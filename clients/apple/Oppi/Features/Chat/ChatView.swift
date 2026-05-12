@@ -509,19 +509,26 @@ struct ChatView: View {
     @ViewBuilder
     private var footerArea: some View {
         if isStopped {
-            SessionEndedFooter(
-                session: session,
-                isResuming: actionHandler.isResuming,
-                onResume: {
-                    actionHandler.resumeSession(
-                        connection: connection,
-                        reducer: reducer,
-                        sessionStore: sessionStore,
-                        sessionManager: sessionManager,
-                        sessionId: sessionId
-                    )
+            VStack(spacing: 8) {
+                if reviewComments.activeCount > 0 {
+                    reviewCommentBar
+                        .padding(.horizontal, 16)
                 }
-            )
+
+                SessionEndedFooter(
+                    session: session,
+                    isResuming: actionHandler.isResuming,
+                    onResume: {
+                        actionHandler.resumeSession(
+                            connection: connection,
+                            reducer: reducer,
+                            sessionStore: sessionStore,
+                            sessionManager: sessionManager,
+                            sessionId: sessionId
+                        )
+                    }
+                )
+            }
         } else {
             VStack(spacing: 8) {
                 if let surface = extensionSurfaceState,
@@ -572,6 +579,11 @@ struct ChatView: View {
                         }
                     )
                     .padding(.horizontal, 16)
+                }
+
+                if reviewComments.activeCount > 0 {
+                    reviewCommentBar
+                        .padding(.horizontal, 16)
                 }
 
                 ChatInputBar(
@@ -653,6 +665,17 @@ struct ChatView: View {
                 )
             }
         }
+    }
+
+    private var reviewCommentBar: some View {
+        ReviewCommentChip(
+            commentCount: reviewComments.activeCount,
+            stagedCount: reviewComments.stagedCount,
+            onTap: {
+                reviewComments.openSheet()
+                Task { await loadReviewCommentsIfPossible() }
+            }
+        )
     }
 
     @ViewBuilder

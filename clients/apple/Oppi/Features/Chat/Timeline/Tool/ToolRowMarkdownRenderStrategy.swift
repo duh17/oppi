@@ -14,6 +14,7 @@ struct ToolRowMarkdownRenderStrategy {
         isUsingMarkdownLayout: Bool,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
         textSelectionEnabled: Bool
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text, isStreaming: isStreaming)
@@ -32,6 +33,7 @@ struct ToolRowMarkdownRenderStrategy {
             plainTextFallbackThreshold: nil,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext,
+            reviewCommentAnnotations: reviewCommentAnnotations,
             perfSurface: .toolExpanded
         ))
 

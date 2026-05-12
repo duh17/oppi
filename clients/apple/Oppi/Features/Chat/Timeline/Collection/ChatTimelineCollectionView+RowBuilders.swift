@@ -109,6 +109,7 @@ extension ChatTimelineCollectionHost.Controller {
             previewText: preview,
             fullText: toolOutputStore?.fullOutput(for: itemID),
             maxBubbleHeight: maxBubbleHeight,
+            itemID: itemID,
             interactionContext: interactionContext
         )
     }
@@ -231,6 +232,7 @@ extension ChatTimelineCollectionHost.Controller {
         )
         return configuration
             .withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
+            .withReviewComments(interactionCtx.reviewComments)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
             .withBashCommandPolicyRuleAction(

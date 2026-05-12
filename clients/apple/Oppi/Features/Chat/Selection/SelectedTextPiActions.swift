@@ -46,19 +46,25 @@ struct SelectedTextActionContext {
     let sourceLabel: String?
     let filePath: String?
     let languageHint: String?
+    let timelineItemId: String?
+    let sourceSurfaceOverride: SelectedTextSurfaceKind?
 
     init(
         dispatcher: SelectedTextPiActionRouter,
         sessionId: String,
         sourceLabel: String? = nil,
         filePath: String? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil,
+        sourceSurfaceOverride: SelectedTextSurfaceKind? = nil
     ) {
         self.dispatcher = dispatcher
         self.sessionId = sessionId
         self.sourceLabel = sourceLabel
         self.filePath = filePath
         self.languageHint = languageHint
+        self.timelineItemId = timelineItemId
+        self.sourceSurfaceOverride = sourceSurfaceOverride
     }
 
     init?(
@@ -66,7 +72,9 @@ struct SelectedTextActionContext {
         sessionId: String? = nil,
         sourceLabel: String? = nil,
         filePath: String? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil,
+        sourceSurfaceOverride: SelectedTextSurfaceKind? = nil
     ) {
         guard let router else { return nil }
         self.init(
@@ -74,7 +82,9 @@ struct SelectedTextActionContext {
             sessionId: sessionId ?? "",
             sourceLabel: sourceLabel,
             filePath: filePath,
-            languageHint: languageHint
+            languageHint: languageHint,
+            timelineItemId: timelineItemId,
+            sourceSurfaceOverride: sourceSurfaceOverride
         )
     }
 
@@ -88,12 +98,12 @@ struct SelectedTextActionContext {
     ) -> SelectedTextSourceContext {
         SelectedTextSourceContext(
             sessionId: sessionId,
-            surface: surface,
+            surface: sourceSurfaceOverride ?? surface,
             sourceLabel: sourceLabel ?? self.sourceLabel,
             filePath: filePath ?? self.filePath,
             lineRange: lineRange,
             languageHint: languageHint ?? self.languageHint,
-            timelineItemId: timelineItemId
+            timelineItemId: timelineItemId ?? self.timelineItemId
         )
     }
 
@@ -101,14 +111,18 @@ struct SelectedTextActionContext {
         sessionId: String? = nil,
         sourceLabel: String? = nil,
         filePath: String? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil,
+        sourceSurfaceOverride: SelectedTextSurfaceKind? = nil
     ) -> SelectedTextActionContext {
         SelectedTextActionContext(
             dispatcher: dispatcher,
             sessionId: sessionId ?? self.sessionId,
             sourceLabel: sourceLabel ?? self.sourceLabel,
             filePath: filePath ?? self.filePath,
-            languageHint: languageHint ?? self.languageHint
+            languageHint: languageHint ?? self.languageHint,
+            timelineItemId: timelineItemId ?? self.timelineItemId,
+            sourceSurfaceOverride: sourceSurfaceOverride ?? self.sourceSurfaceOverride
         )
     }
 }
@@ -118,14 +132,18 @@ extension SelectedTextActionScope {
         sessionId: String? = nil,
         sourceLabel: String? = nil,
         filePath: String? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil,
+        sourceSurfaceOverride: SelectedTextSurfaceKind? = nil
     ) -> SelectedTextActionContext? {
         SelectedTextActionContext(
             router: router,
             sessionId: sessionId,
             sourceLabel: sourceLabel,
             filePath: filePath,
-            languageHint: languageHint
+            languageHint: languageHint,
+            timelineItemId: timelineItemId,
+            sourceSurfaceOverride: sourceSurfaceOverride
         )
     }
 }

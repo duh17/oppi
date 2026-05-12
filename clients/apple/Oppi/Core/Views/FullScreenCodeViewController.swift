@@ -54,6 +54,7 @@ final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
     private let selectedTextActionContext: SelectedTextActionContext?
+    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var showSource = false
     private var copyButton: UIBarButtonItem?
     private weak var contentHostController: UIViewController?
@@ -69,7 +70,8 @@ final class FullScreenCodeViewController: UIViewController {
         selectedTextActionContext: SelectedTextActionContext? = nil,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil
+        selectedTextSourceLabel: String? = nil,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.content = content
         self.presentationMode = presentationMode
@@ -79,6 +81,7 @@ final class FullScreenCodeViewController: UIViewController {
                 sessionId: selectedTextSessionId,
                 sourceLabel: selectedTextSourceLabel
             )
+        self.reviewCommentAnnotations = reviewCommentAnnotations
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -93,7 +96,8 @@ final class FullScreenCodeViewController: UIViewController {
         selectedTextActionContext: SelectedTextActionContext? = nil,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil
+        selectedTextSourceLabel: String? = nil,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first,
@@ -113,7 +117,8 @@ final class FullScreenCodeViewController: UIViewController {
                     router: selectedTextPiRouter,
                     sessionId: selectedTextSessionId,
                     sourceLabel: selectedTextSourceLabel
-                )
+                ),
+            reviewCommentAnnotations: reviewCommentAnnotations
         )
         controller.modalPresentationStyle = .pageSheet
         if let sheet = controller.sheetPresentationController {
@@ -287,7 +292,8 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: language
-                )
+                ),
+                reviewCommentAnnotations: reviewCommentAnnotations
             )
         case .plainText(let text, let filePath):
             return NativeFullScreenSourceBody(
@@ -298,7 +304,8 @@ final class FullScreenCodeViewController: UIViewController {
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenSource,
                     filePath: filePath
-                )
+                ),
+                reviewCommentAnnotations: reviewCommentAnnotations
             )
         case .diff(let oldText, let newText, let filePath, let precomputedLines):
             return NativeFullScreenDiffBody(
@@ -311,7 +318,8 @@ final class FullScreenCodeViewController: UIViewController {
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenDiff,
                     filePath: filePath
-                )
+                ),
+                reviewCommentAnnotations: reviewCommentAnnotations
             )
         case .markdown(let text, let filePath, let wsContext):
             let body = NativeFullScreenMarkdownBody(
@@ -324,6 +332,7 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenMarkdown,
                     filePath: filePath
                 ),
+                reviewCommentAnnotations: reviewCommentAnnotations,
                 workspaceID: wsContext?.workspaceID,
                 serverBaseURL: wsContext?.serverBaseURL,
                 sourceFilePath: filePath,
@@ -349,6 +358,7 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenThinking,
                     fallbackSourceLabel: String(localized: "Thinking")
                 ),
+                reviewCommentAnnotations: reviewCommentAnnotations,
                 perfSurface: .fullScreenThinking
             )
         case .terminal(let text, let command, let stream):
@@ -361,7 +371,8 @@ final class FullScreenCodeViewController: UIViewController {
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
                     fallbackSourceLabel: command
-                )
+                ),
+                reviewCommentAnnotations: reviewCommentAnnotations
             )
         case .liveSource(let snapshot, _):
             return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
@@ -411,7 +422,8 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "dot"
-                )
+                ),
+                reviewCommentAnnotations: reviewCommentAnnotations
             )
         }
     }
@@ -428,7 +440,8 @@ final class FullScreenCodeViewController: UIViewController {
             selectedTextSourceContext: makeSourceContext(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
-            )
+            ),
+            reviewCommentAnnotations: reviewCommentAnnotations
         )
         liveSourceBodyView = body
         return body

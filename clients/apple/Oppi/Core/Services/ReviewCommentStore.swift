@@ -12,6 +12,14 @@ final class ReviewCommentStore {
 
     var stagedCount: Int { stagedComments.count }
 
+    var activeComments: [ReviewComment] {
+        comments(matching: { $0.status == .staged || $0.status == .sent || $0.status == .open }) {
+            $0.updatedAt > $1.updatedAt
+        }
+    }
+
+    var activeCount: Int { activeComments.count }
+
     var sentOrOpenComments: [ReviewComment] {
         comments(matching: { $0.status == .sent || $0.status == .open }) { $0.updatedAt > $1.updatedAt }
     }

@@ -276,7 +276,8 @@ extension View {
         selectedTextActionContext: SelectedTextActionContext? = nil,
         piRouter: SelectedTextPiActionRouter? = nil,
         sessionId: String? = nil,
-        sourceLabel: String? = nil
+        sourceLabel: String? = nil,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) -> some View {
         sheet(isPresented: isPresented) {
             FullScreenCodeView(
@@ -284,7 +285,8 @@ extension View {
                 selectedTextActionContext: selectedTextActionContext,
                 selectedTextActionRouter: piRouter,
                 selectedTextSessionId: sessionId,
-                selectedTextSourceLabel: sourceLabel
+                selectedTextSourceLabel: sourceLabel,
+                reviewCommentAnnotations: reviewCommentAnnotations
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -300,6 +302,7 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     var selectedTextActionRouter: SelectedTextPiActionRouter?
     let selectedTextSessionId: String?
     let selectedTextSourceLabel: String?
+    let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
 
     @Environment(\.selectedTextActionScope) private var selectedTextActionScope
 
@@ -318,19 +321,22 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
         selectedTextActionContext: SelectedTextActionContext? = nil,
         selectedTextActionRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil
+        selectedTextSourceLabel: String? = nil,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.content = content
         self.selectedTextActionContext = selectedTextActionContext
         self.selectedTextActionRouter = selectedTextActionRouter
         self.selectedTextSessionId = selectedTextSessionId
         self.selectedTextSourceLabel = selectedTextSourceLabel
+        self.reviewCommentAnnotations = reviewCommentAnnotations
     }
 
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            selectedTextActionContext: effectiveActionContext
+            selectedTextActionContext: effectiveActionContext,
+            reviewCommentAnnotations: reviewCommentAnnotations
         )
     }
 

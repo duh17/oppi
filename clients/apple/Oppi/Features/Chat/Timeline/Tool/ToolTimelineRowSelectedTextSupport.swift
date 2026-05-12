@@ -33,6 +33,7 @@ enum ToolTimelineRowSelectedTextSupport {
     ///   - expandedContent: The current expanded content (nil when collapsed).
     ///   - sessionId: The active session identifier.
     ///   - sourceLabel: Display label for the tool (typically the tool title).
+    ///   - timelineItemId: Timeline item identifier used to scope review comments.
     ///   - expandedLabelText: Current text content of the expanded label, used for
     ///     line-range computation in code views. Pass nil for non-label surfaces.
     static func sourceContext(
@@ -40,6 +41,7 @@ enum ToolTimelineRowSelectedTextSupport {
         expandedContent: ToolPresentationBuilder.ToolExpandedContent?,
         sessionId: String,
         sourceLabel: String,
+        timelineItemId: String? = nil,
         expandedLabelText: String?
     ) -> SelectedTextSourceContext? {
         switch surface {
@@ -47,14 +49,16 @@ enum ToolTimelineRowSelectedTextSupport {
             return SelectedTextSourceContext(
                 sessionId: sessionId,
                 surface: .toolCommand,
-                sourceLabel: sourceLabel
+                sourceLabel: sourceLabel,
+                timelineItemId: timelineItemId
             )
 
         case .output:
             return SelectedTextSourceContext(
                 sessionId: sessionId,
                 surface: .toolOutput,
-                sourceLabel: sourceLabel
+                sourceLabel: sourceLabel,
+                timelineItemId: timelineItemId
             )
 
         case .expandedLabel:
@@ -63,6 +67,7 @@ enum ToolTimelineRowSelectedTextSupport {
                 expandedContent: expandedContent,
                 sessionId: sessionId,
                 sourceLabel: sourceLabel,
+                timelineItemId: timelineItemId,
                 expandedLabelText: expandedLabelText
             )
 
@@ -72,7 +77,8 @@ enum ToolTimelineRowSelectedTextSupport {
             return SelectedTextSourceContext(
                 sessionId: sessionId,
                 surface: .toolExpandedText,
-                sourceLabel: sourceLabel
+                sourceLabel: sourceLabel,
+                timelineItemId: timelineItemId
             )
         }
     }
@@ -125,6 +131,7 @@ enum ToolTimelineRowSelectedTextSupport {
         expandedContent: ToolPresentationBuilder.ToolExpandedContent,
         sessionId: String,
         sourceLabel: String,
+        timelineItemId: String?,
         expandedLabelText: String?
     ) -> SelectedTextSourceContext? {
         switch expandedContent {
@@ -143,7 +150,8 @@ enum ToolTimelineRowSelectedTextSupport {
                 sourceLabel: sourceLabel,
                 filePath: filePath,
                 lineRange: lineRange,
-                languageHint: language?.displayName
+                languageHint: language?.displayName,
+                timelineItemId: timelineItemId
             )
 
         case .diff(_, let path):
@@ -151,7 +159,8 @@ enum ToolTimelineRowSelectedTextSupport {
                 sessionId: sessionId,
                 surface: .toolExpandedText,
                 sourceLabel: sourceLabel,
-                filePath: path
+                filePath: path,
+                timelineItemId: timelineItemId
             )
 
         case .text(_, let language):
@@ -159,7 +168,8 @@ enum ToolTimelineRowSelectedTextSupport {
                 sessionId: sessionId,
                 surface: .toolExpandedText,
                 sourceLabel: sourceLabel,
-                languageHint: language?.displayName
+                languageHint: language?.displayName,
+                timelineItemId: timelineItemId
             )
 
         case .bash, .markdown, .readMedia, .voiceMessage, .status:

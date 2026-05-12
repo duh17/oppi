@@ -24,6 +24,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let previewText: String
     let fullText: String?
     let maxBubbleHeight: CGFloat
+    let itemID: String?
     var interactionContext: TimelineInteractionContext? = nil
 
     init(
@@ -31,12 +32,14 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
         previewText: String,
         fullText: String?,
         maxBubbleHeight: CGFloat = ThinkingRowHeightPolicy.defaultMaxBubbleHeight,
+        itemID: String? = nil,
         interactionContext: TimelineInteractionContext? = nil
     ) {
         self.isDone = isDone
         self.previewText = previewText
         self.fullText = fullText
         self.maxBubbleHeight = maxBubbleHeight
+        self.itemID = itemID
         self.interactionContext = interactionContext
     }
 
@@ -163,6 +166,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         super.layoutSubviews()
         updateBubbleHeight(forWidth: bounds.width)
         syncFadeMaskFrame()
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: textLabel)
     }
 
     // MARK: - Setup
@@ -294,6 +298,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             if text.isEmpty {
                 textLabel.attributedText = nil
+                applyReviewCommentAnnotations()
                 renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
@@ -310,6 +315,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     text,
                     color: UIColor(palette.fg).withAlphaComponent(0.94)
                 )
+                applyReviewCommentAnnotations()
                 renderSignature = signature
             }
 
@@ -326,6 +332,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             if text.isEmpty {
                 textLabel.attributedText = nil
+                applyReviewCommentAnnotations()
                 renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
@@ -340,6 +347,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     textLabel.text = text
                     textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
                     textLabel.font = .preferredFont(forTextStyle: .callout)
+                    applyReviewCommentAnnotations()
                     renderSignature = signature
                 }
                 updateBubbleHeight(forWidth: bounds.width)
@@ -352,6 +360,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             }
         }
 
+        applyReviewCommentAnnotations()
         updateSelectedTextInteractionPolicy()
     }
 
@@ -361,6 +370,19 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         scrollView.isUserInteractionEnabled = interaction.inlineSelectionEnabled
         bubbleDoubleTapGesture.isEnabled = interaction.enablesTapActivation
         bubblePinchGesture.isEnabled = interaction.enablesPinchActivation
+    }
+
+    private func applyReviewCommentAnnotations() {
+        let sourceContext = currentConfiguration.interactionContext?.sourceContext(
+            surface: .thinking,
+            sourceLabel: "Thinking",
+            timelineItemId: currentConfiguration.itemID
+        )
+        ReviewCommentInlineAnnotationRenderer.apply(
+            to: textLabel,
+            annotations: currentConfiguration.interactionContext?.inlineReviewAnnotations(for: sourceContext) ?? [],
+            sourceContext: sourceContext
+        )
     }
 
     /// Cheap render signature to skip redundant text updates.
@@ -538,12 +560,22 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             content: trimmedDisplayText,
             stream: fullScreenThinkingStream
         )
+        let selectedTextActionContext = currentConfiguration.interactionContext?
+            .selectedTextActionContext?
+            .overriding(
+                sourceLabel: "Thinking",
+                timelineItemId: currentConfiguration.itemID
+            )
+        let sourceContext = selectedTextActionContext?.sourceContext(
+            surface: .fullScreenThinking,
+            sourceLabel: "Thinking"
+        )
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            selectedTextActionContext: currentConfiguration.interactionContext?
-                .selectedTextActionContext?
-                .overriding(sourceLabel: "Thinking")
+            selectedTextActionContext: selectedTextActionContext,
+            reviewCommentAnnotations: currentConfiguration.interactionContext?
+                .inlineReviewAnnotations(for: sourceContext) ?? []
         )
     }
 
@@ -620,7 +652,8 @@ extension ThinkingTimelineRowContentView: UITextViewDelegate {
             router: currentConfiguration.interactionContext?.selectedTextActionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .thinking,
-                sourceLabel: "Thinking"
+                sourceLabel: "Thinking",
+                timelineItemId: currentConfiguration.itemID
             )
         )
     }

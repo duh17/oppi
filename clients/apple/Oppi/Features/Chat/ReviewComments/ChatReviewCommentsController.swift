@@ -16,6 +16,7 @@ final class ChatReviewCommentsController {
 
     var comments: [ReviewComment] { store.comments }
     var stagedCount: Int { store.stagedCount }
+    var activeCount: Int { store.activeCount }
     var stagedCommentIds: [String] { store.stagedComments.map(\.id) }
 
     func beginComment(_ request: SelectedTextPiRequest) {

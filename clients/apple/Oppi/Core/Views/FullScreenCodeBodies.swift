@@ -17,6 +17,7 @@ final class NativeFullScreenCodeBody: UIView {
     private let alwaysBounceVertical: Bool
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var highlightTask: Task<Void, Never>?
 
     init(
@@ -26,7 +27,8 @@ final class NativeFullScreenCodeBody: UIView {
         palette: ThemePalette,
         alwaysBounceVertical: Bool = true,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?
+        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.content = content
         self.language = language
@@ -35,6 +37,7 @@ final class NativeFullScreenCodeBody: UIView {
         self.alwaysBounceVertical = alwaysBounceVertical
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentAnnotations = reviewCommentAnnotations
         super.init(frame: .zero)
         setup()
         loadHighlighting()
@@ -44,6 +47,11 @@ final class NativeFullScreenCodeBody: UIView {
     required init?(coder: NSCoder) { nil }
 
     deinit { highlightTask?.cancel() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: codeTextView)
+    }
 
     private func setup() {
         backgroundColor = UIColor(palette.bgDark)
@@ -97,6 +105,7 @@ final class NativeFullScreenCodeBody: UIView {
         codeTextView.text = content
         codeTextView.delegate = self
         contentContainer.addSubview(codeTextView)
+        applyReviewCommentAnnotations()
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -149,8 +158,17 @@ final class NativeFullScreenCodeBody: UIView {
                 self?.codeTextView.attributedText = fullScreenAttributedCodeText(
                     from: wrapper.value
                 )
+                self?.applyReviewCommentAnnotations()
             }
         }
+    }
+
+    private func applyReviewCommentAnnotations() {
+        ReviewCommentInlineAnnotationRenderer.apply(
+            to: codeTextView,
+            annotations: reviewCommentAnnotations,
+            sourceContext: selectedTextSourceContext
+        )
     }
 }
 
@@ -182,6 +200,7 @@ final class NativeFullScreenDiffBody: UIView {
     private let progressView = UIActivityIndicatorView(style: .medium)
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var widthConstraint: NSLayoutConstraint?
     private var buildTask: Task<Void, Never>?
 
@@ -199,10 +218,12 @@ final class NativeFullScreenDiffBody: UIView {
         precomputedLines: [DiffLine]?,
         palette: ThemePalette,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?
+        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentAnnotations = reviewCommentAnnotations
 
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
@@ -307,6 +328,7 @@ final class NativeFullScreenDiffBody: UIView {
             newText: newText,
             precomputedLines: precomputedLines
         )
+        applyReviewCommentAnnotations()
         let displayPath = filePath ?? "diff.txt"
         buildTask = Task { [weak self] in
             let oldText = oldText
@@ -324,6 +346,11 @@ final class NativeFullScreenDiffBody: UIView {
 
     deinit {
         buildTask?.cancel()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: diffTextView)
     }
 
     private static func initialSelectableText(
@@ -362,11 +389,20 @@ final class NativeFullScreenDiffBody: UIView {
 
     private func applyBuiltDiff(_ result: BuiltDiff) {
         diffTextView.attributedText = result.text
+        applyReviewCommentAnnotations()
         widthConstraint?.constant = result.width
         statsLabel.text = "\(result.added > 0 ? "+\(result.added)" : "0")  \(result.removed > 0 ? "-\(result.removed)" : "0")"
         progressView.stopAnimating()
         progressView.removeFromSuperview()
         setNeedsLayout()
+    }
+
+    private func applyReviewCommentAnnotations() {
+        ReviewCommentInlineAnnotationRenderer.apply(
+            to: diffTextView,
+            annotations: reviewCommentAnnotations,
+            sourceContext: selectedTextSourceContext
+        )
     }
 
     @available(*, unavailable)
@@ -403,6 +439,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private let stream: TerminalTraceStream?
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
     private var renderedSnapshot: TerminalTraceStream.Snapshot?
@@ -424,12 +461,14 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         stream: TerminalTraceStream?,
         palette: ThemePalette,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?
+        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.palette = palette
         self.stream = stream
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentAnnotations = reviewCommentAnnotations
 
         let initialSnapshot = stream?.snapshot
             ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
@@ -461,6 +500,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         tailFollowCoordinator.onLayoutPass()
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: commandView)
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: outputView)
     }
 
     private func setup() {
@@ -534,6 +575,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
            !command.isEmpty {
             commandView.isHidden = false
             commandView.attributedText = ToolRowTextRenderer.bashCommandHighlighted(command)
+            applyReviewCommentAnnotations(to: commandView)
         } else {
             commandView.isHidden = true
             commandView.attributedText = nil
@@ -552,11 +594,13 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             outputView.attributedText = ANSIParser.attributedString(
                 from: content, baseForeground: .themeFg
             )
+            applyReviewCommentAnnotations(to: outputView)
             return
         }
 
         outputView.attributedText = nil
         outputView.text = ANSIParser.strip(content)
+        applyReviewCommentAnnotations(to: outputView)
 
         // Large streaming payloads stay in plain mode while streaming to avoid
         // launching expensive full-text ANSI parses on every chunk.
@@ -575,9 +619,19 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.outputView.attributedText = wrapper.value
+                self?.applyReviewCommentAnnotations(to: self?.outputView)
                 self?.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             }
         }
+    }
+
+    private func applyReviewCommentAnnotations(to textView: UITextView?) {
+        guard let textView else { return }
+        ReviewCommentInlineAnnotationRenderer.apply(
+            to: textView,
+            annotations: reviewCommentAnnotations,
+            sourceContext: selectedTextSourceContext
+        )
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -627,6 +681,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let plainTextFallbackThreshold: Int?
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private let workspaceID: String?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
@@ -652,6 +707,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
@@ -663,6 +719,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.plainTextFallbackThreshold = plainTextFallbackThreshold
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentAnnotations = reviewCommentAnnotations
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
@@ -752,6 +809,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             plainTextFallbackThreshold: plainTextFallbackThreshold,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext,
+            reviewCommentAnnotations: reviewCommentAnnotations,
             workspaceID: workspaceID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
@@ -790,6 +848,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     private let textView = UITextView()
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var isStreaming: Bool
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
@@ -805,10 +864,12 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         isStreaming: Bool,
         palette: ThemePalette,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?
+        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentAnnotations = reviewCommentAnnotations
         self.isStreaming = isStreaming
         super.init(frame: .zero)
 
@@ -826,6 +887,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         textView.delegate = self
         textView.text = content
         addSubview(textView)
+        applyReviewCommentAnnotations()
 
         NSLayoutConstraint.activate([
             textView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -841,6 +903,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         tailFollowCoordinator.onLayoutPass()
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: textView)
     }
 
     func update(content: String, isStreaming: Bool) {
@@ -854,6 +917,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
 
         self.isStreaming = isStreaming
         textView.text = content
+        applyReviewCommentAnnotations()
         if !isStreaming {
             tailFollowCoordinator.shouldAutoFollowTail = false
         }
@@ -880,6 +944,14 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleDidEndDecelerating(isStreaming: isStreaming)
+    }
+
+    private func applyReviewCommentAnnotations() {
+        ReviewCommentInlineAnnotationRenderer.apply(
+            to: textView,
+            annotations: reviewCommentAnnotations,
+            sourceContext: selectedTextSourceContext
+        )
     }
 
     func textView(

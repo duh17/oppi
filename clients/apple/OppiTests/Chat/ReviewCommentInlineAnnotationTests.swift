@@ -86,6 +86,48 @@ struct ReviewCommentInlineAnnotationTests {
         #expect(ReviewCommentInlineAnnotationMatcher.annotations(from: [codeComment], for: codeContext).map(\.id) == ["c1"])
     }
 
+    @Test func fullScreenThinkingMatchesTimelineThinkingComments() {
+        let comment = Self.comment(
+            id: "c1",
+            reference: Self.reference(
+                source: .timelineText,
+                selectedText: "reasoned text",
+                timelineItemId: "thinking-a"
+            )
+        )
+        let context = SelectedTextSourceContext(
+            sessionId: "s1",
+            surface: .fullScreenThinking,
+            timelineItemId: "thinking-a"
+        )
+
+        let annotations = ReviewCommentInlineAnnotationMatcher.annotations(
+            from: [comment],
+            for: context
+        )
+
+        #expect(annotations.map(\.id) == ["c1"])
+    }
+
+    @MainActor
+    @Test func fullScreenToolContextsCanStayScopedToToolOutput() {
+        let actionContext = SelectedTextActionContext(
+            dispatcher: SelectedTextPiActionRouter(dispatch: { _ in }),
+            sessionId: "s1",
+            sourceLabel: "tool output",
+            timelineItemId: "tool-a",
+            sourceSurfaceOverride: .toolExpandedText
+        )
+        let sourceContext = actionContext.sourceContext(
+            surface: .fullScreenCode,
+            languageHint: "swift"
+        )
+
+        #expect(sourceContext.surface == .toolExpandedText)
+        #expect(sourceContext.reviewCommentReferenceSource == .toolOutput)
+        #expect(sourceContext.timelineItemId == "tool-a")
+    }
+
     @Test func fileAnnotationsRequireMatchingPath() {
         let matching = Self.comment(
             id: "c1",
