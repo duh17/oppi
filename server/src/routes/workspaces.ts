@@ -167,7 +167,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
-    const localSessions = await discoverLocalSessions(knownFiles);
+    const localSessions = await discoverLocalSessions(knownFiles, {
+      dataDir: ctx.storage.getDataDir(),
+    });
     helpers.json(res, { sessions: localSessions });
   }
 
@@ -710,7 +712,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   return async ({ method, path, url, req, res }) => {
-    if (path === "/local-sessions" && method === "GET") {
+    if ((path === "/local-sessions" || path === "/tui-sessions") && method === "GET") {
       await handleListLocalSessions(res);
       return true;
     }

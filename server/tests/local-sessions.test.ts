@@ -7,6 +7,7 @@ import {
   mkdirSync,
   writeFileSync,
   rmSync,
+  mkdtempSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
@@ -17,6 +18,7 @@ import {
   validateCwdAlignment,
   getPiSessionsRoot,
 } from "../src/local-sessions.js";
+import { openDatabase } from "../src/sqlite-compat.js";
 
 // ─── Fixtures ───
 
@@ -293,6 +295,38 @@ describe("discoverLocalSessions", () => {
     expect(found!.name).toBeUndefined();
     expect(found!.firstMessage).toBeUndefined();
     expect(found!.messageCount).toBe(0);
+  });
+
+  it("persists TUI session metadata in the sqlite catalog when dataDir is provided", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-catalog-"));
+    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-catalog.jsonl");
+
+    try {
+      writeFileSync(
+        filePath,
+        makeSessionJsonl({
+          id: "uuid-catalog",
+          name: "Catalogued Session",
+          userMessage: "persist me",
+        }),
+      );
+
+      const sessions = await discoverLocalSessions(undefined, { dataDir });
+      const found = sessions.find((s) => s.piSessionId === "uuid-catalog");
+      expect(found?.name).toBe("Catalogued Session");
+
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        const row = db
+          .prepare("SELECT pi_session_id, name FROM tui_session_files WHERE path = ?")
+          .get(filePath) as { pi_session_id: string; name: string } | undefined;
+        expect(row).toEqual({ pi_session_id: "uuid-catalog", name: "Catalogued Session" });
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("returns cached results on second call for unchanged files", async () => {

@@ -17,6 +17,7 @@ import { createThemeRoutes } from "../src/routes/themes.js";
 import { createTelemetryRoutes } from "../src/routes/telemetry.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
 import type { RouteContext } from "../src/routes/types.js";
+import { getPiSessionsRoot } from "../src/local-sessions.js";
 import {
   CHAT_METRIC_NAME_VALUES,
   CHAT_METRIC_REGISTRY,
@@ -642,6 +643,57 @@ describe("routes modules", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.body)).toEqual({ error: "Workspace not found" });
+    });
+
+    it("handles GET /tui-sessions as the global TUI session list", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-route-"));
+      const testDir = join(getPiSessionsRoot(), "--test-route-tui-sessions--");
+      const filePath = join(testDir, "2026-02-20T00-00-00-000Z_route-tui.jsonl");
+
+      try {
+        mkdirSync(testDir, { recursive: true });
+        writeFileSync(
+          filePath,
+          [
+            JSON.stringify({
+              type: "session",
+              id: "route-tui",
+              cwd: "/tmp/project",
+              timestamp: "2026-02-20T00:00:00.000Z",
+            }),
+            JSON.stringify({
+              type: "session_info",
+              name: "Route TUI Session",
+            }),
+          ].join("\n") + "\n",
+        );
+
+        const ctx = {
+          storage: {
+            listSessions: vi.fn(() => []),
+            getDataDir: vi.fn(() => dataDir),
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+
+        const handled = await dispatch({
+          method: "GET",
+          path: "/tui-sessions",
+          url: new URL("http://localhost/tui-sessions"),
+          req: {} as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body) as { sessions: Array<{ piSessionId: string }> };
+        expect(body.sessions.some((session) => session.piSessionId === "route-tui")).toBe(true);
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
     });
 
     it("validates name on POST /workspaces", async () => {

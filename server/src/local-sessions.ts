@@ -9,10 +9,19 @@
  * symlinks before path validation. All paths returned are real paths.
  */
 
-import { existsSync, readdirSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  readdirSync,
+  openSync,
+  readSync,
+  closeSync,
+  realpathSync,
+} from "node:fs";
 import { stat, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import type { LocalSession } from "./types.js";
 
 /** Fixed root of pi agent sessions. */
@@ -232,6 +241,217 @@ async function extractSessionMetadata(
 
 const metadataCache = new Map<string, { mtimeMs: number; session: LocalSession }>();
 
+interface TuiSessionCatalogRow {
+  path: string;
+  pi_session_id: string;
+  cwd: string;
+  name: string | null;
+  first_message: string | null;
+  model: string | null;
+  message_count: number;
+  created_at: number;
+  last_modified: number;
+  size_bytes: number;
+  mtime_ms: number;
+  is_subagent: number;
+}
+
+class TuiSessionCatalog {
+  private readonly db: SqliteDatabase;
+
+  constructor(dataDir: string) {
+    const dbPath = join(dataDir, "session-state.db");
+    this.db = openDatabase(dbPath);
+    chmodSync(dbPath, 0o600);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA synchronous = NORMAL");
+    this.ensureSchema();
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  rowsByPath(): Map<string, TuiSessionCatalogRow> {
+    const rows = this.db.prepare("SELECT * FROM tui_session_files").all() as TuiSessionCatalogRow[];
+    return new Map(rows.map((row) => [row.path, row]));
+  }
+
+  listRows(): TuiSessionCatalogRow[] {
+    return this.db
+      .prepare("SELECT * FROM tui_session_files ORDER BY last_modified DESC, path ASC")
+      .all() as TuiSessionCatalogRow[];
+  }
+
+  upsert(session: LocalSession, sizeBytes: number, mtimeMs: number, isSubagent: boolean): void {
+    this.db
+      .prepare(
+        `INSERT INTO tui_session_files (
+          path,
+          pi_session_id,
+          cwd,
+          name,
+          first_message,
+          model,
+          message_count,
+          created_at,
+          last_modified,
+          size_bytes,
+          mtime_ms,
+          is_subagent,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+          pi_session_id = excluded.pi_session_id,
+          cwd = excluded.cwd,
+          name = excluded.name,
+          first_message = excluded.first_message,
+          model = excluded.model,
+          message_count = excluded.message_count,
+          created_at = excluded.created_at,
+          last_modified = excluded.last_modified,
+          size_bytes = excluded.size_bytes,
+          mtime_ms = excluded.mtime_ms,
+          is_subagent = excluded.is_subagent,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        session.path,
+        session.piSessionId,
+        session.cwd,
+        session.name ?? null,
+        session.firstMessage ?? null,
+        session.model ?? null,
+        session.messageCount,
+        session.createdAt,
+        session.lastModified,
+        sizeBytes,
+        mtimeMs,
+        isSubagent ? 1 : 0,
+        Date.now(),
+      );
+  }
+
+  deletePath(path: string): void {
+    this.db.prepare("DELETE FROM tui_session_files WHERE path = ?").run(path);
+  }
+
+  deleteMissing(livePaths: Set<string>): void {
+    const deleteStmt = this.db.prepare("DELETE FROM tui_session_files WHERE path = ?");
+    this.db.transaction(() => {
+      for (const row of this.listRows()) {
+        if (!livePaths.has(row.path)) {
+          deleteStmt.run(row.path);
+        }
+      }
+    })();
+  }
+
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tui_session_files (
+        path TEXT PRIMARY KEY,
+        pi_session_id TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        name TEXT,
+        first_message TEXT,
+        model TEXT,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        last_modified INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        mtime_ms REAL NOT NULL,
+        is_subagent INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS tui_session_files_mtime_idx
+        ON tui_session_files (last_modified DESC, path ASC);
+
+      CREATE INDEX IF NOT EXISTS tui_session_files_cwd_idx
+        ON tui_session_files (cwd);
+    `);
+  }
+}
+
+function rowToLocalSession(row: TuiSessionCatalogRow): LocalSession {
+  return {
+    path: row.path,
+    piSessionId: row.pi_session_id,
+    cwd: row.cwd,
+    ...(row.name ? { name: row.name } : {}),
+    ...(row.first_message ? { firstMessage: row.first_message } : {}),
+    ...(row.model ? { model: row.model } : {}),
+    messageCount: row.message_count,
+    createdAt: row.created_at,
+    lastModified: row.last_modified,
+  };
+}
+
+function buildLocalSession(
+  realFile: string,
+  mtimeMs: number,
+  header: SessionHeaderData,
+  metadata: { name?: string; firstMessage?: string; model?: string; messageCount: number },
+): LocalSession {
+  return {
+    path: realFile,
+    piSessionId: header.id,
+    cwd: header.cwd,
+    name: metadata.name,
+    firstMessage: metadata.firstMessage,
+    model: metadata.model,
+    messageCount: metadata.messageCount,
+    createdAt: new Date(header.timestamp).getTime() || mtimeMs,
+    lastModified: mtimeMs,
+  };
+}
+
+async function refreshTuiSessionCatalog(
+  catalog: TuiSessionCatalog,
+  needsRead: { path: string; size: number; mtimeMs: number }[],
+): Promise<void> {
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < needsRead.length; i += BATCH_SIZE) {
+    const batch = needsRead.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async ({ path: realFile, size, mtimeMs }) => {
+        const header = readSessionHeader(realFile);
+        if (!header) {
+          catalog.deletePath(realFile);
+          return;
+        }
+
+        const metadata = await extractSessionMetadata(realFile, size);
+        const session = buildLocalSession(realFile, mtimeMs, header, metadata);
+        catalog.upsert(session, size, mtimeMs, isSubagentLocalSession(session));
+      }),
+    );
+  }
+}
+
+async function refreshInMemoryLocalSessionCache(
+  needsRead: { path: string; size: number; mtimeMs: number }[],
+): Promise<void> {
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < needsRead.length; i += BATCH_SIZE) {
+    const batch = needsRead.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async ({ path: realFile, size, mtimeMs }) => {
+        const header = readSessionHeader(realFile);
+        if (!header) {
+          metadataCache.delete(realFile);
+          return;
+        }
+
+        const metadata = await extractSessionMetadata(realFile, size);
+        const session = buildLocalSession(realFile, mtimeMs, header, metadata);
+        metadataCache.set(realFile, { mtimeMs, session });
+      }),
+    );
+  }
+}
+
 function isSubagentPrompt(text: string | undefined): boolean {
   return /^\[Subagent profile: [^\]]+\]\s*\n/.test(text?.trimStart() ?? "");
 }
@@ -256,6 +476,7 @@ export function invalidateLocalSessionsCache(): void {
  */
 export async function discoverLocalSessions(
   knownPiSessionFiles?: Set<string>,
+  options: { dataDir?: string } = {},
 ): Promise<LocalSession[]> {
   if (!existsSync(PI_SESSIONS_ROOT)) {
     return [];
@@ -311,7 +532,33 @@ export async function discoverLocalSessions(
     }),
   );
 
-  // For files with changed/new mtime, read metadata in parallel batches
+  if (options.dataDir) {
+    const catalog = new TuiSessionCatalog(options.dataDir);
+    try {
+      const cachedByPath = catalog.rowsByPath();
+      const needsRead: { path: string; size: number; mtimeMs: number }[] = [];
+      for (const s of statResults) {
+        if (!s) continue;
+        const cached = cachedByPath.get(s.path);
+        if (!cached || cached.mtime_ms !== s.mtimeMs || cached.size_bytes !== s.size) {
+          needsRead.push(s);
+        }
+      }
+
+      await refreshTuiSessionCatalog(catalog, needsRead);
+      catalog.deleteMissing(livePaths);
+
+      return catalog
+        .listRows()
+        .filter((row) => row.is_subagent === 0 && !knownPiSessionFiles?.has(row.path))
+        .map(rowToLocalSession);
+    } finally {
+      catalog.close();
+    }
+  }
+
+  // For files with changed/new mtime, read metadata in parallel batches.
+  // This in-memory path is retained for tests and callers without a dataDir.
   const needsRead: { path: string; size: number; mtimeMs: number }[] = [];
   for (const s of statResults) {
     if (!s) continue;
@@ -321,30 +568,7 @@ export async function discoverLocalSessions(
     }
   }
 
-  const BATCH_SIZE = 20;
-  for (let i = 0; i < needsRead.length; i += BATCH_SIZE) {
-    const batch = needsRead.slice(i, i + BATCH_SIZE);
-    await Promise.all(
-      batch.map(async ({ path: realFile, size, mtimeMs }) => {
-        const header = readSessionHeader(realFile);
-        if (!header) return;
-
-        const metadata = await extractSessionMetadata(realFile, size);
-        const session: LocalSession = {
-          path: realFile,
-          piSessionId: header.id,
-          cwd: header.cwd,
-          name: metadata.name,
-          firstMessage: metadata.firstMessage,
-          model: metadata.model,
-          messageCount: metadata.messageCount,
-          createdAt: new Date(header.timestamp).getTime() || mtimeMs,
-          lastModified: mtimeMs,
-        };
-        metadataCache.set(realFile, { mtimeMs, session });
-      }),
-    );
-  }
+  await refreshInMemoryLocalSessionCache(needsRead);
 
   // Prune entries for deleted files
   for (const key of metadataCache.keys()) {
