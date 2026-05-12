@@ -155,13 +155,16 @@ private struct ReviewCommentRow: View {
             HStack(spacing: 12) {
                 Button(primaryActionTitle, action: onPrimaryAction)
                     .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
                 if let onResolve {
                     Button("Resolve", action: onResolve)
                         .font(.caption.weight(.semibold))
+                        .buttonStyle(.borderless)
                 }
                 Spacer()
                 Button("Delete", role: .destructive, action: onDelete)
                     .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
             }
         }
         .padding(.vertical, 6)
