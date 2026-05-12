@@ -275,6 +275,8 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
   }
 
   private ensureSchema(): void {
+    this.recoverInterruptedPrimaryKeyMigration();
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS review_comments (
         id TEXT NOT NULL,
@@ -299,6 +301,53 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
     this.ensureReviewCommentColumns();
     this.ensureReviewCommentPrimaryKey();
     this.ensureIndexesAndSchemaVersion();
+  }
+
+  private recoverInterruptedPrimaryKeyMigration(): void {
+    const hasCurrent = this.tableExists("review_comments");
+    const hasNext = this.tableExists("review_comments_next");
+    if (!hasNext) {
+      return;
+    }
+
+    this.db.transaction(() => {
+      if (!hasCurrent) {
+        this.db.exec("ALTER TABLE review_comments_next RENAME TO review_comments");
+        log.warn("review_comment_sqlite_store.primary_key_migration.recovered_missing_current");
+        return;
+      }
+
+      const currentCount = this.countRows("review_comments");
+      const nextCount = this.countRows("review_comments_next");
+      if (currentCount === 0 && nextCount > 0) {
+        this.db.exec("DROP TABLE review_comments");
+        this.db.exec("ALTER TABLE review_comments_next RENAME TO review_comments");
+        log.warn("review_comment_sqlite_store.primary_key_migration.recovered_empty_current", {
+          recoveredRows: nextCount,
+        });
+        return;
+      }
+
+      this.db.exec("DROP TABLE review_comments_next");
+      log.warn("review_comment_sqlite_store.primary_key_migration.dropped_orphan_next", {
+        currentRows: currentCount,
+        orphanRows: nextCount,
+      });
+    })();
+  }
+
+  private tableExists(name: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(name) as { present?: number } | undefined;
+    return row !== undefined;
+  }
+
+  private countRows(tableName: "review_comments" | "review_comments_next"): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as
+      | { count?: number }
+      | undefined;
+    return Number(row?.count ?? 0);
   }
 
   private ensureReviewCommentColumns(): void {
@@ -327,7 +376,10 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
       return;
     }
 
-    this.db.exec(`
+    this.db.transaction(() => {
+      this.db.exec(`
+      DROP TABLE IF EXISTS review_comments_next;
+
       CREATE TABLE review_comments_next (
         id TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
@@ -385,6 +437,7 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
       DROP TABLE review_comments;
       ALTER TABLE review_comments_next RENAME TO review_comments;
     `);
+    })();
   }
 
   private ensureIndexesAndSchemaVersion(): void {

@@ -118,6 +118,93 @@ describe("ReviewCommentStore", () => {
     ]);
   });
 
+  it("recovers an interrupted SQLite primary-key rebuild", async () => {
+    const dbPath = join(root, "session-state.db");
+    const db = openDatabase(dbPath);
+    const comment = {
+      id: "rescued-1",
+      workspaceId: "w1",
+      sessionId: "s1",
+      author: "human" as const,
+      status: "staged" as const,
+      body: "Rescued body",
+      reference: { source: "file" as const, path: "README.md" },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    try {
+      db.exec(`
+        CREATE TABLE review_comments_next (
+          id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT,
+          turn_id TEXT,
+          author TEXT NOT NULL,
+          status TEXT NOT NULL,
+          severity TEXT,
+          body TEXT NOT NULL,
+          reference_source TEXT NOT NULL,
+          reference_path TEXT,
+          reference_timeline_item_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          sent_at INTEGER,
+          comment_json TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, id)
+        );
+      `);
+      db.prepare(
+        `
+        INSERT INTO review_comments_next (
+          id,
+          workspace_id,
+          session_id,
+          author,
+          status,
+          body,
+          reference_source,
+          reference_path,
+          created_at,
+          updated_at,
+          comment_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      ).run(
+        comment.id,
+        comment.workspaceId,
+        comment.sessionId,
+        comment.author,
+        comment.status,
+        comment.body,
+        comment.reference.source,
+        comment.reference.path,
+        comment.createdAt,
+        comment.updatedAt,
+        JSON.stringify(comment),
+      );
+    } finally {
+      db.close();
+    }
+
+    const store = track(new ReviewCommentStore(root, "w1"));
+    const comments = await store.list({ sessionId: "s1" });
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toBe("Rescued body");
+
+    const reopened = openDatabase(dbPath);
+    try {
+      const nextTable = reopened
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_comments_next'",
+        )
+        .get();
+      expect(nextTable).toBeUndefined();
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("is exposed through the main Storage DAO seam", () => {
     const storage = new Storage(root);
     const comment = storage.createReviewComment("w1", {
