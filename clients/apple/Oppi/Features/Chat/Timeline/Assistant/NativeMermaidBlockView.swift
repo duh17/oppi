@@ -221,11 +221,16 @@ final class NativeMermaidBlockView: UIView {
     /// Configure selected-text Pi action forwarding on the inner code block.
     func configureSelectedTextPi(
         router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?
+        sourceContext: SelectedTextSourceContext?,
+        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         selectedTextPiRouter = router
         selectedTextSourceContext = sourceContext
-        codeBlockView.configureSelectedTextPi(router: router, sourceContext: sourceContext)
+        codeBlockView.configureSelectedTextPi(
+            router: router,
+            sourceContext: sourceContext,
+            reviewCommentAnnotations: reviewCommentAnnotations
+        )
     }
 
     /// Apply syntax highlighting to the inner code block (when showing as code).

@@ -39,6 +39,7 @@ final class AssistantMarkdownContentView: UIView {
         let plainTextFallbackThreshold: Int?
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let selectedTextSourceContext: SelectedTextSourceContext?
+        let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
         /// Workspace context for resolving inline image paths.
         let workspaceID: String?
         /// Session context for resolving absolute file paths in assistant markdown.
@@ -72,6 +73,7 @@ final class AssistantMarkdownContentView: UIView {
             plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil,
+            reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
             workspaceID: String? = nil,
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
@@ -86,6 +88,7 @@ final class AssistantMarkdownContentView: UIView {
             self.plainTextFallbackThreshold = plainTextFallbackThreshold
             self.selectedTextPiRouter = selectedTextPiRouter
             self.selectedTextSourceContext = selectedTextSourceContext
+            self.reviewCommentAnnotations = reviewCommentAnnotations
             self.workspaceID = workspaceID
             self.sessionID = sessionID
             self.serverBaseURL = serverBaseURL
@@ -102,6 +105,7 @@ final class AssistantMarkdownContentView: UIView {
             plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil,
+            reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
             workspaceID: String? = nil,
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
@@ -117,6 +121,7 @@ final class AssistantMarkdownContentView: UIView {
                 plainTextFallbackThreshold: plainTextFallbackThreshold,
                 selectedTextPiRouter: selectedTextPiRouter,
                 selectedTextSourceContext: selectedTextSourceContext,
+                reviewCommentAnnotations: reviewCommentAnnotations,
                 workspaceID: workspaceID,
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
@@ -134,6 +139,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.plainTextFallbackThreshold == rhs.plainTextFallbackThreshold
                 && lhs.selectedTextPiRouter === rhs.selectedTextPiRouter
                 && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
+                && lhs.reviewCommentAnnotations == rhs.reviewCommentAnnotations
                 && lhs.workspaceID == rhs.workspaceID
                 && lhs.sessionID == rhs.sessionID
                 && lhs.serverBaseURL == rhs.serverBaseURL

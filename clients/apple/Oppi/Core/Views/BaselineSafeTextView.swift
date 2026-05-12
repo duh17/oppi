@@ -18,23 +18,23 @@ final class BaselineSafeTextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        guard !isScrollEnabled else { return }
+        if !isScrollEnabled {
+            let desiredOffset = CGPoint(
+                x: -adjustedContentInset.left,
+                y: -adjustedContentInset.top
+            )
 
-        let desiredOffset = CGPoint(
-            x: -adjustedContentInset.left,
-            y: -adjustedContentInset.top
-        )
-
-        guard abs(contentOffset.x - desiredOffset.x) > 0.5
-                || abs(contentOffset.y - desiredOffset.y) > 0.5 else {
-            return
+            if abs(contentOffset.x - desiredOffset.x) > 0.5
+                || abs(contentOffset.y - desiredOffset.y) > 0.5 {
+                // UITextView can retain an internal scroll position across attributed
+                // text updates even when scrolling is disabled. Streaming assistant
+                // markdown reuses these text views in place, so clamp them back to the
+                // visual top on each layout pass.
+                contentOffset = desiredOffset
+            }
         }
 
-        // UITextView can retain an internal scroll position across attributed
-        // text updates even when scrolling is disabled. Streaming assistant
-        // markdown reuses these text views in place, so clamp them back to the
-        // visual top on each layout pass.
-        contentOffset = desiredOffset
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: self)
     }
 
     // MARK: - Baseline safety

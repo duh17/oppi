@@ -103,6 +103,7 @@ final class AssistantMarkdownSegmentApplier {
                 let textView = makeTextView(palette: palette)
                 textView.isSelectable = config.textSelectionEnabled
                 textView.attributedText = NSAttributedString(attributed)
+                applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
                 stackView.addArrangedSubview(textView)
                 textViews[index] = textView
 
@@ -113,7 +114,8 @@ final class AssistantMarkdownSegmentApplier {
                     && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                 codeView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
                 stackView.addArrangedSubview(codeView)
@@ -126,7 +128,8 @@ final class AssistantMarkdownSegmentApplier {
                 let tableView = NativeTableBlockView()
                 tableView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantTableSourceContext(config: config)
+                    sourceContext: assistantTableSourceContext(config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 tableView.apply(headers: headers, rows: rows, palette: palette)
                 stackView.addArrangedSubview(tableView)
@@ -154,7 +157,8 @@ final class AssistantMarkdownSegmentApplier {
                     && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                 mermaidView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
+                    sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 if isOpen {
                     mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -171,7 +175,8 @@ final class AssistantMarkdownSegmentApplier {
                     && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                 latexView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 if isOpen {
                     latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -255,6 +260,7 @@ final class AssistantMarkdownSegmentApplier {
                 let textView = makeTextView(palette: palette)
                 textView.isSelectable = config.textSelectionEnabled
                 textView.attributedText = NSAttributedString(attributed)
+                applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
                 stackView.addArrangedSubview(textView)
                 textViews[index] = textView
 
@@ -265,7 +271,8 @@ final class AssistantMarkdownSegmentApplier {
                     && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                 codeView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
                 stackView.addArrangedSubview(codeView)
@@ -278,7 +285,8 @@ final class AssistantMarkdownSegmentApplier {
                 let tableView = NativeTableBlockView()
                 tableView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantTableSourceContext(config: config)
+                    sourceContext: assistantTableSourceContext(config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 tableView.apply(headers: headers, rows: rows, palette: palette)
                 stackView.addArrangedSubview(tableView)
@@ -306,7 +314,8 @@ final class AssistantMarkdownSegmentApplier {
                     && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                 mermaidView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
+                    sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 if isOpen {
                     mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -323,7 +332,8 @@ final class AssistantMarkdownSegmentApplier {
                     && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                 latexView.configureSelectedTextPi(
                     router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
+                    reviewCommentAnnotations: config.reviewCommentAnnotations
                 )
                 if isOpen {
                     latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -446,6 +456,7 @@ final class AssistantMarkdownSegmentApplier {
                             }
                             let attrText = NSAttributedString(attributed)
                             textView.attributedText = attrText
+                            applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
                             refreshTextViewLayoutAfterContentChange(textView)
                         }
                     }
@@ -459,7 +470,8 @@ final class AssistantMarkdownSegmentApplier {
                     if !config.isStreaming || isOpen {
                         codeView.configureSelectedTextPi(
                             router: config.selectedTextPiRouter,
-                            sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                            sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
+                            reviewCommentAnnotations: config.reviewCommentAnnotations
                         )
                         codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
                         if !isOpen && highlightTasks[index] == nil {
@@ -472,7 +484,8 @@ final class AssistantMarkdownSegmentApplier {
                 if let tableView = tableViews[index] {
                     tableView.configureSelectedTextPi(
                         router: config.selectedTextPiRouter,
-                        sourceContext: assistantTableSourceContext(config: config)
+                        sourceContext: assistantTableSourceContext(config: config),
+                        reviewCommentAnnotations: config.reviewCommentAnnotations
                     )
                     tableView.apply(headers: headers, rows: rows, palette: palette)
                 }
@@ -499,7 +512,8 @@ final class AssistantMarkdownSegmentApplier {
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     mermaidView.configureSelectedTextPi(
                         router: config.selectedTextPiRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
+                        sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
+                        reviewCommentAnnotations: config.reviewCommentAnnotations
                     )
                     if isOpen {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -515,7 +529,8 @@ final class AssistantMarkdownSegmentApplier {
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     latexView.configureSelectedTextPi(
                         router: config.selectedTextPiRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                        sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
+                        reviewCommentAnnotations: config.reviewCommentAnnotations
                     )
                     if isOpen {
                         latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -571,7 +586,8 @@ final class AssistantMarkdownSegmentApplier {
             sourceLabel: base.sourceLabel,
             filePath: base.filePath,
             lineRange: base.lineRange,
-            languageHint: language
+            languageHint: language,
+            timelineItemId: base.timelineItemId
         )
     }
 
@@ -585,7 +601,21 @@ final class AssistantMarkdownSegmentApplier {
             sourceLabel: base.sourceLabel,
             filePath: base.filePath,
             lineRange: base.lineRange,
-            languageHint: base.languageHint
+            languageHint: base.languageHint,
+            timelineItemId: base.timelineItemId
+        )
+    }
+
+    private func applyInlineReviewAnnotations(
+        to textView: UITextView,
+        sourceContext: SelectedTextSourceContext?,
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        guard !config.isStreaming else { return }
+        ReviewCommentInlineAnnotationRenderer.apply(
+            to: textView,
+            annotations: config.reviewCommentAnnotations,
+            sourceContext: sourceContext
         )
     }
 

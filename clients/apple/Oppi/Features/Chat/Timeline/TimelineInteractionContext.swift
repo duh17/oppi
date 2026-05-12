@@ -10,6 +10,7 @@ import Foundation
 final class TimelineInteractionContext {
     var selectedTextPiRouter: SelectedTextPiActionRouter?
     var sessionId: String = ""
+    var reviewComments: [ReviewComment] = []
 
     /// Context object for renderer plumbing.
     var selectedTextActionContext: SelectedTextActionContext? {
@@ -25,14 +26,23 @@ final class TimelineInteractionContext {
         sourceLabel: String? = nil,
         filePath: String? = nil,
         lineRange: ClosedRange<Int>? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil
     ) -> SelectedTextSourceContext? {
         selectedTextActionContext?.sourceContext(
             surface: surface,
             sourceLabel: sourceLabel,
             filePath: filePath,
             lineRange: lineRange,
-            languageHint: languageHint
+            languageHint: languageHint,
+            timelineItemId: timelineItemId
+        )
+    }
+
+    func inlineReviewAnnotations(for sourceContext: SelectedTextSourceContext?) -> [ReviewCommentInlineAnnotation] {
+        ReviewCommentInlineAnnotationMatcher.annotations(
+            from: reviewComments,
+            for: sourceContext
         )
     }
 }

@@ -43,6 +43,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let piQuickActionStore: PiQuickActionStore?
         let topOverlap: CGFloat
         let bottomOverlap: CGFloat
+        let reviewComments: [ReviewComment]
+        let reviewAnnotationSignature: String
 
         init(
             items: [ChatItem],
@@ -68,7 +70,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             piQuickActionStore: PiQuickActionStore? = nil,
             topOverlap: CGFloat = 0,
-            bottomOverlap: CGFloat = 0
+            bottomOverlap: CGFloat = 0,
+            reviewComments: [ReviewComment] = []
         ) {
             self.items = items
             self.hiddenCount = hiddenCount
@@ -94,6 +97,27 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.piQuickActionStore = piQuickActionStore
             self.topOverlap = topOverlap
             self.bottomOverlap = bottomOverlap
+            self.reviewComments = reviewComments
+            self.reviewAnnotationSignature = Self.makeReviewAnnotationSignature(reviewComments)
+        }
+
+        private static func makeReviewAnnotationSignature(_ comments: [ReviewComment]) -> String {
+            comments
+                .map { comment in
+                    [
+                        comment.id,
+                        comment.sessionId ?? "",
+                        comment.status.rawValue,
+                        comment.body,
+                        comment.reference.source.rawValue,
+                        comment.reference.path ?? "",
+                        comment.reference.timelineItemId ?? "",
+                        comment.reference.selectedText ?? "",
+                        String(comment.updatedAt),
+                    ].joined(separator: "\u{1F}")
+                }
+                .sorted()
+                .joined(separator: "\u{1E}")
         }
     }
 
@@ -241,6 +265,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousHiddenCount = 0
         private var previousItemCount = 0
         private var previousThemeID: ThemeID?
+        private var previousReviewAnnotationSignature: String?
         private var lastHandledScrollCommandNonce = 0
         var lastObservedContentOffsetY: CGFloat?
         var lastObservedContentHeight: CGFloat?
@@ -500,6 +525,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Detect theme change from runtime state instead of threaded param.
             let currentThemeID = ThemeRuntimeState.currentThemeID()
             let themeChanged = previousThemeID != currentThemeID || previousThemeID == nil
+            let reviewAnnotationsChanged = previousReviewAnnotationSignature != nil
+                && previousReviewAnnotationSignature != configuration.reviewAnnotationSignature
+            let appearanceChanged = themeChanged || reviewAnnotationsChanged
 
             // Only update backgroundColor when theme changed or on first apply.
             if themeChanged {
@@ -541,7 +569,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 && configuration.streamingAssistantID == previousStreamingAssistantID
                 && configuration.isBusy == isTimelineBusy
                 && configuration.hiddenCount == previousHiddenCount
-                && !themeChanged
+                && !appearanceChanged
 
             if structurallyUnchanged,
                let streamingID = configuration.streamingAssistantID,
@@ -599,6 +627,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
+                previousReviewAnnotationSignature = configuration.reviewAnnotationSignature
                 isTimelineBusy = configuration.isBusy
 
                 // Process pending scroll commands (auto-scroll during streaming).
@@ -647,6 +676,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     previousHiddenCount = configuration.hiddenCount
                     previousItemCount = configuration.items.count
                     previousThemeID = currentThemeID
+                    previousReviewAnnotationSignature = configuration.reviewAnnotationSignature
                     isTimelineBusy = configuration.isBusy
                     ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
                     updateDetachedStreamingHintVisibility()
@@ -687,6 +717,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
+                previousReviewAnnotationSignature = configuration.reviewAnnotationSignature
                 isTimelineBusy = configuration.isBusy
 
                 var didScroll = false
@@ -739,7 +770,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 streamingAssistantID: configuration.streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
                 sessionId: configuration.sessionId,
-                themeChanged: themeChanged,
+                themeChanged: appearanceChanged,
                 isBusy: configuration.isBusy
             )
 
@@ -748,6 +779,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousHiddenCount = configuration.hiddenCount
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
+            previousReviewAnnotationSignature = configuration.reviewAnnotationSignature
             isTimelineBusy = configuration.isBusy
 
             // Note: detached anchor is NOT cleared here. It persists until

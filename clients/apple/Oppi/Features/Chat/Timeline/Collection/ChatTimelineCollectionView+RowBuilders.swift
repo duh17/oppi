@@ -30,6 +30,7 @@ extension ChatTimelineCollectionHost.Controller {
             isStreaming: isStreaming,
             canFork: false,
             onFork: nil,
+            itemID: itemID,
             sessionId: sessionId,
             interactionContext: interactionContext,
             workspaceID: workspaceId,
@@ -47,7 +48,7 @@ extension ChatTimelineCollectionHost.Controller {
         )
     }
 
-    func userRowConfiguration(itemID _: String, item: ChatItem) -> UserTimelineRowConfiguration? {
+    func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
         guard case .userMessage(_, let text, let images, _) = item else { return nil }
 
         // Fork/branch actions now live in Session Timeline sheet so selected-text
@@ -93,6 +94,7 @@ extension ChatTimelineCollectionHost.Controller {
             },
             canFork: canFork,
             onFork: forkAction,
+            itemID: itemID,
             interactionContext: interactionContext
         )
     }

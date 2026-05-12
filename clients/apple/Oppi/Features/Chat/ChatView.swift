@@ -218,7 +218,8 @@ struct ChatView: View {
             selectedTextPiRouter: selectedTextPiRouter,
             piQuickActionStore: piQuickActionStore,
             topOverlap: headerHeight,
-            bottomOverlap: footerHeight
+            bottomOverlap: footerHeight,
+            reviewComments: reviewComments.comments
         )
     }
 
@@ -285,6 +286,29 @@ struct ChatView: View {
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
             .sheet(isPresented: $showShareRedactionSheet) { shareRedactionSheet }
             .sheet(isPresented: reviewCommentsSheetBinding) { reviewCommentsSheet }
+            .sheet(item: focusedReviewCommentBinding) { comment in
+                ReviewCommentDetailSheet(
+                    comment: comment,
+                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                    onClose: { reviewComments.clearFocusedComment() },
+                    onShowAll: {
+                        reviewComments.clearFocusedComment()
+                        Task { @MainActor in
+                            await Task.yield()
+                            reviewComments.openSheet()
+                        }
+                    },
+                    onUpdateBody: { comment, body in
+                        await updateReviewComment(comment, body: body)
+                    },
+                    onDelete: { comment in
+                        Task { await deleteReviewComment(comment) }
+                    },
+                    onResolve: { comment in
+                        Task { await updateReviewComment(comment, status: .resolved) }
+                    }
+                )
+            }
             .sheet(item: reviewCommentDraftBinding) { context in
                 ReviewCommentComposerSheet(
                     selectedText: context.request.selectedText,
@@ -403,6 +427,9 @@ struct ChatView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { notification in
                 handleAudioPlayerStateChange(notification)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .reviewCommentInlineAnnotationTapped)) { notification in
+                handleInlineReviewCommentTap(notification)
             }
             .onChange(of: sessionId) { oldId, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
@@ -544,13 +571,6 @@ struct ChatView: View {
                             try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
                         }
                     )
-                    .padding(.horizontal, 16)
-                }
-
-                if reviewComments.stagedCount > 0 {
-                    ReviewCommentChip(stagedCount: reviewComments.stagedCount) {
-                        reviewComments.openSheet()
-                    }
                     .padding(.horizontal, 16)
                 }
 
@@ -759,6 +779,23 @@ struct ChatView: View {
     }
 
     @MainActor
+    private func handleInlineReviewCommentTap(_ notification: Notification) {
+        guard let commentId = notification.userInfo?["commentId"] as? String else { return }
+        if let notificationSessionId = notification.userInfo?["sessionId"] as? String,
+           !notificationSessionId.isEmpty,
+           notificationSessionId != sessionId {
+            return
+        }
+
+        if let commentIds = notification.userInfo?["commentIds"] as? [String], commentIds.count > 1 {
+            reviewComments.openSheet()
+            return
+        }
+
+        reviewComments.focusComment(id: commentId)
+    }
+
+    @MainActor
     private func handleSelectedTextPiAction(_ request: SelectedTextPiRequest) {
         guard let route = Self.routeForSelectedTextPiAction(request) else { return }
 
@@ -837,6 +874,18 @@ struct ChatView: View {
         Binding(
             get: { reviewComments.pendingDraft },
             set: { reviewComments.pendingDraft = $0 }
+        )
+    }
+
+    private var focusedReviewCommentBinding: Binding<ReviewComment?> {
+        Binding(
+            get: {
+                guard let id = reviewComments.focusedCommentID else { return nil }
+                return reviewComments.comments.first { $0.id == id }
+            },
+            set: { comment in
+                reviewComments.focusedCommentID = comment?.id
+            }
         )
     }
 

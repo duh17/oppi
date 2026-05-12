@@ -83,7 +83,8 @@ struct SelectedTextActionContext {
         sourceLabel: String? = nil,
         filePath: String? = nil,
         lineRange: ClosedRange<Int>? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil
     ) -> SelectedTextSourceContext {
         SelectedTextSourceContext(
             sessionId: sessionId,
@@ -91,7 +92,8 @@ struct SelectedTextActionContext {
             sourceLabel: sourceLabel ?? self.sourceLabel,
             filePath: filePath ?? self.filePath,
             lineRange: lineRange,
-            languageHint: languageHint ?? self.languageHint
+            languageHint: languageHint ?? self.languageHint,
+            timelineItemId: timelineItemId
         )
     }
 
@@ -135,6 +137,7 @@ struct SelectedTextSourceContext: Equatable {
     let filePath: String?
     let lineRange: ClosedRange<Int>?
     let languageHint: String?
+    let timelineItemId: String?
 
     init(
         sessionId: String,
@@ -142,7 +145,8 @@ struct SelectedTextSourceContext: Equatable {
         sourceLabel: String? = nil,
         filePath: String? = nil,
         lineRange: ClosedRange<Int>? = nil,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        timelineItemId: String? = nil
     ) {
         self.sessionId = sessionId
         self.surface = surface
@@ -150,6 +154,7 @@ struct SelectedTextSourceContext: Equatable {
         self.filePath = filePath
         self.lineRange = lineRange
         self.languageHint = languageHint
+        self.timelineItemId = timelineItemId
     }
 
     func withLineRange(_ range: ClosedRange<Int>?) -> SelectedTextSourceContext {
@@ -159,7 +164,8 @@ struct SelectedTextSourceContext: Equatable {
             sourceLabel: sourceLabel,
             filePath: filePath,
             lineRange: range ?? lineRange,
-            languageHint: languageHint
+            languageHint: languageHint,
+            timelineItemId: timelineItemId
         )
     }
 }

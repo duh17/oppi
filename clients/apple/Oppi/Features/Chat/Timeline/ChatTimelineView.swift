@@ -35,6 +35,7 @@ struct ChatTimelineView: View {
     let piQuickActionStore: PiQuickActionStore?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
+    let reviewComments: [ReviewComment]
 
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -108,7 +109,8 @@ struct ChatTimelineView: View {
                 selectedTextPiRouter: selectedTextPiRouter,
                 piQuickActionStore: piQuickActionStore,
                 topOverlap: topOverlap,
-                bottomOverlap: bottomOverlap
+                bottomOverlap: bottomOverlap,
+                reviewComments: reviewComments
             )
         )
         .overlay(alignment: .bottom) {

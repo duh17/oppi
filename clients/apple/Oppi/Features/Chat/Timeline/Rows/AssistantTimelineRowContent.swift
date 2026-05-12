@@ -12,6 +12,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let isStreaming: Bool
     let canFork: Bool
     let onFork: (() -> Void)?
+    let itemID: String?
     /// Session ID for the grid badge icon.
     let sessionId: String
     /// Shared interaction context for π text-selection actions.
@@ -30,6 +31,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         isStreaming: Bool,
         canFork: Bool,
         onFork: (() -> Void)?,
+        itemID: String? = nil,
         sessionId: String = "",
         interactionContext: TimelineInteractionContext? = nil,
         workspaceID: String? = nil,
@@ -41,6 +43,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.isStreaming = isStreaming
         self.canFork = canFork
         self.onFork = onFork
+        self.itemID = itemID
         self.sessionId = sessionId
         self.interactionContext = interactionContext
         self.workspaceID = workspaceID
@@ -204,14 +207,17 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // Text appears immediately on each coalescer flush (no reveal animation).
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.fetchSessionFile = configuration.fetchSessionFile
+        let selectedTextSourceContext = configuration.interactionContext?.sourceContext(
+            surface: .assistantProse,
+            timelineItemId: configuration.itemID
+        )
         markdownView.apply(configuration: .make(
             content: trimmedText,
             isStreaming: configuration.isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
             selectedTextPiRouter: configuration.interactionContext?.selectedTextActionContext?.dispatcher,
-            selectedTextSourceContext: configuration.interactionContext?.sourceContext(
-                surface: .assistantProse
-            ),
+            selectedTextSourceContext: selectedTextSourceContext,
+            reviewCommentAnnotations: configuration.interactionContext?.inlineReviewAnnotations(for: selectedTextSourceContext) ?? [],
             workspaceID: configuration.workspaceID,
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,

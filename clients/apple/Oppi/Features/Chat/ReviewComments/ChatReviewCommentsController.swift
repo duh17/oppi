@@ -12,6 +12,7 @@ final class ChatReviewCommentsController {
 
     var pendingDraft: ReviewCommentDraftContext?
     var showsSheet = false
+    var focusedCommentID: String?
 
     var comments: [ReviewComment] { store.comments }
     var stagedCount: Int { store.stagedCount }
@@ -27,6 +28,14 @@ final class ChatReviewCommentsController {
 
     func closeSheet() {
         showsSheet = false
+    }
+
+    func focusComment(id: String) {
+        focusedCommentID = id
+    }
+
+    func clearFocusedComment() {
+        focusedCommentID = nil
     }
 
     func load(api: APIClient?, workspaceId: String?, sessionId: String) async {
@@ -104,9 +113,8 @@ final class ChatReviewCommentsController {
     }
 
     private static func reviewReference(for request: SelectedTextPiRequest) -> ReviewCommentReference {
-        let source = reviewReferenceSource(for: request.source.surface)
-        return ReviewCommentReference(
-            source: source,
+        ReviewCommentReference(
+            source: request.source.reviewCommentReferenceSource,
             label: request.source.sourceLabel,
             path: request.source.filePath,
             side: nil,
@@ -115,21 +123,8 @@ final class ChatReviewCommentsController {
             selectedText: request.selectedText,
             languageHint: request.source.languageHint,
             toolCallId: nil,
-            timelineItemId: nil,
+            timelineItemId: request.source.timelineItemId,
             url: nil
         )
-    }
-
-    private static func reviewReferenceSource(for surface: SelectedTextSurfaceKind) -> ReviewCommentReferenceSource {
-        switch surface {
-        case .fullScreenDiff:
-            return .gitDiff
-        case .fullScreenCode, .fullScreenSource, .fullScreenMarkdown:
-            return .file
-        case .toolCommand, .toolOutput, .toolExpandedText, .fullScreenTerminal:
-            return .toolOutput
-        case .assistantProse, .userMessage, .assistantCodeBlock, .assistantTable, .thinking, .fullScreenThinking:
-            return .timelineText
-        }
     }
 }

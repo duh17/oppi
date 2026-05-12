@@ -168,7 +168,8 @@ struct ReadySessionScrollToBottomTests {
                 selectedTextPiRouter: nil,
                 piQuickActionStore: nil,
                 topOverlap: 0,
-                bottomOverlap: 0
+                bottomOverlap: 0,
+                reviewComments: []
             )
             .environment(reducer)
             .environment(audioPlayer)

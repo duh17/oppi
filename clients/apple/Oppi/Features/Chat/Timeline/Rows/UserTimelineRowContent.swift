@@ -11,19 +11,19 @@ private final class VerticalPanPassthroughTextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        guard !isScrollEnabled else { return }
+        if !isScrollEnabled {
+            let desiredOffset = CGPoint(
+                x: -adjustedContentInset.left,
+                y: -adjustedContentInset.top
+            )
 
-        let desiredOffset = CGPoint(
-            x: -adjustedContentInset.left,
-            y: -adjustedContentInset.top
-        )
-
-        guard abs(contentOffset.x - desiredOffset.x) > 0.5
-                || abs(contentOffset.y - desiredOffset.y) > 0.5 else {
-            return
+            if abs(contentOffset.x - desiredOffset.x) > 0.5
+                || abs(contentOffset.y - desiredOffset.y) > 0.5 {
+                contentOffset = desiredOffset
+            }
         }
 
-        contentOffset = desiredOffset
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: self)
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -43,6 +43,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     var onOpenPathPill: ((UserMessagePathPill, UIView) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
+    var itemID: String? = nil
     var interactionContext: TimelineInteractionContext? = nil
 
     func makeContentView() -> any UIView & UIContentView {
@@ -275,13 +276,27 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
         let displayText = Self.displayText(for: parsed.visibleText)
+        let selectedTextSourceContext = configuration.interactionContext?.sourceContext(
+            surface: .userMessage,
+            timelineItemId: configuration.itemID
+        )
         if displayText.text.isEmpty {
             messageTextView.attributedText = nil
+            ReviewCommentInlineAnnotationRenderer.apply(
+                to: messageTextView,
+                annotations: [],
+                sourceContext: selectedTextSourceContext
+            )
         } else {
             messageTextView.attributedText = FlatSegment.renderMarkdownInline(
                 displayText.text,
                 defaultTextColor: UIColor(palette.userMessageText),
                 palette: palette
+            )
+            ReviewCommentInlineAnnotationRenderer.apply(
+                to: messageTextView,
+                annotations: configuration.interactionContext?.inlineReviewAnnotations(for: selectedTextSourceContext) ?? [],
+                sourceContext: selectedTextSourceContext
             )
         }
         let inlineImagePathPills = parsed.pathPills.filter { pill in
@@ -736,7 +751,8 @@ extension UserTimelineRowContentView: UITextViewDelegate {
             suggestedActions: suggestedActions,
             router: currentConfiguration.interactionContext?.selectedTextActionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
-                surface: .userMessage
+                surface: .userMessage,
+                timelineItemId: currentConfiguration.itemID
             )
         )
     }
