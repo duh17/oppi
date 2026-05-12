@@ -6,7 +6,6 @@ import {
   mkdirSync,
   openSync,
   readSync,
-  rmSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -21,7 +20,7 @@ import type {
   WorkspaceSessionSnapshotListOptions,
   WorkspaceSessionSnapshotListResult,
 } from "./session-dao.js";
-import { SessionStore } from "./session-store.js";
+import { loadLegacySessions } from "./session-store.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
 const SCHEMA_VERSION = "5";
@@ -148,7 +147,6 @@ const SESSION_COLUMN_DEFINITIONS = [
 
 export class SessionSqliteStore {
   private readonly dbPath: string;
-  private readonly legacySessionsDir: string;
   private readonly db: SqliteDatabase;
   private cache: Map<string, Session> | null = null;
 
@@ -168,7 +166,6 @@ export class SessionSqliteStore {
       typeof dbPathOrOptions === "string" ? { dbPath: dbPathOrOptions } : (dbPathOrOptions ?? {});
 
     this.dbPath = resolve(options.dbPath ?? join(dataDir, "session-state.db"));
-    this.legacySessionsDir = join(dataDir, "sessions");
     this.db = openDatabase(this.dbPath);
     chmodSync(this.dbPath, 0o600);
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -357,10 +354,10 @@ export class SessionSqliteStore {
     this.stmtDelete.run(sessionId);
     this.cache?.delete(sessionId);
 
-    const legacyPath = join(this.legacySessionsDir, `${sessionId}.json`);
-    if (existsSync(legacyPath)) {
-      rmSync(legacyPath, { force: true });
-    }
+    // Legacy JSON sidecars are import-only now. Keep the file on disk and
+    // record a SQLite tombstone so incomplete legacy imports do not resurrect a
+    // deleted session on the next boot.
+    this.markMigration(legacySessionDeleteMigrationKey(sessionId));
 
     return existed;
   }
@@ -406,10 +403,11 @@ export class SessionSqliteStore {
     }
 
     const configStore = new ConfigStore(dataDir);
-    const sessionStore = new SessionStore(configStore);
-    const sessions = sessionStore.listSessions();
-    const failures = sessionStore.getLoadFailures();
-    const result = this.syncFromSource(sessions);
+    const { sessions, failures } = loadLegacySessions(configStore);
+    const filteredSessions = sessions.filter(
+      (session) => !this.hasMigration(legacySessionDeleteMigrationKey(session.id)),
+    );
+    const result = this.syncFromSource(filteredSessions);
 
     if (failures.length > 0) {
       log.warn("session_sqlite_store.legacy_json_import.incomplete", {
@@ -829,6 +827,10 @@ function parseJsonValue<T>(
 
 function shouldImportSourceSession(source: Session, existing: Session): boolean {
   return source.lastActivity > existing.lastActivity;
+}
+
+function legacySessionDeleteMigrationKey(sessionId: string): string {
+  return `sessions_json_import_sqlite_backend_v2:deleted:${sessionId}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

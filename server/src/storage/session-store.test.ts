@@ -113,6 +113,47 @@ describe("session sqlite store", () => {
     }
   });
 
+  it("keeps legacy JSON sidecars read-only and prevents deleted sessions from re-importing", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-delete-legacy-"));
+
+    try {
+      mkdirSync(join(dataDir, "sessions"), { recursive: true });
+      writeFileSync(
+        join(dataDir, "sessions", "keep-me.json"),
+        JSON.stringify(
+          {
+            session: {
+              id: "keep-me",
+              workspaceId: "ws-1",
+              workspaceName: "workspace one",
+              name: "legacy",
+              status: "ready",
+              createdAt: 10,
+              lastActivity: 20,
+              messageCount: 1,
+              tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+              cost: 0.5,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      writeFileSync(join(dataDir, "sessions", "broken.json"), "{not-json");
+
+      const storage = new Storage(dataDir);
+      expect(storage.getSession("keep-me")?.name).toBe("legacy");
+
+      expect(storage.deleteSession("keep-me")).toBe(true);
+      expect(existsSync(join(dataDir, "sessions", "keep-me.json"))).toBe(true);
+
+      const reloaded = new Storage(dataDir);
+      expect(reloaded.getSession("keep-me")).toBeUndefined();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not mark legacy session import complete until corrupt JSON is fixed", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-corrupt-import-"));
 

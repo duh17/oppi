@@ -3,10 +3,10 @@
  *
  * Data directory structure:
  * ~/.config/oppi/
- * ├── config.json       # Server config
- * ├── users.json        # Owner identity & token (single-user)
- * ├── session-state.db # Runtime session state
- * ├── sessions/        # Legacy JSON session sidecars imported once on startup
+ * ├── config.json        # Server config + auth state
+ * ├── session-state.db   # Runtime session + review comment state
+ * ├── sessions/          # Legacy JSON session sidecars, read only for import
+ * ├── review-comments/   # Legacy JSON review comments, read only for import
  * └── workspaces/
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
