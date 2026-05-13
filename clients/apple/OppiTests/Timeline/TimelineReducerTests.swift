@@ -280,6 +280,19 @@ struct TimelineReducerTests {
         #expect(msg == "Retrying (1/3): rate limit")
     }
 
+    @Test func retryStartNormalizesStructuredProviderErrors() {
+        let reducer = TimelineReducer()
+        let raw = #"Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}"#
+
+        reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: raw))
+
+        guard case .error(_, let msg) = reducer.items[0] else {
+            Issue.record("Expected normalized retry error")
+            return
+        }
+        #expect(msg == "Retrying (1/3): Our servers are currently overloaded. Please try again later.")
+    }
+
     @Test func realErrorRendersAsError() {
         let reducer = TimelineReducer()
         reducer.process(.error(sessionId: "s1", message: "Something went wrong"))
@@ -289,6 +302,19 @@ struct TimelineReducerTests {
             return
         }
         #expect(msg == "Something went wrong")
+    }
+
+    @Test func realErrorNormalizesStructuredProviderErrors() {
+        let reducer = TimelineReducer()
+        let raw = #"{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":2}"#
+
+        reducer.process(.error(sessionId: "s1", message: raw))
+
+        guard case .error(_, let msg) = reducer.items[0] else {
+            Issue.record("Expected normalized error")
+            return
+        }
+        #expect(msg == "Our servers are currently overloaded. Please try again later.")
     }
 
     // loadFromREST removed — trace is the only history path.

@@ -78,8 +78,10 @@ enum ToolRowPlanBuilder {
             return !(output?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         case .diff(let lines, _):
             return !lines.isEmpty
-        case .code(let text, _, _, _), .markdown(let text), .text(let text, _), .readMedia(let text, _, _), .voiceMessage(let text, _, _, _, _):
+        case .code(let text, _, _, _), .markdown(let text), .text(let text, _), .voiceMessage(let text, _, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .readMedia(let text, _, _, let attachments):
+            return !attachments.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .status:
             return false
         }

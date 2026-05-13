@@ -51,7 +51,7 @@ struct ToolExpandedSurfaceHostTests {
         #expect(fitted.height >= 130)
     }
 
-    @Test func readMediaTallInlineImageUsesFullVerticalFitHeight() async throws {
+    @Test func readMediaTallInlineImageUsesNaturalAspectHeight() async throws {
         let preview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 900))
         preview.translatesAutoresizingMaskIntoConstraints = false
@@ -78,7 +78,150 @@ struct ToolExpandedSurfaceHostTests {
             verticalFittingPriority: .fittingSizeLevel
         )
 
-        #expect(fitted.height >= 870, "Tall read-tool image should keep its full vertical fit height: \(fitted.height)")
+        let expectedHeight = 320.0 * (220.0 / 80.0)
+        #expect(abs(fitted.height - expectedHeight) < 2, "Tall read-tool image should use its natural aspect height: \(fitted.height)")
+    }
+
+    @Test func readMediaAttachmentImageFetchesAndUsesNaturalAspectHeight() async throws {
+        let preview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 900))
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(preview)
+        NSLayoutConstraint.activate([
+            preview.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            preview.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        let imageData = try #require(makeTallReadToolTestImage().pngData())
+        preview.apply(
+            attachment: ToolPresentationBuilder.ToolMediaAttachment(
+                kind: "image",
+                id: "att-tall-image",
+                mimeType: "image/png",
+                fileName: "tall.png",
+                sizeBytes: imageData.count,
+                width: 80,
+                height: 220
+            ),
+            fetcher: { attachmentId in
+                #expect(attachmentId == "att-tall-image")
+                return imageData
+            }
+        )
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            return readMediaContentImageView(in: preview) != nil
+        }
+        #expect(decoded)
+
+        let fitted = preview.systemLayoutSizeFitting(
+            CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let expectedHeight = 320.0 * (220.0 / 80.0)
+        #expect(abs(fitted.height - expectedHeight) < 2)
+    }
+
+    @Test func readMediaAttachmentImageRetriesWhenFetcherBecomesAvailable() async throws {
+        let imageData = try #require(makeTallReadToolTestImage().pngData())
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "att-late-fetcher-image",
+            mimeType: "image/png",
+            fileName: "late.png",
+            sizeBytes: imageData.count,
+            width: 80,
+            height: 220
+        )
+        let baseConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/late.png",
+            expandedContent: .readMedia(output: "", filePath: "/tmp/late.png", startLine: 1, attachments: [attachment]),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: baseConfiguration)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 360, height: 1_600))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(readMediaContentImageView(in: view) == nil)
+
+        view.configuration = baseConfiguration.withSessionAttachmentFetcher { attachmentId in
+            #expect(attachmentId == "att-late-fetcher-image")
+            return imageData
+        }
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            return readMediaContentImageView(in: view) != nil
+        }
+        #expect(decoded)
+    }
+
+    @Test func readMediaTallImageKeepsExpandedScrollPinnedWhileOuterTimelineScrolls() async throws {
+        let image = makeReadToolTestImage(size: CGSize(width: 80, height: 220))
+        let imageData = try #require(image.pngData())
+        let output = "Read image file [image/png]\n\ndata:image/png;base64,\(imageData.base64EncodedString())"
+        let configuration = makeTimelineToolConfiguration(
+            title: "read /tmp/tall-read-image.png",
+            expandedContent: .readMedia(output: output, filePath: "/tmp/tall-read-image.png", startLine: 1, attachments: []),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 360, height: 1_600))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            return readMediaContentImageView(in: view) != nil
+        }
+        #expect(decoded)
+
+        let rowSize = view.systemLayoutSizeFitting(
+            CGSize(width: 360, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        view.frame = CGRect(origin: .zero, size: rowSize)
+        container.frame = CGRect(origin: .zero, size: rowSize)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let renderedImageView = try #require(readMediaContentImageView(in: view))
+        let imageFrame = renderedImageView.convert(renderedImageView.bounds, to: view)
+        let expectedImageHeight = imageFrame.width * (220.0 / 80.0)
+        #expect(abs(imageFrame.height - expectedImageHeight) < 8)
+
+        let scrollView = view.expandedScrollView
+        let verticalOverflow = scrollView.contentSize.height - scrollView.bounds.height
+        #expect(verticalOverflow <= 2, "Read-media should not leave an inner vertical viewport that can reveal different image slices while scrolling; overflow=\(verticalOverflow)")
+
+        scrollView.contentOffset.y = 160
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let visualOffset = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+        #expect(abs(visualOffset) < 1, "Read-media inner scroll should stay pinned to top; got offset=\(scrollView.contentOffset)")
     }
 
     @Test func readMediaVerticalAndHorizontalSnapshotsUseExpectedAspectFits() async throws {
@@ -96,7 +239,9 @@ struct ToolExpandedSurfaceHostTests {
             outputURL: outputDirectory.appendingPathComponent("horizontal-read-image.png")
         )
 
-        #expect(vertical.imageFrame.height > vertical.imageFrame.width * 2.5)
+        let expectedVerticalImageHeight = vertical.imageFrame.width * (220.0 / 80.0)
+        #expect(abs(vertical.imageFrame.height - expectedVerticalImageHeight) < 8, "Vertical read-media image should not be clamped: frame=\(vertical.imageFrame)")
+        #expect(vertical.imageFrame.height > vertical.imageFrame.width * 1.5)
         #expect(vertical.rowSize.height > horizontal.rowSize.height * 2.0)
         #expect(horizontal.imageFrame.width > horizontal.imageFrame.height * 2.0)
         #expect(FileManager.default.fileExists(atPath: vertical.outputURL.path))
@@ -205,7 +350,7 @@ struct ToolExpandedSurfaceHostTests {
                 output: "data:image/png;base64,abc",
                 filePath: "icon.png",
                 startLine: 1
-            ),
+            , attachments: []),
             isExpanded: true
         )
         _ = fittedTimelineSize(for: view, width: 360)
@@ -250,7 +395,7 @@ struct ToolExpandedSurfaceHostTests {
         let output = "Read image file [image/png]\n\ndata:image/png;base64,\(imageData.base64EncodedString())"
         let configuration = makeTimelineToolConfiguration(
             title: "read \(filePath)",
-            expandedContent: .readMedia(output: output, filePath: filePath, startLine: 1),
+            expandedContent: .readMedia(output: output, filePath: filePath, startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         )
@@ -296,7 +441,10 @@ struct ToolExpandedSurfaceHostTests {
 
     private func readMediaContentImageView(in root: UIView) -> UIImageView? {
         timelineAllImageViews(in: root)
-            .filter { !$0.isHidden && $0.image != nil }
+            .filter { view in
+                guard !view.isHidden, let image = view.image else { return false }
+                return image.size.width * image.size.height > 1_000
+            }
             .max { lhs, rhs in
                 let lhsPixels = (lhs.image?.size.width ?? 0) * (lhs.image?.size.height ?? 0)
                 let rhsPixels = (rhs.image?.size.width ?? 0) * (rhs.image?.size.height ?? 0)
@@ -312,7 +460,7 @@ struct ToolExpandedSurfaceHostTests {
                 output: Self.brentCrudeSVGFromTempDirectory,
                 filePath: "/tmp/brent.svg",
                 startLine: 1
-            ),
+            , attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         ))

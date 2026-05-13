@@ -106,9 +106,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     static let diffViewportCloseSafeAreaReserve: CGFloat = 88
     private static let collapsedImagePreviewHeight: CGFloat = 136
-    private static let collapsedImagePreviewLandscapeMaxHeight: CGFloat = 220
-    private static let collapsedImagePreviewSquareMaxHeight: CGFloat = 280
-    private static let collapsedImagePreviewPortraitMaxHeight: CGFloat = 380
 
     @MainActor
     enum ExpandedViewportMode {
@@ -583,7 +580,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         output: String,
         isError: Bool,
         filePath: String?,
-        startLine: Int
+        startLine: Int,
+        attachments: [ToolPresentationBuilder.ToolMediaAttachment]
     ) {
         let native: NativeExpandedReadMediaView
         if let existing = expandedReadMediaContentView as? NativeExpandedReadMediaView {
@@ -599,8 +597,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isError: isError,
             filePath: filePath,
             startLine: startLine,
+            attachments: attachments,
             themeID: ThemeRuntimeState.currentThemeID(),
-            audioPlayer: currentConfiguration.audioPlayer
+            audioPlayer: currentConfiguration.audioPlayer,
+            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher
         )
     }
 
@@ -681,29 +681,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         availableWidth: CGFloat,
         windowHeight: CGFloat?
     ) -> CGFloat {
-        guard imageSize.width > 0, imageSize.height > 0 else {
-            return collapsedImagePreviewHeight
-        }
-
-        let aspectRatio = imageSize.height / imageSize.width
-        let widthDrivenHeight = availableWidth * aspectRatio + 12
-
-        let (minHeight, maxHeight): (CGFloat, CGFloat)
-        if aspectRatio >= 1.2 {
-            minHeight = 180
-            maxHeight = collapsedImagePreviewPortraitMaxHeight
-        } else if aspectRatio >= 0.85 {
-            minHeight = 132
-            maxHeight = collapsedImagePreviewSquareMaxHeight
-        } else {
-            minHeight = 96
-            maxHeight = collapsedImagePreviewLandscapeMaxHeight
-        }
-
-        let fallbackWindowHeight = UIScreen.main.bounds.height
-        let maxFromScreen = max(minHeight, (windowHeight ?? fallbackWindowHeight) * 0.5)
-        let effectiveMax = min(maxHeight, maxFromScreen)
-        return min(effectiveMax, max(minHeight, widthDrivenHeight))
+        ImageViewportSizing.fittedHeight(
+            forWidth: availableWidth,
+            aspectRatio: imageSize.height / imageSize.width,
+            screenHeight: windowHeight
+        ) + 12
     }
 
     private func clearExpandedReadMediaView() {
@@ -1216,7 +1198,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch configuration.expandedContent {
         case .voiceMessage:
             return true
-        case .readMedia(_, let filePath, _):
+        case .readMedia(_, let filePath, _, _):
             return filePath == "Voice message"
         case .bash, .diff, .code, .markdown, .status, .text, .none:
             return false
@@ -1421,12 +1403,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 textSelectionEnabled: markdownSelectionEnabled
             )
 
-        case .readMedia(let output, let filePath, let startLine):
+        case .readMedia(let output, let filePath, let startLine, let attachments):
             return ToolRowReadMediaRenderStrategy.render(
                 output: output,
                 filePath: filePath,
                 startLine: startLine,
+                attachments: attachments,
                 isError: configuration.isError,
+                hasAttachmentFetcher: configuration.sessionAttachmentFetcher != nil,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
@@ -1499,8 +1483,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch output.installAction {
         case .none:
             break
-        case .readMedia(let mediaOutput, let isError, let filePath, let startLine):
-            installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine)
+        case .readMedia(let mediaOutput, let isError, let filePath, let startLine, let attachments):
+            installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine, attachments: attachments)
         case .voiceMessage(let text, let attachmentId, let mimeType, let delivery):
             let suppressVoiceAutoplay = isExpandingTransition || delivery == .directSpeak
             installExpandedVoiceMessageView(

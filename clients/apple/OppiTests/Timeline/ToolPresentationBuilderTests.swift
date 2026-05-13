@@ -1609,6 +1609,97 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == FileType.image.displayLabel)
     }
 
+    @Test("expanded image read uses attachment metadata without base64 output")
+    func readImageExpandedUsesAttachmentMetadata() {
+        let details: JSONValue = .object([
+            "media": .array([
+                .object([
+                    "kind": .string("image"),
+                    "id": .string("att-image-1"),
+                    "mimeType": .string("image/png"),
+                    "fileName": .string("icon.png"),
+                    "width": .number(80),
+                    "height": .number(220),
+                ])
+            ])
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: icon.png",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("icon.png")],
+                details: details,
+                expanded: ["t1"],
+                fullOutput: ""
+            )
+        )
+
+        guard case .readMedia(let output, let filePath, _, let attachments) = config.expandedContent else {
+            Issue.record("Expected .readMedia content for image attachment read")
+            return
+        }
+        #expect(output.isEmpty)
+        #expect(filePath == "icon.png")
+        #expect(attachments.first?.id == "att-image-1")
+        #expect(attachments.first?.height == 220)
+    }
+
+    @Test("generic image tool uses details image for collapsed preview")
+    func genericImageCollapsedPreviewFromDetails() {
+        let fakeBase64 = "iVBORw0KGgo="
+        let details: JSONValue = .object([
+            "image": .object([
+                "kind": .string("image"),
+                "base64": .string(fakeBase64),
+                "mimeType": .string("image/png"),
+                "fileName": .string("kitten.png")
+            ])
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "imagen",
+            argsSummary: "prompt: cat portrait",
+            outputPreview: "Generated image",
+            isError: false, isDone: true,
+            context: emptyContext(details: details, fullOutput: "Generated image")
+        )
+
+        #expect(config.collapsedImageBase64 == fakeBase64)
+        #expect(config.collapsedImageMimeType == "image/png")
+    }
+
+    @Test("generic image tool uses details image for expanded media content")
+    func genericImageExpandedUsesReadMedia() {
+        let fakeBase64 = "iVBORw0KGgo="
+        let details: JSONValue = .object([
+            "image": .object([
+                "kind": .string("image"),
+                "base64": .string(fakeBase64),
+                "mimeType": .string("image/png"),
+                "fileName": .string("kitten.png")
+            ])
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "imagen",
+            argsSummary: "prompt: cat portrait",
+            outputPreview: "Generated image",
+            isError: false, isDone: true,
+            context: emptyContext(details: details, expanded: ["t1"], fullOutput: "Generated image")
+        )
+
+        guard case .readMedia(let output, let filePath, _, _) = config.expandedContent else {
+            Issue.record("Expected .readMedia content for generic image tool")
+            return
+        }
+        #expect(output.contains("data:image/png;base64,\(fakeBase64)"))
+        #expect(filePath == "kitten.png")
+        #expect(config.copyOutputText == "Generated image")
+    }
+
     @Test("non-read tool has no collapsed image preview")
     func bashNoImagePreview() {
         let config = ToolPresentationBuilder.build(

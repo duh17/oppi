@@ -514,7 +514,7 @@ struct ToolTimelineRowContentViewTests {
         let output = "Read image file [image/png]\n\ndata:image/png;base64,\(Self.testPNGBase64)"
 
         let config = makeTimelineToolConfiguration(
-            expandedContent: .readMedia(output: output, filePath: "fixtures/image.png", startLine: 1),
+            expandedContent: .readMedia(output: output, filePath: "fixtures/image.png", startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         )
@@ -543,7 +543,7 @@ struct ToolTimelineRowContentViewTests {
         let output = "Read image file [image/png]\n\ndata:image/png;base64,\(Self.testPNGBase64)"
 
         let config = makeTimelineToolConfiguration(
-            expandedContent: .readMedia(output: output, filePath: "fixtures/image.png", startLine: 1),
+            expandedContent: .readMedia(output: output, filePath: "fixtures/image.png", startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         )
@@ -561,7 +561,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedReadMediaPromotesRawSVGSourceToInlinePreview() {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
         let config = makeTimelineToolConfiguration(
-            expandedContent: .readMedia(output: svg, filePath: "fixtures/image.svg", startLine: 1),
+            expandedContent: .readMedia(output: svg, filePath: "fixtures/image.svg", startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         )
@@ -584,12 +584,12 @@ struct ToolTimelineRowContentViewTests {
         let landscapeSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 200\"><rect width=\"600\" height=\"200\" fill=\"blue\"/></svg>"
 
         let portraitView = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .readMedia(output: portraitSVG, filePath: "fixtures/portrait.svg", startLine: 1),
+            expandedContent: .readMedia(output: portraitSVG, filePath: "fixtures/portrait.svg", startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         ))
         let landscapeView = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .readMedia(output: landscapeSVG, filePath: "fixtures/landscape.svg", startLine: 1),
+            expandedContent: .readMedia(output: landscapeSVG, filePath: "fixtures/landscape.svg", startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         ))
@@ -664,7 +664,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedReadMediaViewportUsesSVGWidthHeightWhenViewBoxMissing() async throws {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
         let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .readMedia(output: svg, filePath: "fixtures/chart.svg", startLine: 1),
+            expandedContent: .readMedia(output: svg, filePath: "fixtures/chart.svg", startLine: 1, attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         ))
@@ -1656,7 +1656,7 @@ struct ToolTimelineRowContentViewTests {
                 output: "data:image/png;base64,iVBORw0KGgo=",
                 filePath: "icon.png",
                 startLine: 1
-            ),
+            , attachments: []),
             toolNamePrefix: "read",
             isExpanded: true
         )

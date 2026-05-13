@@ -35,8 +35,10 @@ final class NativeExpandedReadMediaView: UIView {
         isError: Bool,
         filePath: String?,
         startLine: Int,
+        attachments: [ToolPresentationBuilder.ToolMediaAttachment],
         themeID: ThemeID,
-        audioPlayer: AudioPlayerService?
+        audioPlayer: AudioPlayerService?,
+        attachmentFetcher: ((String) async throws -> Data)?
     ) {
         self.audioPlayer = audioPlayer
         var hasher = Hasher()
@@ -44,6 +46,13 @@ final class NativeExpandedReadMediaView: UIView {
         hasher.combine(isError)
         hasher.combine(filePath ?? "")
         hasher.combine(startLine)
+        for attachment in attachments {
+            hasher.combine(attachment.id)
+            hasher.combine(attachment.mimeType)
+            hasher.combine(attachment.width)
+            hasher.combine(attachment.height)
+        }
+        hasher.combine(attachmentFetcher != nil)
         hasher.combine(themeID.rawValue)
         if let audioPlayer {
             hasher.combine(ObjectIdentifier(audioPlayer).hashValue)
@@ -108,23 +117,35 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
         }
 
-        if !displayImages.isEmpty {
+        let imageAttachments = attachments.filter { $0.kind == "image" }
+        let totalImageCount = displayImages.count + imageAttachments.count
+        if totalImageCount > 0 {
             let countLabel = UILabel()
             countLabel.font = ToolFont.smallBold
             countLabel.textColor = UIColor(palette.comment)
-            countLabel.text = displayImages.count == 1 ? "Image" : "Images (\(displayImages.count))"
+            countLabel.text = totalImageCount == 1 ? "Image" : "Images (\(totalImageCount))"
             rootStack.addArrangedSubview(countLabel)
 
+            var renderedCount = 0
             for image in displayImages.prefix(6) {
                 let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
                 imageView.apply(base64: image.base64, mimeType: image.mimeType)
                 rootStack.addArrangedSubview(imageView)
+                renderedCount += 1
             }
-            if displayImages.count > 6 {
+            if renderedCount < 6 {
+                for attachment in imageAttachments.prefix(6 - renderedCount) {
+                    let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
+                    imageView.apply(attachment: attachment, fetcher: attachmentFetcher)
+                    rootStack.addArrangedSubview(imageView)
+                    renderedCount += 1
+                }
+            }
+            if totalImageCount > renderedCount {
                 let more = UILabel()
                 more.font = ToolFont.small
                 more.textColor = UIColor(palette.comment)
-                more.text = "+\(displayImages.count - 6) more image attachment(s)"
+                more.text = "+\(totalImageCount - renderedCount) more image attachment(s)"
                 rootStack.addArrangedSubview(more)
             }
         }
@@ -158,7 +179,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
-        if displayText.isEmpty && displayImages.isEmpty && parsed.audio.isEmpty {
+        if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && parsed.audio.isEmpty {
             let empty = UILabel()
             empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
@@ -474,7 +495,7 @@ final class NativeExpandedInlineImageView: UIView {
         verticalFittingPriority: UILayoutPriority
     ) -> CGSize {
         if let naturalHeightToWidthRatio, targetSize.width > 0 {
-            let height = Self.previewHeight(forWidth: targetSize.width, ratio: naturalHeightToWidthRatio)
+            let height = targetPreviewHeight(forWidth: targetSize.width, ratio: naturalHeightToWidthRatio)
             return CGSize(width: targetSize.width, height: height)
         }
 
@@ -491,13 +512,7 @@ final class NativeExpandedInlineImageView: UIView {
         let key = ImageDecodeCache.decodeKey(for: base64, maxPixelSize: maxPixelSize)
         guard key != decodedKey else { return }
         decodedKey = key
-
-        decodeTask?.cancel()
-        imageView.image = nil
-        imageView.isHidden = false
-        animatedImageView.isHidden = true
-        placeholder.isHidden = false
-        placeholder.startAnimating()
+        prepareForDecode()
 
         let maxPixelSize = self.maxPixelSize
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -508,29 +523,83 @@ final class NativeExpandedInlineImageView: UIView {
                 }
                 return
             }
+            await self?.applyFetchedImageData(data, mimeType: mimeType, key: key, maxPixelSize: maxPixelSize)
+        }
+    }
 
-            let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
-            if info.prefersWebRenderer {
-                let normalizedMimeType = info.normalizedMimeType ?? "image/gif"
-                let dataURLString = "data:\(normalizedMimeType);base64,\(base64)"
-                let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
+    func apply(
+        attachment: ToolPresentationBuilder.ToolMediaAttachment,
+        fetcher: ((String) async throws -> Data)?
+    ) {
+        let key = "attachment:\(attachment.id):\(attachment.mimeType):\(attachment.width ?? 0)x\(attachment.height ?? 0):fetcher=\(fetcher != nil)"
+        guard key != decodedKey else { return }
+        decodedKey = key
+
+        if let width = attachment.width, let height = attachment.height, width > 0, height > 0 {
+            naturalHeightToWidthRatio = CGFloat(height) / CGFloat(width)
+            updatePreviewHeightIfNeeded()
+        } else {
+            naturalHeightToWidthRatio = nil
+        }
+        prepareForDecode()
+
+        guard let fetcher else {
+            applyDecodedImage(nil)
+            return
+        }
+
+        let maxPixelSize = self.maxPixelSize
+        decodeTask = Task { [weak self] in
+            do {
+                let data = try await fetcher(attachment.id)
+                await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
+            } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.decodedKey == key else { return }
-                    self.applyAnimatedImage(
-                        dataURLString: dataURLString,
-                        aspectRatio: aspectRatio,
-                        data: data,
-                        mimeType: normalizedMimeType
-                    )
+                    self.applyDecodedImage(nil)
                 }
-                return
             }
+        }
+    }
 
-            let image = ImageDecodeCache.decode(base64: base64, maxPixelSize: maxPixelSize)
+    private func prepareForDecode() {
+        decodeTask?.cancel()
+        imageView.image = nil
+        imageView.isHidden = false
+        animatedImageView.isHidden = true
+        placeholder.isHidden = false
+        placeholder.startAnimating()
+        previewMimeType = nil
+        previewData = nil
+    }
+
+    private func applyFetchedImageData(
+        _ data: Data,
+        mimeType: String?,
+        key: String,
+        maxPixelSize: CGFloat
+    ) async {
+        let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+        if info.prefersWebRenderer {
+            let normalizedMimeType = info.normalizedMimeType ?? "image/gif"
+            let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
+            let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
             await MainActor.run { [weak self] in
                 guard let self, self.decodedKey == key else { return }
-                self.applyDecodedImage(image)
+                self.applyAnimatedImage(
+                    dataURLString: dataURLString,
+                    aspectRatio: aspectRatio,
+                    data: data,
+                    mimeType: normalizedMimeType
+                )
             }
+            return
+        }
+
+        let image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: maxPixelSize)
+        await MainActor.run { [weak self] in
+            guard let self, self.decodedKey == key else { return }
+            self.applyDecodedImage(image)
         }
     }
 
@@ -587,17 +656,18 @@ final class NativeExpandedInlineImageView: UIView {
         let availableWidth = bounds.width > 1
             ? bounds.width
             : (superview?.bounds.width ?? UIScreen.main.bounds.width)
-        heightConstraint?.constant = Self.previewHeight(
+        heightConstraint?.constant = targetPreviewHeight(
             forWidth: max(1, availableWidth),
             ratio: naturalHeightToWidthRatio
         )
     }
 
-    private static func previewHeight(forWidth width: CGFloat, ratio: CGFloat) -> CGFloat {
-        guard width.isFinite, width > 0, ratio.isFinite, ratio > 0 else {
-            return minPreviewHeight
-        }
-        return max(minPreviewHeight, width * ratio)
+    private func targetPreviewHeight(forWidth width: CGFloat, ratio: CGFloat) -> CGFloat {
+        // Expanded read-media rows should grow to the image's natural
+        // aspect-fit height. The outer timeline owns vertical scrolling;
+        // applying the single-screen inline preview clamp here clips tall
+        // images inside the expanded tool row.
+        ImageViewportSizing.naturalHeight(forWidth: width, heightToWidthRatio: ratio)
     }
 
     private func applyDecodedImage(_ image: UIImage?) {
@@ -681,7 +751,7 @@ private struct FullScreenMediaPreview: View {
                     data: data,
                     mimeType: mimeType,
                     maxPixelSize: 2_400,
-                    maxHeight: nil,
+                    heightMode: .unrestricted,
                     allowsFullscreenStaticImage: true
                 )
                 .padding()

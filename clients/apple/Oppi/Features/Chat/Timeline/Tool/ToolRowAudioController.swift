@@ -82,7 +82,7 @@ final class ToolRowAudioController: NSObject {
     }
 
     private func collapsedVoiceAudioBase64(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard case .readMedia(let output, let filePath, _) = configuration.expandedContent,
+        guard case .readMedia(let output, let filePath, _, _) = configuration.expandedContent,
               filePath == "Voice message",
               let clip = AudioExtractor.extract(from: output).first,
               MediaMimeType.normalized(clip.mimeType) == "audio/wav" else {

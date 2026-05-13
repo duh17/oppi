@@ -38,7 +38,7 @@ struct ExpandedRenderOutput {
     /// instead of the strategy calling installation closures directly.
     enum InstallAction {
         case none
-        case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int)
+        case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int, attachments: [ToolPresentationBuilder.ToolMediaAttachment])
         case voiceMessage(text: String, attachmentId: String, mimeType: String, delivery: VoiceReplyDelivery?)
     }
 }

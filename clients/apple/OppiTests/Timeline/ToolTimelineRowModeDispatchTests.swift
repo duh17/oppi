@@ -63,7 +63,7 @@ struct ToolTimelineRowModeDispatchTests {
                     output: "Read image file [image/png]\n\ndata:image/png;base64,\(Self.testPNGBase64)",
                     filePath: "fixtures/image.png",
                     startLine: 1
-                ),
+                , attachments: []),
                 expected: .init(expanded: true, command: false, output: false)
             ),
             DispatchCase(
@@ -147,7 +147,7 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(extensionJSONPolicy.supportsFullScreenPreview)
 
         let hostedPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), isDone: true
+            .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1, attachments: []), isDone: true
         )
         #expect(!hostedPolicy.enablesTapCopyGesture)
         #expect(!hostedPolicy.enablesPinchGesture)
@@ -169,7 +169,7 @@ struct ToolTimelineRowModeDispatchTests {
             .init(content: .diff(lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"), expectedMode: .diff, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"), expectedMode: .code, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .markdown(text: "# H"), expectedMode: .markdown, expectsFullScreen: true, expectsHorizontalScroll: false),
-            .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
+            .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1, attachments: []), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
             .init(content: .voiceMessage(text: "hi", attachmentId: "att-1", mimeType: "audio/wav", durationSeconds: 1.2, delivery: nil), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
             .init(content: .text(text: "extension output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
         ]
@@ -257,7 +257,7 @@ struct ToolTimelineRowModeDispatchTests {
 
         let mediaView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
             toolNamePrefix: "read",
-            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1),
+            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1, attachments: []),
             isExpanded: true
         ))
         _ = fittedSize(for: mediaView, width: 360)
@@ -517,7 +517,7 @@ struct ToolTimelineRowModeDispatchTests {
 
         let mediaConfig = makeToolConfiguration(
             toolNamePrefix: "read",
-            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1),
+            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1, attachments: []),
             isExpanded: true
         )
 
@@ -828,7 +828,7 @@ struct ToolTimelineRowModeDispatchTests {
         // Reuse for readMedia (hosted view)
         let mediaConfig = makeToolConfiguration(
             toolNamePrefix: "read",
-            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1),
+            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1, attachments: []),
             isExpanded: true
         )
         view.configuration = mediaConfig

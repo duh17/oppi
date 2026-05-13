@@ -170,7 +170,7 @@ struct FileBrowserContentView: View {
                 data: data,
                 mimeType: MediaMimeType.imageMimeType(forPathExtension: fileExtension),
                 maxPixelSize: 2_400,
-                maxHeight: nil
+                heightMode: .unrestricted
             )
             .padding()
         }

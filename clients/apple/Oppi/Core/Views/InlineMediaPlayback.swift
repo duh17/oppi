@@ -6,6 +6,53 @@ import SwiftUI
 import UIKit
 import WebKit
 
+// MARK: - Image Viewport Sizing
+
+enum ImageViewportSizing {
+    enum HeightMode: Equatable {
+        case singleScreenFit
+        case unrestricted
+        case fixed(CGFloat)
+    }
+
+    static let minInlineHeight: CGFloat = 80
+    private static let maxScreenFraction: CGFloat = 0.66
+
+    static func naturalHeight(
+        forWidth width: CGFloat,
+        heightToWidthRatio: CGFloat
+    ) -> CGFloat {
+        guard width.isFinite, width > 0,
+              heightToWidthRatio.isFinite, heightToWidthRatio > 0 else {
+            return minInlineHeight
+        }
+
+        return max(minInlineHeight, width * heightToWidthRatio)
+    }
+
+    static func fittedHeight(
+        forWidth width: CGFloat,
+        aspectRatio: CGFloat,
+        screenHeight: CGFloat?
+    ) -> CGFloat {
+        let naturalHeight = naturalHeight(forWidth: width, heightToWidthRatio: aspectRatio)
+        let limit = maxHeight(for: .singleScreenFit, screenHeight: screenHeight) ?? naturalHeight
+        return min(limit, naturalHeight)
+    }
+
+    static func maxHeight(for mode: HeightMode, screenHeight: CGFloat?) -> CGFloat? {
+        switch mode {
+        case .singleScreenFit:
+            let height = max(320, screenHeight ?? UIScreen.main.bounds.height)
+            return max(minInlineHeight, floor(height * maxScreenFraction))
+        case .unrestricted:
+            return nil
+        case .fixed(let value):
+            return max(1, value)
+        }
+    }
+}
+
 // MARK: - MIME Helpers
 
 enum MediaMimeType {
@@ -398,7 +445,7 @@ struct DataImagePreviewView: View {
     let data: Data
     let mimeType: String?
     var maxPixelSize: CGFloat = 1_600
-    var maxHeight: CGFloat? = 300
+    var heightMode: ImageViewportSizing.HeightMode = .singleScreenFit
     var allowsFullscreenStaticImage = true
 
     @State private var phase: Phase = .loading
@@ -473,7 +520,18 @@ struct DataImagePreviewView: View {
 
     private var cacheKey: String {
         let mime = MediaMimeType.normalized(mimeType) ?? "image/unknown"
-        return "\(mime)-\(data.count)-\(data.prefix(32))-\(data.suffix(32))-\(maxPixelSize)"
+        return "\(mime)-\(data.count)-\(data.prefix(32))-\(data.suffix(32))-\(maxPixelSize)-\(cacheHeightModeKey)"
+    }
+
+    private var cacheHeightModeKey: String {
+        switch heightMode {
+        case .singleScreenFit:
+            return "fit"
+        case .unrestricted:
+            return "full"
+        case .fixed(let value):
+            return "fixed-\(Int(value.rounded()))"
+        }
     }
 
     @ViewBuilder
@@ -482,6 +540,7 @@ struct DataImagePreviewView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity)
 
+        let maxHeight = ImageViewportSizing.maxHeight(for: heightMode, screenHeight: UIScreen.main.bounds.height)
         if let aspectRatio {
             if let maxHeight {
                 base

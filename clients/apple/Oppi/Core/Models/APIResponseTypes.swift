@@ -499,8 +499,10 @@ enum APIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidResponse: return "Invalid server response"
-        case .server(let status, let message): return "Server error (\(status)): \(message)"
+        case .invalidResponse:
+            return "Invalid server response"
+        case .server(_, let message):
+            return UserFacingErrorText.normalize(message)
         }
     }
 }

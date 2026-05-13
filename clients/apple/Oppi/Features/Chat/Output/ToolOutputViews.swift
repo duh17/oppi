@@ -123,6 +123,17 @@ extension ToolPresentationBuilder {
         let delivery: VoiceReplyDelivery?
     }
 
+    struct ToolImageAttachmentDetails: Equatable {
+        let id: String?
+        let mimeType: String
+        let base64: String?
+        let fileName: String?
+        let path: String?
+        let sizeBytes: Int?
+        let width: Int?
+        let height: Int?
+    }
+
     private struct ParsedUnifiedDiff {
         let lines: [DiffLine]
         let path: String?
@@ -147,6 +158,9 @@ extension ToolPresentationBuilder {
         }
         if let audio = toolAudioAttachmentDetails(from: details) {
             return voiceAudioExpandedContent(audio: audio, fallbackText: textOutput, args: args)
+        }
+        if let image = toolImageAttachmentDetails(from: details) {
+            return imageExpandedContent(image: image, fallbackText: textOutput)
         }
 
         let format = normalizedExtensionPresentationFormat(details)
@@ -269,6 +283,59 @@ extension ToolPresentationBuilder {
         )
     }
 
+    static func toolImageAttachmentDetails(from details: JSONValue?) -> ToolImageAttachmentDetails? {
+        guard let object = details?.objectValue,
+              let image = object["image"]?.objectValue,
+              image["kind"]?.stringValue == "image" else {
+            return nil
+        }
+
+        let base64 = image["base64"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = image["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard base64?.isEmpty == false || id?.isEmpty == false else { return nil }
+
+        let normalizedMimeType = image["mimeType"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let mimeType = (normalizedMimeType?.isEmpty == false ? normalizedMimeType : nil) ?? "image/png"
+        return ToolImageAttachmentDetails(
+            id: id?.isEmpty == false ? id : nil,
+            mimeType: mimeType,
+            base64: base64?.isEmpty == false ? base64 : nil,
+            fileName: image["fileName"]?.stringValue,
+            path: image["path"]?.stringValue,
+            sizeBytes: image["sizeBytes"]?.numberValue.map(Int.init),
+            width: image["width"]?.numberValue.map(Int.init),
+            height: image["height"]?.numberValue.map(Int.init)
+        )
+    }
+
+    static func mediaAttachmentDetails(from details: JSONValue?) -> [ToolMediaAttachment] {
+        guard let object = details?.objectValue else { return [] }
+        let mediaArray = object["media"]?.arrayValue ?? []
+        return mediaArray.compactMap { value in
+            guard let media = value.objectValue,
+                  let kind = media["kind"]?.stringValue,
+                  let id = media["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !id.isEmpty else {
+                return nil
+            }
+            let normalizedMimeType = media["mimeType"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let mimeType = if let normalizedMimeType, !normalizedMimeType.isEmpty {
+                normalizedMimeType
+            } else {
+                "application/octet-stream"
+            }
+            return ToolMediaAttachment(
+                kind: kind,
+                id: id,
+                mimeType: mimeType,
+                fileName: media["fileName"]?.stringValue,
+                sizeBytes: media["sizeBytes"]?.numberValue.map(Int.init),
+                width: media["width"]?.numberValue.map(Int.init),
+                height: media["height"]?.numberValue.map(Int.init)
+            )
+        }
+    }
+
     private static func voiceAudioExpandedContent(
         audio: ToolAudioAttachmentDetails,
         fallbackText: String,
@@ -283,7 +350,7 @@ extension ToolPresentationBuilder {
 
         guard audio.mimeType == "audio/wav" else {
             let message = "Audio unavailable on iOS: unsupported MIME type \(audio.mimeType)"
-            return (.readMedia(output: message, filePath: title, startLine: 1), message)
+            return (.readMedia(output: message, filePath: title, startLine: 1, attachments: []), message)
         }
 
         if let attachmentId = audio.id, !attachmentId.isEmpty {
@@ -311,7 +378,37 @@ extension ToolPresentationBuilder {
         }
         outputLines.append("data:audio/wav;base64,\(base64)")
         let output = outputLines.joined(separator: "\n")
-        return (.readMedia(output: output, filePath: title, startLine: 1), title)
+        return (.readMedia(output: output, filePath: title, startLine: 1, attachments: []), title)
+    }
+
+    private static func imageExpandedContent(
+        image: ToolImageAttachmentDetails,
+        fallbackText: String
+    ) -> (content: ToolExpandedContent, copyOutput: String) {
+        let title = image.fileName ?? image.path ?? "image"
+        let message = fallbackText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = image.id, !id.isEmpty {
+            let attachment = ToolMediaAttachment(
+                kind: "image",
+                id: id,
+                mimeType: image.mimeType,
+                fileName: image.fileName,
+                sizeBytes: image.sizeBytes,
+                width: image.width,
+                height: image.height
+            )
+            return (.readMedia(output: message, filePath: title, startLine: 1, attachments: [attachment]), message.isEmpty ? title : message)
+        }
+
+        var outputLines: [String] = []
+        if !message.isEmpty {
+            outputLines.append(message)
+        }
+        if let base64 = image.base64, !base64.isEmpty {
+            outputLines.append("data:\(image.mimeType);base64,\(base64)")
+        }
+        let output = outputLines.joined(separator: "\n")
+        return (.readMedia(output: output, filePath: title, startLine: 1, attachments: []), message.isEmpty ? title : message)
     }
 
     static func formatDuration(_ seconds: Double) -> String {

@@ -108,7 +108,7 @@ struct RemoteFileView: View {
                             data: imageData,
                             mimeType: MediaMimeType.imageMimeType(forPathExtension: pathExtension),
                             maxPixelSize: 2_400,
-                            maxHeight: nil
+                            heightMode: .unrestricted
                         )
                         .padding()
                     }

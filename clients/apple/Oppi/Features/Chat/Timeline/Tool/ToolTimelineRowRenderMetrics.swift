@@ -98,7 +98,9 @@ enum ToolTimelineRowRenderMetrics {
         output: String,
         filePath: String?,
         startLine: Int,
-        isError: Bool
+        isError: Bool,
+        attachments: [ToolPresentationBuilder.ToolMediaAttachment],
+        hasAttachmentFetcher: Bool
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("read-media")
@@ -107,6 +109,13 @@ enum ToolTimelineRowRenderMetrics {
         hasher.combine(filePath ?? "")
         hasher.combine(startLine)
         hasher.combine(isError)
+        hasher.combine(hasAttachmentFetcher)
+        for attachment in attachments {
+            hasher.combine(attachment.id)
+            hasher.combine(attachment.mimeType)
+            hasher.combine(attachment.width)
+            hasher.combine(attachment.height)
+        }
         return hasher.finalize()
     }
 

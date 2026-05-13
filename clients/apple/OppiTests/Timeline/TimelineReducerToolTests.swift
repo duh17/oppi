@@ -145,6 +145,32 @@ struct TimelineReducerToolTests {
         #expect(stored?.objectValue?["ui"]?.arrayValue?.count == 1)
     }
 
+    @Test func toolEndWithoutDetailsPreservesToolOutputDetails() {
+        let reducer = TimelineReducer()
+        let mediaDetails: JSONValue = .object([
+            "media": .array([
+                .object([
+                    "kind": .string("image"),
+                    "id": .string("att-image-1"),
+                    "mimeType": .string("image/png"),
+                ])
+            ])
+        ])
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: ["path": .string("plot.png")]))
+        reducer.process(.toolOutput(
+            sessionId: "s1",
+            toolEventId: "t1",
+            output: "",
+            isError: false,
+            details: mediaDetails
+        ))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+
+        #expect(reducer.toolDetailsStore.details(for: "t1") == mediaDetails)
+    }
+
     @Test func toolArgsStoreClearAll() {
         let store = ToolArgsStore()
         store.set(["key": .string("val")], for: "t1")

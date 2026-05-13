@@ -6,7 +6,9 @@ struct ToolRowReadMediaRenderStrategy {
         output: String,
         filePath: String?,
         startLine: Int,
+        attachments: [ToolPresentationBuilder.ToolMediaAttachment],
         isError: Bool,
+        hasAttachmentFetcher: Bool,
         previousSignature: Int?,
         isUsingReadMediaLayout: Bool,
         hasExpandedReadMediaContentView: Bool
@@ -15,7 +17,9 @@ struct ToolRowReadMediaRenderStrategy {
             output: output,
             filePath: filePath,
             startLine: startLine,
-            isError: isError
+            isError: isError,
+            attachments: attachments,
+            hasAttachmentFetcher: hasAttachmentFetcher
         )
         let shouldReinstall = signature != previousSignature
             || !isUsingReadMediaLayout
@@ -34,7 +38,7 @@ struct ToolRowReadMediaRenderStrategy {
             deferredHighlight: nil,
             invalidateLayout: false,
             installAction: shouldReinstall
-                ? .readMedia(output: output, isError: isError, filePath: filePath, startLine: startLine)
+                ? .readMedia(output: output, isError: isError, filePath: filePath, startLine: startLine, attachments: attachments)
                 : .none
         )
     }

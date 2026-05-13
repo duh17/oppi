@@ -32,7 +32,10 @@ struct ImageBlobView: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: 300)
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: ImageViewportSizing.maxHeight(for: .singleScreenFit, screenHeight: UIScreen.main.bounds.height)
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onTapGesture { FullScreenImageViewController.present(image: image) }
                     .contextMenu {
@@ -50,7 +53,7 @@ struct ImageBlobView: View {
                     data: data,
                     mimeType: mimeType,
                     maxPixelSize: 1_600,
-                    maxHeight: 300,
+                    heightMode: .singleScreenFit,
                     allowsFullscreenStaticImage: false
                 )
             case .failure:

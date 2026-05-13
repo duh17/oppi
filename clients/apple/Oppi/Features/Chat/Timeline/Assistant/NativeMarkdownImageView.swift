@@ -17,7 +17,6 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Mark
 final class NativeMarkdownImageView: UIView {
     private static let imageCache = NSCache<NSURL, UIImage>()
     private static let svgDataCache = NSCache<NSURL, NSData>()
-    private static let maxRenderHeight: CGFloat = 400
 
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let altLabel = UILabel()
@@ -310,13 +309,15 @@ final class NativeMarkdownImageView: UIView {
         errorLabel.isHidden = true
         svgWebView?.isHidden = true
 
-        // Compute display height from aspect ratio, capped at max.
         let aspectRatio = image.size.height / max(image.size.width, 1)
         let displayWidth = bounds.width > 0
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
-        let naturalHeight = displayWidth * aspectRatio
-        let displayHeight = min(naturalHeight, Self.maxRenderHeight)
+        let displayHeight = ImageViewportSizing.fittedHeight(
+            forWidth: displayWidth,
+            aspectRatio: aspectRatio,
+            screenHeight: window?.windowScene?.screen.bounds.height
+        )
 
         heightConstraint?.constant = max(displayHeight, Self.loadingPlaceholderHeight)
 
@@ -343,12 +344,19 @@ final class NativeMarkdownImageView: UIView {
             : (window?.windowScene?.screen.bounds.width ?? 360)
 
         if let aspectRatio {
-            let naturalHeight = displayWidth * (1.0 / aspectRatio)
-            let displayHeight = min(naturalHeight, Self.maxRenderHeight)
+            let displayHeight = ImageViewportSizing.fittedHeight(
+                forWidth: displayWidth,
+                aspectRatio: 1.0 / aspectRatio,
+                screenHeight: window?.windowScene?.screen.bounds.height
+            )
             heightConstraint?.constant = max(displayHeight, Self.loadingPlaceholderHeight)
         } else {
-            // No viewBox — use a default square-ish height.
-            heightConstraint?.constant = min(displayWidth, Self.maxRenderHeight)
+            // No viewBox — use a square-ish fallback, still capped by the shared inline image policy.
+            let cappedHeight = ImageViewportSizing.maxHeight(
+                for: .singleScreenFit,
+                screenHeight: window?.windowScene?.screen.bounds.height
+            ) ?? displayWidth
+            heightConstraint?.constant = min(displayWidth, cappedHeight)
         }
 
         let webView = ensureSVGWebView()

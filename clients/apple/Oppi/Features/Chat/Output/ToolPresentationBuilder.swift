@@ -7,6 +7,16 @@ import SwiftUI
 /// so per-tool rendering logic is isolated and testable.
 enum ToolPresentationBuilder {
 
+    struct ToolMediaAttachment: Equatable, Sendable {
+        let kind: String
+        let id: String
+        let mimeType: String
+        let fileName: String?
+        let sizeBytes: Int?
+        let width: Int?
+        let height: Int?
+    }
+
     // MARK: - Dependencies
 
     struct Context {
@@ -77,6 +87,7 @@ enum ToolPresentationBuilder {
             outputPreview: outputPreview
         )
 
+        let previewImage = isDone ? Self.toolImageAttachmentDetails(from: context.details) : nil
         let isVoicePresentationResult = Self.toolAudioAttachmentDetails(from: context.details) != nil
             || Self.toolVoicePresentationDetails(from: context.details) != nil
 
@@ -174,8 +185,8 @@ enum ToolPresentationBuilder {
                 : collapsed.toolNameColor,
             editAdded: collapsed.editAdded,
             editRemoved: collapsed.editRemoved,
-            collapsedImageBase64: nil,
-            collapsedImageMimeType: nil,
+            collapsedImageBase64: !isExpanded ? previewImage?.base64 : nil,
+            collapsedImageMimeType: !isExpanded ? previewImage?.mimeType : nil,
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError,
@@ -306,7 +317,7 @@ enum ToolPresentationBuilder {
         /// Rendered markdown (read .md)
         case markdown(text: String)
         /// Media renderer for images/audio in read output
-        case readMedia(output: String, filePath: String?, startLine: Int)
+        case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
         /// Voice message with server-owned session attachment replay.
         case voiceMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?, delivery: VoiceReplyDelivery?)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
@@ -336,6 +347,7 @@ enum ToolPresentationBuilder {
         let output = fullOutput.isEmpty ? outputPreview : fullOutput
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         let fileMetadata = filePresentationMetadata(args: args, argsSummary: argsSummary)
+        let mediaAttachments = mediaAttachmentDetails(from: details)
         var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
         var copyCommand: String?
         var content: ToolExpandedContent?
@@ -351,18 +363,20 @@ enum ToolPresentationBuilder {
             )
 
         case "read":
-            if !outputTrimmed.isEmpty {
+            if !outputTrimmed.isEmpty || !mediaAttachments.isEmpty {
                 let startLine = ToolCallFormatting.readStartLine(from: args)
                 content = isDone
                     ? expandedFileContent(
                         text: outputTrimmed,
                         metadata: fileMetadata,
-                        startLine: startLine
+                        startLine: startLine,
+                        attachments: mediaAttachments
                     )
                     : expandedStreamingFileContent(
                         text: outputTrimmed,
                         metadata: fileMetadata,
-                        startLine: startLine
+                        startLine: startLine,
+                        attachments: mediaAttachments
                     )
             } else if isLoadingOutput {
                 content = .status(message: "Loading read output…")
@@ -378,12 +392,14 @@ enum ToolPresentationBuilder {
                     ? expandedFileContent(
                         text: writeContent,
                         metadata: fileMetadata,
-                        startLine: 1
+                        startLine: 1,
+                        attachments: []
                     )
                     : expandedStreamingFileContent(
                         text: writeContent,
                         metadata: fileMetadata,
-                        startLine: 1
+                        startLine: 1,
+                        attachments: []
                     )
             } else if !outputTrimmed.isEmpty {
                 content = isDone
@@ -415,7 +431,8 @@ enum ToolPresentationBuilder {
                         content = expandedStreamingFileContent(
                             text: streamingText,
                             metadata: fileMetadata,
-                            startLine: 1
+                            startLine: 1,
+                            attachments: []
                         )
                     }
                 }
@@ -433,7 +450,9 @@ enum ToolPresentationBuilder {
             let voicePresentation = Self.toolVoicePresentationDetails(from: details)
             let hasStructuredVoiceContent = Self.toolAudioAttachmentDetails(from: details) != nil
                 || voicePresentation != nil
-            if !outputTrimmed.isEmpty || hasStructuredVoiceContent {
+            let hasStructuredMediaContent = !mediaAttachments.isEmpty
+                || Self.toolImageAttachmentDetails(from: details) != nil
+            if !outputTrimmed.isEmpty || hasStructuredVoiceContent || hasStructuredMediaContent {
                 if !isError,
                    let voicePresentation,
                    Self.toolAudioAttachmentDetails(from: details) == nil {
@@ -450,6 +469,14 @@ enum ToolPresentationBuilder {
                         delivery: voicePresentation.delivery
                     )
                     copyOutput = transcript.isEmpty ? nil : transcript
+                } else if !mediaAttachments.isEmpty && Self.toolAudioAttachmentDetails(from: details) == nil {
+                    content = .readMedia(
+                        output: outputTrimmed,
+                        filePath: rawToolName,
+                        startLine: 1,
+                        attachments: mediaAttachments
+                    )
+                    copyOutput = outputTrimmed.isEmpty ? rawToolName : outputTrimmed
                 } else {
                     let resolved = resolveGenericExtensionExpandedContent(
                         output: outputTrimmed,
@@ -520,7 +547,8 @@ enum ToolPresentationBuilder {
     private static func expandedFileContent(
         text: String,
         metadata: FilePresentationMetadata,
-        startLine: Int
+        startLine: Int,
+        attachments: [ToolMediaAttachment]
     ) -> ToolExpandedContent {
         switch metadata.fileType {
         case .markdown:
@@ -531,7 +559,8 @@ enum ToolPresentationBuilder {
             return .readMedia(
                 output: text,
                 filePath: metadata.filePath,
-                startLine: startLine
+                startLine: startLine,
+                attachments: attachments
             )
         case .html, .plain, .code, .json, .pdf, .binary,
              .latex, .mermaid, .graphviz, .none:
@@ -547,7 +576,8 @@ enum ToolPresentationBuilder {
     private static func expandedStreamingFileContent(
         text: String,
         metadata: FilePresentationMetadata,
-        startLine: Int
+        startLine: Int,
+        attachments: [ToolMediaAttachment]
     ) -> ToolExpandedContent {
         switch metadata.fileType {
         case .markdown:
@@ -560,7 +590,8 @@ enum ToolPresentationBuilder {
             return .readMedia(
                 output: text,
                 filePath: metadata.filePath,
-                startLine: startLine
+                startLine: startLine,
+                attachments: attachments
             )
         case .html, .plain, .code, .json, .pdf, .binary,
              .latex, .mermaid, .graphviz, .none:

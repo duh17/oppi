@@ -857,9 +857,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .error(_, let message):
+            let normalized = UserFacingErrorText.normalize(message)
             let itemID = UUID().uuidString
-            items.append(.error(id: itemID, message: message))
-            retryMergeCandidate = (itemID: itemID, message: message)
+            items.append(.error(id: itemID, message: normalized))
+            retryMergeCandidate = (itemID: itemID, message: normalized)
             return true
 
         case .compactionStart(_, let reason):
@@ -872,12 +873,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return handleRetryStart(
                 attempt: attempt,
                 maxAttempts: maxAttempts,
-                errorMessage: errorMessage
+                errorMessage: UserFacingErrorText.normalize(errorMessage)
             )
 
         case .retryEnd(_, let success, _, let finalError):
             if !success, let err = finalError {
-                items.append(.error(id: UUID().uuidString, message: "Retry failed: \(err)"))
+                items.append(.error(id: UUID().uuidString, message: "Retry failed: \(UserFacingErrorText.normalize(err))"))
                 return true
             }
             return false
@@ -1006,8 +1007,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         if let details {
             toolDetailsStore.set(details, for: toolEventId)
-        } else {
-            toolDetailsStore.remove(for: toolEventId)
         }
         if let resultSegments, !resultSegments.isEmpty {
             toolSegmentStore.setResultSegments(resultSegments, for: toolEventId)
@@ -1092,7 +1091,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // RPC results — model changes get a system event, others are silent
     private func handleCommandResult(command: String, success: Bool, error: String?) -> Bool {
         if !success, let err = error {
-            items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(err)"))
+            items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(UserFacingErrorText.normalize(err))"))
             return true
         }
         if command == "set_model" || command == "cycle_model" {

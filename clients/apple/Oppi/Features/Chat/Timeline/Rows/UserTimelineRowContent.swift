@@ -662,7 +662,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                                 data: data,
                                 mimeType: mimeType,
                                 maxPixelSize: 512,
-                                maxHeight: Self.thumbnailSize,
+                                heightMode: .fixed(Self.thumbnailSize),
                                 allowsFullscreenStaticImage: false
                             )
                         )

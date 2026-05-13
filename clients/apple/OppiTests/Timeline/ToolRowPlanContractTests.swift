@@ -60,7 +60,7 @@ struct ToolRowPlanContractTests {
                 output: "data:image/png;base64,abc",
                 filePath: "icon.png",
                 startLine: 1
-            ),
+            , attachments: []),
             toolNamePrefix: "read",
             isExpanded: true,
             selectedTextPiRouter: SelectedTextPiActionRouter { _ in },
