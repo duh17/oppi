@@ -322,14 +322,25 @@ fi
 echo "  package.json:   OK"
 
 # Verify node_modules has key dependencies
-for dep in "@anthropic-ai/sdk" "@mariozechner/pi-coding-agent"; do
+for dep in "@anthropic-ai/sdk"; do
     dep_dir="$SERVER_SEED/node_modules/$dep"
     if [[ ! -d "$dep_dir" ]]; then
         echo "ERROR: Missing required dependency: $dep"
         exit 1
     fi
 done
-echo "  Dependencies:   OK"
+PI_AGENT_DEP=""
+for dep in "@earendil-works/pi-coding-agent" "@mariozechner/pi-coding-agent"; do
+    if [[ -d "$SERVER_SEED/node_modules/$dep" ]]; then
+        PI_AGENT_DEP="$dep"
+        break
+    fi
+done
+if [[ -z "$PI_AGENT_DEP" ]]; then
+    echo "ERROR: Missing required dependency: @earendil-works/pi-coding-agent (or legacy @mariozechner/pi-coding-agent)"
+    exit 1
+fi
+echo "  Dependencies:   OK ($PI_AGENT_DEP)"
 
 # Verify .seed-version was written
 if [[ ! -f "$SERVER_SEED/.seed-version" ]]; then
