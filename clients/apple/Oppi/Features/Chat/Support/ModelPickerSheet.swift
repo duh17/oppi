@@ -15,6 +15,7 @@ struct ModelPickerSheet: View {
 
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
+    @State private var codexUsage: CodexUsageInfo?
     private var recentIds: [String] { AppPreferences.RecentModels.load() }
 
     private var models: [ModelInfo] { chatState.cachedModels }
@@ -54,9 +55,13 @@ struct ModelPickerSheet: View {
         }
 
         let grouped = Dictionary(grouping: filtered) { $0.provider }
-        return grouped
-            .sorted { $0.key < $1.key }
-            .map { (provider: $0.key, models: $0.value) }
+        let orderedProviders = ModelPickerProviderOrdering.sortProviders(
+            Array(grouped.keys),
+            recentModels: recentModels
+        )
+        return orderedProviders.map { provider in
+            (provider: provider, models: grouped[provider] ?? [])
+        }
     }
 
     var body: some View {
@@ -87,7 +92,9 @@ struct ModelPickerSheet: View {
             .task {
                 // Background refresh — UI already shows cached data
                 if let api = apiClient {
-                    await chatState.refreshModelCache(api: api)
+                    async let refresh: Void = chatState.refreshModelCache(api: api)
+                    async let usage: Void = loadCodexUsage(api: api)
+                    _ = await (refresh, usage)
                 }
             }
         }
@@ -182,6 +189,20 @@ struct ModelPickerSheet: View {
 
                 Spacer(minLength: 8)
 
+                let usageBadges = codexUsageBadges(for: provider)
+                if !usageBadges.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(usageBadges) { badge in
+                            Text(badge.label)
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(badge.color)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(badge.color.opacity(0.14), in: Capsule())
+                        }
+                    }
+                }
+
                 if !isSearchActive {
                     Text("\(modelCount)")
                         .font(.caption2.monospacedDigit())
@@ -203,6 +224,121 @@ struct ModelPickerSheet: View {
                 : (isCollapsed ? "Expand \(name) models" : "Collapse \(name) models")
         )
     }
+
+    @MainActor
+    private func loadCodexUsage(api: APIClient) async {
+        do {
+            codexUsage = try await api.fetchCodexUsage()
+        } catch {
+            // Keep picker lightweight; missing usage data should not block model selection.
+        }
+    }
+
+    private func codexUsageBadges(for provider: String) -> [ProviderUsageBadge] {
+        guard provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "openai-codex",
+              let usage = codexUsage,
+              usage.authenticated
+        else {
+            return []
+        }
+
+        var badges: [ProviderUsageBadge] = []
+        if let window = usage.fiveHour {
+            badges.append(
+                ProviderUsageBadge(
+                    label: "5h \(Int(window.remainingPercent.rounded()))%",
+                    color: remainingColor(window.remainingPercent)
+                )
+            )
+        }
+        if let window = usage.weekly {
+            badges.append(
+                ProviderUsageBadge(
+                    label: "7d \(Int(window.remainingPercent.rounded()))%",
+                    color: remainingColor(window.remainingPercent)
+                )
+            )
+        }
+        return badges
+    }
+
+    private func remainingColor(_ remainingPercent: Double) -> Color {
+        if remainingPercent <= 20 { return .themeRed }
+        if remainingPercent <= 50 { return .themeOrange }
+        return .themeGreen
+    }
+}
+
+enum ModelPickerProviderOrdering {
+    struct Stats: Equatable {
+        var count = 0
+        var bestRecentIndex = Int.max
+    }
+
+    static func sortProviders(_ providers: [String], recentModels: [ModelInfo]) -> [String] {
+        let stats = providerStats(from: recentModels)
+        return providers.sorted { lhs, rhs in
+            let lhsFamily = providerFamily(lhs)
+            let rhsFamily = providerFamily(rhs)
+            let lhsStats = stats[lhsFamily] ?? Stats()
+            let rhsStats = stats[rhsFamily] ?? Stats()
+
+            if lhsStats.count != rhsStats.count {
+                return lhsStats.count > rhsStats.count
+            }
+            if lhsStats.bestRecentIndex != rhsStats.bestRecentIndex {
+                return lhsStats.bestRecentIndex < rhsStats.bestRecentIndex
+            }
+
+            let lhsBoost = providerBoost(lhsFamily)
+            let rhsBoost = providerBoost(rhsFamily)
+            if lhsBoost != rhsBoost {
+                return lhsBoost < rhsBoost
+            }
+
+            let lhsName = ProviderIcon.displayName(for: lhs)
+            let rhsName = ProviderIcon.displayName(for: rhs)
+            let nameOrder = lhsName.localizedCaseInsensitiveCompare(rhsName)
+            if nameOrder != .orderedSame {
+                return nameOrder == .orderedAscending
+            }
+
+            return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+        }
+    }
+
+    static func providerFamily(_ provider: String) -> String {
+        let normalized = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "openai-codex":
+            return "openai"
+        default:
+            return normalized
+        }
+    }
+
+    private static func providerStats(from recentModels: [ModelInfo]) -> [String: Stats] {
+        var stats: [String: Stats] = [:]
+        for (index, model) in recentModels.enumerated() {
+            let family = providerFamily(model.provider)
+            var entry = stats[family] ?? Stats()
+            entry.count += 1
+            entry.bestRecentIndex = min(entry.bestRecentIndex, index)
+            stats[family] = entry
+        }
+        return stats
+    }
+
+    private static func providerBoost(_ family: String) -> Int {
+        family == "openai" ? 0 : 1
+    }
+}
+
+private struct ProviderUsageBadge: Identifiable {
+    let label: String
+    let color: Color
+
+    var id: String { label }
 }
 
 // MARK: - Model Row

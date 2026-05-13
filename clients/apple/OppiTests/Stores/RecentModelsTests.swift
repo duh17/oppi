@@ -97,4 +97,24 @@ struct RecentModelsTests {
 
         #expect(naiveId != correctId, "mismatch proves the bug")
     }
+
+    @Test func providerOrderingUsesRecentProviderFrequencyBeforeAlphabetical() {
+        let providers = ["google", "anthropic", "openai-codex", "mistral"]
+        let recent = [
+            ModelInfo(id: "gpt-5.3-codex", name: "Codex", provider: "openai-codex", contextWindow: 272_000),
+            ModelInfo(id: "gpt-5.4", name: "GPT 5.4", provider: "openai", contextWindow: 272_000),
+            ModelInfo(id: "claude-sonnet-4", name: "Sonnet", provider: "anthropic", contextWindow: 200_000),
+        ]
+
+        let ordered = ModelPickerProviderOrdering.sortProviders(providers, recentModels: recent)
+        #expect(ordered == ["openai-codex", "anthropic", "google", "mistral"])
+    }
+
+    @Test func providerOrderingKeepsOpenAINearTopWithoutRecentSignal() {
+        let providers = ["google", "mistral", "openai-codex", "anthropic"]
+
+        let ordered = ModelPickerProviderOrdering.sortProviders(providers, recentModels: [])
+        #expect(ordered.first == "openai-codex")
+        #expect(Array(ordered.dropFirst()) == ["anthropic", "google", "mistral"])
+    }
 }
