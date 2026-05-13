@@ -19,7 +19,10 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
-import { sessionAttachmentDetailsForToolCall } from "./session-attachments.js";
+import {
+  sessionAttachmentDetailsForToolCall,
+  sessionAttachmentMediaDetailsForToolResult,
+} from "./session-attachments.js";
 
 export type TraceViewMode = "context" | "full";
 
@@ -31,6 +34,12 @@ export interface TraceReadOptions {
 }
 
 const log = createLogger({ base: { component: "trace" } });
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
 
 // ─── Trace Event Types ───
 
@@ -380,7 +389,6 @@ function emitMessageEvents(
       });
     }
   } else if (role === "toolResult") {
-    const output = extractText(content);
     // pi's ToolResultMessage carries structured details (expandedText,
     // presentationFormat, etc.) used by extensions for rich rendering.
     // The message object is the raw JSONL entry — details lives on msg
@@ -388,7 +396,18 @@ function emitMessageEvents(
     const rawMsg = msg as Record<string, unknown>;
     const rawDetails =
       rawMsg.details !== undefined && rawMsg.details !== null ? rawMsg.details : undefined;
-    const details =
+    const mediaDetails =
+      options.attachmentDataDir && options.attachmentSessionId
+        ? sessionAttachmentMediaDetailsForToolResult(
+            options.attachmentDataDir,
+            options.attachmentSessionId,
+            msg.toolCallId,
+            content,
+            rawDetails,
+          )
+        : [];
+    const output = extractText(content, { includeMediaDataURIs: mediaDetails.length === 0 });
+    const replayDetails =
       rawDetails !== undefined && options.attachmentDataDir && options.attachmentSessionId
         ? sessionAttachmentDetailsForToolCall(
             options.attachmentDataDir,
@@ -397,6 +416,10 @@ function emitMessageEvents(
             rawDetails,
           )
         : rawDetails;
+    const details =
+      mediaDetails.length > 0
+        ? { ...(asRecord(replayDetails) ?? {}), media: mediaDetails }
+        : replayDetails;
     events.push({
       id: `result-${entry.id}`,
       type: "toolResult",
@@ -669,7 +692,8 @@ const KNOWN_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "output_audio",
 ]);
 
-function extractText(content: unknown): string {
+function extractText(content: unknown, options: { includeMediaDataURIs?: boolean } = {}): string {
+  const includeMediaDataURIs = options.includeMediaDataURIs ?? true;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
@@ -678,11 +702,11 @@ function extractText(content: unknown): string {
           return b.text;
         }
         // Image/audio content blocks -> data URI so iOS extractors can render them
-        if (b.type === "image" && b.data) {
+        if (includeMediaDataURIs && b.type === "image" && b.data) {
           const mime = (b.mimeType as string) || "image/png";
           return `data:${mime};base64,${b.data}`;
         }
-        if ((b.type === "audio" || b.type === "output_audio") && b.data) {
+        if (includeMediaDataURIs && (b.type === "audio" || b.type === "output_audio") && b.data) {
           const mime = (b.mimeType as string) || "audio/wav";
           return `data:${mime};base64,${b.data}`;
         }

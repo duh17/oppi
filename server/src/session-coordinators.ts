@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type { GateServer } from "./gate.js";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -41,6 +44,10 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 
 export type { SessionCatchUpResponse };
+
+function trustedSessionAttachmentSourceRoots(): string[] {
+  return [join(homedir(), "Library/Application Support/Yuwp/Audio/pi-voice")];
+}
 
 export interface SessionCoordinatorBundle {
   broadcaster: SessionBroadcaster;
@@ -302,6 +309,7 @@ export function createSessionCoordinatorBundle(
     schedulePostCompactionQueueFlush: (key) =>
       queueCoordinator.schedulePostCompactionQueueFlush(key),
     dataDir: deps.storage.getDataDir(),
+    trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
   });
 
   const stopFlowCoordinator = new SessionStopFlowCoordinator(

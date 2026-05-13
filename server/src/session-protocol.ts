@@ -119,6 +119,179 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+interface NormalizedErrorDetails {
+  message?: string;
+  code?: string;
+  type?: string;
+}
+
+function cleanErrorText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function tryParseJSON(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function parseStructuredErrorCandidate(input: string): unknown | null {
+  const direct = tryParseJSON(input);
+  if (direct !== null) {
+    return direct;
+  }
+
+  const start = input.indexOf("{");
+  const end = input.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return tryParseJSON(input.slice(start, end + 1));
+  }
+
+  return null;
+}
+
+function extractNormalizedErrorDetails(value: unknown): NormalizedErrorDetails {
+  if (typeof value === "string") {
+    const trimmed = cleanErrorText(value);
+    if (!trimmed) {
+      return {};
+    }
+
+    const parsed = parseStructuredErrorCandidate(trimmed);
+    if (parsed !== null) {
+      const nested = extractNormalizedErrorDetails(parsed);
+      if (nested.message || nested.code || nested.type) {
+        return nested;
+      }
+    }
+
+    return { message: trimmed };
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return {};
+  }
+
+  const nestedError = record.error !== undefined ? extractNormalizedErrorDetails(record.error) : {};
+  const nestedDetails =
+    record.details !== undefined ? extractNormalizedErrorDetails(record.details) : {};
+  const nestedCause = record.cause !== undefined ? extractNormalizedErrorDetails(record.cause) : {};
+
+  const messageCandidates = [
+    typeof record.message === "string" ? cleanErrorText(record.message) : "",
+    typeof record.errorMessage === "string" ? cleanErrorText(record.errorMessage) : "",
+    nestedError.message ?? "",
+    nestedDetails.message ?? "",
+    nestedCause.message ?? "",
+  ];
+  const codeCandidates = [
+    typeof record.code === "string" ? cleanErrorText(record.code) : "",
+    nestedError.code ?? "",
+    nestedDetails.code ?? "",
+    nestedCause.code ?? "",
+  ];
+  const typeCandidates = [
+    typeof record.type === "string" ? cleanErrorText(record.type) : "",
+    nestedError.type ?? "",
+    nestedDetails.type ?? "",
+    nestedCause.type ?? "",
+  ];
+
+  return {
+    message: messageCandidates.find((candidate) => candidate.length > 0) || undefined,
+    code: codeCandidates.find((candidate) => candidate.length > 0) || undefined,
+    type: typeCandidates.find((candidate) => candidate.length > 0) || undefined,
+  };
+}
+
+function normalizedKnownPlainErrorMessage(message: string): string | null {
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("request_too_large") ||
+    lower.includes("context_length_exceeded") ||
+    lower.includes("maximum context length") ||
+    lower.includes("maximum request size") ||
+    lower.includes("prompt is too long")
+  ) {
+    return "Request too large. Start a new session or reduce the message size and try again.";
+  }
+
+  return null;
+}
+
+function knownCodeOnlyErrorMessage(details: NormalizedErrorDetails): string | null {
+  const combined = [details.code, details.type]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (!combined) {
+    return null;
+  }
+
+  if (combined.includes("request_too_large") || combined.includes("context_length_exceeded")) {
+    return "Request too large. Start a new session or reduce the message size and try again.";
+  }
+
+  if (combined.includes("server_is_overloaded") || combined.includes("service_unavailable_error")) {
+    return "Servers are currently overloaded. Please try again later.";
+  }
+
+  if (combined.includes("rate_limit")) {
+    return "Rate limit reached. Please try again in a moment.";
+  }
+
+  if (combined.includes("insufficient_quota")) {
+    return "Quota exceeded. Check your provider billing or plan and try again.";
+  }
+
+  if (combined.includes("invalid_api_key") || combined.includes("authentication_error")) {
+    return "Authentication failed. Check the provider login or API key and try again.";
+  }
+
+  return null;
+}
+
+function looksLikeStructuredErrorText(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    /"(?:error|message|code|type)"\s*:/.test(trimmed)
+  );
+}
+
+export function normalizeUserFacingError(
+  error: string,
+  fallback = "Something went wrong. Please try again.",
+): string {
+  const trimmed = cleanErrorText(error);
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const details = extractNormalizedErrorDetails(trimmed);
+
+  if (details.message && !looksLikeStructuredErrorText(details.message)) {
+    return normalizedKnownPlainErrorMessage(details.message) ?? details.message;
+  }
+
+  const known = knownCodeOnlyErrorMessage(details);
+  if (known) {
+    return known;
+  }
+
+  if (looksLikeStructuredErrorText(trimmed)) {
+    return fallback;
+  }
+
+  return trimmed;
+}
+
 export function extractToolFullOutputPath(details: unknown): string | null {
   const record = asRecord(details);
   const path = record?.fullOutputPath;
@@ -192,7 +365,11 @@ export function normalizeCommandError(command: string, error: string): string {
     return "Already compacted";
   }
 
-  return trimmed;
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  return normalizeUserFacingError(trimmed);
 }
 
 // ─── Event Translation ───
@@ -230,8 +407,27 @@ export interface TranslationContext {
  * Pi sends media as { type: "image"|"audio", data: "base64...", mimeType: "..." }.
  * We encode as data URIs so iOS extractors can detect and render them.
  */
-function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMessage[] {
-  const out: ServerMessage[] = [];
+function attachmentMediaDetails(
+  record: Record<string, unknown>,
+  kind: "image" | "audio",
+): Record<string, unknown> {
+  return {
+    kind,
+    id: record.id,
+    ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}),
+    ...(typeof record.fileName === "string" ? { fileName: record.fileName } : {}),
+    ...(typeof record.sizeBytes === "number" ? { sizeBytes: record.sizeBytes } : {}),
+    ...(typeof record.storageKey === "string" ? { storageKey: record.storageKey } : {}),
+    ...(typeof record.width === "number" ? { width: record.width } : {}),
+    ...(typeof record.height === "number" ? { height: record.height } : {}),
+    ...(typeof record.durationSeconds === "number"
+      ? { durationSeconds: record.durationSeconds }
+      : {}),
+  };
+}
+
+function extractAttachmentMedia(contents: unknown[]): Record<string, unknown>[] {
+  const attachmentMedia: Record<string, unknown>[] = [];
   for (const block of contents) {
     const record = asRecord(block);
     if (!record) {
@@ -239,6 +435,60 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
     }
 
     const type = record.type;
+    if ((type === "image" || type === "audio") && typeof record.id === "string") {
+      attachmentMedia.push(attachmentMediaDetails(record, type));
+    }
+  }
+  return attachmentMedia;
+}
+
+function mergeAttachmentMediaIntoDetails(
+  details: unknown,
+  attachmentMedia: Record<string, unknown>[],
+): unknown {
+  if (attachmentMedia.length === 0) {
+    return details;
+  }
+
+  const root = asRecord(details) ?? {};
+  const existingMedia = Array.isArray(root.media)
+    ? root.media.filter(
+        (item): item is Record<string, unknown> =>
+          !!item && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const media of [...existingMedia, ...attachmentMedia]) {
+    const kind = typeof media.kind === "string" ? media.kind : "unknown";
+    const id = typeof media.id === "string" ? media.id : JSON.stringify(media);
+    merged.set(`${kind}:${id}`, media);
+  }
+
+  return {
+    ...root,
+    media: Array.from(merged.values()),
+  };
+}
+
+function extractMediaOutputs(
+  contents: unknown[],
+  toolCallId?: string,
+  details?: unknown,
+): ServerMessage[] {
+  const out: ServerMessage[] = [];
+  const attachmentMedia = extractAttachmentMedia(contents);
+
+  for (const block of contents) {
+    const record = asRecord(block);
+    if (!record) {
+      continue;
+    }
+
+    const type = record.type;
+    if ((type === "image" || type === "audio") && typeof record.id === "string") {
+      continue;
+    }
+
     if ((type === "image" || type === "audio") && typeof record.data === "string") {
       const defaultMime = type === "image" ? "image/png" : "audio/wav";
       const mimeType = typeof record.mimeType === "string" ? record.mimeType : defaultMime;
@@ -246,6 +496,16 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
       out.push({ type: "tool_output", output: dataUri, toolCallId });
     }
   }
+
+  if (attachmentMedia.length > 0) {
+    out.push({
+      type: "tool_output",
+      output: "",
+      toolCallId,
+      details: mergeAttachmentMediaIntoDetails(details, attachmentMedia),
+    });
+  }
+
   return out;
 }
 
@@ -470,7 +730,7 @@ export function translatePiEvent(
         const reason = evt.reason ?? "error";
         const errorMsg =
           typeof evt.error?.errorMessage === "string" && evt.error.errorMessage.length > 0
-            ? evt.error.errorMessage
+            ? normalizeUserFacingError(evt.error.errorMessage)
             : `Stream ${reason}`;
         return [{ type: "error", error: errorMsg }];
       }
@@ -646,7 +906,7 @@ export function translatePiEvent(
         });
       }
 
-      messages.push(...extractMediaOutputs(contents, toolCallId));
+      messages.push(...extractMediaOutputs(contents, toolCallId, updateDetails));
       return messages;
     }
 
@@ -700,7 +960,7 @@ export function translatePiEvent(
           }
         }
 
-        messages.push(...extractMediaOutputs(resultContents, toolCallId));
+        messages.push(...extractMediaOutputs(resultContents, toolCallId, event.result?.details));
       }
 
       ctx.partialResults.delete(key);
@@ -722,7 +982,10 @@ export function translatePiEvent(
         });
       }
 
-      const details = detailsResult.details;
+      const details = mergeAttachmentMediaIntoDetails(
+        detailsResult.details,
+        Array.isArray(resultContents) ? extractAttachmentMedia(resultContents) : [],
+      );
       const resultSegments = ctx.mobileRenderers?.renderResult(
         event.toolName,
         details,
@@ -761,7 +1024,7 @@ export function translatePiEvent(
           attempt: event.attempt,
           maxAttempts: event.maxAttempts,
           delayMs: event.delayMs,
-          errorMessage: event.errorMessage ?? "retry requested",
+          errorMessage: normalizeUserFacingError(event.errorMessage ?? "retry requested"),
         },
       ];
 
@@ -798,16 +1061,9 @@ export function translatePiEvent(
         const rawError =
           typeof msgRecord.errorMessage === "string" ? msgRecord.errorMessage : "Unknown error";
 
-        // Extract a human-readable message for known error types.
-        let userError = rawError;
-        if (rawError.includes("request_too_large")) {
-          userError =
-            "Request too large - the conversation has exceeded the maximum request size. Start a new session to continue.";
-        }
-
         ctx.streamedAssistantText = "";
         ctx.hasStreamedThinking = false;
-        return [{ type: "error", error: userError }];
+        return [{ type: "error", error: normalizeUserFacingError(rawError) }];
       }
 
       const out: ServerMessage[] = [];

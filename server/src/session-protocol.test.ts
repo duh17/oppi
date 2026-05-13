@@ -6,6 +6,7 @@ import {
   applyMessageEndToSession,
   translatePiEvent,
   normalizeCommandError,
+  normalizeUserFacingError,
   extractToolFullOutputPath,
   updateSessionChangeStats,
   type TranslationContext,
@@ -69,6 +70,24 @@ describe("normalizeCommandError", () => {
 
   it("handles whitespace-only error string", () => {
     expect(normalizeCommandError("compact", "   ")).toBe("");
+  });
+});
+
+describe("normalizeUserFacingError", () => {
+  it("extracts nested provider messages from raw JSON payloads", () => {
+    expect(
+      normalizeUserFacingError(
+        '{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":2}',
+      ),
+    ).toBe("Our servers are currently overloaded. Please try again later.");
+  });
+
+  it("extracts useful text from prefixed JSON blobs", () => {
+    expect(
+      normalizeUserFacingError(
+        'Codex error: {"type":"error","error":{"message":"Our servers are currently overloaded. Please try again later."}}',
+      ),
+    ).toBe("Our servers are currently overloaded. Please try again later.");
   });
 });
 
@@ -1330,6 +1349,77 @@ describe("translatePiEvent", () => {
       expect(msg.output).toBe("data:audio/wav;base64,wavdata");
     });
 
+    it("emits attachment metadata for materialized image blocks", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "screenshot");
+
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "screenshot",
+          args: {},
+          partialResult: {
+            content: [
+              {
+                type: "image",
+                kind: "image",
+                id: "att-1",
+                mimeType: "image/png",
+                fileName: "plot.png",
+                width: 2,
+                height: 3,
+              },
+            ],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toHaveLength(1);
+      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
+      expect(msg.output).toBe("");
+      expect(
+        (msg.details as { media?: Array<{ id: string; width: number }> }).media?.[0],
+      ).toMatchObject({ id: "att-1", width: 2 });
+    });
+
+    it("strips raw media payload fields from attachment metadata", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "screenshot");
+
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "screenshot",
+          args: {},
+          partialResult: {
+            content: [
+              {
+                type: "image",
+                id: "att-1",
+                mimeType: "image/png",
+                data: "stale-base64",
+                base64: "stale-base64",
+                path: "/private/tmp/plot.png",
+                width: 2,
+                height: 3,
+              },
+            ],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
+      const media = (msg.details as { media?: Array<Record<string, unknown>> }).media?.[0];
+      expect(media).toMatchObject({ kind: "image", id: "att-1", width: 2, height: 3 });
+      expect(media?.data).toBeUndefined();
+      expect(media?.base64).toBeUndefined();
+      expect(media?.path).toBeUndefined();
+    });
+
     it("uses default mime type for image without explicit mimeType", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "tool");
@@ -1605,6 +1695,55 @@ describe("translatePiEvent", () => {
         (m) => m.type === "tool_output" && (m as { output: string }).output.startsWith("data:"),
       ) as Extract<ServerMessage, { type: "tool_output" }>;
       expect(imageMsg.output).toBe("data:image/jpeg;base64,imgdata");
+    });
+
+    it("includes attachment media metadata on tool_end details", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "screenshot");
+
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_end",
+          toolCallId: "tc-1",
+          toolName: "screenshot",
+          result: {
+            content: [
+              {
+                type: "image",
+                kind: "image",
+                id: "att-1",
+                mimeType: "image/png",
+                fileName: "plot.png",
+                width: 2,
+                height: 3,
+              },
+            ],
+            details: {
+              fullOutputPath: "/tmp/plot.png",
+            },
+          },
+          isError: false,
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      const toolEnd = result.find((m) => m.type === "tool_end") as Extract<
+        ServerMessage,
+        { type: "tool_end" }
+      >;
+      expect(toolEnd.details).toMatchObject({
+        fullOutputPath: "/tmp/plot.png",
+        media: [
+          {
+            kind: "image",
+            id: "att-1",
+            mimeType: "image/png",
+            fileName: "plot.png",
+            width: 2,
+            height: 3,
+          },
+        ],
+      });
     });
 
     it("uses replace mode for shell tool final output exceeding threshold", () => {
@@ -1937,6 +2076,29 @@ describe("translatePiEvent", () => {
           maxAttempts: 3,
           delayMs: 5000,
           errorMessage: "rate limit",
+        },
+      ]);
+    });
+
+    it("normalizes structured retry errors", () => {
+      const result = translatePiEvent(
+        {
+          type: "auto_retry_start",
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 5000,
+          errorMessage:
+            'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}',
+        } as AgentSessionEvent,
+        makeCtx(),
+      );
+      expect(result).toEqual([
+        {
+          type: "retry_start",
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 5000,
+          errorMessage: "Our servers are currently overloaded. Please try again later.",
         },
       ]);
     });

@@ -147,6 +147,57 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toHaveLength(0);
   });
 
+  it("normalizes prompt_error before broadcasting it to clients", () => {
+    const active = makeActiveSession();
+    const { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent } =
+      makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "prompt_error",
+      error:
+        'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}',
+    });
+
+    expect(broadcast).toHaveBeenCalledWith("child-1", {
+      type: "error",
+      error: "Our servers are currently overloaded. Please try again later.",
+    });
+    expect(updateSessionFromEvent).not.toHaveBeenCalled();
+    expect(resetIdleTimer).toHaveBeenCalledWith("child-1");
+  });
+
+  it("logs the raw prompt_error payload alongside the normalized user-facing message", () => {
+    const active = makeActiveSession();
+    const { coordinator } = makeCoordinator(active);
+    const writes: string[] = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(((
+      chunk: string | Uint8Array,
+    ) => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stderr.write);
+
+    try {
+      coordinator.handlePiEvent(active.session.id, {
+        type: "prompt_error",
+        error:
+          'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}',
+      });
+    } finally {
+      stderrSpy.mockRestore();
+    }
+
+    const logLine = writes.find((line) =>
+      line.includes('"event":"session_agent_events.prompt.error"'),
+    );
+    expect(logLine).toContain(
+      '"error":"Our servers are currently overloaded. Please try again later."',
+    );
+    expect(logLine).toContain(
+      '"rawError":"Codex error: {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"service_unavailable_error\\",\\"code\\":\\"server_is_overloaded\\",\\"message\\":\\"Our servers are currently overloaded. Please try again later.\\"}}"',
+    );
+  });
+
   it("forwards extension audio stream events without sending them through SDK event translation", () => {
     const active = makeActiveSession();
     const { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent } =
