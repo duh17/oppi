@@ -4,12 +4,31 @@ Oppi is a monorepo for the Apple clients and self-hosted server behind mobile-su
 
 For simulator/device loops, release workflows, incident triage, telemetry, config checks, and other operational runbooks, load the `oppi-dev` skill.
 
+## Project Invariants
+
+- Oppi is mobile-supervised agent infrastructure, not a generic chat app.
+- The Apple clients must make long-running terminal sessions observable, steerable, and safe from a phone or Mac.
+- The chat timeline is a hot path: streaming text, tool output, approvals, diffs, and lifecycle events must render without scroll jumps or excessive SwiftUI invalidation.
+- Protocol changes must stay forward-compatible and mirrored across server and Apple models.
+
 ## Structure
 
 ```text
 clients/apple/  Apple clients (iOS + macOS)
 server/         Server runtime (TypeScript, Node.js 22+)
 ```
+
+## Architecture Map
+
+- `server/src/types.ts` defines the client/server protocol unions.
+- `server/src/session-*.ts` owns session lifecycle, input, queueing, broadcasts, turns, state, summaries, and UI event shaping.
+- `server/src/policy-*.ts` owns command policy, approvals, allowlists, and bash/git heuristics.
+- `server/src/routes/` owns HTTP and streaming endpoints.
+- `clients/apple/Oppi/Core/Models/ClientMessage.swift` and `ServerMessage.swift` mirror the wire protocol.
+- `clients/apple/Oppi/Core/Networking` owns WebSocket/API transport and server-message effects.
+- `clients/apple/Oppi/Features/Chat/Timeline` owns iOS chat timeline rendering and scroll anchoring.
+- `clients/apple/Shared/Renderers` contains reusable Mermaid, LaTeX, and Org renderers.
+- `clients/apple/OppiMac` owns the macOS client shell and Mac-specific server integration.
 
 ## Core Commands
 
@@ -41,6 +60,15 @@ cd clients/apple && bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh \
   - Function: `-only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'`
 
 After code changes, run the relevant checks and fix all errors before finishing.
+
+## Sharp Edges
+
+- `Oppi.xcodeproj` is generated. Do not repair build issues by editing it directly.
+- Simulator logs are part of the signal. Do not pipe `sim-pool.sh` through filters that hide the summary or log path.
+- Swift 6 strict concurrency is enabled. UI-observable state must stay main-actor isolated.
+- Unknown server messages must be logged and skipped, not treated as fatal decode failures.
+- Server and Apple protocol updates are one change. Do not land one side without the other.
+- Keep repo-private working artifacts in `.pi/` (`reports/`, `research/`, `diagrams/`). Reserve `docs/` for curated public docs.
 
 ## Complexity Guardrails
 
@@ -110,16 +138,26 @@ Run `bash clients/apple/scripts/check-duplication.sh` before finishing Apple UI 
 - Share views when they are pure SwiftUI. Fork views when rendering is platform-specific.
 - `ServerMessage` decoding is forward-compatible. Unknown server message types must be logged and skipped.
 
-- Keep repo-private working artifacts in `.pi/` (`reports/`, `research/`, `diagrams/`) and reserve `docs/` for curated public docs.
+## When Ambiguous
+
+1. Search for an existing implementation, test, helper, or naming pattern first.
+2. Follow the local pattern unless it conflicts with this guide or the user asked for a redesign.
+3. Keep diffs minimal when fixing bugs. Save broad refactors for explicit refactor tasks.
+4. If a protocol, rendering, or session-lifecycle change has multiple plausible designs, present options and pick the safest default before coding.
+5. Do not remove behavior that looks intentional without asking or proving it is dead.
 
 ## Style
 
 - No emojis in commits or code.
 - Keep technical prose direct.
 
-## Definition of Done
+## Verification Checklist
 
-1. `npm run check` passes for server changes
-2. Apple build and relevant tests pass for Apple changes
-3. Protocol changes are mirrored on both sides with tests
-4. `xcodegen generate` was run if Apple file structure changed
+- Server-only changes: run `cd server && npm run check`.
+- Server tests: run the relevant `npm test` target or focused test file when behavior changes.
+- Apple file structure changes: run `cd clients/apple && xcodegen generate`.
+- Apple code changes: run the relevant `sim-pool.sh` build or targeted test from the Core Commands section.
+- Apple UI or rendering changes: also run `bash clients/apple/scripts/check-duplication.sh`.
+- Protocol changes: update server types, Apple models, and protocol tests on both sides before finishing.
+
+Fix all errors before handing work back. If a check cannot run, say exactly why and name the next best validation.
