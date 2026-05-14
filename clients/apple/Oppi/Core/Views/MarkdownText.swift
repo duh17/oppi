@@ -931,6 +931,11 @@ enum FlatSegment: Sendable {
         return result
     }
 
+    private static func imageFallbackText(alt: String) -> String {
+        let trimmed = alt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "[image]" : "[\(trimmed)]"
+    }
+
     /// Recursively extract plain text from inlines and record attribute ranges.
     private static func collectInlineText(
         _ inlines: [MarkdownInline],
@@ -989,13 +994,11 @@ enum FlatSegment: Sendable {
                     })
                 }
             case .image(let alt, _):
-                if !alt.isEmpty {
-                    text += "[\(alt)]"
-                    let end = text.utf8.count
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = UIColor(palette.comment)
-                    })
-                }
+                text += imageFallbackText(alt: alt)
+                let end = text.utf8.count
+                attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                    sub.uiKit.foregroundColor = UIColor(palette.comment)
+                })
             case .softBreak, .hardBreak:
                 text += "\n"
             case .html(let raw):
@@ -1046,8 +1049,7 @@ enum FlatSegment: Sendable {
             }
             return result
         case .image(let alt, _):
-            if alt.isEmpty { return AttributedString() }
-            var result = AttributedString("[\(alt)]")
+            var result = AttributedString(imageFallbackText(alt: alt))
             result.uiKit.foregroundColor = UIColor(palette.comment)
             return result
         case .softBreak, .hardBreak:

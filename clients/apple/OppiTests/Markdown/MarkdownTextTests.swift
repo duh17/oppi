@@ -281,17 +281,16 @@ struct FlatSegmentBuildTests {
         }
     }
 
-    @Test func imageWithEmptyAltTextProducesNoText() {
+    @Test func imageWithEmptyAltTextFallsBackToGenericPlaceholder() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "", source: "img.png")])
         ]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        // Empty image alt text produces empty attributed string, which
-        // means the paragraph has no visible content.
-        if segments.isEmpty {
-            // OK — empty paragraph filtered out
-        } else if case .text(let attr) = segments[0] {
-            #expect(String(attr.characters).isEmpty)
+        #expect(segments.count == 1)
+        if case .text(let attr) = segments[0] {
+            #expect(String(attr.characters).contains("[image]"))
+        } else {
+            Issue.record("Expected .text fallback segment")
         }
     }
 
@@ -532,6 +531,20 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
+    @Test func imageOnlyParagraphWithoutWorkspaceContextUsesGenericImageFallbackWhenAltIsEmpty() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "   ", source: "charts/mockup.png")])
+        ]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .text(let attr) = segments[0] {
+            let text = String(attr.characters)
+            #expect(text.contains("[image]"))
+        } else {
+            Issue.record("Expected .text fallback segment")
+        }
+    }
+
     @Test func paragraphWithTextAndImageIsNotPromoted() {
         // Mixed paragraph: not image-only, falls back to text rendering.
         let blocks: [MarkdownBlock] = [
@@ -666,7 +679,7 @@ struct FlatSegmentImageResolutionTests {
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
-        // Empty alt: promoted to .image with empty alt (hidden on error)
+        // Empty alt: promoted to .image with empty alt and a generic placeholder on load failure.
         if case .image(let alt, _) = segments[0] {
             #expect(alt.isEmpty)
         } else {
@@ -1016,6 +1029,32 @@ struct NativeMarkdownImageViewTests {
         let heightConstraints = view.constraints.filter { $0.firstAttribute == .height }
         let hasPlaceholderHeight = heightConstraints.contains { $0.constant == 80 }
         #expect(hasPlaceholderHeight, "Should have 80pt loading placeholder height. Constraints: \(heightConstraints.map { "\($0.constant)" })")
+    }
+
+    @Test func unsupportedURLWithEmptyAltShowsGenericPlaceholder() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+        view.layoutIfNeeded()
+
+        view.apply(
+            url: URL(fileURLWithPath: "/tmp/not-an-inline-image"),
+            alt: "",
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: nil
+        )
+
+        var showedPlaceholder = false
+        for _ in 0..<20 {
+            try await Task.sleep(for: .milliseconds(50))
+            let visibleLabels = view.subviews.compactMap { $0 as? UILabel }.filter { !$0.isHidden }
+            if visibleLabels.contains(where: { $0.text == "[image]" }) {
+                showedPlaceholder = true
+                break
+            }
+        }
+
+        #expect(showedPlaceholder, "Broken markdown image should show a generic placeholder instead of collapsing")
+        #expect(!view.isHidden)
     }
 }
 

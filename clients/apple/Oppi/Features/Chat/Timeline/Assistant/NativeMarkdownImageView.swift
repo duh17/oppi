@@ -12,7 +12,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Mark
 /// Lifecycle: apply(url:alt:fetchWorkspaceFile:) triggers an async load. States:
 /// - loading: spinner + alt text label
 /// - loaded: image view (tap to fullscreen)
-/// - failed: bracketed alt text in comment color
+/// - failed: muted placeholder label (alt text when available, otherwise `[image]`)
 @MainActor
 final class NativeMarkdownImageView: UIView {
     private static let imageCache = NSCache<NSURL, UIImage>()
@@ -71,7 +71,7 @@ final class NativeMarkdownImageView: UIView {
         imageView.isUserInteractionEnabled = true
 
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
-        errorLabel.font = .preferredFont(forTextStyle: .body)
+        errorLabel.font = .preferredFont(forTextStyle: .caption1)
         errorLabel.textAlignment = .center
         errorLabel.numberOfLines = 2
         errorLabel.isHidden = true
@@ -266,16 +266,27 @@ final class NativeMarkdownImageView: UIView {
         }
     }
 
+    private func normalizedAltText(_ alt: String) -> String? {
+        let trimmed = alt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func bracketedFallbackText(for alt: String) -> String {
+        guard let alt = normalizedAltText(alt) else { return "[image]" }
+        return "[\(alt)]"
+    }
+
     /// Export mode: show alt text in a styled box. No spinner, no async load.
     /// If the image was previously viewed, the cache check above already
     /// handled it. This path is for uncached images only.
     private func showExportPlaceholder(alt: String) {
         let palette = ThemeRuntimeState.currentPalette()
+        let placeholderText = normalizedAltText(alt) ?? "[image]"
         backgroundColor = UIColor(palette.bgHighlight)
         altLabel.textColor = UIColor(palette.comment)
-        altLabel.text = alt.isEmpty ? "[image]" : alt
+        altLabel.text = placeholderText
 
-        heightConstraint?.constant = alt.isEmpty ? 30 : 40
+        heightConstraint?.constant = placeholderText == "[image]" ? 30 : 40
         isHidden = false
 
         spinner.stopAnimating()
@@ -287,17 +298,18 @@ final class NativeMarkdownImageView: UIView {
 
     private func showLoadingState(alt: String) {
         let palette = ThemeRuntimeState.currentPalette()
+        let normalizedAlt = normalizedAltText(alt)
         backgroundColor = UIColor(palette.bgHighlight)
         spinner.color = UIColor(palette.comment)
         altLabel.textColor = UIColor(palette.comment)
-        altLabel.text = alt.isEmpty ? nil : alt
+        altLabel.text = normalizedAlt
 
         // Ensure loading placeholder height is active.
         heightConstraint?.constant = Self.loadingPlaceholderHeight
         isHidden = false
 
         spinner.startAnimating()
-        altLabel.isHidden = alt.isEmpty
+        altLabel.isHidden = normalizedAlt == nil
         imageView.isHidden = true
         errorLabel.isHidden = true
         svgWebView?.isHidden = true
@@ -450,23 +462,21 @@ final class NativeMarkdownImageView: UIView {
 
     private func showErrorState(alt: String) {
         spinner.stopAnimating()
+        altLabel.isHidden = true
         imageView.isHidden = true
         svgWebView?.isHidden = true
 
-        if alt.isEmpty {
-            heightConstraint?.constant = 0
-            isHidden = true
-            invalidateTimelineLayout()
-            return
-        }
-
         let palette = ThemeRuntimeState.currentPalette()
         errorLabel.textColor = UIColor(palette.comment)
-        errorLabel.text = "[\(alt)]"
+        errorLabel.text = bracketedFallbackText(for: alt)
         errorLabel.isHidden = false
-        // Shrink to fit the error label instead of holding loading placeholder height.
+        // Shrink to fit the placeholder instead of holding loading height.
         heightConstraint?.constant = 40
-        backgroundColor = .clear
+        backgroundColor = UIColor(palette.bgHighlight)
+        isHidden = false
+
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
         invalidateTimelineLayout()
     }
 
