@@ -1,16 +1,8 @@
 # Oppi — Agent Guide
 
-Oppi is a monorepo for the Apple clients and self-hosted server behind mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions.
+Oppi is a monorepo for the Apple clients and self-hosted server behind mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions. It is mobile-supervised agent infrastructure, not a generic chat app. It is purpose-built for supervising long-running agent work from a phone or Mac, so the Apple clients must keep those sessions observable, steerable, and safe.
 
 For simulator/device loops, release workflows, incident triage, telemetry, config checks, and other operational runbooks, load the `oppi-dev` skill.
-
-## Project Invariants
-
-- Oppi is mobile-supervised agent infrastructure, not a generic chat app.
-- The Apple clients must make long-running terminal sessions observable, steerable, and safe from a phone or Mac.
-- The chat timeline is a hot path: streaming text, tool output, approvals, diffs, and lifecycle events must render without scroll jumps or excessive SwiftUI invalidation.
-- Workspace navigation is HTTP-first and time-bounded: workspace home uses summary snapshots, workspace detail uses a recent session-list window plus lazy archive buckets, and hot paths must stay off raw JSONL reads.
-- Protocol changes must stay forward-compatible and mirrored across server and Apple models.
 
 ## Structure
 
@@ -86,6 +78,8 @@ After code changes, run the relevant checks and fix all errors before finishing.
 
 ## Protocol Discipline
 
+Protocol changes must stay forward-compatible and mirrored across server and Apple models.
+
 When changing client/server message contracts:
 
 1. Update server types in `server/src/types.ts`
@@ -126,6 +120,8 @@ No partial protocol updates.
 
 ### Hot paths
 
+The chat timeline is a hot path: streaming text, tool output, approvals, diffs, and lifecycle events must render without scroll jumps or excessive SwiftUI invalidation.
+
 For hot paths such as the chat timeline, streaming rendering, and scroll containers, use the lowest-level stable native API Apple provides rather than the highest-level abstraction.
 
 Do not wrap performance-critical rendering in SwiftUI when UIKit or AppKit gives direct control over layout, diffing, and scroll position.
@@ -139,6 +135,8 @@ Do not wrap performance-critical rendering in SwiftUI when UIKit or AppKit gives
 Run `bash clients/apple/scripts/check-duplication.sh` before finishing Apple UI changes.
 
 ### Shared structure
+
+Workspace navigation is HTTP-first and time-bounded: workspace home uses summary snapshots, workspace detail uses a recent session-list window plus lazy archive buckets, and hot paths must stay off raw JSONL reads.
 
 - Many small stores are intentional. Do not merge them to “simplify” the architecture.
 - Prefer the narrowest dependency that works.
