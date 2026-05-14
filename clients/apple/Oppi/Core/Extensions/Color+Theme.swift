@@ -36,22 +36,6 @@ extension Color {
     static var themeScrim: Color { palette.bgDark.opacity(0.82) }
     static var themeOnBlue: Color { ThemeColorContrast.foreground(for: palette.blue) }
     static var themeOnGreen: Color { ThemeColorContrast.foreground(for: palette.green) }
-    static var themeOnOrange: Color { ThemeColorContrast.foreground(for: palette.orange) }
-    static var themeOnPurple: Color { ThemeColorContrast.foreground(for: palette.purple) }
-    static var themeOnRed: Color { ThemeColorContrast.foreground(for: palette.red) }
-
-    // MARK: - User Message
-
-    static var themeUserMessageBg: Color { palette.userMessageBg }
-    static var themeUserMessageText: Color { palette.userMessageText }
-
-    // MARK: - Tool State
-
-    static var themeToolPendingBg: Color { palette.toolPendingBg }
-    static var themeToolSuccessBg: Color { palette.toolSuccessBg }
-    static var themeToolErrorBg: Color { palette.toolErrorBg }
-    static var themeToolTitle: Color { palette.toolTitle }
-    static var themeToolOutput: Color { palette.toolOutput }
 
     // MARK: - Semantic Syntax
 
@@ -67,27 +51,20 @@ extension Color {
 
     // MARK: - Semantic Markdown
 
+    // periphery:ignore - used by OrgFoldableView; Periphery misses this Color extension accessor
     static var themeMdHeading: Color { palette.mdHeading }
-    static var themeMdLink: Color { palette.mdLink }
-    static var themeMdLinkUrl: Color { palette.mdLinkUrl }
-    static var themeMdCode: Color { palette.mdCode }
-    static var themeMdCodeBlock: Color { palette.mdCodeBlock }
     static var themeMdCodeBlockBorder: Color { palette.mdCodeBlockBorder }
-    static var themeMdQuote: Color { palette.mdQuote }
-    static var themeMdQuoteBorder: Color { palette.mdQuoteBorder }
-    static var themeMdHr: Color { palette.mdHr }
-    static var themeMdListBullet: Color { palette.mdListBullet }
 
     // MARK: - Semantic Diff
 
     static var themeDiffAdded: Color { palette.toolDiffAdded }
     static var themeDiffRemoved: Color { palette.toolDiffRemoved }
+    // periphery:ignore - used by ToolRowTextRenderer via UIColor(Color.themeDiffContext)
     static var themeDiffContext: Color { palette.toolDiffContext }
 }
 
 extension ShapeStyle where Self == Color {
     static var themeBg: Color { Color.themeBg }
-    static var themeBgDark: Color { Color.themeBgDark }
     static var themeBgHighlight: Color { Color.themeBgHighlight }
     static var themeFg: Color { Color.themeFg }
     static var themeFgDim: Color { Color.themeFgDim }
@@ -103,34 +80,13 @@ extension ShapeStyle where Self == Color {
     static var themeChipSubtleBg: Color { Color.themeChipSubtleBg }
     static var themeScrim: Color { Color.themeScrim }
     static var themeOnBlue: Color { Color.themeOnBlue }
+    // periphery:ignore - used by ChatSubviews through SwiftUI contextual static member lookup
     static var themeOnGreen: Color { Color.themeOnGreen }
-    static var themeOnOrange: Color { Color.themeOnOrange }
-    static var themeOnPurple: Color { Color.themeOnPurple }
-    static var themeOnRed: Color { Color.themeOnRed }
 
     // Semantic
-    static var themeSyntaxComment: Color { Color.themeSyntaxComment }
     static var themeSyntaxKeyword: Color { Color.themeSyntaxKeyword }
-    static var themeSyntaxFunction: Color { Color.themeSyntaxFunction }
-    static var themeSyntaxVariable: Color { Color.themeSyntaxVariable }
-    static var themeSyntaxString: Color { Color.themeSyntaxString }
-    static var themeSyntaxNumber: Color { Color.themeSyntaxNumber }
-    static var themeSyntaxType: Color { Color.themeSyntaxType }
-    static var themeSyntaxOperator: Color { Color.themeSyntaxOperator }
-    static var themeSyntaxPunctuation: Color { Color.themeSyntaxPunctuation }
-    static var themeMdHeading: Color { Color.themeMdHeading }
-    static var themeMdLink: Color { Color.themeMdLink }
-    static var themeMdLinkUrl: Color { Color.themeMdLinkUrl }
-    static var themeMdCode: Color { Color.themeMdCode }
-    static var themeMdCodeBlock: Color { Color.themeMdCodeBlock }
-    static var themeMdCodeBlockBorder: Color { Color.themeMdCodeBlockBorder }
-    static var themeMdQuote: Color { Color.themeMdQuote }
-    static var themeMdQuoteBorder: Color { Color.themeMdQuoteBorder }
-    static var themeMdHr: Color { Color.themeMdHr }
-    static var themeMdListBullet: Color { Color.themeMdListBullet }
     static var themeDiffAdded: Color { Color.themeDiffAdded }
     static var themeDiffRemoved: Color { Color.themeDiffRemoved }
-    static var themeDiffContext: Color { Color.themeDiffContext }
 }
 
 // MARK: - Themed Surface Modifiers

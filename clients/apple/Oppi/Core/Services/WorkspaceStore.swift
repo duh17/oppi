@@ -171,11 +171,13 @@ final class WorkspaceStore {
         workspaceSummariesByServer[serverId] ?? [:]
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     func storedWorkspaceSummaries(forServer serverId: String) -> [String: WorkspaceListSummary] {
         storedWorkspaceSummariesByServer[serverId] ?? [:]
     }
 
     #if DEBUG
+    // periphery:ignore - used by MultiServerStoreTests + ServerConnectionTests via @testable import
     func setStoredWorkspaceSummariesForTesting(
         _ summaries: [String: WorkspaceListSummary],
         serverId: String? = nil

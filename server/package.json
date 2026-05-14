@@ -45,7 +45,7 @@
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --exclude tests/policy-fuzz-perf.test.ts",
     "test:watch": "vitest",
     "bench": "npm run bench:correctness && npm run bench:perf:gate",
     "bench:perf": "npm run bench:hotpath",
