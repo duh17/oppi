@@ -37,6 +37,33 @@ struct ToolCallCorrelatorTests {
         #expect(endId == startId, "end should reuse start's toolEventId")
     }
 
+    @Test func updateOutputEndSequenceSharesToolIdWithoutStartingExecution() {
+        let mapper = ToolCallCorrelator()
+
+        let updateEvent = mapper.update(sessionId: "s1", tool: "edit", args: ["path": "README.md"])
+        guard case .toolUpdate(_, let updateId, let tool, let args, _) = updateEvent else {
+            Issue.record("Expected toolUpdate")
+            return
+        }
+        #expect(tool == "edit")
+        #expect(args["path"] == .string("README.md"))
+        #expect(!updateId.isEmpty)
+
+        let outputEvent = mapper.output(sessionId: "s1", output: "preview", isError: false)
+        guard case .toolOutput(let payload) = outputEvent else {
+            Issue.record("Expected toolOutput")
+            return
+        }
+        #expect(payload.toolEventId == updateId)
+
+        let endEvent = mapper.end(sessionId: "s1")
+        guard case .toolEnd(_, let endId, _, _, _) = endEvent else {
+            Issue.record("Expected toolEnd")
+            return
+        }
+        #expect(endId == updateId)
+    }
+
     // MARK: - Sequential tools get distinct IDs
 
     @Test func sequentialToolsGetDistinctIds() {

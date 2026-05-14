@@ -23,7 +23,7 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
-    streamingToolUpdatesSeen: new Set(),
+    streamingToolUpdatesSeen: new Map(),
     ...overrides,
   };
 }
@@ -812,9 +812,87 @@ describe("translatePiEvent", () => {
       expect(ctx.streamingArgPreviews.size).toBe(0);
     });
 
-    it("emits only the first tool_update for repeated toolcall deltas", () => {
+    it("skips empty streamed previews and emits when args become available", () => {
       const ctx = makeCtx();
-      const event = {
+      const startEvent = {
+        type: "message_update",
+        message: {
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit-1",
+              name: "edit",
+              arguments: {},
+            },
+          ],
+        },
+        assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+      } as unknown as AgentSessionEvent;
+      const emptyDeltaEvent = {
+        type: "message_update",
+        message: {
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit-1",
+              name: "edit",
+              arguments: {},
+            },
+          ],
+        },
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: '{"path":"READ' },
+      } as unknown as AgentSessionEvent;
+      const deltaEvent = {
+        type: "message_update",
+        message: {
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit-1",
+              name: "edit",
+              arguments: {
+                path: "README.md",
+                edits: [{ oldText: "before", newText: "after" }],
+              },
+            },
+          ],
+        },
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+      } as unknown as AgentSessionEvent;
+
+      expect(translatePiEvent(startEvent, ctx)).toEqual([]);
+      expect(translatePiEvent(emptyDeltaEvent, ctx)).toEqual([]);
+
+      const streamed = translatePiEvent(deltaEvent, ctx);
+      expect(streamed).toHaveLength(1);
+      expect(streamed[0]).toMatchObject({
+        type: "tool_update",
+        tool: "edit",
+        toolCallId: "tc-edit-1",
+        args: {
+          path: "README.md",
+          edits: [{ oldText: "before", newText: "after" }],
+        },
+      });
+    });
+
+    it("emits tool_update again when streamed args materially change", () => {
+      const ctx = makeCtx();
+      const partialEvent = {
+        type: "message_update",
+        message: {
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-repeat-1",
+              name: "write",
+              arguments: { path: "READ", content: "hello" },
+            },
+          ],
+        },
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+      } as unknown as AgentSessionEvent;
+      const fullEvent = {
         type: "message_update",
         message: {
           content: [
@@ -829,12 +907,21 @@ describe("translatePiEvent", () => {
         assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
       } as unknown as AgentSessionEvent;
 
-      const first = translatePiEvent(event, ctx);
-      const second = translatePiEvent(event, ctx);
+      const first = translatePiEvent(partialEvent, ctx);
+      const second = translatePiEvent(fullEvent, ctx);
+      const third = translatePiEvent(fullEvent, ctx);
 
       expect(first).toHaveLength(1);
-      expect(first[0]!.type).toBe("tool_update");
-      expect(second).toEqual([]);
+      expect(first[0]).toMatchObject({
+        type: "tool_update",
+        args: { path: "READ", content: "hello" },
+      });
+      expect(second).toHaveLength(1);
+      expect(second[0]).toMatchObject({
+        type: "tool_update",
+        args: { path: "README.md", content: "hello" },
+      });
+      expect(third).toEqual([]);
     });
 
     it("picks the largest string arg when multiple exceed threshold", () => {

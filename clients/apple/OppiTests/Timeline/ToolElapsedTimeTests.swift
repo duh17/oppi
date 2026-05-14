@@ -47,6 +47,21 @@ struct ToolElapsedTimeTests {
         #expect(reducer.toolStartTime(for: toolId) != nil)
     }
 
+    @Test("toolUpdate does not start elapsed timing")
+    func toolUpdateDoesNotStartTiming() {
+        let reducer = TimelineReducer()
+        let toolId = "t-preview"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolUpdate(sessionId: "s1", toolEventId: toolId, tool: "edit", args: ["path": .string("README.md")]))
+
+        #expect(reducer.toolStartTime(for: toolId) == nil)
+        #expect(reducer.toolElapsed(for: toolId) == nil)
+
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "edit", args: ["path": .string("README.md")]))
+        #expect(reducer.toolStartTime(for: toolId) != nil)
+    }
+
     @Test("toolStartTime not overwritten on duplicate tool_start")
     func toolStartTimeNotOverwritten() {
         let reducer = TimelineReducer()

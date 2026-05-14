@@ -16,6 +16,12 @@ final class ToolCallCorrelator {
         return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments)
     }
 
+    func update(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil) -> AgentEvent {
+        let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
+        currentToolEventID = id
+        return .toolUpdate(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments)
+    }
+
     func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil, details: JSONValue? = nil) -> AgentEvent {
         // Prefer server-provided toolCallId, then current open tool, then synthetic
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString

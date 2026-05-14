@@ -4,11 +4,11 @@ import Foundation
 ///
 /// Rules:
 /// - `textDelta` / `thinkingDelta` / `toolOutput`: buffer and flush every 33ms
-/// - Repeated `toolStart` updates for the same in-flight tool call are also
-///   coalesced so streamed args (for example write/edit content) don't thrash
-///   the reducer and collection layout on every chunk.
-/// - Initial `toolStart` plus all other events: flush buffer immediately,
-///   then deliver event.
+/// - Repeated `toolUpdate` / duplicate `toolStart` events for the same tool
+///   call are also coalesced so streamed args (for example write/edit content)
+///   don't thrash the reducer and collection layout on every chunk.
+/// - Initial `toolStart` / `toolUpdate` plus all other events: flush buffer
+///   immediately, then deliver event.
 ///
 /// This prevents per-token/chunk SwiftUI diff thrash while keeping tool starts,
 /// permissions, and errors latency-free.
@@ -26,6 +26,7 @@ final class DeltaCoalescer {
     private var flushTask: Task<Void, Never>?
     private let flushInterval: Duration = .milliseconds(33)
     private var activeToolStarts: Set<ToolStartKey> = []
+    private var previewToolStarts: Set<ToolStartKey> = []
 
     /// Guardrail caps to prevent runaway queue growth during bursty streams.
     private let maxBufferedEvents = 512
@@ -73,9 +74,20 @@ final class DeltaCoalescer {
         case .toolStart(let sessionId, let toolEventId, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
             if activeToolStarts.contains(key) {
-                appendOrReplaceBufferedToolStart(event, key: key)
+                appendOrReplaceBufferedToolEvent(event, key: key)
             } else {
                 activeToolStarts.insert(key)
+                previewToolStarts.remove(key)
+                flushNow()
+                onFlush?([event])
+            }
+
+        case .toolUpdate(let sessionId, let toolEventId, _, _, _):
+            let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
+            if activeToolStarts.contains(key) || previewToolStarts.contains(key) {
+                appendOrReplaceBufferedToolEvent(event, key: key)
+            } else {
+                previewToolStarts.insert(key)
                 flushNow()
                 onFlush?([event])
             }
@@ -83,6 +95,7 @@ final class DeltaCoalescer {
         case .toolEnd(let sessionId, let toolEventId, _, _, _):
             flushNow()
             activeToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
+            previewToolStarts.remove(ToolStartKey(sessionId: sessionId, toolEventId: toolEventId))
             onFlush?([event])
 
         // Everything else: flush pending deltas first, then deliver immediately
@@ -101,12 +114,16 @@ final class DeltaCoalescer {
             flushNow()
             if case .agentStart = event {
                 activeToolStarts.removeAll()
+                previewToolStarts.removeAll()
             } else if case .agentEnd = event {
                 activeToolStarts.removeAll()
+                previewToolStarts.removeAll()
             } else if case .sessionEnded = event {
                 activeToolStarts.removeAll()
+                previewToolStarts.removeAll()
             } else if case .error = event {
                 activeToolStarts.removeAll()
+                previewToolStarts.removeAll()
             }
             onFlush?([event])
         }
@@ -214,8 +231,8 @@ final class DeltaCoalescer {
         }
     }
 
-    private func appendOrReplaceBufferedToolStart(_ event: AgentEvent, key: ToolStartKey) {
-        if let existingIndex = buffer.firstIndex(where: { matchesBufferedToolStart($0, key: key) }) {
+    private func appendOrReplaceBufferedToolEvent(_ event: AgentEvent, key: ToolStartKey) {
+        if let existingIndex = buffer.firstIndex(where: { matchesBufferedToolEvent($0, key: key) }) {
             bufferedBytes -= estimatedPayloadBytes(buffer[existingIndex])
             buffer[existingIndex] = event
             bufferedBytes += estimatedPayloadBytes(event)
@@ -229,11 +246,14 @@ final class DeltaCoalescer {
         appendBuffered(event)
     }
 
-    private func matchesBufferedToolStart(_ event: AgentEvent, key: ToolStartKey) -> Bool {
-        guard case .toolStart(let sessionId, let toolEventId, _, _, _) = event else {
+    private func matchesBufferedToolEvent(_ event: AgentEvent, key: ToolStartKey) -> Bool {
+        switch event {
+        case .toolStart(let sessionId, let toolEventId, _, _, _),
+             .toolUpdate(let sessionId, let toolEventId, _, _, _):
+            return sessionId == key.sessionId && toolEventId == key.toolEventId
+        default:
             return false
         }
-        return sessionId == key.sessionId && toolEventId == key.toolEventId
     }
 
     private func estimatedPayloadBytes(_ event: AgentEvent) -> Int {
@@ -242,7 +262,8 @@ final class DeltaCoalescer {
             return delta.utf8.count
         case .thinkingDelta(_, let delta):
             return delta.utf8.count
-        case .toolStart(_, _, let tool, let args, _):
+        case .toolStart(_, _, let tool, let args, _),
+             .toolUpdate(_, _, let tool, let args, _):
             return tool.utf8.count + args.reduce(into: 0) { partial, entry in
                 partial += entry.key.utf8.count
                 partial += estimatedPayloadBytes(entry.value)

@@ -815,7 +815,22 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .toolStart(_, let toolEventId, let tool, let args, let callSegments):
-            return handleToolStart(toolEventId: toolEventId, tool: tool, args: args, callSegments: callSegments)
+            return handleToolStart(
+                toolEventId: toolEventId,
+                tool: tool,
+                args: args,
+                callSegments: callSegments,
+                startsExecution: true
+            )
+
+        case .toolUpdate(_, let toolEventId, let tool, let args, let callSegments):
+            return handleToolStart(
+                toolEventId: toolEventId,
+                tool: tool,
+                args: args,
+                callSegments: callSegments,
+                startsExecution: false
+            )
 
         case .toolOutput(let payload):
             let outputDidChange: Bool
@@ -890,7 +905,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     // MARK: - Event Handlers (extracted from processInternal)
 
-    private func handleToolStart(toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]?) -> Bool {
+    private func handleToolStart(toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]?, startsExecution: Bool) -> Bool {
         // Ask tool: show the tool row for questions, but suppress the tool_end
         // (answers appear as a user message instead). Track the ID for tool_end interception.
         if tool == "ask" {
@@ -901,9 +916,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let previousArgs = toolArgsStore.args(for: toolEventId)
         let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
         finalizeAssistantMessage()
-        // Record start time for elapsed display (only if not already set — replay/reconnect
-        // can deliver duplicate tool_start for the same ID).
-        if toolStartTimes[toolEventId] == nil {
+        // Record start time only once real execution begins. Streaming
+        // tool_update previews should not start the elapsed timer.
+        if startsExecution, toolStartTimes[toolEventId] == nil {
             toolStartTimes[toolEventId] = Date()
         }
         let argsSummary = args.map { "\($0.key): \($0.value.summary())" }

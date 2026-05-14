@@ -89,10 +89,12 @@ final class TestEventPipeline {
         case .thinkingDelta(let delta):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
-        case .toolStart(let tool, let args, let toolCallId, let callSegments),
-             .toolUpdate(let tool, let args, let toolCallId, let callSegments):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
+        case .toolUpdate(let tool, let args, let toolCallId, let callSegments):
+            conn.silenceWatchdog.recordEvent()
+            coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
         case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details))

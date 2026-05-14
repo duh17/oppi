@@ -97,7 +97,7 @@ final class ChatSessionManager {
     /// (`/workspaces/:workspaceId/sessions/:id/events?since=`).
     var _loadCatchUpForTesting: ((_ since: Int, _ currentSeq: Int) async -> APIClient.SessionEventsResponse?)?
 
-    /// Legacy test seam: inject inbound sequence metadata for `_streamSessionForTesting`.
+    /// Test seam: attach inbound sequence metadata to `_streamSessionForTesting` events.
     var _consumeInboundMetaForTesting: (() -> WebSocketClient.InboundMeta?)?
 
     /// Test seam: override trace fetch for lifecycle snapshot flush.
@@ -785,7 +785,7 @@ final class ChatSessionManager {
                     "has_segments": (callSegments?.isEmpty == false) ? "1" : "0",
                 ]
             )
-            coalescer.receive(toolCallCorrelator.start(
+            coalescer.receive(toolCallCorrelator.update(
                 sessionId: sessionId, tool: tool, args: args,
                 toolCallId: toolCallId, callSegments: callSegments
             ))

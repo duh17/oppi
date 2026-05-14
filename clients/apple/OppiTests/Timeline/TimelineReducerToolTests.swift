@@ -242,11 +242,10 @@ struct TimelineReducerToolTests {
 
     // MARK: - Write tool args persistence
 
-    @Test func writeToolArgsContentSurvivesSecondToolStart() {
-        // The server sends two tool_start messages for the write tool:
-        // 1. From streaming (message_update) — has full args including content
-        // 2. From tool_execution_start — also has full args
-        // Verify args (especially content) survive the second tool_start.
+    @Test func writeToolArgsContentSurvivesToolUpdateThenToolStart() {
+        // The server first sends tool_update while the model is still
+        // streaming arguments, then tool_start when execution actually begins.
+        // Verify args (especially content) survive that transition.
         let reducer = TimelineReducer()
         let toolId = "write-1"
         let writeArgs: [String: JSONValue] = [
@@ -256,13 +255,13 @@ struct TimelineReducerToolTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
 
-        // First tool_start (streaming phase)
-        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "write", args: writeArgs))
+        reducer.process(.toolUpdate(sessionId: "s1", toolEventId: toolId, tool: "write", args: writeArgs))
         #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
+        #expect(reducer.toolStartTime(for: toolId) == nil)
 
-        // Second tool_start (execution phase) with same args
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "write", args: writeArgs))
         #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
+        #expect(reducer.toolStartTime(for: toolId) != nil)
 
         // Tool completes
         reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "Wrote 28 bytes", isError: false))
@@ -271,6 +270,50 @@ struct TimelineReducerToolTests {
         // Args should still be available after tool completion
         #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
         #expect(reducer.toolArgsStore.args(for: toolId)?["path"]?.stringValue == "docs/guide.md")
+    }
+
+    @Test func editPreviewTitleUsesUpdatedPathBeforeExecutionStart() {
+        let reducer = TimelineReducer()
+        let toolId = "edit-preview-1"
+        let editArgs: [String: JSONValue] = [
+            "path": .string("server/src/routes/sessions.ts"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("old line"),
+                    "newText": .string("new line"),
+                ]),
+            ]),
+        ]
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolUpdate(sessionId: "s1", toolEventId: toolId, tool: "edit", args: editArgs))
+
+        guard let item = reducer.items.first(where: {
+            if case .toolCall(let id, _, _, _, _, _, _) = $0 { return id == toolId }
+            return false
+        }),
+        case .toolCall(_, let tool, let argsSummary, let outputPreview, _, let isError, let isDone) = item else {
+            Issue.record("Expected preview toolCall item")
+            return
+        }
+
+        let config = ToolPresentationBuilder.build(
+            itemID: toolId,
+            tool: tool,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            context: .init(
+                args: reducer.toolArgsStore.args(for: toolId),
+                expandedItemIDs: [],
+                fullOutput: reducer.toolOutputStore.fullOutput(for: toolId),
+                isLoadingOutput: false
+            )
+        )
+
+        #expect(config.title == "server/src/routes/sessions.ts")
+        #expect(reducer.toolStartTime(for: toolId) == nil)
     }
 
     @Test func writeToolArgsContentSurvivesTraceRoundTrip() {

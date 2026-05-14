@@ -324,6 +324,7 @@ final class LiveActivityManager {
         case .textDelta,
              .thinkingDelta,
              .messageEnd,
+             .toolUpdate,
              .toolOutput,
              .compactionStart,
              .compactionEnd,

@@ -45,7 +45,7 @@ function createHarness(): {
     toolNames: new Map<string, string>(),
     shellPreviewLastSent: new Map<string, number>(),
     streamingArgPreviews: new Set<string>(),
-    streamingToolUpdatesSeen: new Set<string>(),
+    streamingToolUpdatesSeen: new Map<string, string>(),
     sdkBackend,
   } as unknown as EventProcessorSessionState & SessionUIState;
 

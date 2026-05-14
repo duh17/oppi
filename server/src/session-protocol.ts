@@ -397,8 +397,8 @@ export interface TranslationContext {
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews (tool_output emitted from args). */
   streamingArgPreviews: Set<string>;
-  /** toolCallIds that already emitted an ephemeral streaming tool update this turn. */
-  streamingToolUpdatesSeen: Set<string>;
+  /** Last serialized streaming tool args emitted per toolCallId this turn. */
+  streamingToolUpdatesSeen: Map<string, string>;
 }
 
 /**
@@ -583,6 +583,14 @@ function findLargestStringArg(args: Record<string, unknown>): string | null {
   return largest !== null && largestLen > STREAMING_ARG_PREVIEW_THRESHOLD ? largest : null;
 }
 
+function serializeStreamingToolArgs(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return "{}";
+  }
+}
+
 /**
  * Extract streamed tool-call arguments from `message_update` events.
  *
@@ -739,12 +747,16 @@ export function translatePiEvent(
       if (toolCallUpdate && toolCallUpdate.type === "tool_update") {
         const messages: ServerMessage[] = [];
         const updateKey = toolCallUpdate.toolCallId ?? "";
+        const serializedArgs = serializeStreamingToolArgs(toolCallUpdate.args);
+        const previousSerializedArgs = ctx.streamingToolUpdatesSeen.get(updateKey);
+        const shouldEmitToolUpdate =
+          serializedArgs !== "{}" && previousSerializedArgs !== serializedArgs;
 
-        if (!ctx.streamingToolUpdatesSeen.has(updateKey)) {
-          ctx.streamingToolUpdatesSeen.add(updateKey);
+        if (shouldEmitToolUpdate) {
+          ctx.streamingToolUpdatesSeen.set(updateKey, serializedArgs);
 
-          // Augment the first streaming tool_update with callSegments so iOS
-          // renders a properly formatted title instead of raw argsSummary.
+          // Augment streaming tool_update with callSegments so iOS can keep
+          // file-tool titles current as streamed args become more complete.
           if (ctx.mobileRenderers) {
             const callSegments = ctx.mobileRenderers.renderCall(
               toolCallUpdate.tool,

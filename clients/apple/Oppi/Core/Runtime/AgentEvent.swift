@@ -25,6 +25,7 @@ enum AgentEvent: Sendable {
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
     case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil)
+    case toolUpdate(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil)
     case toolOutput(ToolOutputEventPayload)
     case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil)
 
@@ -76,6 +77,7 @@ enum AgentEvent: Sendable {
         case .thinkingDelta: "thinkingDelta"
         case .messageEnd: "messageEnd"
         case .toolStart: "toolStart"
+        case .toolUpdate: "toolUpdate"
         case .toolOutput: "toolOutput"
         case .toolEnd: "toolEnd"
         case .compactionStart: "compactionStart"

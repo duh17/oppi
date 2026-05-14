@@ -33,7 +33,7 @@ function makeCtx(): TranslationContext {
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
-    streamingToolUpdatesSeen: new Set(),
+    streamingToolUpdatesSeen: new Map(),
   };
 }
 

@@ -42,7 +42,7 @@ describe("SessionAgentEventCoordinator", () => {
       toolNames: new Map(),
       shellPreviewLastSent: new Map(),
       streamingArgPreviews: new Set<string>(),
-      streamingToolUpdatesSeen: new Set<string>(),
+      streamingToolUpdatesSeen: new Map<string, string>(),
       turnCache: new TurnDedupeCache(),
       pendingTurnStarts: [],
       sdkBackend: {} as never,

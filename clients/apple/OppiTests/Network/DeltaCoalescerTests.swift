@@ -26,32 +26,59 @@ struct DeltaCoalescerTests {
         #expect(tool == "bash")
     }
 
-    @Test func repeatedToolStartForSameToolIsBufferedAndCoalesced() {
+    @Test func repeatedToolUpdateForSameToolIsBufferedAndCoalesced() {
         let coalescer = DeltaCoalescer()
         var flushed: [[AgentEvent]] = []
         coalescer.onFlush = { flushed.append($0) }
 
-        coalescer.receive(.toolStart(
+        coalescer.receive(.toolUpdate(
             sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "a"]
         ))
-        coalescer.receive(.toolStart(
+        coalescer.receive(.toolUpdate(
             sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "ab"]
         ))
-        coalescer.receive(.toolStart(
+        coalescer.receive(.toolUpdate(
             sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "abc"]
         ))
 
-        #expect(flushed.count == 1, "Only the initial toolStart should flush immediately")
+        #expect(flushed.count == 1, "Only the initial toolUpdate should flush immediately")
 
         coalescer.flushNow()
 
         #expect(flushed.count == 2)
         #expect(flushed[1].count == 1)
-        guard case .toolStart(_, _, _, let args, _) = flushed[1][0] else {
-            Issue.record("Expected buffered toolStart")
+        guard case .toolUpdate(_, _, _, let args, _) = flushed[1][0] else {
+            Issue.record("Expected buffered toolUpdate")
             return
         }
         #expect(args["content"]?.stringValue == "abc")
+    }
+
+    @Test func toolStartAfterPreviewFlushesImmediately() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "edit", args: ["path": "READ"]
+        ))
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "edit", args: ["path": "README.md"]
+        ))
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "edit", args: ["path": "README.md"]
+        ))
+
+        #expect(flushed.count == 3)
+        guard case .toolUpdate(_, _, _, let previewArgs, _) = flushed[1][0] else {
+            Issue.record("Expected buffered preview before toolStart")
+            return
+        }
+        #expect(previewArgs["path"]?.stringValue == "README.md")
+        guard case .toolStart = flushed[2][0] else {
+            Issue.record("Expected immediate toolStart after preview")
+            return
+        }
     }
 
     @Test func toolEndFlushesImmediately() {
@@ -64,22 +91,22 @@ struct DeltaCoalescerTests {
         #expect(flushed.count == 1)
     }
 
-    @Test func toolEndFlushesBufferedToolStartUpdateBeforeEnding() {
+    @Test func toolEndFlushesBufferedToolUpdateBeforeEnding() {
         let coalescer = DeltaCoalescer()
         var flushed: [[AgentEvent]] = []
         coalescer.onFlush = { flushed.append($0) }
 
-        coalescer.receive(.toolStart(
+        coalescer.receive(.toolUpdate(
             sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "a"]
         ))
-        coalescer.receive(.toolStart(
+        coalescer.receive(.toolUpdate(
             sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "ab"]
         ))
         coalescer.receive(.toolEnd(sessionId: "s1", toolEventId: "t1"))
 
         #expect(flushed.count == 3)
-        guard case .toolStart(_, _, _, let args, _) = flushed[1][0] else {
-            Issue.record("Expected buffered toolStart before toolEnd")
+        guard case .toolUpdate(_, _, _, let args, _) = flushed[1][0] else {
+            Issue.record("Expected buffered toolUpdate before toolEnd")
             return
         }
         #expect(args["content"]?.stringValue == "ab")

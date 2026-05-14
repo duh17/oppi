@@ -68,8 +68,8 @@ export interface EventProcessorSessionState {
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews. */
   streamingArgPreviews: Set<string>;
-  /** toolCallIds that already emitted an ephemeral streaming tool update this turn. */
-  streamingToolUpdatesSeen: Set<string>;
+  /** Last serialized streaming tool args emitted per toolCallId this turn. */
+  streamingToolUpdatesSeen: Map<string, string>;
   /** Pending first-class ask request awaiting a user response. */
   pendingAsk?: PendingAskState;
   /** Timestamp (ms) when the current turn started (agent_start). */
