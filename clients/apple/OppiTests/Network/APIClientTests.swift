@@ -106,40 +106,41 @@ struct APIClientTests {
 
     // MARK: - Sessions
 
-    @Test func listSessionsFromWorkspacesUsesScopedEndpoints() async throws {
+    @Test func listRecentWorkspaceSessionSummariesUsesAggregatedEndpoint() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            switch request.url?.path {
-            case "/workspaces":
-                return self.mockResponse(json: """
-                {"workspaces":[
-                    {"id":"w1","name":"One","skills":[],"createdAt":0,"updatedAt":0},
-                    {"id":"w2","name":"Two","skills":[],"createdAt":0,"updatedAt":0}
-                ]}
-                """)
+            #expect(request.url?.path == "/workspace-session-summaries")
+            #expect(request.url?.query == "recentDays=3")
+            return self.mockResponse(json: """
+            {"sessions":[
+                {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01},
+                {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
+            ]}
+            """)
+        }
 
-            case "/workspaces/w1/sessions":
-                #expect(request.url?.query == "recentDays=3")
-                return self.mockResponse(json: """
-                {"sessions":[
-                    {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
-                ]}
-                """)
+        let summaries = try await client.listRecentWorkspaceSessionSummaries(recentDays: 3)
+        #expect(summaries.count == 2)
+        #expect(summaries[0].id == "s2")
+        #expect(summaries[1].id == "s1")
+        #expect(summaries[0].status == .busy)
+    }
 
-            case "/workspaces/w2/sessions":
-                #expect(request.url?.query == "recentDays=3")
-                return self.mockResponse(json: """
-                {"sessions":[
-                    {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
-                ]}
-                """)
+    @Test func listSessionsFromWorkspacesUsesAggregatedEndpoint() async throws {
+        let client = makeClient()
+        defer { cleanup() }
 
-            default:
-                Issue.record("Unexpected path: \(request.url?.path ?? "nil")")
-                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
-            }
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspace-session-summaries")
+            #expect(request.url?.query == "recentDays=3")
+            return self.mockResponse(json: """
+            {"sessions":[
+                {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01},
+                {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
+            ]}
+            """)
         }
 
         let sessions = try await client.listSessionsFromWorkspaces()

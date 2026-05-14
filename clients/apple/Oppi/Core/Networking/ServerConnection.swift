@@ -1001,6 +1001,12 @@ final class ServerConnection {
 
         let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: request.workspaceId,
+                sessionId: request.sessionId
+            ) {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             if isFocusedSession(request.sessionId) {
                 onPermissionResolved?(id, outcome, request.tool, request.displaySummary)
             }

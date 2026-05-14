@@ -916,7 +916,7 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
     }
 
-    /// List recent workspace session summaries for a bounded global refresh lane.
+    /// List recent workspace session summaries for one workspace.
     func listRecentWorkspaceSessionSummaries(
         workspaceId: String,
         recentDays: Int = 3
@@ -925,37 +925,15 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
     }
 
-    /// List recent session summaries across known workspaces without using the legacy global `/sessions` endpoint.
-    func listRecentWorkspaceSessionSummaries(
-        workspaces: [Workspace],
-        recentDays: Int = 3
-    ) async throws -> [SessionSummary] {
-        let workspaceIds = workspaces.map(\.id)
-        return try await withThrowingTaskGroup(of: [SessionSummary].self) { group in
-            for workspaceId in workspaceIds {
-                group.addTask {
-                    try await self.listRecentWorkspaceSessionSummaries(
-                        workspaceId: workspaceId,
-                        recentDays: recentDays
-                    )
-                }
-            }
-
-            var summaries: [SessionSummary] = []
-            for try await batch in group {
-                summaries.append(contentsOf: batch)
-            }
-            return summaries.sorted { $0.lastActivity > $1.lastActivity }
-        }
+    /// List recent session summaries across all workspaces with one server request.
+    func listRecentWorkspaceSessionSummaries(recentDays: Int = 3) async throws -> [SessionSummary] {
+        let data = try await get("/workspace-session-summaries?recentDays=\(recentDays)")
+        return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
     }
 
     /// Bootstrap helper for flows that have an API client but no populated workspace store yet.
     func listSessionsFromWorkspaces(recentDays: Int = 3) async throws -> [Session] {
-        let workspaces = try await listWorkspaces()
-        let summaries = try await listRecentWorkspaceSessionSummaries(
-            workspaces: workspaces,
-            recentDays: recentDays
-        )
+        let summaries = try await listRecentWorkspaceSessionSummaries(recentDays: recentDays)
         return summaries.map(\.session)
     }
 

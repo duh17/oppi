@@ -113,10 +113,7 @@ struct WorkspaceHomeView: View {
         let serverConn = coordinator.connection(for: serverId)
         let workspaceCatalog = workspacesForServer(serverId)
         let isCollapsed = collapsedServerIds.contains(serverId)
-        let storedSummaries = serverConn?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
-        let summaries = isCollapsed
-            ? [:]
-            : (storedSummaries.isEmpty ? fallbackWorkspaceSummaries(for: serverConn) : storedSummaries)
+        let summaries = serverConn?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
         let workspaces = isCollapsed ? workspaceCatalog : sortedWorkspaces(workspaceCatalog, summaries: summaries)
         let rawFreshness = serverConn?.workspaceStore.freshnessState(forServer: serverId) ?? .offline
         let rawFreshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: serverId) ?? "Offline"
@@ -243,70 +240,6 @@ struct WorkspaceHomeView: View {
             stoppedCount: 0,
             hasAttention: false
         )
-    }
-
-    private func fallbackWorkspaceSummaries(for connection: ServerConnection?) -> [String: WorkspaceListSummary] {
-        guard let connection else { return [:] }
-
-        var sessionsByWorkspace: [String: [Session]] = [:]
-        for session in connection.sessionStore.listProjectionSessions {
-            guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { continue }
-            sessionsByWorkspace[workspaceId, default: []].append(session)
-        }
-
-        let permissionSessionIds = Set(connection.permissionStore.pending.map(\.sessionId))
-        var summaries: [String: WorkspaceListSummary] = [:]
-
-        for (workspaceId, sessions) in sessionsByWorkspace {
-            let workspaceSessionIds = Set(sessions.map(\.id))
-            var latestActivity: Date?
-            var hasAttention = false
-            var activeCount = 0
-            var stoppedCount = 0
-
-            for session in sessions {
-                if let currentLatest = latestActivity {
-                    if session.lastActivity > currentLatest {
-                        latestActivity = session.lastActivity
-                    }
-                } else {
-                    latestActivity = session.lastActivity
-                }
-
-                if !hasAttention,
-                   permissionSessionIds.contains(session.id) || connection.askRequestStore.hasPending(for: session.id) {
-                    hasAttention = true
-                }
-
-                let isRootSession: Bool
-                if let parentSessionId = session.parentSessionId {
-                    isRootSession = !workspaceSessionIds.contains(parentSessionId)
-                } else {
-                    isRootSession = true
-                }
-                guard isRootSession else { continue }
-
-                if session.status == .stopped {
-                    stoppedCount += 1
-                } else {
-                    activeCount += 1
-                }
-
-                if session.status == .error {
-                    hasAttention = true
-                }
-            }
-
-            summaries[workspaceId] = WorkspaceListSummary(
-                workspaceId: workspaceId,
-                activeCount: activeCount,
-                stoppedCount: stoppedCount,
-                hasAttention: hasAttention,
-                latestActivity: latestActivity
-            )
-        }
-
-        return summaries
     }
 
     private func toggleServerExpansion(for serverId: String) {

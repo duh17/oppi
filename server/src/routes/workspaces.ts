@@ -224,6 +224,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         activeCount: snapshot?.activeCount ?? 0,
         stoppedCount: snapshot?.stoppedCount ?? 0,
         hasAttention,
+        hasErrorRoot: snapshot?.hasErrorRoot === true,
         ...(snapshot?.latestActivity !== undefined
           ? { latestActivity: snapshot.latestActivity }
           : {}),

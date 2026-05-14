@@ -24,6 +24,12 @@ extension ServerConnection {
         pendingAskRequests.removeValue(forKey: sessionId)
         activeAskRequest = ask
         askRequestStore.set(ask, for: sessionId)
+        if let workspaceId = attentionWorkspaceId(
+            explicitWorkspaceId: ask.workspaceId,
+            sessionId: sessionId
+        ) {
+            syncWorkspaceSummary(workspaceId: workspaceId)
+        }
         // The agent is blocked waiting for user input, so silence is expected.
         silenceWatchdog.stop()
     }
@@ -39,6 +45,12 @@ extension ServerConnection {
         } else {
             askRequestStore.remove(for: sessionId)
         }
+        if let workspaceId = attentionWorkspaceId(
+            explicitWorkspaceId: ask.workspaceId,
+            sessionId: sessionId
+        ) {
+            syncWorkspaceSummary(workspaceId: workspaceId)
+        }
     }
 
     func restorePendingAskRequestIfNeeded(for sessionId: String) {
@@ -48,6 +60,12 @@ extension ServerConnection {
         if let restored {
             activeAskRequest = restored
             askRequestStore.set(restored, for: sessionId)
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: restored.workspaceId,
+                sessionId: sessionId
+            ) {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
         } else {
             activeAskRequest = nil
         }
@@ -65,11 +83,21 @@ extension ServerConnection {
             return
         }
 
+        let explicitWorkspaceId = pendingAskRequests[sessionId]?.workspaceId
+            ?? askRequestStore.pending(for: sessionId)?.workspaceId
+            ?? (activeAskRequest?.sessionId == sessionId ? activeAskRequest?.workspaceId : nil)
+        let removedWorkspaceId = attentionWorkspaceId(
+            explicitWorkspaceId: explicitWorkspaceId,
+            sessionId: sessionId
+        )
         pendingAskRequests.removeValue(forKey: sessionId)
         askRequestStore.remove(for: sessionId)
 
         if activeAskRequest?.sessionId == sessionId {
             activeAskRequest = nil
+        }
+        if let removedWorkspaceId {
+            syncWorkspaceSummary(workspaceId: removedWorkspaceId)
         }
     }
 

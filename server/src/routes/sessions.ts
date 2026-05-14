@@ -135,6 +135,27 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return Array.from(byId.values()).sort(compareWorkspaceListSessions);
   }
 
+  function mergeActiveSessionsAcrossWorkspaces(
+    projectedSessions: Session[],
+    filters: {
+      cutoffMs?: number;
+      untilMs?: number;
+    },
+  ): Session[] {
+    const byId = new Map(projectedSessions.map((session) => [session.id, session]));
+    for (const activeSessionId of ctx.sessions.getActiveSessionIds()) {
+      const active = ctx.sessions.getActiveSession(activeSessionId);
+      if (!active?.workspaceId) {
+        continue;
+      }
+      if (!sessionMatchesWorkspaceListFilters(active, filters)) {
+        continue;
+      }
+      byId.set(active.id, active);
+    }
+    return Array.from(byId.values()).sort(compareWorkspaceListSessions);
+  }
+
   function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {
     const asks: Array<Record<string, unknown>> = [];
     for (const sessionId of ctx.sessions.getActiveSessionIds()) {
@@ -393,6 +414,33 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     sessions: Session[],
   ): ReturnType<typeof buildSessionSummary>[] {
     return sessions.map((session) => buildSessionSummary(ctx.ensureSessionContextWindow(session)));
+  }
+
+  function handleListRecentWorkspaceSessionSummaries(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): void {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const recentDaysParam = Number.parseInt(url.searchParams.get("recentDays") ?? "", 10);
+    const recentDays =
+      Number.isFinite(recentDaysParam) && recentDaysParam > 0 ? recentDaysParam : 0;
+    const serverNow = Date.now();
+
+    const projectedSessions = ctx.storage
+      .listWorkspaces()
+      .flatMap((workspace) =>
+        recentDays > 0
+          ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspace.id, recentDays, serverNow)
+          : ctx.storage.listAllWorkspaceSessionSnapshots(workspace.id),
+      );
+    const sessions = summarizeWorkspaceListSessions(
+      mergeActiveSessionsAcrossWorkspaces(
+        projectedSessions,
+        recentDays > 0 ? { cutoffMs: serverNow - recentDays * 86_400_000 } : {},
+      ),
+    );
+
+    helpers.compressedJson(req, res, { sessions });
   }
 
   function handleListWorkspaceSessions(
@@ -1286,6 +1334,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     // ── Session search ──
     if (path === "/sessions/search" && method === "GET") {
       handleSearchSessions(url, res);
+      return true;
+    }
+
+    if (path === "/workspace-session-summaries" && method === "GET") {
+      handleListRecentWorkspaceSessionSummaries(req, res);
       return true;
     }
 

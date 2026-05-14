@@ -77,8 +77,16 @@ final class WorkspaceStore {
     /// Skills keyed by server ID (fingerprint).
     var skillsByServer: [String: [SkillInfo]] = [:]
 
-    /// SQLite-backed workspace home summaries keyed by server ID then workspace ID.
+    /// Visible workspace home summaries keyed by server ID then workspace ID.
+    ///
+    /// This map is what the UI reads after local live overlays are merged in.
     var workspaceSummariesByServer: [String: [String: WorkspaceListSummary]] = [:]
+
+    /// Last server-provided workspace home summaries keyed by server ID.
+    ///
+    /// This stays as the authoritative server snapshot so local attention/error
+    /// overlays can be recomputed without permanently mutating the base counts.
+    private var storedWorkspaceSummariesByServer: [String: [String: WorkspaceListSummary]] = [:]
 
     /// Per-server sync freshness tracking.
     var serverFreshness: [String: ServerSyncState] = [:]
@@ -107,6 +115,11 @@ final class WorkspaceStore {
     var workspaceSummaries: [String: WorkspaceListSummary] {
         get { workspaceSummariesByServer[activeKey] ?? [:] }
         set { workspaceSummariesByServer[activeKey] = newValue }
+    }
+
+    /// Active server's last server-provided workspace summaries.
+    var storedWorkspaceSummaries: [String: WorkspaceListSummary] {
+        storedWorkspaceSummariesByServer[activeKey] ?? [:]
     }
 
     /// Active server loaded state.
@@ -158,6 +171,20 @@ final class WorkspaceStore {
         workspaceSummariesByServer[serverId] ?? [:]
     }
 
+    func storedWorkspaceSummaries(forServer serverId: String) -> [String: WorkspaceListSummary] {
+        storedWorkspaceSummariesByServer[serverId] ?? [:]
+    }
+
+    #if DEBUG
+    func setStoredWorkspaceSummariesForTesting(
+        _ summaries: [String: WorkspaceListSummary],
+        serverId: String? = nil
+    ) {
+        let key = serverId ?? activeKey
+        storedWorkspaceSummariesByServer[key] = summaries
+    }
+    #endif
+
     // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// All skills flattened from all servers (deduplicated by name).
     var allSkills: [SkillInfo] {
@@ -194,6 +221,9 @@ final class WorkspaceStore {
         }
         if workspaceSummariesByServer[serverId] == nil {
             workspaceSummariesByServer[serverId] = [:]
+        }
+        if storedWorkspaceSummariesByServer[serverId] == nil {
+            storedWorkspaceSummariesByServer[serverId] = [:]
         }
         if serverFreshness[serverId] == nil {
             serverFreshness[serverId] = ServerSyncState()
@@ -272,6 +302,8 @@ final class WorkspaceStore {
     /// Remove a workspace by ID from a specific server.
     func remove(id: String, serverId: String) {
         workspacesByServer[serverId]?.removeAll { $0.id == id }
+        workspaceSummariesByServer[serverId]?.removeValue(forKey: id)
+        storedWorkspaceSummariesByServer[serverId]?.removeValue(forKey: id)
     }
 
     // periphery:ignore - used by MultiServerStoreTests via @testable import
@@ -280,6 +312,7 @@ final class WorkspaceStore {
         workspacesByServer.removeValue(forKey: serverId)
         skillsByServer.removeValue(forKey: serverId)
         workspaceSummariesByServer.removeValue(forKey: serverId)
+        storedWorkspaceSummariesByServer.removeValue(forKey: serverId)
         serverFreshness.removeValue(forKey: serverId)
         serverLoaded.removeValue(forKey: serverId)
         serverOrder.removeAll { $0 == serverId }
@@ -368,9 +401,11 @@ final class WorkspaceStore {
             workspacesByServer[serverId] = ws
             skillsByServer[serverId] = sk
             if let summariesResponse {
-                workspaceSummariesByServer[serverId] = Dictionary(
+                let summaries = Dictionary(
                     uniqueKeysWithValues: summariesResponse.summaries.map { ($0.workspaceId, $0) }
                 )
+                storedWorkspaceSummariesByServer[serverId] = summaries
+                workspaceSummariesByServer[serverId] = summaries
             }
             serverLoaded[serverId] = true
             markSyncSucceeded(forServer: serverId)

@@ -666,6 +666,7 @@ struct OppiApp: App {
         if let cachedSessions = await cache.loadSessionList() {
             usedCachedSessions = true
             connection.sessionStore.applyServerSnapshot(cachedSessions)
+            connection.syncAllWorkspaceSummariesFromLocalState()
             connection.syncLiveActivityPermissions()
         }
 

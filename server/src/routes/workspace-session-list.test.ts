@@ -68,6 +68,7 @@ interface MockRouteContext {
   errors: Array<{ status: number; message: string }>;
   storage: {
     getWorkspace: ReturnType<typeof vi.fn>;
+    listWorkspaces: ReturnType<typeof vi.fn>;
     listAllWorkspaceSessionSnapshots: ReturnType<typeof vi.fn>;
     listRecentWorkspaceSessionSnapshots: ReturnType<typeof vi.fn>;
     listWorkspaceTimeRangeSessionSnapshots: ReturnType<typeof vi.fn>;
@@ -84,6 +85,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
 
   const storage = {
     getWorkspace: vi.fn().mockReturnValue(workspace),
+    listWorkspaces: vi.fn().mockReturnValue([workspace]),
     listAllWorkspaceSessionSnapshots: vi.fn<(workspaceId: string) => Session[]>(),
     listRecentWorkspaceSessionSnapshots:
       vi.fn<(workspaceId: string, recentDays: number, nowMs?: number) => Session[]>(),
@@ -319,6 +321,57 @@ describe("workspace session list routes", () => {
     expect(response.sessions[0]?.id).toBe("legacy-row");
     expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
     expect(response.sessions[0]).not.toHaveProperty("warnings");
+  });
+
+  it("returns aggregated recent workspace session summaries as thin summaries", async () => {
+    const workspaceTwo = makeWorkspace({ id: "ws-2", name: "Other" });
+    const mock = createMockContext();
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    mock.storage.listWorkspaces.mockReturnValue([makeWorkspace(), workspaceTwo]);
+    mock.storage.listRecentWorkspaceSessionSnapshots.mockImplementation((workspaceId: string) => {
+      if (workspaceId === "ws-1") {
+        return [
+          makeSession({
+            id: "ws-1-row",
+            workspaceId: "ws-1",
+            status: "ready",
+            lastActivity: now,
+            piSessionFile: "/Users/chenda/.pi/agent/sessions/ws-1-row.jsonl",
+            warnings: ["local warning"],
+          }),
+        ];
+      }
+      return [
+        makeSession({
+          id: "ws-2-row",
+          workspaceId: "ws-2",
+          status: "busy",
+          lastActivity: now + 1_000,
+          piSessionFile: "/Users/chenda/.pi/agent/sessions/ws-2-row.jsonl",
+          warnings: ["other warning"],
+        }),
+      ];
+    });
+
+    const handled = await dispatch(
+      mock,
+      "/workspace-session-summaries",
+      "https://localhost/workspace-session-summaries?recentDays=3",
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.errors).toHaveLength(0);
+
+    const response = mock.responses[0]?.data as {
+      sessions: Array<Record<string, unknown>>;
+    };
+
+    expect(mock.storage.listRecentWorkspaceSessionSnapshots).toHaveBeenCalledTimes(2);
+    expect(response.sessions.map((session) => session.id)).toEqual(["ws-2-row", "ws-1-row"]);
+    expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
+    expect(response.sessions[0]).not.toHaveProperty("warnings");
+    expect(response.sessions[1]).not.toHaveProperty("piSessionFile");
+    expect(response.sessions[1]).not.toHaveProperty("warnings");
   });
 
   it("returns only the requested bucket contents", async () => {

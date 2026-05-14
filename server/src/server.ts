@@ -174,7 +174,21 @@ export function formatPermissionRequestLog(opts: {
 function normalizePathPattern(path: string): string {
   return path
     .replace(/^\/workspaces\/[^/]+\/sessions$/, "/workspaces/:workspaceId/sessions")
+    .replace(
+      /^\/workspaces\/[^/]+\/sessions\/[^/]+$/,
+      "/workspaces/:workspaceId/sessions/:sessionId",
+    )
+    .replace(/^\/workspace-session-summaries$/, "/workspace-session-summaries")
+    .replace(/^\/workspaces\/[^/]+\/session-list$/, "/workspaces/:workspaceId/session-list")
+    .replace(
+      /^\/workspaces\/[^/]+\/session-list-bucket$/,
+      "/workspaces/:workspaceId/session-list-bucket",
+    )
     .replace(/^\/workspaces\/[^/]+\/attention$/, "/workspaces/:workspaceId/attention")
+    .replace(/^\/workspaces\/[^/]+\/git-status$/, "/workspaces/:workspaceId/git-status")
+    .replace(/^\/workspaces\/[^/]+\/review\/comments$/, "/workspaces/:workspaceId/review/comments")
+    .replace(/^\/workspaces\/[^/]+\/file-index$/, "/workspaces/:workspaceId/file-index")
+    .replace(/^\/workspaces\/[^/]+\/stream\/events$/, "/workspaces/:workspaceId/stream/events")
     .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/:id")
     .replace(/\/[0-9a-f]{16,}/gi, "/:id");
 }

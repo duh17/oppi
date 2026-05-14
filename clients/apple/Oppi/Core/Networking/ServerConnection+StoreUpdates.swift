@@ -72,6 +72,12 @@ extension ServerConnection {
                     activeSessionId: focusedSessionId
                 )
             }
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: perm.workspaceId,
+                sessionId: perm.sessionId
+            ) {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
 
@@ -79,6 +85,12 @@ extension ServerConnection {
             let request = permissionStore.take(id: id)
             if ReleaseFeatures.pushNotificationsEnabled {
                 PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            }
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: request?.workspaceId,
+                sessionId: request?.sessionId
+            ) {
+                syncWorkspaceSummary(workspaceId: workspaceId)
             }
             syncLiveActivityPermissions()
             return StoreUpdateResult(takenPermission: request, handled: true)
@@ -100,6 +112,9 @@ extension ServerConnection {
                 current.currentTurnStartedAt = now
                 current.lastActivity = now
                 sessionStore.upsert(current)
+                if let workspaceId = current.workspaceId {
+                    syncWorkspaceSummary(workspaceId: workspaceId)
+                }
             }
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
             syncLiveActivityPermissions()
@@ -112,6 +127,9 @@ extension ServerConnection {
                 current.currentTurnStartedAt = nil
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
+                if let workspaceId = current.workspaceId {
+                    syncWorkspaceSummary(workspaceId: workspaceId)
+                }
             }
             sessionStore.recordTurnEnded(sessionId: sessionId)
             activityStore.clear(sessionId: sessionId)
@@ -123,17 +141,26 @@ extension ServerConnection {
 
         case .stopRequested:
             updateStopStatus(sessionId, status: .stopping)
+            if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
 
         case .stopConfirmed:
             updateStopStatus(sessionId, status: .ready, onlyFrom: .stopping)
+            if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
 
         case .stopFailed:
             updateStopStatus(sessionId, status: .busy, onlyFrom: .stopping)
+            if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
@@ -147,11 +174,15 @@ extension ServerConnection {
             return applySessionSummary(summary)
 
         case .sessionEnded:
+            let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 current.status = .stopped
                 current.currentTurnStartedAt = nil
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
+            }
+            if let workspaceId {
+                syncWorkspaceSummary(workspaceId: workspaceId)
             }
             activityStore.clear(sessionId: sessionId)
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
@@ -159,7 +190,11 @@ extension ServerConnection {
             return StoreUpdateResult(handled: true)
 
         case .sessionDeleted(let deletedId):
+            let workspaceId = sessionStore.session(id: deletedId)?.workspaceId
             sessionStore.remove(id: deletedId)
+            if let workspaceId {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
@@ -199,6 +234,14 @@ extension ServerConnection {
         )
         emitSessionUsageMetricsIfNeeded(currentSession)
 
+        if let previousWorkspaceId = previousSession?.workspaceId,
+           previousWorkspaceId != currentSession.workspaceId {
+            syncWorkspaceSummary(workspaceId: previousWorkspaceId)
+        }
+        if let currentWorkspaceId = currentSession.workspaceId {
+            syncWorkspaceSummary(workspaceId: currentWorkspaceId)
+        }
+
         if currentSession.status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
@@ -209,6 +252,123 @@ extension ServerConnection {
 
         syncLiveActivityPermissions()
         return StoreUpdateResult(stateContext: stateContext, handled: true)
+    }
+
+    func attentionWorkspaceId(explicitWorkspaceId: String?, sessionId: String?) -> String? {
+        if let explicitWorkspaceId, !explicitWorkspaceId.isEmpty {
+            return explicitWorkspaceId
+        }
+        guard let sessionId else { return nil }
+        return sessionStore.workspaceId(for: sessionId)
+    }
+
+    func syncWorkspaceSummary(workspaceId: String) {
+        guard !workspaceId.isEmpty else { return }
+
+        var summaries = workspaceStore.workspaceSummaries
+        let storedSummary = workspaceStore.storedWorkspaceSummaries[workspaceId]
+        let fallbackSummary = fallbackWorkspaceSummary(workspaceId: workspaceId)
+
+        guard storedSummary != nil || fallbackSummary != nil else {
+            if summaries.removeValue(forKey: workspaceId) != nil {
+                workspaceStore.workspaceSummaries = summaries
+            }
+            return
+        }
+
+        let nextSummary: WorkspaceListSummary
+        if let storedSummary {
+            let hasErrorRoot = storedSummary.hasErrorRoot || (fallbackSummary?.hasErrorRoot ?? false)
+            let hasAttention = hasErrorRoot || (fallbackSummary?.hasAttention ?? false)
+            let latestActivity = [storedSummary.latestActivity, fallbackSummary?.latestActivity]
+                .compactMap { $0 }
+                .max()
+            nextSummary = WorkspaceListSummary(
+                workspaceId: workspaceId,
+                activeCount: storedSummary.activeCount,
+                stoppedCount: storedSummary.stoppedCount,
+                hasAttention: hasAttention,
+                hasErrorRoot: hasErrorRoot,
+                latestActivity: latestActivity
+            )
+        } else if let fallbackSummary {
+            nextSummary = fallbackSummary
+        } else {
+            return
+        }
+
+        if summaries[workspaceId] != nextSummary {
+            summaries[workspaceId] = nextSummary
+            workspaceStore.workspaceSummaries = summaries
+        }
+    }
+
+    func syncAllWorkspaceSummariesFromLocalState() {
+        var workspaceIds = Set(workspaceStore.workspaceSummaries.keys)
+        workspaceIds.formUnion(workspaceStore.storedWorkspaceSummaries.keys)
+
+        for session in sessionStore.listProjectionSessions {
+            if let workspaceId = session.workspaceId, !workspaceId.isEmpty {
+                workspaceIds.insert(workspaceId)
+            }
+        }
+        for permission in permissionStore.pending {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: permission.workspaceId,
+                sessionId: permission.sessionId
+            ) {
+                workspaceIds.insert(workspaceId)
+            }
+        }
+        for ask in askRequestStore.pending.values {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: ask.workspaceId,
+                sessionId: ask.sessionId
+            ) {
+                workspaceIds.insert(workspaceId)
+            }
+        }
+
+        for workspaceId in workspaceIds where !workspaceId.isEmpty {
+            syncWorkspaceSummary(workspaceId: workspaceId)
+        }
+    }
+
+    private func fallbackWorkspaceSummary(workspaceId: String) -> WorkspaceListSummary? {
+        let workspaceSessions = sessionStore.listProjectionSessions(workspaceId: workspaceId)
+        let workspaceSessionIds = Set(workspaceSessions.map(\.id))
+        let hasPendingPermission = permissionStore.pending.contains { permission in
+            permission.workspaceId == workspaceId
+                || (permission.workspaceId == nil && workspaceSessionIds.contains(permission.sessionId))
+        }
+        let hasPendingAsk = askRequestStore.pending.values.contains { ask in
+            ask.workspaceId == workspaceId
+                || (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
+        }
+        let rootSessions = workspaceRootSessions(workspaceSessions)
+        let hasLiveErrorRoot = rootSessions.contains { $0.status == .error }
+
+        guard !rootSessions.isEmpty || hasPendingPermission || hasPendingAsk else {
+            return nil
+        }
+
+        let latestActivity = workspaceSessions.map(\.lastActivity).max()
+        return WorkspaceListSummary(
+            workspaceId: workspaceId,
+            activeCount: rootSessions.filter { $0.status != .stopped }.count,
+            stoppedCount: rootSessions.filter { $0.status == .stopped }.count,
+            hasAttention: hasLiveErrorRoot || hasPendingPermission || hasPendingAsk,
+            hasErrorRoot: hasLiveErrorRoot,
+            latestActivity: latestActivity
+        )
+    }
+
+    private func workspaceRootSessions(_ sessions: [Session]) -> [Session] {
+        let workspaceSessionIds = Set(sessions.map(\.id))
+        return sessions.filter { session in
+            guard let parentSessionId = session.parentSessionId else { return true }
+            return !workspaceSessionIds.contains(parentSessionId)
+        }
     }
 
     /// Apply an authoritative workspace-scoped attention snapshot fetched over HTTP.
@@ -254,6 +414,7 @@ extension ServerConnection {
             }
         }
 
+        syncWorkspaceSummary(workspaceId: workspaceId)
         syncLiveActivityPermissions()
     }
 

@@ -1366,6 +1366,152 @@ struct ForegroundRecoveryTests {
         #expect(conn.workspaceStore.lastSyncFailed == false)
     }
 
+    @Test func syncWorkspaceSummaryFallsBackToLocalProjectionWhenNoStoredSnapshot() {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let rootBusy = makeTestSession(
+            id: "root-busy",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let rootStopped = makeTestSession(
+            id: "root-stopped",
+            workspaceId: "w1",
+            status: .stopped,
+            lastActivity: Date(timeIntervalSince1970: 1_700_000_200)
+        )
+        var childError = makeTestSession(
+            id: "child-error",
+            workspaceId: "w1",
+            status: .error,
+            lastActivity: Date(timeIntervalSince1970: 1_700_000_300)
+        )
+        childError.parentSessionId = "root-busy"
+
+        conn.sessionStore.applyServerSnapshot([rootBusy, rootStopped, childError])
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+
+        let summary = conn.workspaceStore.workspaceSummaries["w1"]
+        #expect(summary?.activeCount == 1)
+        #expect(summary?.stoppedCount == 1)
+        #expect(summary?.hasAttention == false)
+        #expect(summary?.hasErrorRoot == false)
+        #expect(summary?.latestActivity == childError.lastActivity)
+    }
+
+    @Test func syncWorkspaceSummaryPreservesStoredCountsAndUsesLiveAttentionOverlay() {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
+            "w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 4,
+                stoppedCount: 12,
+                hasAttention: true,
+                hasErrorRoot: false,
+                latestActivity: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+        ])
+        conn.sessionStore.applyServerSnapshot([
+            makeTestSession(
+                id: "ready-root",
+                workspaceId: "w1",
+                status: .ready,
+                lastActivity: Date(timeIntervalSince1970: 1_700_000_500)
+            )
+        ])
+
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+
+        let idleSummary = conn.workspaceStore.workspaceSummaries["w1"]
+        #expect(idleSummary?.activeCount == 4)
+        #expect(idleSummary?.stoppedCount == 12)
+        #expect(idleSummary?.hasAttention == false)
+        #expect(idleSummary?.hasErrorRoot == false)
+        #expect(idleSummary?.latestActivity == Date(timeIntervalSince1970: 1_700_000_500))
+
+        conn.permissionStore.add(
+            PermissionRequest(
+                id: "perm-1",
+                sessionId: "ready-root",
+                tool: "bash",
+                input: [:],
+                displaySummary: "bash: test",
+                reason: "Test",
+                timeoutAt: Date().addingTimeInterval(120),
+                workspaceId: "w1"
+            )
+        )
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+
+        let pendingSummary = conn.workspaceStore.workspaceSummaries["w1"]
+        #expect(pendingSummary?.activeCount == 4)
+        #expect(pendingSummary?.stoppedCount == 12)
+        #expect(pendingSummary?.hasAttention == true)
+        #expect(pendingSummary?.hasErrorRoot == false)
+    }
+
+    @Test func syncWorkspaceSummaryClearsLocalErrorOverlayOnceLiveStateRecovers() {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
+            "w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 2,
+                stoppedCount: 8,
+                hasAttention: false,
+                hasErrorRoot: false,
+                latestActivity: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+        ])
+
+        let root = makeTestSession(id: "root", workspaceId: "w1", status: .ready)
+        var childError = makeTestSession(id: "child", workspaceId: "w1", status: .error)
+        childError.parentSessionId = "root"
+        conn.sessionStore.applyServerSnapshot([root, childError])
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == false)
+
+        let rootError = makeTestSession(id: "root", workspaceId: "w1", status: .error)
+        conn.sessionStore.applyServerSnapshot([rootError])
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == true)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
+
+        let recoveredRoot = makeTestSession(id: "root", workspaceId: "w1", status: .ready)
+        conn.sessionStore.applyServerSnapshot([recoveredRoot])
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == false)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
+    }
+
+    @Test func syncAllWorkspaceSummariesRemovesFallbackOnlyWorkspaceWhenLocalStateDisappears() {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        conn.sessionStore.applyServerSnapshot([
+            makeTestSession(id: "root", workspaceId: "w1", status: .ready)
+        ])
+        conn.syncAllWorkspaceSummariesFromLocalState()
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.activeCount == 1)
+
+        conn.sessionStore.remove(id: "root")
+        conn.syncAllWorkspaceSummariesFromLocalState()
+        #expect(conn.workspaceStore.workspaceSummaries["w1"] == nil)
+    }
+
     @Test func refreshWorkspaceCatalogForceEmitsEndBreadcrumbWithCounts() async {
         let conn = ServerConnection()
         conn.configure(credentials: ServerCredentials(
@@ -1747,6 +1893,136 @@ struct StreamLifecycleTests {
         let result = try? await pending.waiter.wait()
         #expect(result != nil, "All requestId command results should resolve at stream boundary")
         _ = pipe
+    }
+
+    // MARK: - Workspace summary attention sync
+
+    @Test func workspaceAttentionSnapshotClearsStaleWorkspaceBadge() {
+        let (conn, _) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
+            "w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 1,
+                stoppedCount: 12,
+                hasAttention: true,
+                hasErrorRoot: false
+            )
+        ])
+        conn.permissionStore.add(PermissionRequest(
+            id: "p1",
+            sessionId: "s1",
+            tool: "bash",
+            input: [:],
+            displaySummary: "run command",
+            reason: "Test",
+            timeoutAt: Date().addingTimeInterval(60),
+            workspaceId: "w1"
+        ))
+
+        conn.applyWorkspaceAttentionSnapshot(
+            APIClient.WorkspaceAttentionResponse(
+                workspaceId: "w1",
+                serverNow: 0,
+                attention: .init(permissions: [], asks: [])
+            )
+        )
+
+        #expect(conn.permissionStore.pending.isEmpty)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == false)
+    }
+
+    @Test func workspaceAttentionSnapshotPreservesRootErrorAttention() {
+        let (conn, _) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
+            "w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 1,
+                stoppedCount: 12,
+                hasAttention: true,
+                hasErrorRoot: true
+            )
+        ])
+        conn.permissionStore.add(PermissionRequest(
+            id: "p1",
+            sessionId: "s1",
+            tool: "bash",
+            input: [:],
+            displaySummary: "run command",
+            reason: "Test",
+            timeoutAt: Date().addingTimeInterval(60),
+            workspaceId: "w1"
+        ))
+
+        conn.applyWorkspaceAttentionSnapshot(
+            APIClient.WorkspaceAttentionResponse(
+                workspaceId: "w1",
+                serverNow: 0,
+                attention: .init(permissions: [], asks: [])
+            )
+        )
+
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == true)
+    }
+
+    @Test func permissionEventsSyncWorkspaceSummaryAttention() {
+        let (conn, _) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
+            "w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 1,
+                stoppedCount: 0,
+                hasAttention: false,
+                hasErrorRoot: false
+            )
+        ])
+        let permission = PermissionRequest(
+            id: "p1",
+            sessionId: "s1",
+            tool: "bash",
+            input: [:],
+            displaySummary: "run command",
+            reason: "Test",
+            timeoutAt: Date().addingTimeInterval(60)
+        )
+
+        _ = conn.applySharedStoreUpdate(for: .permissionRequest(permission), sessionId: "s1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
+
+        _ = conn.applySharedStoreUpdate(for: .permissionResolved(id: "p1", action: .allow), sessionId: "s1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
+    }
+
+    @Test func askLifecycleSyncsWorkspaceSummaryAttention() {
+        let (conn, _) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
+            "w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 1,
+                stoppedCount: 0,
+                hasAttention: false,
+                hasErrorRoot: false
+            )
+        ])
+        let ask = AskRequest(
+            id: "a1",
+            sessionId: "s1",
+            questions: [],
+            allowCustom: true,
+            timeout: nil,
+            workspaceId: "w1"
+        )
+
+        conn.presentAskRequest(ask, for: "s1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
+
+        conn.clearAskState(for: "s1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
     }
 
     // MARK: - Split stream disconnect cleanup

@@ -55,6 +55,7 @@ export interface WorkspaceListSummary {
   activeCount: number;
   stoppedCount: number;
   hasAttention: boolean;
+  hasErrorRoot: boolean;
   latestActivity?: number;
 }
 

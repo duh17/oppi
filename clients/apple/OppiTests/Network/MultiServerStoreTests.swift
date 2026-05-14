@@ -72,16 +72,62 @@ struct MultiServerStoreTests {
         #expect(store.workspacesByServer["s2"]?.count == 1)  // untouched
     }
 
+    @Test func removeWorkspaceAlsoClearsStoredSummaryForServer() {
+        let store = WorkspaceStore()
+        store.setStoredWorkspaceSummariesForTesting(
+            ["w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 1,
+                stoppedCount: 2,
+                hasAttention: false,
+                hasErrorRoot: false
+            )],
+            serverId: "s1"
+        )
+        store.workspaceSummariesByServer["s1"] = ["w1": WorkspaceListSummary(
+            workspaceId: "w1",
+            activeCount: 1,
+            stoppedCount: 2,
+            hasAttention: false,
+            hasErrorRoot: false
+        )]
+        store.upsert(makeTestWorkspace(id: "w1", name: "A"), serverId: "s1")
+
+        store.remove(id: "w1", serverId: "s1")
+
+        #expect(store.workspaceSummariesByServer["s1"]?["w1"] == nil)
+        #expect(store.storedWorkspaceSummaries(forServer: "s1")["w1"] == nil)
+    }
+
     @Test func removeServer() {
         let store = WorkspaceStore()
         store.workspacesByServer["s1"] = [makeTestWorkspace(id: "w1", name: "A")]
         store.skillsByServer["s1"] = [makeSkill(name: "sk1")]
+        store.workspaceSummariesByServer["s1"] = ["w1": WorkspaceListSummary(
+            workspaceId: "w1",
+            activeCount: 1,
+            stoppedCount: 0,
+            hasAttention: false,
+            hasErrorRoot: false
+        )]
+        store.setStoredWorkspaceSummariesForTesting(
+            ["w1": WorkspaceListSummary(
+                workspaceId: "w1",
+                activeCount: 1,
+                stoppedCount: 0,
+                hasAttention: false,
+                hasErrorRoot: false
+            )],
+            serverId: "s1"
+        )
         store.serverFreshness["s1"] = ServerSyncState()
         store.serverOrder = ["s1", "s2"]
 
         store.removeServer("s1")
         #expect(store.workspacesByServer["s1"] == nil)
         #expect(store.skillsByServer["s1"] == nil)
+        #expect(store.workspaceSummariesByServer["s1"] == nil)
+        #expect(store.storedWorkspaceSummaries(forServer: "s1").isEmpty)
         #expect(store.serverFreshness["s1"] == nil)
         #expect(store.serverOrder == ["s2"])
     }

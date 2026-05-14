@@ -55,10 +55,11 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
     var activeCount: Int
     var stoppedCount: Int
     var hasAttention: Bool
+    var hasErrorRoot: Bool
     var latestActivity: Date?
 
     enum CodingKeys: String, CodingKey {
-        case workspaceId, activeCount, stoppedCount, hasAttention, latestActivity
+        case workspaceId, activeCount, stoppedCount, hasAttention, hasErrorRoot, latestActivity
     }
 
     init(
@@ -66,12 +67,14 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         activeCount: Int,
         stoppedCount: Int,
         hasAttention: Bool,
+        hasErrorRoot: Bool = false,
         latestActivity: Date? = nil
     ) {
         self.workspaceId = workspaceId
         self.activeCount = activeCount
         self.stoppedCount = stoppedCount
         self.hasAttention = hasAttention
+        self.hasErrorRoot = hasErrorRoot
         self.latestActivity = latestActivity
     }
 
@@ -81,6 +84,7 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         activeCount = try c.decode(Int.self, forKey: .activeCount)
         stoppedCount = try c.decode(Int.self, forKey: .stoppedCount)
         hasAttention = try c.decode(Bool.self, forKey: .hasAttention)
+        hasErrorRoot = try c.decodeIfPresent(Bool.self, forKey: .hasErrorRoot) ?? false
 
         if let latestActivityMs = try c.decodeIfPresent(Double.self, forKey: .latestActivity) {
             latestActivity = Date(timeIntervalSince1970: latestActivityMs / 1000)
@@ -95,6 +99,7 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         try c.encode(activeCount, forKey: .activeCount)
         try c.encode(stoppedCount, forKey: .stoppedCount)
         try c.encode(hasAttention, forKey: .hasAttention)
+        try c.encode(hasErrorRoot, forKey: .hasErrorRoot)
         try c.encodeIfPresent(latestActivity.map { $0.timeIntervalSince1970 * 1000 }, forKey: .latestActivity)
     }
 }

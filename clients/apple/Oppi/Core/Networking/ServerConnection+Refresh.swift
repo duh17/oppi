@@ -22,11 +22,6 @@ extension ServerConnection {
         return String(message.prefix(maxLength)) + "…"
     }
 
-    static func workspaceCount(from sessions: [Session]) -> Int {
-        let workspaceIDs = Set(sessions.compactMap(\.workspaceId).filter { !$0.isEmpty })
-        return workspaceIDs.count
-    }
-
     func recordRefreshBreadcrumb(
         _ message: String,
         level: ClientLogLevel = .info,
@@ -60,7 +55,7 @@ extension ServerConnection {
         return now.timeIntervalSince(workspaceSyncAt) >= Self.listRefreshMinimumInterval
     }
 
-    /// Refresh global session list (`/workspaces` + workspace session fan-out).
+    /// Refresh the recent workspace-scoped session projection used by cold UI.
     /// Uses single-flight coalescing so overlapping callers share one request.
     func refreshSessionList(force: Bool = false) async {
         guard let apiClient else { return }
@@ -104,6 +99,7 @@ extension ServerConnection {
             if self.sessionStore.sessions.isEmpty,
                let cached = await TimelineCache.shared.loadSessionList() {
                 self.sessionStore.applyServerSnapshot(cached)
+                self.syncAllWorkspaceSummariesFromLocalState()
                 self.syncLiveActivityPermissions()
             }
 
@@ -115,10 +111,10 @@ extension ServerConnection {
 
                 let workspaces = self.workspaceStore.workspaces
                 let sessionSummaries = try await apiClient.listRecentWorkspaceSessionSummaries(
-                    workspaces: workspaces,
                     recentDays: Self.globalSessionRefreshRecentDays
                 )
                 self.sessionStore.upsertManySummaries(sessionSummaries)
+                self.syncAllWorkspaceSummariesFromLocalState()
                 self.sessionStore.markSyncSucceeded()
                 self.syncLiveActivityPermissions()
                 let cachedSessions = self.sessionStore.sessions
@@ -132,7 +128,7 @@ extension ServerConnection {
                         "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
                         "sessionCount": String(sessionSummaries.count),
                         "workspaceCount": String(workspaces.count),
-                        "source": "workspace_scoped",
+                        "source": "workspace_session_summaries",
                     ]
                 )
             } catch {
@@ -259,6 +255,12 @@ extension ServerConnection {
         // 2. Sweep expired permissions (safety net for missed WS messages)
         let expiredRequests = permissionStore.sweepExpired()
         for request in expiredRequests {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: request.workspaceId,
+                sessionId: request.sessionId
+            ) {
+                syncWorkspaceSummary(workspaceId: workspaceId)
+            }
             // Notify per-session reducer via callback
             if isFocusedSession(request.sessionId) {
                 onPermissionResolved?(request.id, .expired, request.tool, request.displaySummary)
