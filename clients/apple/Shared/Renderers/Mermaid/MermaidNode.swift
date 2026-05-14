@@ -21,8 +21,6 @@ struct GanttDiagram: Equatable, Sendable {
     let excludes: [String]
     let tickInterval: String?
     let weekend: String?
-
-    static let empty = Self(title: nil, dateFormat: "YYYY-MM-DD", sections: [], axisFormat: nil, excludes: [], tickInterval: nil, weekend: nil)
 }
 
 struct GanttSection: Equatable, Sendable {
@@ -192,8 +190,6 @@ struct SequenceDiagram: Equatable, Sendable {
     let notes: [SequenceNote]
     let blocks: [SequenceBlock]
     let autonumber: Bool
-
-    static let empty = Self(participants: [], messages: [], notes: [], blocks: [], autonumber: false)
 }
 
 /// A note annotation in a sequence diagram.

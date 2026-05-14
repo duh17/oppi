@@ -326,7 +326,15 @@ struct MermaidGanttRendererTests {
     }
 
     @Test func emptyDiagramReturnsPlaceholder() {
-        let diagram = GanttDiagram.empty
+        let diagram = GanttDiagram(
+            title: nil,
+            dateFormat: "YYYY-MM-DD",
+            sections: [],
+            axisFormat: nil,
+            excludes: [],
+            tickInterval: nil,
+            weekend: nil
+        )
         let layout = MermaidGanttRenderer.layout(diagram, configuration: config)
         #expect(layout.isPlaceholder)
     }
