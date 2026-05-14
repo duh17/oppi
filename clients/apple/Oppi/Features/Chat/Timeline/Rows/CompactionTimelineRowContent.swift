@@ -5,15 +5,21 @@ struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     let presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation
     let isExpanded: Bool
     let onToggleExpand: (() -> Void)?
+    let interactionContext: TimelineInteractionContext?
+    let itemID: String?
 
     init(
         presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation,
         isExpanded: Bool,
-        onToggleExpand: (() -> Void)? = nil
+        onToggleExpand: (() -> Void)? = nil,
+        interactionContext: TimelineInteractionContext? = nil,
+        itemID: String? = nil
     ) {
         self.presentation = presentation
         self.isExpanded = isExpanded
         self.onToggleExpand = onToggleExpand
+        self.interactionContext = interactionContext
+        self.itemID = itemID
     }
 
     var canExpand: Bool { presentation.canExpand }
@@ -200,6 +206,14 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
         let trimmedDetail = configuration.presentation.detail?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
+        let selectedTextSourceContext = configuration.interactionContext?.sourceContext(
+            surface: .assistantProse,
+            sourceLabel: style.title,
+            timelineItemId: configuration.itemID
+        )
+        let reviewCommentAnnotations = configuration.interactionContext?
+            .inlineReviewAnnotations(for: selectedTextSourceContext) ?? []
+
         let hasDetail: Bool
         if let trimmedDetail, !trimmedDetail.isEmpty {
             hasDetail = true
@@ -220,7 +234,10 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                     configuration: .make(
                         content: trimmedDetail,
                         isStreaming: false,
-                        themeID: ThemeRuntimeState.currentThemeID()
+                        themeID: ThemeRuntimeState.currentThemeID(),
+                        selectedTextPiRouter: configuration.interactionContext?.selectedTextActionContext?.dispatcher,
+                        selectedTextSourceContext: selectedTextSourceContext,
+                        reviewCommentAnnotations: reviewCommentAnnotations
                     )
                 )
             } else {

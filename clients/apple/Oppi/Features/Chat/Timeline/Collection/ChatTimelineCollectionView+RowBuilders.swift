@@ -166,7 +166,9 @@ extension ChatTimelineCollectionHost.Controller {
             return CompactionTimelineRowConfiguration(
                 presentation: compaction,
                 isExpanded: isExpanded,
-                onToggleExpand: onToggleExpand
+                onToggleExpand: onToggleExpand,
+                interactionContext: interactionContext,
+                itemID: itemID
             )
         }
 

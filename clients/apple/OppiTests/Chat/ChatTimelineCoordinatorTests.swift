@@ -200,6 +200,7 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func compactionRowsRenderWithNativeConfiguration() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
+        let router = SelectedTextPiActionRouter { _ in }
 
         let rows: [ChatItem] = [
             .systemEvent(
@@ -216,7 +217,8 @@ struct ChatTimelineCoordinatorTests {
             toolArgsStore: harness.toolArgsStore,
             connection: harness.connection,
             scrollController: harness.scrollController,
-            audioPlayer: harness.audioPlayer
+            audioPlayer: harness.audioPlayer,
+            selectedTextPiRouter: router
         )
         harness.coordinator.apply(configuration: config, to: harness.collectionView)
 
@@ -225,6 +227,8 @@ struct ChatTimelineCoordinatorTests {
         #expect(compactionConfig.presentation.phase == .completed)
         #expect(compactionConfig.presentation.tokensBefore == 12_345)
         #expect(compactionConfig.canExpand)
+        #expect(compactionConfig.itemID == "compaction-1")
+        #expect(compactionConfig.interactionContext === harness.coordinator.interactionContext)
     }
 
     @MainActor
@@ -581,6 +585,37 @@ struct ChatTimelineCoordinatorTests {
             .map { $0.attributedText?.string ?? $0.text ?? "" }
             .joined(separator: "\n")
         #expect(rendered.contains("Goal"))
+    }
+
+    @MainActor
+    @Test func compactionRowExpandedSelectedTextEditMenuPrependsCommentAction() throws {
+        let interactionCtx = TimelineInteractionContext()
+        interactionCtx.selectedTextPiRouter = SelectedTextPiActionRouter { _ in }
+        interactionCtx.sessionId = "session-1"
+
+        let config = CompactionTimelineRowConfiguration(
+            presentation: .init(
+                phase: .completed,
+                detail: "## Goal\nAlpha beta gamma",
+                tokensBefore: 98_765
+            ),
+            isExpanded: true,
+            interactionContext: interactionCtx,
+            itemID: "compaction-1"
+        )
+
+        let view = CompactionTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 338)
+
+        let markdownView = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
+        let textView = try #require(timelineFirstTextView(in: markdownView))
+        let menu = try #require(markdownView.textView(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 5),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
     }
 
     @MainActor
