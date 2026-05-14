@@ -6,9 +6,9 @@
  * dashboard views with engine/source/provider/model breakdowns.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 interface SloThreshold {
   p95: number;
@@ -901,6 +901,358 @@ export function review(
   };
 }
 
+export interface TrendBucket {
+  startTs: number;
+  endTs: number;
+  label: string;
+  metrics: Record<string, MetricStats & { unit: string }>;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+function defaultTrendBucketCount(days: number): number {
+  return Math.min(24, Math.max(6, days * 4));
+}
+
+function formatTrendLabel(ts: number, spanMs: number): string {
+  const date = new Date(ts);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  if (spanMs >= DAY_MS) return `${month}/${day}`;
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${month}/${day} ${hour}:00`;
+}
+
+export function buildTrendBuckets(
+  data: LoadResult,
+  metricNames: string[],
+  options: { days: number; bucketCount?: number; dictationOnly: boolean; endTs?: number },
+): TrendBucket[] {
+  const metricSet = new Set(
+    metricNames.filter((metric) => shouldIncludeMetric(metric, options.dictationOnly)),
+  );
+  if (metricSet.size === 0) return [];
+
+  const endTs = options.endTs ?? Date.now();
+  const startTs = endTs - options.days * DAY_MS;
+  const bucketCount = Math.max(1, options.bucketCount ?? defaultTrendBucketCount(options.days));
+  const spanMs = Math.max(1, Math.ceil((endTs - startTs) / bucketCount));
+  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+    startTs: startTs + index * spanMs,
+    endTs: index === bucketCount - 1 ? endTs : startTs + (index + 1) * spanMs,
+    values: {} as Record<string, MetricBucket>,
+  }));
+
+  for (const sample of data.samples) {
+    if (sample.ts < startTs || sample.ts > endTs) continue;
+    if (!metricSet.has(sample.metric)) continue;
+    const bucketIndex = Math.min(
+      bucketCount - 1,
+      Math.max(0, Math.floor((sample.ts - startTs) / spanMs)),
+    );
+    const bucket = buckets[bucketIndex];
+    pushValue(bucket.values, sample.metric, sample.value, sample.unit);
+  }
+
+  return buckets.map((bucket) => ({
+    startTs: bucket.startTs,
+    endTs: bucket.endTs,
+    label: formatTrendLabel(bucket.startTs, spanMs),
+    metrics: Object.fromEntries(
+      Object.entries(bucket.values).map(([metric, metricBucket]) => [
+        metric,
+        {
+          ...computeStats(metricBucket.vals),
+          unit: metricBucket.unit,
+        },
+      ]),
+    ),
+  }));
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function truncateLabel(value: string, maxChars: number): string {
+  return value.length > maxChars ? `${value.slice(0, Math.max(1, maxChars - 1))}…` : value;
+}
+
+function seriesPath(
+  values: Array<number | null>,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  maxValue: number,
+): string {
+  if (values.length === 0 || maxValue <= 0) return "";
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  let path = "";
+  let drawing = false;
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value == null || !Number.isFinite(value)) {
+      drawing = false;
+      continue;
+    }
+    const px = x + step * index;
+    const py = y + height - (value / maxValue) * height;
+    path += `${drawing ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)} `;
+    drawing = true;
+  }
+
+  return path.trim();
+}
+
+function lastDefinedValue(values: Array<number | null>): number | null {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index];
+    if (value != null && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function statusPalette(status: MetricResult["status"]): {
+  fill: string;
+  stroke: string;
+  text: string;
+  line: string;
+} {
+  if (status === "over") {
+    return {
+      fill: "#fff1f2",
+      stroke: "#f43f5e",
+      text: "#9f1239",
+      line: "#e11d48",
+    };
+  }
+  if (status === "pass") {
+    return {
+      fill: "#f0fdf4",
+      stroke: "#22c55e",
+      text: "#166534",
+      line: "#2563eb",
+    };
+  }
+  return {
+    fill: "#f8fafc",
+    stroke: "#94a3b8",
+    text: "#334155",
+    line: "#475569",
+  };
+}
+
+export function buildTelemetryTrendSvg(
+  result: ReviewOutput,
+  trendBuckets: TrendBucket[],
+  options: { dictationOnly: boolean; title?: string; subtitle?: string },
+): string {
+  const width = 1240;
+  const margin = 36;
+  const columnGap = 20;
+  const rowGap = 16;
+  const columns = 2;
+  const cardHeight = 128;
+  const innerWidth = width - margin * 2;
+  const cardWidth = (innerWidth - columnGap * (columns - 1)) / columns;
+
+  const groupNames: string[] = [];
+  const metricsByGroup: Record<string, string[]> = {};
+  for (const [metric, slo] of visibleSloEntries(options.dictationOnly)) {
+    const metricResult = result.metrics[metric];
+    if (!metricResult || metricResult.count === 0) continue;
+    if (!metricsByGroup[slo.group]) {
+      metricsByGroup[slo.group] = [];
+      groupNames.push(slo.group);
+    }
+    metricsByGroup[slo.group].push(metric);
+  }
+
+  for (const groupName of groupNames) {
+    metricsByGroup[groupName].sort((left, right) => {
+      const leftResult = result.metrics[left];
+      const rightResult = result.metrics[right];
+      if (leftResult.status !== rightResult.status) {
+        return leftResult.status === "over" ? -1 : 1;
+      }
+      return SLO_THRESHOLDS[left].label.localeCompare(SLO_THRESHOLDS[right].label);
+    });
+  }
+
+  const chipSpecs = Object.entries(result.summary.groups).map(([groupName, counts]) => ({
+    groupName,
+    text: `${groupName} ${counts.pass}/${counts.over}/${counts.missing}`,
+    over: counts.over > 0,
+  }));
+
+  const topBlockHeight = 110 + Math.max(0, Math.ceil(chipSpecs.length / 4) - 1) * 28;
+  let totalHeight = margin + topBlockHeight;
+  for (const groupName of groupNames) {
+    const metricCount = metricsByGroup[groupName]?.length ?? 0;
+    const rows = Math.ceil(metricCount / columns);
+    totalHeight += 28 + rows * cardHeight + Math.max(0, rows - 1) * rowGap + 18;
+  }
+  totalHeight += margin;
+
+  const pieces: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${totalHeight}" viewBox="0 0 ${width} ${totalHeight}" role="img" aria-label="${escapeXml(options.title ?? "Oppi telemetry trend review")}">`,
+    `<style>
+      .bg { fill: #ffffff; }
+      .title { font: 700 28px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #0f172a; }
+      .subtitle { font: 500 14px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #475569; }
+      .section { font: 700 18px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #0f172a; }
+      .section-meta { font: 500 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #64748b; }
+      .chip { font: 600 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; }
+      .metric-title { font: 700 15px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #0f172a; }
+      .metric-meta { font: 500 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #475569; }
+      .status { font: 700 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; }
+      .axis { font: 500 11px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; fill: #64748b; }
+      .threshold { stroke: #f59e0b; stroke-width: 1.5; stroke-dasharray: 4 4; }
+      .grid { stroke: #e2e8f0; stroke-width: 1; }
+      .spark { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    </style>`,
+    `<rect class="bg" x="0" y="0" width="${width}" height="${totalHeight}" rx="24" />`,
+  ];
+
+  const title = options.title ?? "Oppi Telemetry Trend Review";
+  const subtitle =
+    options.subtitle ??
+    `Last ${result.summary.days}d · ${result.summary.totalSamples.toLocaleString()} samples · ${result.summary.violations} metric(s) over SLO · fetched ${result.fetchedAt}`;
+  pieces.push(`<text class="title" x="${margin}" y="${margin + 8}">${escapeXml(title)}</text>`);
+  pieces.push(`<text class="subtitle" x="${margin}" y="${margin + 34}">${escapeXml(subtitle)}</text>`);
+  pieces.push(
+    `<text class="subtitle" x="${margin}" y="${margin + 56}">Status uses overall p95 vs SLO. Each card sparkline shows bucketed p95 so release regressions are visible at a glance.</text>`,
+  );
+
+  let chipX = margin;
+  let chipY = margin + 78;
+  for (const chip of chipSpecs) {
+    const chipWidth = Math.max(150, 28 + chip.text.length * 7.1);
+    if (chipX + chipWidth > width - margin) {
+      chipX = margin;
+      chipY += 28;
+    }
+    pieces.push(
+      `<rect x="${chipX}" y="${chipY - 15}" width="${chipWidth}" height="24" rx="12" fill="${chip.over ? "#fff1f2" : "#f8fafc"}" stroke="${chip.over ? "#f43f5e" : "#cbd5e1"}" />`,
+    );
+    pieces.push(
+      `<text class="chip" x="${chipX + 12}" y="${chipY + 1}" fill="${chip.over ? "#9f1239" : "#334155"}">${escapeXml(chip.text)}</text>`,
+    );
+    chipX += chipWidth + 10;
+  }
+
+  let y = margin + topBlockHeight;
+  const startLabel = trendBuckets[0]?.label ?? "start";
+  const endLabel = trendBuckets[trendBuckets.length - 1]?.label ?? "now";
+
+  for (const groupName of groupNames) {
+    const metrics = metricsByGroup[groupName] ?? [];
+    if (metrics.length === 0) continue;
+    const counts = result.summary.groups[groupName];
+    pieces.push(`<text class="section" x="${margin}" y="${y}">${escapeXml(groupName)}</text>`);
+    pieces.push(
+      `<text class="section-meta" x="${margin + 170}" y="${y}">${escapeXml(`${counts.pass} pass · ${counts.over} over · ${counts.missing} missing`)}</text>`,
+    );
+    y += 16;
+
+    for (let index = 0; index < metrics.length; index += 1) {
+      const metric = metrics[index];
+      const cardRow = Math.floor(index / columns);
+      const cardCol = index % columns;
+      const cardX = margin + cardCol * (cardWidth + columnGap);
+      const cardY = y + 12 + cardRow * (cardHeight + rowGap);
+      const metricResult = result.metrics[metric];
+      const palette = statusPalette(metricResult.status);
+      const slo = SLO_THRESHOLDS[metric];
+      const titleText = truncateLabel(slo.label, 40);
+      const chartX = cardX + 16;
+      const chartY = cardY + 60;
+      const chartWidth = cardWidth - 32;
+      const chartHeight = 34;
+      const series = trendBuckets.map((bucket) => bucket.metrics[metric]?.p95 ?? null);
+      const latestValue = lastDefinedValue(series);
+      const maxSeriesValue = series.reduce((max, value) => {
+        if (value == null || !Number.isFinite(value)) return max;
+        return Math.max(max, value);
+      }, 0);
+      const chartMax = Math.max(1, maxSeriesValue, metricResult.p95, metricResult.slo_p95 ?? 0);
+      const thresholdY =
+        metricResult.slo_p95 == null
+          ? null
+          : chartY + chartHeight - ((metricResult.slo_p95 ?? 0) / chartMax) * chartHeight;
+      const sparkPathData = seriesPath(series, chartX, chartY, chartWidth, chartHeight, chartMax);
+
+      pieces.push(
+        `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="16" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="1.5" />`,
+      );
+      pieces.push(
+        `<text class="metric-title" x="${cardX + 16}" y="${cardY + 22}">${escapeXml(titleText)}</text>`,
+      );
+      pieces.push(
+        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">overall p95 ${escapeXml(fmtValue(metricResult.p95, metricResult.unit))} / slo ${escapeXml(fmtValue(metricResult.slo_p95 ?? 0, metricResult.unit))}${slo.lowerIsBad ? " · low bad" : ""}</text>`,
+      );
+      pieces.push(
+        `<text class="status" x="${cardX + cardWidth - 16}" y="${cardY + 22}" text-anchor="end" fill="${palette.text}">${metricResult.status === "over" ? "OVER" : "OK"}</text>`,
+      );
+      pieces.push(
+        `<text class="metric-meta" x="${cardX + cardWidth - 16}" y="${cardY + 40}" text-anchor="end">${metricResult.count.toLocaleString()} samples</text>`,
+      );
+      pieces.push(
+        `<line class="grid" x1="${chartX}" y1="${chartY + chartHeight}" x2="${chartX + chartWidth}" y2="${chartY + chartHeight}" />`,
+      );
+      if (thresholdY != null) {
+        pieces.push(
+          `<line class="threshold" x1="${chartX}" y1="${thresholdY.toFixed(1)}" x2="${chartX + chartWidth}" y2="${thresholdY.toFixed(1)}" />`,
+        );
+        pieces.push(
+          `<text class="axis" x="${chartX + chartWidth}" y="${(thresholdY - 4).toFixed(1)}" text-anchor="end">SLO ${escapeXml(fmtValue(metricResult.slo_p95 ?? 0, metricResult.unit))}</text>`,
+        );
+      }
+      if (sparkPathData) {
+        pieces.push(`<path class="spark" d="${sparkPathData}" stroke="${palette.line}" />`);
+      }
+      if (latestValue != null) {
+        const step = series.length > 1 ? chartWidth / (series.length - 1) : 0;
+        const latestIndex = series.reduce((found, value, index) => (value != null ? index : found), 0);
+        const latestX = chartX + step * latestIndex;
+        const latestY = chartY + chartHeight - (latestValue / chartMax) * chartHeight;
+        pieces.push(
+          `<circle cx="${latestX.toFixed(1)}" cy="${latestY.toFixed(1)}" r="4" fill="${palette.line}" stroke="#ffffff" stroke-width="1.5" />`,
+        );
+      }
+      pieces.push(
+        `<text class="axis" x="${chartX}" y="${cardY + 112}">${escapeXml(startLabel)}</text>`,
+      );
+      pieces.push(
+        `<text class="axis" x="${chartX + chartWidth}" y="${cardY + 112}" text-anchor="end">${escapeXml(endLabel)}</text>`,
+      );
+      pieces.push(
+        `<text class="axis" x="${cardX + cardWidth - 16}" y="${cardY + 58}" text-anchor="end">latest ${escapeXml(latestValue == null ? "—" : fmtValue(latestValue, metricResult.unit))}</text>`,
+      );
+    }
+
+    const rows = Math.ceil(metrics.length / columns);
+    y += 12 + rows * cardHeight + Math.max(0, rows - 1) * rowGap + 18;
+  }
+
+  pieces.push(`</svg>`);
+  return pieces.join("\n");
+}
+
+function writeSvgReport(svgPath: string, svg: string): string {
+  const resolvedPath = resolve(svgPath);
+  mkdirSync(dirname(resolvedPath), { recursive: true });
+  writeFileSync(resolvedPath, svg, "utf8");
+  return resolvedPath;
+}
+
 export function fmtValue(n: number, unit: string = "ms"): string {
   if (unit === "ms") {
     if (n >= 10_000) return `${(n / 1_000).toFixed(1)}s`;
@@ -1216,6 +1568,7 @@ interface ParsedArgs {
   dictation: boolean;
   fields: Set<string> | null;
   byTags: string[];
+  svgOut: string | undefined;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -1231,6 +1584,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     dictation: false,
     fields: null,
     byTags: [],
+    svgOut: undefined,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -1247,6 +1601,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--compact":
         result.compact = true;
+        break;
+      case "--svg-out":
+        result.svgOut = argv[++i];
         break;
       case "--wide":
         result.wide = true;
@@ -1314,6 +1671,7 @@ Options:
   --by <tags>           Breakdown tags (comma-separated). Example: engine,source,provider_id,model
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
+  --svg-out <path>      Write an app-viewable SVG trend dashboard to a file
   --fields <list>       Columns: p50,p95,p99,max,count,slo,status,tm99
   --gate                Exit non-zero on SLO violations
   --no-color            Disable ANSI colors
@@ -1356,18 +1714,40 @@ function main(): void {
     byTags: args.byTags,
   });
 
+  let writtenSvgPath: string | null = null;
+  if (args.svgOut) {
+    const svgMetrics = visibleSloEntries(args.dictation)
+      .map(([metric]) => metric)
+      .filter((metric) => (result.metrics[metric]?.count ?? 0) > 0);
+    const trendBuckets = buildTrendBuckets(data, svgMetrics, {
+      days: args.days,
+      dictationOnly: args.dictation,
+    });
+    const svg = buildTelemetryTrendSvg(result, trendBuckets, {
+      dictationOnly: args.dictation,
+      title: args.dictation ? "Oppi Dictation Telemetry Trend Review" : "Oppi Telemetry Trend Review",
+    });
+    writtenSvgPath = writeSvgReport(args.svgOut, svg);
+  }
+
   if (args.compact) {
     printCompact(result, args);
+    if (writtenSvgPath) console.error(`SVG report: ${writtenSvgPath}`);
     exitGate(result, args.gate);
     return;
   }
   if (args.json) {
     console.log(JSON.stringify(result, null, 2));
+    if (writtenSvgPath) console.error(`SVG report: ${writtenSvgPath}`);
     exitGate(result, args.gate);
     return;
   }
 
   printHuman(result, args);
+  if (writtenSvgPath) {
+    console.log();
+    console.log(`SVG report: ${writtenSvgPath}`);
+  }
   exitGate(result, args.gate);
 }
 
