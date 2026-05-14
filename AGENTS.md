@@ -1,6 +1,8 @@
 # Oppi — Agent Guide
 
-Oppi is a monorepo for the Apple clients and self-hosted server behind mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions. It is mobile-supervised agent infrastructure, not a generic chat app. It is purpose-built for supervising long-running agent work from a phone or Mac, so the Apple clients must keep those sessions observable, steerable, and safe.
+Oppi is a monorepo for the Apple clients and self-hosted server behind mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions.
+
+The Apple clients need to keep pi sessions observable, steerable, and safe from a phone or Mac.
 
 For simulator/device loops, release workflows, incident triage, telemetry, config checks, and other operational runbooks, load the `oppi-dev` skill.
 
