@@ -24,8 +24,8 @@ import {
 import type { ReviewCommentListFilters } from "./storage/review-comment-dao.js";
 import { ReviewCommentSqliteStore } from "./storage/review-comment-sqlite-store.js";
 import type {
-  WorkspaceSessionSnapshotListOptions,
-  WorkspaceSessionSnapshotListResult,
+  WorkspaceSessionSummarySnapshot,
+  WorkspaceStoppedTimeBucketSnapshot,
 } from "./storage/session-dao.js";
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
@@ -269,11 +269,48 @@ export class Storage {
     return this.sessionStore.listSessionsByWorkspace(workspaceId);
   }
 
-  listWorkspaceSessionSnapshots(
+  listAllWorkspaceSessionSnapshots(workspaceId: string): Session[] {
+    return this.sessionStore.listAllWorkspaceSessionSnapshots(workspaceId);
+  }
+
+  listRecentWorkspaceSessionSnapshots(
     workspaceId: string,
-    options?: WorkspaceSessionSnapshotListOptions,
-  ): WorkspaceSessionSnapshotListResult {
-    return this.sessionStore.listWorkspaceSessionSnapshots(workspaceId, options);
+    recentDays: number,
+    nowMs?: number,
+  ): Session[] {
+    return this.sessionStore.listRecentWorkspaceSessionSnapshots(workspaceId, recentDays, nowMs);
+  }
+
+  listWorkspaceTimeRangeSessionSnapshots(
+    workspaceId: string,
+    sinceMs: number,
+    untilMs: number,
+  ): Session[] {
+    return this.sessionStore.listWorkspaceTimeRangeSessionSnapshots(workspaceId, sinceMs, untilMs);
+  }
+
+  listStoppedWorkspaceTimeRangeSessionSnapshots(
+    workspaceId: string,
+    sinceMs: number,
+    untilMs: number,
+  ): Session[] {
+    return this.sessionStore.listStoppedWorkspaceTimeRangeSessionSnapshots(
+      workspaceId,
+      sinceMs,
+      untilMs,
+    );
+  }
+
+  listWorkspaceSessionSummarySnapshots(): WorkspaceSessionSummarySnapshot[] {
+    return this.sessionStore.listWorkspaceSessionSummarySnapshots();
+  }
+
+  listWorkspaceStoppedTimeBuckets(
+    workspaceId: string,
+    beforeMs: number,
+    nowMs?: number,
+  ): WorkspaceStoppedTimeBucketSnapshot[] {
+    return this.sessionStore.listWorkspaceStoppedTimeBuckets(workspaceId, beforeMs, nowMs);
   }
 
   deleteSession(sessionId: string): boolean {

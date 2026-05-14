@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const ROUTES = {
   wsSessionsList: /^\/workspaces\/([^/]+)\/sessions$/,
+  wsAttention: /^\/workspaces\/([^/]+)\/attention$/,
   wsSessionStop: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/,
   wsSessionResume: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
   wsSessionFork: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/,
@@ -23,8 +24,6 @@ const ROUTES = {
   wsReviewSelection: /^\/workspaces\/([^/]+)\/review\/selection$/,
   wsReviewSession: /^\/workspaces\/([^/]+)\/review\/session$/,
   wsGraph: /^\/workspaces\/([^/]+)\/graph$/,
-  wsWorkspaceStream: /^\/workspaces\/([^/]+)\/stream$/,
-  wsWorkspaceStreamEvents: /^\/workspaces\/([^/]+)\/stream\/events$/,
   permissionsPending: /^\/permissions\/pending$/,
   policyRules: /^\/policy\/rules$/,
   policyRuleDetail: /^\/policy\/rules\/([^/]+)$/,
@@ -37,6 +36,12 @@ const ROUTES = {
 describe("Workspace-scoped API routes", () => {
   it("matches GET /workspaces/:wid/sessions", () => {
     const m = "/workspaces/ws-abc/sessions".match(ROUTES.wsSessionsList);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-abc");
+  });
+
+  it("matches GET /workspaces/:wid/attention", () => {
+    const m = "/workspaces/ws-abc/attention".match(ROUTES.wsAttention);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-abc");
   });
@@ -143,18 +148,6 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches GET /workspaces/:wid/graph", () => {
     const m = "/workspaces/ws-1/graph".match(ROUTES.wsGraph);
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("ws-1");
-  });
-
-  it("matches workspace WS stream route", () => {
-    const m = "/workspaces/ws-1/stream".match(ROUTES.wsWorkspaceStream);
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("ws-1");
-  });
-
-  it("matches workspace stream events catch-up route", () => {
-    const m = "/workspaces/ws-1/stream/events".match(ROUTES.wsWorkspaceStreamEvents);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
   });

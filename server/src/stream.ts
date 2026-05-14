@@ -1,12 +1,11 @@
 /**
  * WebSocket stream transports.
  *
- * Split-stream server transports for workspace updates, focused session
- * commands/timeline, and per-session audio dictation.
+ * Split-stream server transports for focused session commands/timeline
+ * and per-session audio dictation.
  */
 
 import { WebSocket, type RawData } from "ws";
-import { EventRing } from "./event-ring.js";
 import type { SessionManager } from "./sessions.js";
 import { buildPermissionMessage, type GateServer, type PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
@@ -16,16 +15,6 @@ import type { DictationManager } from "./dictation-manager.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
-
-interface WorkspaceStreamState {
-  seq: number;
-  ring: EventRing;
-  liveConnections: Set<WorkspaceStreamLiveConnection>;
-}
-
-interface WorkspaceStreamLiveConnection {
-  send: (msg: ServerMessage) => void;
-}
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -59,7 +48,7 @@ function streamConnectedMessage(ctx: unknown, userName: string): ServerMessage {
   return {
     type: "stream_connected",
     userName,
-    asrAvailable: Boolean(streamContext.dictationManager),
+    serverDictationAvailable: Boolean(streamContext.dictationManager),
   };
 }
 
@@ -175,146 +164,7 @@ export function startServerPing(
   return () => clearInterval(timer);
 }
 
-// ─── Workspace Stream Mux ───
-
-export class WorkspaceStreamMux {
-  private readonly ringCapacity: number;
-  private readonly states = new Map<string, WorkspaceStreamState>();
-  private connectionSeq = 0;
-
-  constructor(
-    private ctx: Pick<
-      StreamContext,
-      "storage" | "metrics" | "trackConnection" | "untrackConnection"
-    >,
-    options?: { ringCapacity?: number },
-  ) {
-    this.ringCapacity = options?.ringCapacity ?? 2000;
-  }
-
-  private nextConnId(): string {
-    this.connectionSeq += 1;
-    return `workspace_stream_${this.connectionSeq}`;
-  }
-
-  private stateFor(workspaceId: string): WorkspaceStreamState {
-    let state = this.states.get(workspaceId);
-    if (!state) {
-      state = { seq: 0, ring: new EventRing(this.ringCapacity), liveConnections: new Set() };
-      this.states.set(workspaceId, state);
-    }
-    return state;
-  }
-
-  getWorkspaceStreamCatchUp(
-    workspaceId: string,
-    sinceSeq: number,
-  ): { events: ServerMessage[]; currentSeq: number; catchUpComplete: boolean } {
-    const state = this.stateFor(workspaceId);
-    const catchUpComplete = state.ring.canServe(sinceSeq);
-    const events = catchUpComplete ? state.ring.since(sinceSeq).map((entry) => entry.event) : [];
-    this.ctx.metrics?.record(
-      catchUpComplete ? "server.catchup_events" : "server.catchup_miss",
-      catchUpComplete ? events.length : 1,
-      {
-        ring: "workspace_stream",
-      },
-    );
-    return { events, currentSeq: state.seq || state.ring.currentSeq, catchUpComplete };
-  }
-
-  hasOpenConnections(workspaceId: string): boolean {
-    return this.stateFor(workspaceId).liveConnections.size > 0;
-  }
-
-  recordAndFanOutWorkspaceEvent(workspaceId: string, msg: ServerMessage): number {
-    const state = this.stateFor(workspaceId);
-    state.seq += 1;
-    const event = { ...msg, workspaceId, streamSeq: state.seq } as ServerMessage;
-    state.ring.push({ seq: state.seq, event, timestamp: Date.now() });
-
-    let delivered = 0;
-    for (const connection of state.liveConnections) {
-      connection.send(event);
-      delivered += 1;
-    }
-    this.ctx.metrics?.record("server.user_stream_fanout", delivered, {
-      type: msg.type,
-      lane: "workspace",
-    });
-    return state.seq;
-  }
-
-  handleWebSocket(workspaceId: string, ws: WebSocket, upgradeReceivedAt?: number): void {
-    const workspace = this.ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      ws.close(1008, "Workspace not found");
-      return;
-    }
-
-    const connectedAt = Date.now();
-    const metrics = this.ctx.metrics;
-    const connId = this.nextConnId();
-    if (upgradeReceivedAt && metrics) {
-      metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
-        path: "workspace_stream",
-      });
-    }
-
-    log.info("ws.workspace_stream_connected", {
-      connId,
-      workspaceId,
-      path: `/workspaces/${workspaceId}/stream`,
-    });
-    this.ctx.trackConnection(ws, { userBroadcast: false });
-    const stopPing = startServerPing(
-      ws,
-      `/workspaces/${workspaceId}/stream`,
-      PING_INTERVAL_MS,
-      metrics,
-      connId,
-    );
-    const state = this.stateFor(workspaceId);
-    let msgSent = 0;
-    const send = (msg: ServerMessage): void => {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      msgSent += 1;
-      ws.send(JSON.stringify(msg));
-      metrics?.record("server.ws_message_sent", 1, {
-        type: msg.type,
-        level: "workspace",
-        path: "workspace_stream",
-      });
-    };
-    const liveConnection: WorkspaceStreamLiveConnection = { send };
-    state.liveConnections.add(liveConnection);
-    send(streamConnectedMessage(this.ctx, this.ctx.storage.getOwnerName()));
-
-    ws.on("message", () => {
-      metrics?.record("server.ws_message_received", 1, {
-        type: "unexpected_client_message",
-        path: "workspace_stream",
-      });
-      send({ type: "error", error: "Workspace stream is server-to-client only" });
-    });
-    ws.on("close", (code) => {
-      state.liveConnections.delete(liveConnection);
-      stopPing();
-      this.ctx.untrackConnection(ws);
-      metrics?.record("server.ws_session_duration_ms", Date.now() - connectedAt, {
-        path: "workspace_stream",
-      });
-      metrics?.record("server.ws_messages_sent", msgSent, { path: "workspace_stream" });
-      metrics?.record("server.ws_close_code", 1, { code: String(code), path: "workspace_stream" });
-      log.info("ws.workspace_stream_closed", { connId, workspaceId, code, msgSent });
-    });
-    ws.on("error", (err) => {
-      log.warn("ws.workspace_stream_error", { connId, workspaceId, error: safeErrorMessage(err) });
-    });
-  }
-}
-
-// ─── Session Audio Stream Mux ───
+// ─── Bound Session Stream Mux ───
 
 export class BoundSessionStreamMux {
   private connectionSeq = 0;
@@ -607,9 +457,7 @@ export class BoundSessionStreamMux {
               return;
             }
 
-            const msg = parsed.message as
-              | ClientMessage
-              | { type: "subscribe" | "unsubscribe"; requestId?: string };
+            const msg = parsed.message;
             metrics?.record("server.ws_message_received", 1, {
               type: msg.type,
               path: "bound_session_stream",
@@ -624,18 +472,6 @@ export class BoundSessionStreamMux {
             });
 
             switch (msg.type) {
-              case "subscribe":
-              case "unsubscribe":
-                send({
-                  type: "command_result",
-                  command: msg.type,
-                  requestId: msg.requestId,
-                  success: false,
-                  error: `${msg.type} is not supported on bound session streams`,
-                  sessionId,
-                });
-                return;
-
               case "dictation_start":
               case "dictation_stop":
               case "dictation_cancel":
@@ -743,6 +579,8 @@ export class BoundSessionStreamMux {
   }
 }
 
+// ─── Session Audio Stream Mux ───
+
 export class SessionAudioStreamMux {
   private connectionSeq = 0;
 
@@ -785,7 +623,7 @@ export class SessionAudioStreamMux {
       workspaceId,
       sessionId,
       path: `/workspaces/${workspaceId}/sessions/${sessionId}/audio/stream`,
-      asrAvailable: Boolean(dictationManager),
+      serverDictationAvailable: Boolean(dictationManager),
     });
 
     this.ctx.trackConnection(ws, { userBroadcast: false });

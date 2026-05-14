@@ -230,14 +230,16 @@ describe("session sqlite store", () => {
       }
 
       sqliteStore = new SessionSqliteStore(dataDir);
-      const result = sqliteStore.listWorkspaceSessionSnapshots("ws-1");
+      const sessions = sqliteStore.listWorkspaceTimeRangeSessionSnapshots(
+        "ws-1",
+        0,
+        Number.MAX_SAFE_INTEGER,
+      );
 
-      expect(result.totalCount).toBe(1);
-      expect(result.remainingCount).toBe(0);
-      expect(result.sessions[0]?.id).toBe("sess-projected");
-      expect(result.sessions[0]?.lastAgentReplyAt).toBe(11);
-      expect(result.sessions[0]?.contextTokens).toBe(123);
-      expect(result.sessions[0]?.changeStats?.changedFiles).toEqual(["src/a.ts"]);
+      expect(sessions[0]?.id).toBe("sess-projected");
+      expect(sessions[0]?.lastAgentReplyAt).toBe(11);
+      expect(sessions[0]?.contextTokens).toBe(123);
+      expect(sessions[0]?.changeStats?.changedFiles).toEqual(["src/a.ts"]);
     } finally {
       sqliteStore?.close();
       rmSync(dataDir, { recursive: true, force: true });
@@ -272,37 +274,9 @@ describe("workspace session snapshots", () => {
       storage.saveSession(baseSession("old-stopped", "ws-1", old));
       storage.saveSession(baseSession("other-workspace", "ws-2", recent));
 
-      const result = storage.listWorkspaceSessionSnapshots("ws-1", { recentDays: 3, nowMs: now });
+      const sessions = storage.listRecentWorkspaceSessionSnapshots("ws-1", 3, now);
 
-      expect(result.totalCount).toBe(3);
-      expect(result.filteredCount).toBe(2);
-      expect(result.sessions.map((session) => session.id)).toEqual(["recent-stopped", "old-busy"]);
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("uses deterministic stopped pagination cursors", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-snapshot-page-"));
-
-    try {
-      const storage = new Storage(dataDir);
-      storage.saveSession(baseSession("a", "ws-1", 300));
-      storage.saveSession(baseSession("b", "ws-1", 200));
-      storage.saveSession(baseSession("c", "ws-1", 200));
-      storage.saveSession(baseSession("d", "ws-1", 100));
-
-      const result = storage.listWorkspaceSessionSnapshots("ws-1", {
-        status: "stopped",
-        beforeLastActivity: 200,
-        beforeSessionId: "b",
-        limit: 1,
-      });
-
-      expect(result.totalCount).toBe(4);
-      expect(result.filteredCount).toBe(2);
-      expect(result.remainingCount).toBe(1);
-      expect(result.sessions.map((session) => session.id)).toEqual(["c"]);
+      expect(sessions.map((session) => session.id)).toEqual(["recent-stopped", "old-busy"]);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -322,9 +296,141 @@ describe("workspace session snapshots", () => {
         parentSessionId: "parent",
       });
 
-      const result = storage.listWorkspaceSessionSnapshots("ws-1", { recentDays: 3, nowMs: now });
+      const sessions = storage.listRecentWorkspaceSessionSnapshots("ws-1", 3, now);
 
-      expect(result.sessions.map((session) => session.id)).toEqual(["child", "parent"]);
+      expect(sessions.map((session) => session.id)).toEqual(["child", "parent"]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("filters stopped sessions by explicit time range while keeping active sessions", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-snapshot-range-"));
+
+    try {
+      const now = new Date(2026, 4, 13, 12, 0, 0).getTime();
+      const rangeSince = now - 3 * 86_400_000;
+      const rangeUntil = now + 1_000;
+      const storage = new Storage(dataDir);
+      storage.saveSession({
+        ...baseSession("old-busy", "ws-1", now - 20 * 86_400_000),
+        status: "busy",
+      });
+      storage.saveSession(baseSession("recent-stopped", "ws-1", now - 60_000));
+      storage.saveSession(baseSession("old-stopped", "ws-1", now - 10 * 86_400_000));
+
+      const sessions = storage.listWorkspaceTimeRangeSessionSnapshots(
+        "ws-1",
+        rangeSince,
+        rangeUntil,
+      );
+
+      expect(sessions.map((session) => session.id)).toEqual(["recent-stopped", "old-busy"]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("workspace session summary snapshots", () => {
+  function summarySession(
+    id: string,
+    workspaceId: string,
+    status: Session["status"],
+    lastActivity: number,
+    parentSessionId?: string,
+  ): Session {
+    return {
+      id,
+      workspaceId,
+      status,
+      createdAt: lastActivity,
+      lastActivity,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      ...(parentSessionId ? { parentSessionId } : {}),
+    };
+  }
+
+  it("counts only root sessions while preserving latest child activity", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-summary-"));
+
+    try {
+      const storage = new Storage(dataDir);
+      storage.saveSession(summarySession("root-stopped", "ws-1", "stopped", 100));
+      storage.saveSession(summarySession("child-error", "ws-1", "error", 500, "root-stopped"));
+      storage.saveSession(summarySession("root-ready", "ws-1", "ready", 300));
+
+      const summaries = storage.listWorkspaceSessionSummarySnapshots();
+      expect(summaries).toEqual([
+        {
+          workspaceId: "ws-1",
+          activeCount: 1,
+          stoppedCount: 1,
+          hasErrorRoot: false,
+          latestActivity: 500,
+        },
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags root error sessions in summaries", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-summary-error-"));
+
+    try {
+      const storage = new Storage(dataDir);
+      storage.saveSession(summarySession("root-error", "ws-1", "error", 200));
+      storage.saveSession(summarySession("other-root-stopped", "ws-1", "stopped", 100));
+
+      const summaries = storage.listWorkspaceSessionSummarySnapshots();
+      expect(summaries).toEqual([
+        {
+          workspaceId: "ws-1",
+          activeCount: 1,
+          stoppedCount: 1,
+          hasErrorRoot: true,
+          latestActivity: 200,
+        },
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("workspace stopped time buckets", () => {
+  function bucketSession(id: string, workspaceId: string, lastActivity: number): Session {
+    return {
+      id,
+      workspaceId,
+      status: "stopped",
+      createdAt: lastActivity,
+      lastActivity,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+  }
+
+  it("groups older stopped sessions into day and month buckets", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-buckets-"));
+
+    try {
+      const now = new Date(2026, 4, 13, 12, 0, 0).getTime();
+      const storage = new Storage(dataDir);
+      storage.saveSession(bucketSession("recent-day", "ws-1", now - 10 * 86_400_000));
+      storage.saveSession(bucketSession("old-month-a", "ws-1", now - 60 * 86_400_000));
+      storage.saveSession(bucketSession("old-month-b", "ws-1", now - 65 * 86_400_000));
+
+      const buckets = storage.listWorkspaceStoppedTimeBuckets("ws-1", now - 3 * 86_400_000, now);
+
+      expect(buckets.map((bucket) => [bucket.bucketKind, bucket.itemCount])).toEqual([
+        ["day", 1],
+        ["month", 2],
+      ]);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

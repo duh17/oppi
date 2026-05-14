@@ -461,7 +461,7 @@ final class WebSocketClient {
 
                     let transportPath = self?.preferredEndpoint?.transportPath ?? .paired
                     let inboundMeta = InboundMeta(
-                        seq: streamMessage.effectiveSeq,
+                        seq: streamMessage.seq,
                         currentSeq: streamMessage.currentSeq,
                         receivedAtMs: Date.nowMs(),
                         transportPath: transportPath
@@ -588,12 +588,6 @@ final class WebSocketClient {
                 self.openStreamWebSocket(continuation: cont)
             }
         }
-    }
-
-    func consumeInboundMeta(sessionId _: String) -> InboundMeta? {
-        // Metadata now travels in-band on StreamFrameEvent / SessionStreamEvent.
-        // Kept as a compatibility seam for older tests.
-        nil
     }
 
     /// Reconnect delay curve tuned for mobile networking:

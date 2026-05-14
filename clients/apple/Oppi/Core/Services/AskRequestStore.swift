@@ -50,6 +50,37 @@ final class AskRequestStore {
         pending[sessionId] != nil
     }
 
+    /// Apply an authoritative workspace-scoped HTTP attention snapshot.
+    ///
+    /// Returns session IDs whose pending ask was removed.
+    @discardableResult
+    func applyWorkspaceSnapshot(
+        workspaceId: String,
+        asks: [AskRequest],
+        workspaceSessionIds: Set<String>
+    ) -> [String] {
+        let incomingSessionIds = Set(asks.map(\.sessionId))
+        var dict = pending
+        let removedSessionIds = dict.values
+            .filter { ask in
+                ask.workspaceId == workspaceId ||
+                    (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
+            }
+            .filter { !incomingSessionIds.contains($0.sessionId) }
+            .map(\.sessionId)
+
+        for sessionId in removedSessionIds {
+            dict.removeValue(forKey: sessionId)
+        }
+
+        for ask in asks {
+            dict[ask.sessionId] = ask
+        }
+
+        pending = dict
+        return removedSessionIds
+    }
+
     // MARK: - Server switching
 
     /// Switch the active server partition.

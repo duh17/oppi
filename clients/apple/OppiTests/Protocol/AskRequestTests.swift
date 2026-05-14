@@ -348,8 +348,8 @@ struct AskRequestTests {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("active")
 
-        let (_, continuation) = AsyncStream<ServerMessage>.makeStream()
-        conn.sessionContinuations["s2"] = continuation
+        let (_, continuation) = AsyncStream<SessionStreamEvent>.makeStream()
+        conn.sessionEventContinuations["s2"] = continuation
 
         let request = ExtensionUIRequest(
             id: "ask-other",
@@ -363,8 +363,7 @@ struct AskRequestTests {
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s2",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .extensionUIRequest(request)
         ))
@@ -396,8 +395,7 @@ struct AskRequestTests {
 
             conn.routeStreamMessage(StreamMessage(
                 sessionId: "s2",
-                streamSeq: 1,
-                seq: nil,
+                seq: 1,
                 currentSeq: nil,
                 message: message
             ))
@@ -427,8 +425,7 @@ struct AskRequestTests {
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s2",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .state(session: makeTestSession(id: "s2", status: .ready))
         ))

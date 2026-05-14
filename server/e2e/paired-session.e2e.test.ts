@@ -4,7 +4,7 @@
  * Exercises the full session lifecycle for an already-paired device:
  *   1. Pre-paired device creates a workspace
  *   2. Creates a session with a local model
- *   3. Opens split workspace/session WebSockets
+ *   3. Opens the split session WebSocket
  *   4. Sends a prompt, auto-approves permissions on the session stream
  *   5. Verifies assistant response arrives (text_delta + agent_end)
  *   6. Sends a prompt requiring tool use (bash)
@@ -18,10 +18,8 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
-  openWorkspaceStream,
   openSessionStream,
   closeStream,
-  waitForEvent,
   sendPromptAndWait,
   autoApprovePermissions,
   restartServerPreservingData,
@@ -144,46 +142,35 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const sessionList = sessions.json?.sessions as { id: string }[];
     expect(sessionList.some((session) => session.id === sessionId)).toBe(true);
 
-    const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
-    await closeStream(workspaceStream);
-
     const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
     await closeStream(sessionStream);
   }, 120_000);
 
-  // ── 3. Split stream lanes ──
+  // ── 3. HTTP workspace list + split session lane ──
 
-  it("opens workspace and bound session streams", async () => {
+  it("uses HTTP session snapshots and opens the bound session stream", async () => {
     if (!lmsReady()) return;
 
-    const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
-    const projectionStartIndex = workspaceStream.events.length;
     const projected = await api("POST", `/workspaces/${workspaceId}/sessions`, deviceToken, {
       model: inject("e2eModel"),
     });
     expect(projected.status).toBe(201);
     const projectedSessionId = (projected.json!.session as Record<string, unknown>).id as string;
 
+    const listRes = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
+    expect(listRes.status).toBe(200);
+    const sessions = (listRes.json?.sessions ?? []) as { id: string }[];
+    expect(sessions.some((session) => session.id === projectedSessionId)).toBe(true);
+
     const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
 
     try {
-      expect(workspaceStream.events.some((e) => e.type === "stream_connected")).toBe(true);
-      await waitForEvent(
-        workspaceStream,
-        (e) =>
-          e.direction === "in" &&
-          e.type === "session_projection" &&
-          e.sessionId === projectedSessionId,
-        "workspace session_projection event",
-        { startIndex: projectionStartIndex, timeoutMs: 30_000 },
-      );
       const connected = sessionStream.events.find(
         (e) => e.type === "connected" && e.sessionId === sessionId,
       );
       expect(connected).toBeTruthy();
     } finally {
       await closeStream(sessionStream);
-      await closeStream(workspaceStream);
     }
   });
 

@@ -4536,7 +4536,7 @@
     },
     {
       "title": "Split Stream Server Lanes",
-      "description": "Release preflight: confirm split workspace/session/audio lanes have traffic and no untagged WebSocket lane is carrying the client flow.",
+      "description": "Release preflight: confirm split session/audio lanes have traffic and no untagged WebSocket lane is carrying the client flow.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",

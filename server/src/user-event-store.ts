@@ -47,10 +47,10 @@ export class UserEventStore {
   }
 
   recordEvent(sessionId: string, msg: ServerMessage): number {
-    const streamSeq = ++this.seq;
-    const event: ServerMessage = { ...msg, sessionId, streamSeq };
-    this.eventRing().push({ seq: streamSeq, event, timestamp: Date.now() });
+    const seq = ++this.seq;
+    const event: ServerMessage = { ...msg, sessionId };
+    this.eventRing().push({ seq, event, timestamp: Date.now() });
     this.metrics?.record("server.user_stream_event", 1, { type: msg.type });
-    return streamSeq;
+    return seq;
   }
 }

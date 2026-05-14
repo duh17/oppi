@@ -7,7 +7,7 @@ final class VoiceInputRouteResolver {
         mode: VoiceInputManager.EngineMode,
         fallback: VoiceInputManager.TranscriptionEngine,
         serverCredentials: ServerCredentials? = nil,
-        asrAvailable: Bool = false
+        serverDictationAvailable: Bool = false
     ) async -> VoiceInputManager.TranscriptionEngine {
         switch mode {
         case .onDevice:
@@ -18,7 +18,7 @@ final class VoiceInputRouteResolver {
             // Legacy path: prefer server dictation whenever a server is in play.
             // The settings UI no longer exposes Auto because dictation routing
             // should be explicit, but stale preferences may still exist.
-            if serverCredentials != nil || asrAvailable {
+            if serverCredentials != nil || serverDictationAvailable {
                 return .serverDictation
             }
             return fallback

@@ -48,7 +48,7 @@ struct ScreenAwakeIntegrationTests {
 
     /// Convenience wrapper: create a StreamMessage for cross-session tests.
     func streamMsg(sessionId: String, message: ServerMessage) -> StreamMessage {
-        StreamMessage(sessionId: sessionId, streamSeq: nil, seq: nil, currentSeq: nil, message: message)
+        StreamMessage(sessionId: sessionId, seq: nil, currentSeq: nil, message: message)
     }
 
     // MARK: - Active-session: agentStart / agentEnd

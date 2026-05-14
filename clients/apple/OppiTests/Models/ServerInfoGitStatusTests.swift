@@ -88,10 +88,8 @@ struct ServerInfoTests {
           "piVersion": "0.7.1",
           "configVersion": 5,
           "capabilities": {
-            "workspaceStream": { "version": 1 },
             "sessionStream": { "version": 1 },
-            "sessionAudioStream": { "version": 1 },
-            "sessionProjection": { "version": 1 }
+            "sessionAudioStream": { "version": 1 }
           },
           "stats": {
             "workspaceCount": 3,
@@ -104,19 +102,15 @@ struct ServerInfoTests {
         """.utf8)
 
         let decoded = try JSONDecoder().decode(ServerInfo.self, from: json)
-        #expect(decoded.capabilities?.workspaceStream?.version == 1)
         #expect(decoded.capabilities?.sessionStream?.version == 1)
         #expect(decoded.capabilities?.sessionAudioStream?.version == 1)
-        #expect(decoded.capabilities?.sessionProjection?.version == 1)
         #expect(decoded.capabilities?.hasRequiredSplitStreamCapabilities == true)
     }
 
     @Test func requiredSplitStreamCapabilitiesIgnoreOptionalAudio() {
         let capabilities = ServerInfo.Capabilities(
-            workspaceStream: .init(version: 1),
             sessionStream: .init(version: 1),
-            sessionAudioStream: nil,
-            sessionProjection: .init(version: 1)
+            sessionAudioStream: nil
         )
 
         #expect(capabilities.hasRequiredSplitStreamCapabilities)
@@ -125,21 +119,16 @@ struct ServerInfoTests {
 
     @Test func requiredSplitStreamCapabilitiesReportMissingServerUpdatePieces() {
         let capabilities = ServerInfo.Capabilities(
-            workspaceStream: .init(version: 1),
             sessionStream: nil,
-            sessionAudioStream: .init(version: 1),
-            sessionProjection: nil
+            sessionAudioStream: .init(version: 1)
         )
 
         #expect(capabilities.missingRequiredSplitStreamCapabilities == [
             "sessionStream",
-            "sessionProjection",
         ])
         #expect(!capabilities.hasRequiredSplitStreamCapabilities)
         #expect(ServerInfo.Capabilities.missingRequiredSplitStreamCapabilities(in: nil) == [
-            "workspaceStream",
             "sessionStream",
-            "sessionProjection",
         ])
     }
 

@@ -1878,7 +1878,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value END), 1) AS untagged_ws,\n  ROUND(AVG(CASE WHEN tag_path = 'workspace_stream' THEN value END), 1) AS workspace_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'bound_session_stream' THEN value END), 1) AS bound_session_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'session_audio_stream' THEN value END), 1) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_handshake_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value END), 1) AS untagged_ws,\n  ROUND(AVG(CASE WHEN tag_path = 'bound_session_stream' THEN value END), 1) AS bound_session_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'session_audio_stream' THEN value END), 1) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_handshake_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -1928,7 +1928,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value ELSE 0 END) AS untagged_ws,\n  SUM(CASE WHEN tag_path = 'workspace_stream' THEN value ELSE 0 END) AS workspace_stream,\n  SUM(CASE WHEN tag_path = 'bound_session_stream' THEN value ELSE 0 END) AS bound_session_stream,\n  SUM(CASE WHEN tag_path = 'session_audio_stream' THEN value ELSE 0 END) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value ELSE 0 END) AS untagged_ws,\n  SUM(CASE WHEN tag_path = 'bound_session_stream' THEN value ELSE 0 END) AS bound_session_stream,\n  SUM(CASE WHEN tag_path = 'session_audio_stream' THEN value ELSE 0 END) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -2015,7 +2015,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'workspace_stream' THEN value ELSE 0 END) AS workspace_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'workspace_stream' THEN value ELSE 0 END) AS workspace_misses,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_misses,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'user_stream' THEN value ELSE 0 END) AS legacy_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'user_stream' THEN value ELSE 0 END) AS legacy_misses\nFROM server_ops_metric_samples\nWHERE metric IN ('server.catchup_events', 'server.catchup_miss')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_misses,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'user_stream' THEN value ELSE 0 END) AS legacy_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'user_stream' THEN value ELSE 0 END) AS legacy_misses\nFROM server_ops_metric_samples\nWHERE metric IN ('server.catchup_events', 'server.catchup_miss')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }

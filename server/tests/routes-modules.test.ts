@@ -108,44 +108,6 @@ describe("routes modules", () => {
   });
 
   describe("streaming module", () => {
-    it("handles GET /workspaces/:id/stream/events in isolation", async () => {
-      const ctx = {
-        storage: {
-          getWorkspace: vi.fn(() => ({ id: "w1" })),
-        },
-        workspaceStreamMux: {
-          getWorkspaceStreamCatchUp: vi.fn(() => ({
-            events: [{ type: "session_projection", sessionId: "s1", workspaceId: "w1" }],
-            currentSeq: 12,
-            catchUpComplete: true,
-          })),
-        },
-      } as unknown as RouteContext;
-
-      const dispatch = createStreamingRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
-
-      const handled = await dispatch({
-        method: "GET",
-        path: "/workspaces/w1/stream/events",
-        url: new URL("http://localhost/workspaces/w1/stream/events?since=4"),
-        req: {} as never,
-        res: res as never,
-      });
-
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
-
-      const body = JSON.parse(res.body) as {
-        currentSeq: number;
-        catchUpComplete: boolean;
-        events: unknown[];
-      };
-      expect(body.currentSeq).toBe(12);
-      expect(body.catchUpComplete).toBe(true);
-      expect(body.events).toHaveLength(1);
-    });
-
     it("validates /permissions/pending filters", async () => {
       const ctx = {
         gate: {
@@ -830,13 +792,9 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listWorkspaceSessionSnapshots: vi.fn(() => ({
-            sessions: [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }],
-            totalCount: 1,
-            filteredCount: 1,
-            remainingCount: 0,
-            appliedLimit: 0,
-          })),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => [
+            { id: "s1", workspaceId: "ws-1", name: "Session 1" },
+          ]),
         },
         sessions: {
           getActiveSessionIds: vi.fn(() => new Set()),
@@ -861,12 +819,8 @@ describe("routes modules", () => {
 
       const body = JSON.parse(res.body) as {
         sessions: unknown[];
-        workspace: unknown;
-        totalCount: number;
       };
       expect(body.sessions).toHaveLength(1);
-      expect(body.workspace).toBeDefined();
-      expect(body.totalCount).toBe(1);
     });
 
     it("merges active in-memory sessions into workspace snapshots", async () => {
@@ -879,13 +833,7 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listWorkspaceSessionSnapshots: vi.fn(() => ({
-            sessions: [],
-            totalCount: 0,
-            filteredCount: 0,
-            remainingCount: 0,
-            appliedLimit: 0,
-          })),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => []),
         },
         sessions: {
           getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
@@ -1246,13 +1194,6 @@ describe("routes modules", () => {
                 tags: { reason: "history_applied", cache: "1" },
               },
               {
-                ts: generatedAt + 21,
-                metric: "chat.subscribe_gate_ms",
-                value: 88,
-                unit: "ms",
-                tags: { transport: "paired", status: "ok" },
-              },
-              {
                 ts: generatedAt + 22,
                 metric: "chat.queue_sync_ms",
                 value: 52,
@@ -1354,20 +1295,19 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; value: number }>;
         };
         expect(record.appVersion).toBe("1.0.0");
-        expect(record.sampleCount).toBe(14);
+        expect(record.sampleCount).toBe(13);
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
-        expect(record.samples[3]?.metric).toBe("chat.subscribe_gate_ms");
-        expect(record.samples[4]?.metric).toBe("chat.queue_sync_ms");
-        expect(record.samples[5]?.metric).toBe("chat.session_message_count");
-        expect(record.samples[6]?.metric).toBe("chat.session_input_tokens");
-        expect(record.samples[7]?.metric).toBe("chat.session_output_tokens");
-        expect(record.samples[8]?.metric).toBe("chat.session_mutating_tool_calls");
-        expect(record.samples[9]?.metric).toBe("chat.session_files_changed");
-        expect(record.samples[10]?.metric).toBe("chat.session_added_lines");
-        expect(record.samples[11]?.metric).toBe("chat.session_removed_lines");
-        expect(record.samples[12]?.metric).toBe("chat.session_context_tokens");
-        expect(record.samples[13]?.metric).toBe("chat.session_context_window");
+        expect(record.samples[3]?.metric).toBe("chat.queue_sync_ms");
+        expect(record.samples[4]?.metric).toBe("chat.session_message_count");
+        expect(record.samples[5]?.metric).toBe("chat.session_input_tokens");
+        expect(record.samples[6]?.metric).toBe("chat.session_output_tokens");
+        expect(record.samples[7]?.metric).toBe("chat.session_mutating_tool_calls");
+        expect(record.samples[8]?.metric).toBe("chat.session_files_changed");
+        expect(record.samples[9]?.metric).toBe("chat.session_added_lines");
+        expect(record.samples[10]?.metric).toBe("chat.session_removed_lines");
+        expect(record.samples[11]?.metric).toBe("chat.session_context_tokens");
+        expect(record.samples[12]?.metric).toBe("chat.session_context_window");
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }

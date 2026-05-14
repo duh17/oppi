@@ -70,7 +70,7 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.user_stream_fanout": {
     unit: "count",
-    description: "Live notification/workspace-stream fanout count. Tagged by type.",
+    description: "Live notification fanout count. Tagged by type.",
   },
 
   // ── P1: Session Lifecycle ──
@@ -158,8 +158,7 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.catchup_events": {
     unit: "count",
-    description:
-      "Events replayed during catch-up. Tagged by ring (session, user_stream, workspace_stream).",
+    description: "Events replayed during catch-up. Tagged by ring (session, user_stream).",
   },
   "server.catchup_miss": {
     unit: "count",

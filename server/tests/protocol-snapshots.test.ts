@@ -82,6 +82,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     stream_connected: {
       type: "stream_connected",
       userName: "my-server",
+      serverDictationAvailable: true,
     },
     state: {
       type: "state",
@@ -89,10 +90,6 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     },
     session_summary: {
       type: "session_summary",
-      summary: TEST_SESSION_SUMMARY,
-    },
-    session_projection: {
-      type: "session_projection",
       summary: TEST_SESSION_SUMMARY,
     },
     session_ended: {
@@ -137,6 +134,18 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     // Streaming
     text_delta: { type: "text_delta", delta: "Hello, " },
     thinking_delta: { type: "thinking_delta", delta: "Let me analyze..." },
+    audio_stream: {
+      type: "audio_stream",
+      kind: "audio-stream",
+      id: "audio-001",
+      event: "chunk",
+      mimeType: "audio/pcm; codecs=s16le",
+      sampleRate: 24000,
+      channels: 1,
+      chunkIndex: 0,
+      audioBase64: "AAAA",
+      delivery: "directSpeak",
+    },
 
     // Tool execution
     tool_start: {
@@ -192,6 +201,32 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
         { text: "✓ Saved", style: "success" },
         { text: " → 2026-02-18.md", style: "muted" },
       ],
+    },
+
+    // Message queue
+    queue_state: {
+      type: "queue_state",
+      queue: {
+        version: 3,
+        steering: [
+          {
+            id: "queue-steer-1",
+            message: "Adjust the approach",
+            createdAt: 1739750470000,
+          },
+        ],
+        followUp: [],
+      },
+    },
+    queue_item_started: {
+      type: "queue_item_started",
+      kind: "follow_up",
+      item: {
+        id: "queue-follow-1",
+        message: "Run the tests next",
+        createdAt: 1739750480000,
+      },
+      queueVersion: 4,
     },
 
     // Turn delivery
@@ -252,6 +287,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       type: "permission_request",
       id: "perm-001",
       sessionId: "test-session-1",
+      workspaceId: "ws-1",
       tool: "bash",
       input: { command: "rm -rf node_modules" },
       displaySummary: "Run: rm -rf node_modules",
@@ -327,6 +363,31 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
         ],
       },
     },
+
+    // Dictation
+    dictation_ready: {
+      type: "dictation_ready",
+      sttProvider: "openai-compatible",
+      sttModel: "gpt-4o-transcribe",
+    },
+    dictation_result: {
+      type: "dictation_result",
+      text: "hello wor",
+      committedText: "hello ",
+      activeText: "wor",
+      snap: false,
+    },
+    dictation_final: {
+      type: "dictation_final",
+      text: "hello world",
+      committedText: "hello world",
+      activeText: "",
+    },
+    dictation_error: {
+      type: "dictation_error",
+      error: "STT backend unavailable",
+      fatal: true,
+    },
   };
 }
 
@@ -365,7 +426,6 @@ describe("protocol snapshots", () => {
       "stream_connected",
       "state",
       "session_summary",
-      "session_projection",
       "session_ended",
       "session_deleted",
       "stop_requested",
@@ -377,9 +437,12 @@ describe("protocol snapshots", () => {
       "message_end",
       "text_delta",
       "thinking_delta",
+      "audio_stream",
       "tool_start",
       "tool_output",
       "tool_end",
+      "queue_state",
+      "queue_item_started",
       "turn_ack",
       "command_result",
       "compaction_start",
@@ -393,6 +456,10 @@ describe("protocol snapshots", () => {
       "extension_ui_request",
       "extension_ui_notification",
       "git_status",
+      "dictation_ready",
+      "dictation_result",
+      "dictation_final",
+      "dictation_error",
     ];
 
     const actualTypes = new Set(Object.values(messages).map((m) => m.type));

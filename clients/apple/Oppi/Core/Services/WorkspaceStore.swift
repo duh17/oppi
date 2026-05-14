@@ -77,6 +77,9 @@ final class WorkspaceStore {
     /// Skills keyed by server ID (fingerprint).
     var skillsByServer: [String: [SkillInfo]] = [:]
 
+    /// SQLite-backed workspace home summaries keyed by server ID then workspace ID.
+    var workspaceSummariesByServer: [String: [String: WorkspaceListSummary]] = [:]
+
     /// Per-server sync freshness tracking.
     var serverFreshness: [String: ServerSyncState] = [:]
 
@@ -98,6 +101,12 @@ final class WorkspaceStore {
     var skills: [SkillInfo] {
         get { skillsByServer[activeKey] ?? [] }
         set { skillsByServer[activeKey] = newValue }
+    }
+
+    /// Active server workspace home summaries keyed by workspace ID.
+    var workspaceSummaries: [String: WorkspaceListSummary] {
+        get { workspaceSummariesByServer[activeKey] ?? [:] }
+        set { workspaceSummariesByServer[activeKey] = newValue }
     }
 
     /// Active server loaded state.
@@ -145,6 +154,10 @@ final class WorkspaceStore {
         serverOrder.flatMap { workspacesByServer[$0] ?? [] }
     }
 
+    func workspaceSummaries(forServer serverId: String) -> [String: WorkspaceListSummary] {
+        workspaceSummariesByServer[serverId] ?? [:]
+    }
+
     // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// All skills flattened from all servers (deduplicated by name).
     var allSkills: [SkillInfo] {
@@ -178,6 +191,9 @@ final class WorkspaceStore {
         }
         if skillsByServer[serverId] == nil {
             skillsByServer[serverId] = []
+        }
+        if workspaceSummariesByServer[serverId] == nil {
+            workspaceSummariesByServer[serverId] = [:]
         }
         if serverFreshness[serverId] == nil {
             serverFreshness[serverId] = ServerSyncState()
@@ -263,6 +279,7 @@ final class WorkspaceStore {
     func removeServer(_ serverId: String) {
         workspacesByServer.removeValue(forKey: serverId)
         skillsByServer.removeValue(forKey: serverId)
+        workspaceSummariesByServer.removeValue(forKey: serverId)
         serverFreshness.removeValue(forKey: serverId)
         serverLoaded.removeValue(forKey: serverId)
         serverOrder.removeAll { $0 == serverId }
@@ -343,11 +360,18 @@ final class WorkspaceStore {
 
         async let fetchWorkspaces = api.listWorkspaces()
         async let fetchSkills = api.listSkills()
+        async let fetchSummaries = api.listWorkspaceSummaries()
 
         do {
             let (ws, sk) = try await (fetchWorkspaces, fetchSkills)
+            let summariesResponse = try? await fetchSummaries
             workspacesByServer[serverId] = ws
             skillsByServer[serverId] = sk
+            if let summariesResponse {
+                workspaceSummariesByServer[serverId] = Dictionary(
+                    uniqueKeysWithValues: summariesResponse.summaries.map { ($0.workspaceId, $0) }
+                )
+            }
             serverLoaded[serverId] = true
             markSyncSucceeded(forServer: serverId)
 

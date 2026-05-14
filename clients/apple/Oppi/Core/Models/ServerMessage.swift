@@ -38,11 +38,10 @@ struct AudioStreamMessage: Sendable, Equatable {
 
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
-    case streamConnected(userName: String, asrAvailable: Bool)
+    case streamConnected(userName: String, serverDictationAvailable: Bool)
     case connected(session: Session)
     case state(session: Session)
     case sessionSummary(SessionSummary)
-    case sessionProjection(SessionSummary)
     case sessionEnded(reason: String)
     case sessionDeleted(sessionId: String)
     case stopRequested(source: StopLifecycleSource, reason: String?)
@@ -200,7 +199,7 @@ extension ServerMessage: Decodable {
     enum CodingKeys: String, CodingKey {
         case type
         // stream_connected
-        case userName, asrAvailable
+        case userName, serverDictationAvailable
         // connected / state / session projection
         case session
         // session_ended / stop lifecycle
@@ -244,9 +243,9 @@ extension ServerMessage: Decodable {
 
         switch type {
         case "stream_connected":
-            let userName = try c.decodeIfPresent(String.self, forKey: .userName) ?? ""
-            let asrAvailable = try c.decodeIfPresent(Bool.self, forKey: .asrAvailable) ?? false
-            self = .streamConnected(userName: userName, asrAvailable: asrAvailable)
+            let userName = try c.decode(String.self, forKey: .userName)
+            let serverDictationAvailable = try c.decode(Bool.self, forKey: .serverDictationAvailable)
+            self = .streamConnected(userName: userName, serverDictationAvailable: serverDictationAvailable)
 
         case "connected":
             let session = try c.decode(Session.self, forKey: .session)
@@ -259,10 +258,6 @@ extension ServerMessage: Decodable {
         case "session_summary":
             let summary = try c.decode(SessionSummary.self, forKey: .summary)
             self = .sessionSummary(summary)
-
-        case "session_projection":
-            let summary = try c.decode(SessionSummary.self, forKey: .summary)
-            self = .sessionProjection(summary)
 
         case "session_ended":
             let reason = try c.decode(String.self, forKey: .reason)
@@ -424,7 +419,8 @@ extension ServerMessage: Decodable {
                 displaySummary: try c.decode(String.self, forKey: .displaySummary),
                 reason: try c.decode(String.self, forKey: .reason),
                 timeoutAt: Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .timeoutAt) / 1000),
-                expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true
+                expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true,
+                workspaceId: try c.decodeIfPresent(String.self, forKey: .workspaceId)
             )
             self = .permissionRequest(perm)
 
@@ -550,12 +546,9 @@ extension ServerMessage: Decodable {
 /// emit `sessionId` so the client can use the same decoder and router.
 struct StreamMessage: Sendable, Equatable {
     let sessionId: String?
-    let streamSeq: Int?
     let seq: Int?
     let currentSeq: Int?
     let message: ServerMessage
-
-    var effectiveSeq: Int? { seq ?? streamSeq }
 }
 
 /// Transport metadata attached to the same frame as a server message.
@@ -602,13 +595,12 @@ struct SessionStreamEvent: Sendable, Equatable {
 
 extension StreamMessage: Decodable {
     enum CodingKeys: String, CodingKey {
-        case sessionId, streamSeq, seq, currentSeq
+        case sessionId, seq, currentSeq
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
-        streamSeq = try c.decodeIfPresent(Int.self, forKey: .streamSeq)
         seq = try c.decodeIfPresent(Int.self, forKey: .seq)
         currentSeq = try c.decodeIfPresent(Int.self, forKey: .currentSeq)
         message = try ServerMessage(from: decoder)
@@ -633,7 +625,6 @@ extension ServerMessage {
         case .connected: "connected"
         case .state: "state"
         case .sessionSummary: "sessionSummary"
-        case .sessionProjection: "sessionProjection"
         case .sessionEnded: "sessionEnded"
         case .sessionDeleted: "sessionDeleted"
         case .stopRequested: "stopRequested"

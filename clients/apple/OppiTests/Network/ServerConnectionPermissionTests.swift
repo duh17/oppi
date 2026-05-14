@@ -112,8 +112,7 @@ struct ServerConnectionPermissionTests {
         )
         let streamMsg = StreamMessage(
             sessionId: "s2",
-            streamSeq: 2,
-            seq: nil,
+            seq: 2,
             currentSeq: nil,
             message: .permissionRequest(permRequest)
         )
@@ -209,92 +208,6 @@ struct ServerConnectionPermissionTests {
                 "Same-session permission approval should inject marker into active timeline")
     }
 
-    @Test func workspaceStreamPermissionCancellationReachesVisibleInactiveSessionTimeline() async {
-        let parentId = "parent-perm"
-        let focusedId = "focused-perm"
-        let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
-        connection.sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
-        connection.sessionStore.upsert(makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
-        connection.focusSession(focusedId)
-        connection._setWorkspaceStreamWorkspaceIdForTesting("w1")
-
-        var parentContinuation: AsyncStream<SessionStreamEvent>.Continuation?
-        let parentStream = AsyncStream<SessionStreamEvent> { continuation in
-            parentContinuation = continuation
-            connection.sessionEventContinuations[parentId] = continuation
-        }
-
-        let parentManager = ChatSessionManager(sessionId: parentId)
-        parentManager._loadHistoryForTesting = { _, _ in nil }
-        parentManager._streamEventsForTesting = { sessionId in
-            sessionId == parentId ? parentStream : nil
-        }
-
-        let parentTask = Task { @MainActor in
-            await parentManager.connect(connection: connection, sessionStore: connection.sessionStore)
-        }
-
-        #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { parentContinuation != nil }
-        })
-        parentContinuation?.yield(SessionStreamEvent(
-            sessionId: parentId,
-            message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1", status: .busy)),
-            meta: InboundStreamMeta(seq: nil, currentSeq: 0),
-            source: .live
-        ))
-        #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { parentManager.entryState == .streaming }
-        })
-        connection.focusSession(focusedId)
-
-        let permission = PermissionRequest(
-            id: "parent-perm-1",
-            sessionId: parentId,
-            tool: "bash",
-            input: [:],
-            displaySummary: "parent command",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(60)
-        )
-        connection._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
-            sessionId: parentId,
-            message: .permissionRequest(permission),
-            meta: InboundStreamMeta(seq: 1, currentSeq: 2)
-        ))
-
-        #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                connection.permissionStore.pending.contains { $0.id == permission.id }
-            }
-        })
-
-        connection._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
-            sessionId: parentId,
-            message: .permissionCancelled(id: permission.id),
-            meta: InboundStreamMeta(seq: 2, currentSeq: 2)
-        ))
-
-        let resolved = await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run {
-                parentManager.reducer.items.contains {
-                    if case .permissionResolved(let id, let outcome, let tool, _) = $0 {
-                        return id == permission.id && outcome == .cancelled && tool == "bash"
-                    }
-                    return false
-                }
-            }
-        }
-        #expect(resolved,
-                "Workspace-stream permission cancellation should reach a visible inactive session timeline")
-
-        parentTask.cancel()
-        parentContinuation?.finish()
-        connection.sessionEventContinuations.removeValue(forKey: parentId)
-        await parentTask.value
-        connection.disconnectStream()
-    }
 }
 
 private struct CapturedPermissionRESTResponse {

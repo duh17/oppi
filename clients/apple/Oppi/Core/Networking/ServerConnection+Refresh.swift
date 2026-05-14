@@ -114,11 +114,11 @@ extension ServerConnection {
                 }
 
                 let workspaces = self.workspaceStore.workspaces
-                let sessions = try await apiClient.listWorkspaceSessions(
+                let sessionSummaries = try await apiClient.listRecentWorkspaceSessionSummaries(
                     workspaces: workspaces,
                     recentDays: Self.globalSessionRefreshRecentDays
                 )
-                self.sessionStore.upsertMany(sessions)
+                self.sessionStore.upsertManySummaries(sessionSummaries)
                 self.sessionStore.markSyncSucceeded()
                 self.syncLiveActivityPermissions()
                 let cachedSessions = self.sessionStore.sessions
@@ -130,7 +130,7 @@ extension ServerConnection {
                         "force": force ? "1" : "0",
                         "result": "success",
                         "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
-                        "sessionCount": String(sessions.count),
+                        "sessionCount": String(sessionSummaries.count),
                         "workspaceCount": String(workspaces.count),
                         "source": "workspace_scoped",
                     ]
@@ -241,7 +241,7 @@ extension ServerConnection {
         defer { foregroundRecoveryInFlight = false }
 
         // 0. If a chat session owns a prepared bound stream, keep that focused transport alive.
-        // Home/workspace-list refreshes and pre-stream session focus stay HTTP/workspace-stream only.
+        // Home/workspace-list refreshes and pre-stream session focus stay HTTP-only.
         if focusedSessionId != nil, focusedSessionStreamEndpointKind == "split_session" {
             if case .reconnecting = wsClient?.status {
                 wsClient?.cancelReconnectBackoff()
@@ -280,7 +280,6 @@ extension ServerConnection {
         }
 
         let streamAttached = sessionEventContinuations[sessionId] != nil
-            || sessionContinuations[sessionId] != nil
         let streamAlive: Bool
         if streamAttached {
             switch wsClient?.status {

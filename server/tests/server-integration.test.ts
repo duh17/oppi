@@ -185,9 +185,7 @@ describe("GET /server/info", () => {
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
     expect(body.runtimeUpdate).toBeTypeOf("object");
-    expect(body.capabilities?.workspaceStream?.version).toBe(1);
     expect(body.capabilities?.sessionStream?.version).toBe(1);
-    expect(body.capabilities?.sessionProjection?.version).toBe(1);
   });
 });
 
@@ -297,6 +295,18 @@ describe("workspaces API", () => {
     const body = await res.json();
     expect(body.sessions).toBeInstanceOf(Array);
     expect(body.sessions.length).toBe(0);
+  });
+
+  it("GET /workspaces/:id/attention returns an authoritative empty snapshot", async () => {
+    const createRes = await post("/workspaces", { name: "attention-test", skills: [] });
+    const { workspace } = await createRes.json();
+
+    const res = await get(`/workspaces/${workspace.id}/attention`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.workspaceId).toBe(workspace.id);
+    expect(body.serverNow).toBeTypeOf("number");
+    expect(body.attention).toEqual({ permissions: [], asks: [] });
   });
 });
 
@@ -720,7 +730,7 @@ describe("WebSocket", () => {
   });
 
   it("rejects WS upgrade with mismatched Origin header", async () => {
-    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/stream`, {
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/sessions/test/stream`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Origin: "http://evil.example.com",
@@ -730,39 +740,15 @@ describe("WebSocket", () => {
     expect(rejection.statusCode).toBe(403);
   });
 
-  it("accepts authenticated WS to workspace stream and receives stream_connected", async () => {
-    const createRes = await fetch(`${baseUrl}/workspaces`, {
-      method: "POST",
+  it("rejects retired workspace WS path", async () => {
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/stream`, {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+        Origin: baseUrl,
       },
-      body: JSON.stringify({ name: "ws-test", skills: [] }),
     });
-    const createBody = (await createRes.json()) as { workspace: { id: string } };
-
-    const ws = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/workspaces/${createBody.workspace.id}/stream`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Origin: baseUrl,
-        },
-      },
-    );
-
-    const msg = await new Promise<Record<string, unknown> | null>((resolve) => {
-      ws.on("message", (data) => {
-        resolve(JSON.parse(data.toString()));
-      });
-      ws.on("error", () => resolve(null));
-      setTimeout(() => resolve(null), 3000);
-    });
-
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("stream_connected");
-    expect(msg!.userName).toBeTypeOf("string");
-    ws.close();
+    const rejection = await waitForUpgradeRejection(ws);
+    expect(rejection.statusCode).toBe(404);
   });
 });
 

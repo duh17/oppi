@@ -256,6 +256,11 @@ interface TuiSessionCatalogRow {
   is_subagent: number;
 }
 
+export interface LocalSessionCatalogSnapshot {
+  sessions: LocalSession[];
+  lastScannedAt?: number;
+}
+
 class TuiSessionCatalog {
   private readonly db: SqliteDatabase;
 
@@ -347,6 +352,28 @@ class TuiSessionCatalog {
     })();
   }
 
+  getLastScannedAt(): number | undefined {
+    const row = this.db
+      .prepare("SELECT value FROM tui_session_catalog_state WHERE key = 'last_scanned_at'")
+      .get() as { value?: string } | undefined;
+    if (!row?.value) {
+      return undefined;
+    }
+
+    const value = Number.parseInt(row.value, 10);
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  setLastScannedAt(timestampMs: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO tui_session_catalog_state (key, value)
+         VALUES ('last_scanned_at', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(String(timestampMs));
+  }
+
   private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tui_session_files (
@@ -370,6 +397,11 @@ class TuiSessionCatalog {
 
       CREATE INDEX IF NOT EXISTS tui_session_files_cwd_idx
         ON tui_session_files (cwd);
+
+      CREATE TABLE IF NOT EXISTS tui_session_catalog_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
   }
 }
@@ -465,6 +497,25 @@ export function invalidateLocalSessionsCache(): void {
   metadataCache.clear();
 }
 
+export function listCatalogedLocalSessions(
+  knownPiSessionFiles: Set<string> | undefined,
+  options: { dataDir: string },
+): LocalSessionCatalogSnapshot {
+  const catalog = new TuiSessionCatalog(options.dataDir);
+  try {
+    const lastScannedAt = catalog.getLastScannedAt();
+    return {
+      sessions: catalog
+        .listRows()
+        .filter((row) => row.is_subagent === 0 && !knownPiSessionFiles?.has(row.path))
+        .map(rowToLocalSession),
+      ...(lastScannedAt !== undefined ? { lastScannedAt } : {}),
+    };
+  } finally {
+    catalog.close();
+  }
+}
+
 /**
  * Discover all local pi sessions.
  *
@@ -547,6 +598,7 @@ export async function discoverLocalSessions(
 
       await refreshTuiSessionCatalog(catalog, needsRead);
       catalog.deleteMissing(livePaths);
+      catalog.setLastScannedAt(Date.now());
 
       return catalog
         .listRows()

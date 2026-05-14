@@ -16,10 +16,8 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
-  openWorkspaceStream,
   openSessionStream,
   closeStream,
-  workspaceStreamURL,
   sessionStreamURL,
   isSecureTransport,
 } from "./harness.js";
@@ -58,7 +56,7 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
 
     const result = await new Promise<{ status: number }>((resolve) => {
       const ws = new WebSocket(
-        workspaceStreamURL("missing-workspace"),
+        sessionStreamURL("missing-workspace", "missing-session"),
         isSecureTransport() ? { rejectUnauthorized: false } : undefined,
       );
       ws.on("unexpected-response", (_req, res) => {
@@ -217,15 +215,11 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
       expect(sessionId).toBeTruthy();
     });
 
-    it("opens split workspace and session WebSockets with device token", async () => {
+    it("opens split session WebSocket with device token", async () => {
       if (!lmsReady() || !deviceToken || !workspaceId || !sessionId) return;
 
-      const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
       const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
 
-      expect(
-        workspaceStream.events.some((e) => e.direction === "in" && e.type === "stream_connected"),
-      ).toBe(true);
       expect(
         sessionStream.events.some(
           (e) => e.direction === "in" && e.type === "connected" && e.sessionId === sessionId,
@@ -233,7 +227,6 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
       ).toBe(true);
 
       await closeStream(sessionStream);
-      await closeStream(workspaceStream);
     });
 
     it("rejects split streams with invalid device token", async () => {
@@ -283,9 +276,7 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     expect(info.json?.version).toBeTruthy();
     expect(info.json?.stats).toBeTruthy();
     const capabilities = info.json?.capabilities as Record<string, { version?: number }>;
-    expect(capabilities.workspaceStream?.version).toBeGreaterThanOrEqual(1);
     expect(capabilities.sessionStream?.version).toBeGreaterThanOrEqual(1);
-    expect(capabilities.sessionProjection?.version).toBeGreaterThanOrEqual(1);
   });
 
   it("lists models with device token", async () => {

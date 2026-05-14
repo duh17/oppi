@@ -1,12 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
 import { WebSocket } from "ws";
-import {
-  BoundSessionStreamMux,
-  SessionAudioStreamMux,
-  WorkspaceStreamMux,
-  type StreamContext,
-} from "./stream.js";
+import { BoundSessionStreamMux, SessionAudioStreamMux, type StreamContext } from "./stream.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
@@ -132,6 +127,7 @@ describe("BoundSessionStreamMux", () => {
         type: "permission_request",
         id: "p-bound",
         sessionId: "sess-bound",
+        workspaceId: "w1",
         tool: "bash",
         input: {},
         displaySummary: "approval",
@@ -152,7 +148,7 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
-  it("includes ASR availability in the split session bootstrap", async () => {
+  it("includes server dictation availability in the split session bootstrap", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
     ctx.dictationManager = {} as NonNullable<StreamContext["dictationManager"]>;
@@ -162,7 +158,7 @@ describe("BoundSessionStreamMux", () => {
     await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
     await drain();
 
-    expect(ws.sentOfType("stream_connected")[0]).toMatchObject({ asrAvailable: true });
+    expect(ws.sentOfType("stream_connected")[0]).toMatchObject({ serverDictationAvailable: true });
   });
 
   it("accepts permission responses while session startup is waiting", async () => {
@@ -273,106 +269,6 @@ describe("BoundSessionStreamMux", () => {
 
     expect(ws.sentOfType("text_delta", "sess-bound")).toHaveLength(0);
     expect(ctx.untrackConnection).toHaveBeenCalled();
-  });
-});
-
-describe("WorkspaceStreamMux", () => {
-  function createWorkspaceContext(): Pick<
-    StreamContext,
-    "storage" | "metrics" | "trackConnection" | "untrackConnection"
-  > {
-    const workspaces = new Map<string, Workspace>([
-      ["w1", { id: "w1", name: "One", path: "/tmp/one" } as Workspace],
-      ["w2", { id: "w2", name: "Two", path: "/tmp/two" } as Workspace],
-    ]);
-
-    return {
-      storage: {
-        getOwnerName: () => "test-user",
-        getWorkspace: (id: string) => workspaces.get(id) ?? null,
-      } as StreamContext["storage"],
-      metrics: { record: vi.fn() } as unknown as StreamContext["metrics"],
-      trackConnection: vi.fn(),
-      untrackConnection: vi.fn(),
-    };
-  }
-
-  it("includes ASR availability in the workspace stream bootstrap", () => {
-    const ctx = createWorkspaceContext() as ReturnType<typeof createWorkspaceContext> & {
-      dictationManager: NonNullable<StreamContext["dictationManager"]>;
-    };
-    ctx.dictationManager = {} as NonNullable<StreamContext["dictationManager"]>;
-    const mux = new WorkspaceStreamMux(ctx);
-    const ws = new FakeWebSocket();
-
-    mux.handleWebSocket("w1", ws as unknown as WebSocket);
-
-    expect(ws.sentOfType("stream_connected")[0]).toMatchObject({ asrAvailable: true });
-  });
-
-  it("fans out workspace events only to matching workspace sockets", () => {
-    const ctx = createWorkspaceContext();
-    const mux = new WorkspaceStreamMux(ctx);
-    const ws1 = new FakeWebSocket();
-    const ws2 = new FakeWebSocket();
-
-    mux.handleWebSocket("w1", ws1 as unknown as WebSocket);
-    mux.handleWebSocket("w2", ws2 as unknown as WebSocket);
-    expect(ctx.trackConnection).toHaveBeenCalledWith(ws1, { userBroadcast: false });
-    expect(ctx.trackConnection).toHaveBeenCalledWith(ws2, { userBroadcast: false });
-    ws1.sent.length = 0;
-    ws2.sent.length = 0;
-
-    mux.recordAndFanOutWorkspaceEvent("w1", {
-      type: "session_projection",
-      summary: makeSession("s1", "w1"),
-      sessionId: "s1",
-    } as ServerMessage);
-
-    expect(ws1.sentOfType("session_projection")).toHaveLength(1);
-    expect(ws2.sentOfType("session_projection")).toHaveLength(0);
-    expect(ws1.sent[0]?.workspaceId).toBe("w1");
-    expect(ws1.sent[0]?.streamSeq).toBe(1);
-  });
-
-  it("serves workspace catch-up from the workspace-specific ring", () => {
-    const ctx = createWorkspaceContext();
-    const mux = new WorkspaceStreamMux(ctx);
-
-    mux.recordAndFanOutWorkspaceEvent("w1", {
-      type: "session_projection",
-      summary: makeSession("s1", "w1"),
-      sessionId: "s1",
-    } as ServerMessage);
-    mux.recordAndFanOutWorkspaceEvent("w2", {
-      type: "session_projection",
-      summary: makeSession("s2", "w2"),
-      sessionId: "s2",
-    } as ServerMessage);
-    mux.recordAndFanOutWorkspaceEvent("w1", {
-      type: "session_deleted",
-      sessionId: "s1",
-    } as ServerMessage);
-
-    const catchUp = mux.getWorkspaceStreamCatchUp("w1", 0);
-    expect(catchUp.catchUpComplete).toBe(true);
-    expect(catchUp.currentSeq).toBe(2);
-    expect(catchUp.events.map((event) => event.type)).toEqual([
-      "session_projection",
-      "session_deleted",
-    ]);
-    expect(catchUp.events.every((event) => event.workspaceId === "w1")).toBe(true);
-  });
-
-  it("closes unknown workspace sockets without tracking them", () => {
-    const ctx = createWorkspaceContext();
-    const mux = new WorkspaceStreamMux(ctx);
-    const ws = new FakeWebSocket();
-
-    mux.handleWebSocket("missing", ws as unknown as WebSocket);
-
-    expect(ws.readyState).toBe(WebSocket.CLOSED);
-    expect(ctx.trackConnection).not.toHaveBeenCalled();
   });
 });
 

@@ -68,6 +68,40 @@ final class PermissionStore {
         pending.filter { $0.sessionId == sessionId }
     }
 
+    /// Apply an authoritative workspace-scoped HTTP attention snapshot.
+    ///
+    /// Returns requests removed from the active server partition so callers can
+    /// cancel any local side effects such as notifications.
+    @discardableResult
+    func applyWorkspaceSnapshot(
+        workspaceId: String,
+        requests: [PermissionRequest],
+        workspaceSessionIds: Set<String>
+    ) -> [PermissionRequest] {
+        let incomingIds = Set(requests.map(\.id))
+        var list = pending
+        let removed = list.filter { request in
+            request.workspaceId == workspaceId ||
+                (request.workspaceId == nil && workspaceSessionIds.contains(request.sessionId))
+        }.filter { !incomingIds.contains($0.id) }
+
+        if !removed.isEmpty {
+            let removedIds = Set(removed.map(\.id))
+            list.removeAll { removedIds.contains($0.id) }
+        }
+
+        for request in requests {
+            if let idx = list.firstIndex(where: { $0.id == request.id }) {
+                list[idx] = request
+            } else {
+                list.append(request)
+            }
+        }
+
+        pending = list
+        return removed
+    }
+
     /// Remove permissions whose timeout has passed.
     /// Returns the full requests so callers can record resolved markers with tool/summary.
     func sweepExpired() -> [PermissionRequest] {

@@ -688,7 +688,7 @@ struct VoiceInputManagerTests {
         )
         manager.setEngineMode(.remote)
         let conn = ServerConnection()
-        conn.setAsrAvailableForTesting(true)
+        conn.setServerDictationAvailableForTesting(true)
         manager.setServerConnection(conn)
 
         try? await manager.startRecording(source: "test")
@@ -829,7 +829,7 @@ struct VoiceInputManagerTests {
         #expect(systemAccess.deactivateAudioSessionCallCount == 1)
     }
 
-    /// Remote mode without ASR available fails clearly instead of falling back.
+    /// Remote mode without server dictation available fails clearly instead of falling back.
     @Test func remoteModeWithoutAsrFailsClearly() async {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
@@ -842,7 +842,7 @@ struct VoiceInputManagerTests {
             systemAccess: systemAccess
         )
         manager.setEngineMode(.remote)
-        // No connection / no asrAvailable — should fail clearly.
+        // No connection / no serverDictationAvailable — should fail clearly.
 
         try? await manager.startRecording(source: "test")
 
@@ -851,7 +851,7 @@ struct VoiceInputManagerTests {
         #expect(manager.state == .error("Server dictation is not connected. Connect to an Oppi server first."))
     }
 
-    /// Credentials exist but ASR is not available — remote mode should fail
+    /// Credentials exist but server dictation is not available — remote mode should fail
     /// clearly instead of silently dropping to on-device dictation.
     @Test func remoteModeWithCredentialsButNoAsrFailsClearly() async {
         resetVoicePreferences()
@@ -871,7 +871,7 @@ struct VoiceInputManagerTests {
             name: "test-server",
             scheme: .http
         ))
-        // Connection exists but asrAvailable is false (server has no STT backend)
+        // Connection exists but serverDictationAvailable is false (server has no STT backend)
         let conn = ServerConnection()
         manager.setServerConnection(conn)
 
@@ -882,7 +882,7 @@ struct VoiceInputManagerTests {
         #expect(manager.state == .error("Server dictation is unavailable on this server. Check the ASR server and reconnect."))
     }
 
-    /// ASR advertised but remote setup fails — remote mode should surface the
+    /// server dictation advertised but remote setup fails — remote mode should surface the
     /// server failure instead of silently retrying on-device.
     @Test func remoteModeWithAsrAvailableButServerSetupFailureFailsClearly() async {
         resetVoicePreferences()
@@ -908,7 +908,7 @@ struct VoiceInputManagerTests {
         ))
 
         let conn = ServerConnection()
-        conn.setAsrAvailableForTesting(true)
+        conn.setServerDictationAvailableForTesting(true)
         manager.setServerConnection(conn)
 
         try? await manager.startRecording(source: "test")

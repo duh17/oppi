@@ -50,6 +50,55 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
 
 }
 
+struct WorkspaceListSummary: Codable, Sendable, Equatable {
+    let workspaceId: String
+    var activeCount: Int
+    var stoppedCount: Int
+    var hasAttention: Bool
+    var latestActivity: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceId, activeCount, stoppedCount, hasAttention, latestActivity
+    }
+
+    init(
+        workspaceId: String,
+        activeCount: Int,
+        stoppedCount: Int,
+        hasAttention: Bool,
+        latestActivity: Date? = nil
+    ) {
+        self.workspaceId = workspaceId
+        self.activeCount = activeCount
+        self.stoppedCount = stoppedCount
+        self.hasAttention = hasAttention
+        self.latestActivity = latestActivity
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        workspaceId = try c.decode(String.self, forKey: .workspaceId)
+        activeCount = try c.decode(Int.self, forKey: .activeCount)
+        stoppedCount = try c.decode(Int.self, forKey: .stoppedCount)
+        hasAttention = try c.decode(Bool.self, forKey: .hasAttention)
+
+        if let latestActivityMs = try c.decodeIfPresent(Double.self, forKey: .latestActivity) {
+            latestActivity = Date(timeIntervalSince1970: latestActivityMs / 1000)
+        } else {
+            latestActivity = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(workspaceId, forKey: .workspaceId)
+        try c.encode(activeCount, forKey: .activeCount)
+        try c.encode(stoppedCount, forKey: .stoppedCount)
+        try c.encode(hasAttention, forKey: .hasAttention)
+        try c.encodeIfPresent(latestActivity.map { $0.timeIntervalSince1970 * 1000 }, forKey: .latestActivity)
+    }
+}
+
 // MARK: - Codable (Unix millisecond timestamps)
 
 extension Workspace: Codable {

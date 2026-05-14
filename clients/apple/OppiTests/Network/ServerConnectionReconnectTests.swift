@@ -21,8 +21,8 @@ struct ServerConnectionReconnectTests {
         conn._sendMessageForTesting = { _ in }
 
         conn.routeStreamMessage(StreamMessage(
-            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            sessionId: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
         let cancelled = await waitForTestCondition(timeoutMs: 1_500) {
@@ -43,7 +43,7 @@ struct ServerConnectionReconnectTests {
             await getQueueCounter.increment()
             conn.routeStreamMessage(StreamMessage(
                 sessionId: "s1",
-                streamSeq: nil, seq: nil, currentSeq: nil,
+                seq: nil, currentSeq: nil,
                 message: .commandResult(
                     command: "get_queue", requestId: requestId,
                     success: true, data: nil, error: nil
@@ -52,8 +52,8 @@ struct ServerConnectionReconnectTests {
         }
 
         conn.routeStreamMessage(StreamMessage(
-            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            sessionId: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
         let sent = await waitForTestCondition(timeoutMs: 3_000) {
@@ -75,7 +75,7 @@ struct ServerConnectionReconnectTests {
             await getQueueCounter.increment()
             conn.routeStreamMessage(StreamMessage(
                 sessionId: "s1",
-                streamSeq: nil, seq: nil, currentSeq: nil,
+                seq: nil, currentSeq: nil,
                 message: .commandResult(
                     command: "get_queue", requestId: requestId,
                     success: true, data: nil, error: nil
@@ -84,12 +84,12 @@ struct ServerConnectionReconnectTests {
         }
 
         conn.routeStreamMessage(StreamMessage(
-            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            sessionId: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
         conn.routeStreamMessage(StreamMessage(
-            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            sessionId: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
         let sent = await waitForTestCondition(timeoutMs: 3_000) {
@@ -128,7 +128,7 @@ struct ServerConnectionReconnectTests {
             await getQueueCounter.increment()
             conn.routeStreamMessage(StreamMessage(
                 sessionId: "s1",
-                streamSeq: nil, seq: nil, currentSeq: nil,
+                seq: nil, currentSeq: nil,
                 message: .commandResult(
                     command: "get_queue", requestId: requestId,
                     success: true, data: nil, error: nil
@@ -137,8 +137,8 @@ struct ServerConnectionReconnectTests {
         }
 
         conn.routeStreamMessage(StreamMessage(
-            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            sessionId: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
         let cancelled = await waitForTestCondition(timeoutMs: 1_500) {

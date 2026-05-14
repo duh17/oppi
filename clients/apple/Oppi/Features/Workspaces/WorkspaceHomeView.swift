@@ -40,6 +40,8 @@ struct WorkspaceHomeView: View {
     @State private var collapsedServerIds: Set<String> = []
     /// Guards against re-presenting the guided create after the user dismisses it.
     @State private var guidedCreateConsumed = false
+    /// Prevents re-running the full workspace/session refresh on every back navigation.
+    @State private var hasPerformedInitialRefresh = false
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -100,7 +102,6 @@ struct WorkspaceHomeView: View {
                 appLaunchMetricRecorded = true
                 ChatSessionTelemetry.recordAppLaunch()
             }
-            Task { await refresh(force: false) }
         }
     }
 
@@ -109,20 +110,25 @@ struct WorkspaceHomeView: View {
     @ViewBuilder
     private func serverSection(for server: PairedServer) -> some View {
         let serverId = server.id
-        let workspaces = sortedWorkspaces(for: serverId)
         let serverConn = coordinator.connection(for: serverId)
+        let workspaceCatalog = workspacesForServer(serverId)
+        let isCollapsed = collapsedServerIds.contains(serverId)
+        let storedSummaries = serverConn?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
+        let summaries = isCollapsed
+            ? [:]
+            : (storedSummaries.isEmpty ? fallbackWorkspaceSummaries(for: serverConn) : storedSummaries)
+        let workspaces = isCollapsed ? workspaceCatalog : sortedWorkspaces(workspaceCatalog, summaries: summaries)
         let rawFreshness = serverConn?.workspaceStore.freshnessState(forServer: serverId) ?? .offline
         let rawFreshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: serverId) ?? "Offline"
         let statusPresentation = WorkspaceServerStatusPresentation.derive(
             freshnessState: rawFreshness,
             freshnessLabel: rawFreshnessLabel,
             isTransportConnected: serverConn?.isConnected == true,
-            hasCachedCatalog: !workspaces.isEmpty
+            hasCachedCatalog: !workspaceCatalog.isEmpty
         )
         let freshness = statusPresentation.state
         let freshnessLabel = statusPresentation.label
         let isUnreachable = statusPresentation.isUnreachable
-        let isCollapsed = collapsedServerIds.contains(serverId)
 
         Section {
             if !isCollapsed {
@@ -133,12 +139,13 @@ struct WorkspaceHomeView: View {
                         .listRowBackground(Color.themeBg)
                 } else {
                     ForEach(workspaces) { workspace in
+                        let summary = summaryForWorkspace(workspace.id, in: summaries)
                         NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
                             WorkspaceHomeRow(
                                 workspace: workspace,
-                                activeCount: activeCount(for: workspace.id, serverId: serverId),
-                                stoppedCount: stoppedCount(for: workspace.id, serverId: serverId),
-                                hasAttention: hasAttention(for: workspace.id, serverId: serverId),
+                                activeCount: summary.activeCount,
+                                stoppedCount: summary.stoppedCount,
+                                hasAttention: summary.hasAttention,
                                 isUnreachable: isUnreachable,
                                 badgeIcon: server.resolvedBadgeIcon,
                                 badgeColor: server.resolvedBadgeColor
@@ -206,77 +213,100 @@ struct WorkspaceHomeView: View {
         coordinator.connection(for: serverId)?.workspaceStore.workspaces ?? []
     }
 
-    private func sortedWorkspaces(for serverId: String) -> [Workspace] {
-        workspacesForServer(serverId).sorted { lhs, rhs in
-            let lhsActive = activeCount(for: lhs.id, serverId: serverId)
-            let rhsActive = activeCount(for: rhs.id, serverId: serverId)
-            let lhsAttn = hasAttention(for: lhs.id, serverId: serverId)
-            let rhsAttn = hasAttention(for: rhs.id, serverId: serverId)
+    private func sortedWorkspaces(
+        _ workspaces: [Workspace],
+        summaries: [String: WorkspaceListSummary]
+    ) -> [Workspace] {
+        workspaces.sorted { lhs, rhs in
+            let lhsSummary = summaryForWorkspace(lhs.id, in: summaries)
+            let rhsSummary = summaryForWorkspace(rhs.id, in: summaries)
 
-            if lhsAttn != rhsAttn { return lhsAttn }
-            if (lhsActive > 0) != (rhsActive > 0) { return lhsActive > 0 }
-            return latestActivity(for: lhs.id, serverId: serverId) > latestActivity(for: rhs.id, serverId: serverId)
+            if lhsSummary.hasAttention != rhsSummary.hasAttention {
+                return lhsSummary.hasAttention
+            }
+            if (lhsSummary.activeCount > 0) != (rhsSummary.activeCount > 0) {
+                return lhsSummary.activeCount > 0
+            }
+            return (lhsSummary.latestActivity ?? .distantPast) > (rhsSummary.latestActivity ?? .distantPast)
         }
     }
 
     // MARK: - Session Helpers
 
-    /// Sessions for a workspace on a specific server.
-    ///
-    /// Routes to the server's own cold list projection (per-server connections).
-    private func sessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
-        coordinator.connection(for: serverId)?
-            .sessionStore
-            .listProjectionSessions(workspaceId: workspaceId) ?? []
+    private func summaryForWorkspace(
+        _ workspaceId: String,
+        in summaries: [String: WorkspaceListSummary]
+    ) -> WorkspaceListSummary {
+        summaries[workspaceId] ?? WorkspaceListSummary(
+            workspaceId: workspaceId,
+            activeCount: 0,
+            stoppedCount: 0,
+            hasAttention: false
+        )
     }
 
-    /// Root sessions only (no children whose parent is in the same workspace).
-    ///
-    /// Matches the detail view's root filtering — children are accessible
-    /// through their parent's row, so counting them separately inflates
-    /// the active/stopped badges vs what the user sees inside.
-    private func rootSessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
-        let all = sessionsFor(workspaceId, serverId: serverId)
-        let allIds = Set(all.map(\.id))
-        return all.filter { session in
-            guard let parentId = session.parentSessionId else { return true }
-            return !allIds.contains(parentId)
+    private func fallbackWorkspaceSummaries(for connection: ServerConnection?) -> [String: WorkspaceListSummary] {
+        guard let connection else { return [:] }
+
+        var sessionsByWorkspace: [String: [Session]] = [:]
+        for session in connection.sessionStore.listProjectionSessions {
+            guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { continue }
+            sessionsByWorkspace[workspaceId, default: []].append(session)
         }
-    }
 
-    private func activeCount(for workspaceId: String, serverId: String) -> Int {
-        rootSessionsFor(workspaceId, serverId: serverId).filter { $0.status != .stopped }.count
-    }
+        let permissionSessionIds = Set(connection.permissionStore.pending.map(\.sessionId))
+        var summaries: [String: WorkspaceListSummary] = [:]
 
-    private func stoppedCount(for workspaceId: String, serverId: String) -> Int {
-        rootSessionsFor(workspaceId, serverId: serverId).filter { $0.status == .stopped }.count
-    }
+        for (workspaceId, sessions) in sessionsByWorkspace {
+            let workspaceSessionIds = Set(sessions.map(\.id))
+            var latestActivity: Date?
+            var hasAttention = false
+            var activeCount = 0
+            var stoppedCount = 0
 
-    private func hasAttention(for workspaceId: String, serverId: String) -> Bool {
-        let conn = coordinator.connection(for: serverId)
-        let serverPermissions = conn?.permissionStore.pending ?? []
+            for session in sessions {
+                if let currentLatest = latestActivity {
+                    if session.lastActivity > currentLatest {
+                        latestActivity = session.lastActivity
+                    }
+                } else {
+                    latestActivity = session.lastActivity
+                }
 
-        // Permissions: check all sessions (child permissions surface on the parent row)
-        let allSessions = sessionsFor(workspaceId, serverId: serverId)
-        let hasPermission = allSessions.contains { session in
-            serverPermissions.contains { $0.sessionId == session.id }
+                if !hasAttention,
+                   permissionSessionIds.contains(session.id) || connection.askRequestStore.hasPending(for: session.id) {
+                    hasAttention = true
+                }
+
+                let isRootSession: Bool
+                if let parentSessionId = session.parentSessionId {
+                    isRootSession = !workspaceSessionIds.contains(parentSessionId)
+                } else {
+                    isRootSession = true
+                }
+                guard isRootSession else { continue }
+
+                if session.status == .stopped {
+                    stoppedCount += 1
+                } else {
+                    activeCount += 1
+                }
+
+                if session.status == .error {
+                    hasAttention = true
+                }
+            }
+
+            summaries[workspaceId] = WorkspaceListSummary(
+                workspaceId: workspaceId,
+                activeCount: activeCount,
+                stoppedCount: stoppedCount,
+                hasAttention: hasAttention,
+                latestActivity: latestActivity
+            )
         }
-        if hasPermission { return true }
 
-        // Ask requests also require user input, so treat them as attention at the
-        // workspace level even when the pending question belongs to a child session.
-        let hasAsk = allSessions.contains { session in
-            conn?.askRequestStore.hasPending(for: session.id) == true
-        }
-        if hasAsk { return true }
-
-        // Error status: check root sessions only. Error children of stopped
-        // parents are unactionable and shouldn't flag the workspace.
-        return rootSessionsFor(workspaceId, serverId: serverId).contains { $0.status == .error }
-    }
-
-    private func latestActivity(for workspaceId: String, serverId: String) -> Date {
-        sessionsFor(workspaceId, serverId: serverId).map(\.lastActivity).max() ?? .distantPast
+        return summaries
     }
 
     private func toggleServerExpansion(for serverId: String) {
@@ -289,9 +319,13 @@ struct WorkspaceHomeView: View {
         }
     }
 
-    // periphery:ignore:parameters force
     private func refresh(force: Bool) async {
-        // Unified path: coordinator handles single- and multi-server refresh
+        if !force {
+            guard !hasPerformedInitialRefresh else { return }
+            hasPerformedInitialRefresh = true
+        }
+
+        // Unified path: coordinator handles single- and multi-server refresh.
         await coordinator.refreshAllServers()
     }
 

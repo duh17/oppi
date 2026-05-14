@@ -17,8 +17,8 @@ import type { Session, SessionChangeStats } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import { ConfigStore } from "./config-store.js";
 import type {
-  WorkspaceSessionSnapshotListOptions,
-  WorkspaceSessionSnapshotListResult,
+  WorkspaceSessionSummarySnapshot,
+  WorkspaceStoppedTimeBucketSnapshot,
 } from "./session-dao.js";
 import { loadLegacySessions } from "./session-store.js";
 
@@ -64,8 +64,19 @@ interface SessionIdRow {
   id: string;
 }
 
-interface CountRow {
-  count: number;
+interface WorkspaceSummaryRow {
+  workspace_id: string;
+  latest_activity: number | null;
+  active_count: number;
+  stopped_count: number;
+  has_error_root: number;
+}
+
+interface WorkspaceStoppedTimeBucketRow {
+  bucket_kind: "day" | "month";
+  bucket_key: string;
+  latest_activity: number | null;
+  item_count: number;
 }
 
 export interface SessionSqliteSyncResult {
@@ -283,68 +294,123 @@ export class SessionSqliteStore {
     return this.parseJsonRows(rows).map(stripInternalFields);
   }
 
-  listWorkspaceSessionSnapshots(
+  listAllWorkspaceSessionSnapshots(workspaceId: string): Session[] {
+    return this.queryWorkspaceProjectedSessions(workspaceId);
+  }
+
+  listRecentWorkspaceSessionSnapshots(
     workspaceId: string,
-    options: WorkspaceSessionSnapshotListOptions = {},
-  ): WorkspaceSessionSnapshotListResult {
-    const nowMs = options.nowMs ?? Date.now();
-    const recentDays = normalizePositiveInteger(options.recentDays);
-    const cutoffMs = recentDays ? nowMs - recentDays * 86_400_000 : undefined;
-    const appliedLimit = normalizeLimit(options.limit, options.maxLimit ?? 500);
-    const beforeLastActivity = Number.isFinite(options.beforeLastActivity)
-      ? options.beforeLastActivity
-      : undefined;
-    const beforeSessionId = options.beforeSessionId;
-
-    const totalCount = this.countWorkspaceSessions(workspaceId);
-    const whereParts = ["workspace_id = ?"];
-    const params: unknown[] = [workspaceId];
-
-    if (cutoffMs !== undefined) {
-      whereParts.push("(status <> 'stopped' OR last_activity >= ?)");
-      params.push(cutoffMs);
+    recentDays: number,
+    nowMs: number = Date.now(),
+  ): Session[] {
+    const normalizedRecentDays = normalizePositiveInteger(recentDays);
+    if (!normalizedRecentDays) {
+      return this.queryWorkspaceProjectedSessions(workspaceId);
     }
 
-    if (options.status) {
-      whereParts.push("status = ?");
-      params.push(options.status);
-    }
+    return this.queryWorkspaceProjectedSessions(workspaceId, {
+      stoppedSinceMs: nowMs - normalizedRecentDays * 86_400_000,
+    });
+  }
 
-    if (beforeLastActivity !== undefined) {
-      whereParts.push("(last_activity < ? OR (? IS NOT NULL AND last_activity = ? AND id > ?))");
-      params.push(
-        beforeLastActivity,
-        beforeSessionId ?? null,
-        beforeLastActivity,
-        beforeSessionId ?? null,
-      );
-    }
+  listWorkspaceTimeRangeSessionSnapshots(
+    workspaceId: string,
+    sinceMs: number,
+    untilMs: number,
+  ): Session[] {
+    return this.queryWorkspaceProjectedSessions(workspaceId, {
+      stoppedSinceMs: normalizeTimestamp(sinceMs),
+      stoppedUntilMs: normalizeTimestamp(untilMs),
+    });
+  }
 
-    const whereSql = whereParts.join(" AND ");
-    const filteredCount = this.countRows(
-      `SELECT COUNT(*) AS count FROM session_state_sessions WHERE ${whereSql}`,
-      params,
-    );
-    const pageRows = this.db
+  listStoppedWorkspaceTimeRangeSessionSnapshots(
+    workspaceId: string,
+    sinceMs: number,
+    untilMs: number,
+  ): Session[] {
+    return this.queryWorkspaceProjectedSessions(workspaceId, {
+      status: "stopped",
+      stoppedSinceMs: normalizeTimestamp(sinceMs),
+      stoppedUntilMs: normalizeTimestamp(untilMs),
+    });
+  }
+
+  listWorkspaceSessionSummarySnapshots(): WorkspaceSessionSummarySnapshot[] {
+    const rows = this.db
       .prepare(
-        `SELECT ${SESSION_PROJECTION_COLUMNS}
-         FROM session_state_sessions
-         WHERE ${whereSql}
-         ORDER BY last_activity DESC, id ASC
-         ${appliedLimit > 0 ? "LIMIT ?" : ""}`,
+        `SELECT
+           s.workspace_id AS workspace_id,
+           MAX(s.last_activity) AS latest_activity,
+           SUM(CASE WHEN parent.id IS NULL AND s.status <> 'stopped' THEN 1 ELSE 0 END) AS active_count,
+           SUM(CASE WHEN parent.id IS NULL AND s.status = 'stopped' THEN 1 ELSE 0 END) AS stopped_count,
+           MAX(CASE WHEN parent.id IS NULL AND s.status = 'error' THEN 1 ELSE 0 END) AS has_error_root
+         FROM session_state_sessions s
+         LEFT JOIN session_state_sessions parent
+           ON parent.id = s.parent_session_id
+          AND parent.workspace_id = s.workspace_id
+         WHERE s.workspace_id IS NOT NULL
+         GROUP BY s.workspace_id
+         ORDER BY latest_activity DESC, s.workspace_id ASC`,
       )
-      .all(...(appliedLimit > 0 ? [...params, appliedLimit] : params)) as SessionProjectionRow[];
-    const pageSessions = this.parseProjectedRows(pageRows);
-    const sessions = this.includeProjectedAncestors(workspaceId, pageSessions);
+      .all() as WorkspaceSummaryRow[];
 
-    return {
-      sessions,
-      totalCount,
-      filteredCount,
-      remainingCount: appliedLimit > 0 ? Math.max(0, filteredCount - pageRows.length) : 0,
-      ...(cutoffMs !== undefined ? { cutoffMs } : {}),
-      appliedLimit,
-    };
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      activeCount: row.active_count,
+      stoppedCount: row.stopped_count,
+      hasErrorRoot: row.has_error_root > 0,
+      ...(row.latest_activity !== null ? { latestActivity: row.latest_activity } : {}),
+    }));
+  }
+
+  listWorkspaceStoppedTimeBuckets(
+    workspaceId: string,
+    beforeMs: number,
+    nowMs: number = Date.now(),
+  ): WorkspaceStoppedTimeBucketSnapshot[] {
+    const recentDayCutoffMs = nowMs - 30 * 86_400_000;
+    const rows = this.db
+      .prepare(
+        `SELECT
+           CASE WHEN last_activity >= ? THEN 'day' ELSE 'month' END AS bucket_kind,
+           CASE
+             WHEN last_activity >= ?
+               THEN strftime('%Y-%m-%d', last_activity / 1000.0, 'unixepoch', 'localtime')
+             ELSE strftime('%Y-%m', last_activity / 1000.0, 'unixepoch', 'localtime')
+           END AS bucket_key,
+           MAX(last_activity) AS latest_activity,
+           COUNT(*) AS item_count
+         FROM session_state_sessions
+         WHERE workspace_id = ?
+           AND status = 'stopped'
+           AND last_activity < ?
+         GROUP BY bucket_kind, bucket_key
+         ORDER BY latest_activity DESC, bucket_key DESC`,
+      )
+      .all(
+        recentDayCutoffMs,
+        recentDayCutoffMs,
+        workspaceId,
+        beforeMs,
+      ) as WorkspaceStoppedTimeBucketRow[];
+
+    return rows.flatMap((row) => {
+      const range = localBucketRangeMs(row.bucket_kind, row.bucket_key);
+      if (!range) {
+        return [];
+      }
+      return [
+        {
+          bucketId: `${row.bucket_kind}:${row.bucket_key}`,
+          bucketKind: row.bucket_kind,
+          startMs: range.startMs,
+          endMs: range.endMs,
+          itemCount: row.item_count,
+          ...(row.latest_activity !== null ? { latestActivity: row.latest_activity } : {}),
+        },
+      ];
+    });
   }
 
   deleteSession(sessionId: string): boolean {
@@ -699,16 +765,51 @@ export class SessionSqliteStore {
     };
   }
 
-  private countWorkspaceSessions(workspaceId: string): number {
-    return this.countRows(
-      "SELECT COUNT(*) AS count FROM session_state_sessions WHERE workspace_id = ?",
-      [workspaceId],
-    );
-  }
+  private queryWorkspaceProjectedSessions(
+    workspaceId: string,
+    filters: {
+      status?: Session["status"];
+      stoppedSinceMs?: number;
+      stoppedUntilMs?: number;
+    } = {},
+  ): Session[] {
+    const whereParts = ["workspace_id = ?"];
+    const params: unknown[] = [workspaceId];
 
-  private countRows(sql: string, params: unknown[]): number {
-    const row = this.db.prepare(sql).get(...params) as CountRow | undefined;
-    return row?.count ?? 0;
+    if (filters.status) {
+      whereParts.push("status = ?");
+      params.push(filters.status);
+    }
+
+    if (filters.stoppedSinceMs !== undefined) {
+      if (filters.status === "stopped") {
+        whereParts.push("last_activity >= ?");
+      } else {
+        whereParts.push("(status <> 'stopped' OR last_activity >= ?)");
+      }
+      params.push(filters.stoppedSinceMs);
+    }
+
+    if (filters.stoppedUntilMs !== undefined) {
+      if (filters.status === "stopped") {
+        whereParts.push("last_activity < ?");
+      } else {
+        whereParts.push("(status <> 'stopped' OR last_activity < ?)");
+      }
+      params.push(filters.stoppedUntilMs);
+    }
+
+    const whereSql = whereParts.join(" AND ");
+    const rows = this.db
+      .prepare(
+        `SELECT ${SESSION_PROJECTION_COLUMNS}
+         FROM session_state_sessions
+         WHERE ${whereSql}
+         ORDER BY last_activity DESC, id ASC`,
+      )
+      .all(...params) as SessionProjectionRow[];
+
+    return this.includeProjectedAncestors(workspaceId, this.parseProjectedRows(rows));
   }
 
   private getProjectedSessionById(workspaceId: string, sessionId: string): Session | undefined {
@@ -997,15 +1098,39 @@ function normalizePositiveInteger(value: number | undefined): number | undefined
   return normalized > 0 ? normalized : undefined;
 }
 
-function normalizeLimit(value: number | undefined, maxLimit: number): number {
+function normalizeTimestamp(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value)) {
-    return 0;
+    return undefined;
   }
-  const normalized = Math.floor(value);
-  if (normalized <= 0) {
-    return 0;
+  return Math.floor(value);
+}
+
+function localBucketRangeMs(
+  bucketKind: "day" | "month",
+  bucketKey: string,
+): { startMs: number; endMs: number } | undefined {
+  if (bucketKind === "day") {
+    const match = bucketKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      return undefined;
+    }
+    const [, yearText, monthText, dayText] = match;
+    const start = new Date(
+      Number.parseInt(yearText, 10),
+      Number.parseInt(monthText, 10) - 1,
+      Number.parseInt(dayText, 10),
+    ).getTime();
+    return { startMs: start, endMs: start + 86_400_000 };
   }
-  return Math.min(normalized, maxLimit);
+
+  const match = bucketKey.match(/^(\d{4})-(\d{2})$/);
+  if (!match) {
+    return undefined;
+  }
+  const [, yearText, monthText] = match;
+  const startDate = new Date(Number.parseInt(yearText, 10), Number.parseInt(monthText, 10) - 1, 1);
+  const endDate = new Date(Number.parseInt(yearText, 10), Number.parseInt(monthText, 10), 1);
+  return { startMs: startDate.getTime(), endMs: endDate.getTime() };
 }
 
 function normalizeDeclaredSession(session: Session): Session {

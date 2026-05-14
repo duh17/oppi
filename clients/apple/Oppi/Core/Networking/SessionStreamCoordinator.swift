@@ -137,43 +137,24 @@ final class SessionStreamCoordinator {
 
         transition(to: .queueSync(sessionId: sessionId, phase: .initial), event: .transportReady)
 
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .subscribeGateMs,
-                value: 0,
-                unit: .ms,
-                sessionId: sessionId,
-                tags: [
-                    "transport": transport,
-                    "stream_endpoint": await MainActor.run { connection.focusedSessionStreamEndpointKind },
-                    "workspace_stream_active": await MainActor.run { connection.isWorkspaceStreamActive ? "1" : "0" },
-                    "status": "bound_session",
-                    "level": "full",
-                ]
-            )
-        }
-
         scheduleQueueSync(connection: connection, sessionId: sessionId, transport: transport)
 
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
         let endpointHost = connection.streamEndpointHostForMetrics()
         streamCoordinatorLogger.info(
-            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeGate=0ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)"
+            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)"
         )
 
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
             "wsStatus": String(describing: wsStatus),
             "streamOpenMs": String(streamOpenMs),
-            "subscribeGateMs": "0",
             "queueSyncMs": "0",
             "queueSyncStatus": "async",
             "totalMs": String(totalMs),
             "transport": transport,
             "streamEndpoint": connection.focusedSessionStreamEndpointKind,
-            "workspaceStreamActive": connection.isWorkspaceStreamActive ? "1" : "0",
             "endpointHost": endpointHost,
             "connectMs": String(streamOpenMs),
-            "subscribeMs": "0",
         ])
 
         return perSessionStream

@@ -473,6 +473,54 @@ extension LocalSession: Decodable {
     }
 }
 
+struct WorkspaceSessionArchiveBucket: Identifiable, Sendable, Equatable {
+    enum Kind: String, Decodable, Sendable {
+        case day
+        case month
+    }
+
+    let id: String
+    let kind: Kind
+    let startAt: Date
+    let endAt: Date
+    var itemCount: Int
+    var managedStoppedCount: Int
+    var importableLocalCount: Int
+
+    var latestActivity: Date?
+}
+
+extension WorkspaceSessionArchiveBucket: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id = "bucketId"
+        case kind = "bucketKind"
+        case startAt = "startMs"
+        case endAt = "endMs"
+        case itemCount
+        case managedStoppedCount
+        case importableLocalCount
+        case latestActivity
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        let startMs = try c.decode(Double.self, forKey: .startAt)
+        startAt = Date(timeIntervalSince1970: startMs / 1000)
+        let endMs = try c.decode(Double.self, forKey: .endAt)
+        endAt = Date(timeIntervalSince1970: endMs / 1000)
+        itemCount = try c.decode(Int.self, forKey: .itemCount)
+        managedStoppedCount = try c.decode(Int.self, forKey: .managedStoppedCount)
+        importableLocalCount = try c.decode(Int.self, forKey: .importableLocalCount)
+        if let latestActivityMs = try c.decodeIfPresent(Double.self, forKey: .latestActivity) {
+            latestActivity = Date(timeIntervalSince1970: latestActivityMs / 1000)
+        } else {
+            latestActivity = nil
+        }
+    }
+}
+
 // MARK: - Session Search
 
 struct SessionSearchResponse: Decodable, Sendable {

@@ -1474,25 +1474,25 @@ struct StreamLifecycleTests {
         conn.streamConsumptionTask = Task { }
 
         // Add a session continuation
-        let (_, continuation) = AsyncStream<ServerMessage>.makeStream()
-        conn.sessionContinuations["s1"] = continuation
+        let (_, continuation) = AsyncStream<SessionStreamEvent>.makeStream()
+        conn.sessionEventContinuations["s1"] = continuation
 
         conn.disconnectStream()
 
         #expect(conn.streamConsumptionTask == nil,
                 "Should nil out consumption task")
-        #expect(conn.sessionContinuations.isEmpty,
+        #expect(conn.sessionEventContinuations.isEmpty,
                 "Should clear all session continuations")
     }
 
     @Test func disconnectStreamResetsAsrAvailability() {
         let (conn, _) = makeTestConnection()
-        conn.setAsrAvailableForTesting(true)
+        conn.setServerDictationAvailableForTesting(true)
 
         conn.disconnectStream()
 
-        #expect(conn.asrAvailable == false,
-                "disconnectStream should clear stale asrAvailable state")
+        #expect(conn.serverDictationAvailable == false,
+                "disconnectStream should clear stale serverDictationAvailable state")
     }
 
     // MARK: - stream_connected refresh handling
@@ -1504,8 +1504,8 @@ struct StreamLifecycleTests {
         // Track that routeStreamMessage correctly identifies stream_connected
         // and does not yield it to session continuations (it's handled at stream level)
         var yieldedToSession = false
-        let stream = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
         let consumeTask = Task {
             for await _ in stream {
@@ -1516,10 +1516,9 @@ struct StreamLifecycleTests {
         // stream_connected should NOT be yielded to session continuations
         let streamMsg = StreamMessage(
             sessionId: nil,
-            streamSeq: nil,
             seq: nil,
             currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         )
         conn.routeStreamMessage(streamMsg)
 
@@ -1536,14 +1535,14 @@ struct StreamLifecycleTests {
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedMessages: [ServerMessage] = []
-        let stream = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
 
         // Start consuming
         let consumeTask = Task {
-            for await msg in stream {
-                await MainActor.run { receivedMessages.append(msg) }
+            for await event in stream {
+                await MainActor.run { receivedMessages.append(event.message) }
             }
         }
 
@@ -1556,8 +1555,7 @@ struct StreamLifecycleTests {
         )
         let streamMsg = StreamMessage(
             sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .permissionRequest(permRequest)
         )
@@ -1585,8 +1583,7 @@ struct StreamLifecycleTests {
         )
         let streamMsg = StreamMessage(
             sessionId: "s2",
-            streamSeq: 2,
-            seq: nil,
+            seq: 2,
             currentSeq: nil,
             message: .permissionRequest(permRequest)
         )
@@ -1685,7 +1682,7 @@ struct StreamLifecycleTests {
                 "reconnectIfNeeded should restart a prepared bound session stream")
 
         conn.streamConsumptionTask?.cancel()
-        conn.disconnectStream(disconnectWorkspace: false)
+        conn.disconnectStream()
     }
 
     @Test func reconnectIfNeededSkipsFocusedSessionWithoutBoundStreamEndpoint() async {
@@ -1725,21 +1722,20 @@ struct StreamLifecycleTests {
     // MARK: - routeStreamMessage resolves command waiters at stream boundary
 
 
-    @Test func routeStreamMessageResolvesNonSubscribeCommandsAtBoundary() async {
+    @Test func routeStreamMessageResolvesCommandResultsAtBoundary() async {
         let (conn, pipe) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         let pending = PendingCommand(command: "set_model", requestId: "req-m")
         conn.commands.registerCommand(pending)
 
-        _ = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        _ = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
 
         let streamMsg = StreamMessage(
             sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .commandResult(
                 command: "set_model", requestId: "req-m",

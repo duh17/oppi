@@ -255,7 +255,7 @@ describe("telemetry SQLite importer", () => {
             ts: 1,
             metric: "server.ws_handshake_ms",
             value: 12,
-            tags: { path: "workspace_stream" },
+            tags: { path: "bound_session_stream" }
           },
         ],
       }) + "\n",
@@ -268,7 +268,7 @@ describe("telemetry SQLite importer", () => {
       const row = db.prepare("SELECT tag_path FROM server_ops_metric_samples").get() as {
         tag_path: string;
       };
-      expect(row.tag_path).toBe("workspace_stream");
+      expect(row.tag_path).toBe("bound_session_stream");
     } finally {
       db.close();
     }
@@ -292,7 +292,7 @@ describe("telemetry SQLite importer", () => {
             ts: 1_778_254_400_002,
             metric: "server.catchup_events",
             value: 3,
-            tags: { lane: "workspace", ring: "workspace_stream", outcome: "success" },
+            tags: { lane: "session", ring: "session", outcome: "success" }
           },
           {
             ts: 1_778_254_400_003,
@@ -343,8 +343,8 @@ describe("telemetry SQLite importer", () => {
           tag_path: null,
           tag_type: null,
           tag_level: null,
-          tag_lane: "workspace",
-          tag_ring: "workspace_stream",
+          tag_lane: "session",
+          tag_ring: "session",
           tag_code: null,
           tag_outcome: "success",
         },

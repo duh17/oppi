@@ -216,8 +216,7 @@ struct ServerConnectionRoutingTests {
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: message
         ))

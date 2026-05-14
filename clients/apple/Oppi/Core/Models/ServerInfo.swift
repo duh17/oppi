@@ -49,10 +49,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
     }
 
     struct Capabilities: Codable, Sendable, Equatable {
-        let workspaceStream: CapabilityVersion?
         let sessionStream: CapabilityVersion?
         let sessionAudioStream: CapabilityVersion?
-        let sessionProjection: CapabilityVersion?
     }
 
     struct CapabilityVersion: Codable, Sendable, Equatable {
@@ -129,23 +127,15 @@ struct CodexUsageInfo: Codable, Sendable, Equatable {
 
 extension ServerInfo.Capabilities {
     static let requiredSplitStreamCapabilityNames = [
-        "workspaceStream",
         "sessionStream",
-        "sessionProjection",
     ]
 
     static func missingRequiredSplitStreamCapabilities(in capabilities: ServerInfo.Capabilities?) -> [String] {
         guard let capabilities else { return requiredSplitStreamCapabilityNames }
 
         var missing: [String] = []
-        if capabilities.workspaceStream?.version ?? 0 < 1 {
-            missing.append("workspaceStream")
-        }
         if capabilities.sessionStream?.version ?? 0 < 1 {
             missing.append("sessionStream")
-        }
-        if capabilities.sessionProjection?.version ?? 0 < 1 {
-            missing.append("sessionProjection")
         }
         return missing
     }

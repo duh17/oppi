@@ -9,6 +9,7 @@ For simulator/device loops, release workflows, incident triage, telemetry, confi
 - Oppi is mobile-supervised agent infrastructure, not a generic chat app.
 - The Apple clients must make long-running terminal sessions observable, steerable, and safe from a phone or Mac.
 - The chat timeline is a hot path: streaming text, tool output, approvals, diffs, and lifecycle events must render without scroll jumps or excessive SwiftUI invalidation.
+- Workspace navigation is HTTP-first and time-bounded: workspace home uses summary snapshots, workspace detail uses a recent session-list window plus lazy archive buckets, and hot paths must stay off raw JSONL reads.
 - Protocol changes must stay forward-compatible and mirrored across server and Apple models.
 
 ## Structure
@@ -23,9 +24,14 @@ server/         Server runtime (TypeScript, Node.js 22+)
 - `server/src/types.ts` defines the client/server protocol unions.
 - `server/src/session-*.ts` owns session lifecycle, input, queueing, broadcasts, turns, state, summaries, and UI event shaping.
 - `server/src/policy-*.ts` owns command policy, approvals, allowlists, and bash/git heuristics.
-- `server/src/routes/` owns HTTP and streaming endpoints.
+- `server/src/routes/workspaces.ts` owns workspace CRUD plus workspace-home summaries.
+- `server/src/routes/sessions.ts` owns focused-session REST plus unified workspace session-list, archive bucket, attention, and local-session import APIs.
+- `server/src/storage/session-sqlite-store.ts` owns the SQLite read model for recent session snapshots, workspace summaries, and stopped-history buckets.
+- `server/src/local-sessions.ts` owns the cached importable TUI session catalog; hot paths must use the catalog, not reread JSONL files.
 - `clients/apple/Oppi/Core/Models/ClientMessage.swift` and `ServerMessage.swift` mirror the wire protocol.
-- `clients/apple/Oppi/Core/Networking` owns WebSocket/API transport and server-message effects.
+- `clients/apple/Oppi/Core/Networking` owns focused-session WebSocket, audio stream, HTTP refresh, and server-message effects.
+- `clients/apple/Oppi/Core/Services/SessionStore.swift` owns full session state plus the cold list projection and authoritative workspace snapshot merge rules.
+- `clients/apple/Oppi/Features/Workspaces/WorkspaceHomeView.swift` and `WorkspaceDetailView.swift` own the HTTP-first workspace navigation path.
 - `clients/apple/Oppi/Features/Chat/Timeline` owns iOS chat timeline rendering and scroll anchoring.
 - `clients/apple/Shared/Renderers` contains reusable Mermaid, LaTeX, and Org renderers.
 - `clients/apple/OppiMac` owns the macOS client shell and Mac-specific server integration.
@@ -68,6 +74,8 @@ After code changes, run the relevant checks and fix all errors before finishing.
 - Swift 6 strict concurrency is enabled. UI-observable state must stay main-actor isolated.
 - Unknown server messages must be logged and skipped, not treated as fatal decode failures.
 - Server and Apple protocol updates are one change. Do not land one side without the other.
+- Do not reintroduce workspace-scoped WebSocket list fanout for normal navigation without proving it beats the current HTTP snapshot path.
+- Do not read `~/.pi/agent/sessions/*.jsonl` on workspace navigation hot paths; use the local-session catalog and SQLite projections.
 - Keep repo-private working artifacts in `.pi/` (`reports/`, `research/`, `diagrams/`). Reserve `docs/` for curated public docs.
 
 ## Complexity Guardrails

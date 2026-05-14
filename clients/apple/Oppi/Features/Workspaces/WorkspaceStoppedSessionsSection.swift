@@ -16,9 +16,11 @@ struct WorkspaceStoppedSessionsSection: View {
     @Binding var expandedGroupIDs: Set<String>
     @Binding var collapsedGroupIDs: Set<String>
 
-    let olderSessionCount: Int
-    let isLoadingOlder: Bool
-    let onLoadOlder: () -> Void
+    let archiveBuckets: [WorkspaceSessionArchiveBucket]
+    let archiveStoppedSessions: (WorkspaceSessionArchiveBucket) -> [Session]
+    let archiveLocalSessions: (WorkspaceSessionArchiveBucket) -> [LocalSession]
+    let loadingArchiveBucketIDs: Set<String>
+    let onExpandArchiveBucket: (WorkspaceSessionArchiveBucket) -> Void
 
     private enum StoppedItem: Identifiable {
         case session(Session)
@@ -194,30 +196,81 @@ struct WorkspaceStoppedSessionsSection: View {
             }
         }
 
-        if olderSessionCount > 0 {
+        ForEach(archiveBuckets) { bucket in
             Section {
-                Button {
-                    onLoadOlder()
-                } label: {
-                    HStack(spacing: 8) {
-                        if isLoadingOlder {
+                if isArchiveBucketExpanded(bucket) {
+                    if loadingArchiveBucketIDs.contains(bucket.id) {
+                        HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
-                        } else {
-                            Image(systemName: "clock.arrow.circlepath")
+                            Text("Loading older sessions…")
                                 .foregroundStyle(.themeComment)
+                            Spacer()
                         }
-                        Text("\(olderSessionCount) older sessions")
-                            .foregroundStyle(.themeComment)
-                        Spacer()
-                        if !isLoadingOlder {
-                            Image(systemName: "arrow.down.circle")
-                                .foregroundStyle(.themeComment)
+                        .listRowBackground(Color.themeBg)
+                    } else {
+                        ForEach(archiveItems(for: bucket)) { item in
+                            switch item {
+                            case .session(let session):
+                                NavigationLink(value: session.id) {
+                                    SessionRow(
+                                        session: session,
+                                        pendingCount: 0,
+                                        lineageHint: lineageHint(session),
+                                        children: childSummary(session),
+                                        modelSummaries: modelSummaries(session),
+                                        searchSnippet: searchSnippet(session.id)
+                                    )
+                                }
+                                .accessibilityIdentifier("session.nav.\(session.id)")
+                                .listRowBackground(Color.themeBg)
+                                .swipeActions(edge: .leading) {
+                                    if session.ephemeral != true {
+                                        Button {
+                                            onResumeSession(session)
+                                        } label: {
+                                            Label("Resume", systemImage: "play.fill")
+                                        }
+                                        .tint(.themeGreen)
+                                    }
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        onDeleteSession(session)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+
+                            case .local(let local):
+                                Button {
+                                    onImportLocal(local)
+                                } label: {
+                                    LocalSessionRow(session: local)
+                                }
+                                .listRowBackground(Color.themeBg)
+                                .disabled(isImportingLocal)
+                            }
                         }
                     }
                 }
-                .disabled(isLoadingOlder)
-                .listRowBackground(Color.themeBg)
+            } header: {
+                Button {
+                    toggleArchiveBucketExpansion(bucket)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Stopped · \(stoppedGroupTitle(bucket))")
+                        Spacer()
+                        Text("\(bucket.itemCount)")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                        Image(systemName: isArchiveBucketExpanded(bucket) ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -237,6 +290,21 @@ struct WorkspaceStoppedSessionsSection: View {
         case .month(let month):
             return month.formatted(.dateTime.month(.wide).year())
         }
+    }
+
+    private func stoppedGroupTitle(_ bucket: WorkspaceSessionArchiveBucket) -> String {
+        switch bucket.kind {
+        case .day:
+            return stoppedGroupTitle(.day(bucket.startAt))
+        case .month:
+            return stoppedGroupTitle(.month(bucket.startAt))
+        }
+    }
+
+    private func archiveItems(for bucket: WorkspaceSessionArchiveBucket) -> [StoppedItem] {
+        let managed = archiveStoppedSessions(bucket).map(StoppedItem.session)
+        let local = archiveLocalSessions(bucket).map(StoppedItem.local)
+        return (managed + local).sorted { $0.sortDate > $1.sortDate }
     }
 
     private func isGroupExpanded(_ group: StoppedSessionGroup) -> Bool {
@@ -259,6 +327,27 @@ struct WorkspaceStoppedSessionsSection: View {
         } else {
             collapsedGroupIDs.remove(group.id)
             expandedGroupIDs.insert(group.id)
+        }
+    }
+
+    private func isArchiveBucketExpanded(_ bucket: WorkspaceSessionArchiveBucket) -> Bool {
+        if expandedGroupIDs.contains(bucket.id) {
+            return true
+        }
+        if collapsedGroupIDs.contains(bucket.id) {
+            return false
+        }
+        return false
+    }
+
+    private func toggleArchiveBucketExpansion(_ bucket: WorkspaceSessionArchiveBucket) {
+        if isArchiveBucketExpanded(bucket) {
+            expandedGroupIDs.remove(bucket.id)
+            collapsedGroupIDs.insert(bucket.id)
+        } else {
+            collapsedGroupIDs.remove(bucket.id)
+            expandedGroupIDs.insert(bucket.id)
+            onExpandArchiveBucket(bucket)
         }
     }
 

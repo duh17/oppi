@@ -20,14 +20,14 @@ Exercises the first-time device pairing lifecycle:
 4. POST /pair exchanges pairing token for device token
 5. Replayed pairing token rejected (one-time use)
 6. Device token authenticates all subsequent API calls
-7. Split workspace/session WebSockets accessible with device token
+7. HTTP workspace snapshots and split session WebSocket accessible with device token
 
 ### Paired Session Flow (`paired-session.e2e.test.ts`)
 
 Exercises the full session lifecycle for an already-paired device:
 
 1. Create workspace and session
-2. Open `WS /workspaces/:workspaceId/stream`
+2. Verify `GET /workspaces/:workspaceId/sessions` snapshots
 3. Open `WS /workspaces/:workspaceId/sessions/:sessionId/stream`
 4. Send prompt, receive assistant response (text_delta + agent_end)
 5. Send prompt requiring tool use, verify tool_start → tool_end lifecycle

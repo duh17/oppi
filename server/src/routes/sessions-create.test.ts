@@ -115,13 +115,6 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     userEventStore: {
       recordEvent: vi.fn(),
     } as unknown as RouteContext["userEventStore"],
-    workspaceStreamMux: {
-      recordAndFanOutWorkspaceEvent: vi.fn(),
-    } as unknown as RouteContext["workspaceStreamMux"],
-    workspaceProjectionEmitter: {
-      emitSessionProjection: vi.fn(),
-      emitSessionDeleted: vi.fn(),
-    } as unknown as RouteContext["workspaceProjectionEmitter"],
     ensureSessionContextWindow: (session: Session) => session,
     resolveWorkspaceForSession: () => ws,
     refreshModelCatalog: vi.fn().mockResolvedValue(undefined),
@@ -709,14 +702,13 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       await dispatchDelete(mock);
 
       expect(mock.sessions.stopSession).toHaveBeenCalledWith("sess-1");
-      expect(mock.ctx.workspaceProjectionEmitter.emitSessionDeleted).toHaveBeenCalledWith(
-        "ws-1",
-        "sess-1",
-      );
+      expect(mock.ctx.userEventStore.recordEvent).toHaveBeenCalledWith("sess-1", {
+        type: "session_deleted",
+        sessionId: "sess-1",
+      });
       expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
       expect(
-        vi.mocked(mock.ctx.workspaceProjectionEmitter.emitSessionDeleted).mock
-          .invocationCallOrder[0],
+        vi.mocked(mock.ctx.userEventStore.recordEvent).mock.invocationCallOrder[0],
       ).toBeLessThan(vi.mocked(mock.storage.deleteSession).mock.invocationCallOrder[0]!);
       expect(existsSync(jsonlA)).toBe(false);
       expect(existsSync(jsonlB)).toBe(false);

@@ -9,39 +9,6 @@ type PermissionRespondBody = {
 };
 
 export function createStreamingRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  function parseSinceSeq(url: URL, res: ServerResponse): number | null {
-    const sinceParam = url.searchParams.get("since");
-    const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
-    if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
-      helpers.error(res, 400, "since must be a non-negative integer");
-      return null;
-    }
-    return sinceSeq;
-  }
-
-  function handleGetWorkspaceStreamEvents(
-    workspaceId: string,
-    url: URL,
-    res: ServerResponse,
-  ): void {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const sinceSeq = parseSinceSeq(url, res);
-    if (sinceSeq === null) return;
-
-    const catchUp = ctx.workspaceStreamMux.getWorkspaceStreamCatchUp(workspaceId, sinceSeq);
-
-    helpers.json(res, {
-      events: catchUp.events,
-      currentSeq: catchUp.currentSeq,
-      catchUpComplete: catchUp.catchUpComplete,
-    });
-  }
-
   function handleGetPendingPermissions(url: URL, res: ServerResponse): void {
     const sessionIdFilter = url.searchParams.get("sessionId") || undefined;
     const workspaceIdFilter = url.searchParams.get("workspaceId") || undefined;
@@ -139,12 +106,6 @@ export function createStreamingRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   return async ({ method, path, url, req, res }) => {
-    const workspaceEventsMatch = path.match(/^\/workspaces\/([^/]+)\/stream\/events$/);
-    if (workspaceEventsMatch && method === "GET") {
-      handleGetWorkspaceStreamEvents(decodeURIComponent(workspaceEventsMatch[1]), url, res);
-      return true;
-    }
-
     if (path === "/permissions/pending" && method === "GET") {
       handleGetPendingPermissions(url, res);
       return true;

@@ -20,14 +20,19 @@ import {
 } from "../diff-core.js";
 import { buildDiffHunks } from "../workspace-review-diff.js";
 import {
+  discoverLocalSessions,
   invalidateLocalSessionsCache,
+  listCatalogedLocalSessions,
   validateLocalSessionPath,
   validateCwdAlignment,
+  type LocalSessionCatalogSnapshot,
 } from "../local-sessions.js";
-import { type ChatAttachmentRef, type Session } from "../types.js";
+import { buildPermissionMessage } from "../gate.js";
+import { type ChatAttachmentRef, type LocalSession, type Session } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { buildSessionSummary } from "../session-summary.js";
 import {
   deleteSessionAttachments,
   getSessionAttachment,
@@ -35,26 +40,13 @@ import {
 } from "../session-attachments.js";
 import { createSessionFileHandlers } from "./session-files.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import type { WorkspaceStoppedTimeBucketSnapshot } from "../storage/session-dao.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
 const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
+const LOCAL_SESSION_CATALOG_MAX_AGE_MS = 60_000;
 
 const log = createLogger({ base: { component: "route_sessions" } });
-
-const SESSION_STATUSES = new Set<Session["status"]>([
-  "starting",
-  "ready",
-  "busy",
-  "stopping",
-  "stopped",
-  "error",
-]);
-
-function parseSessionStatus(value: string | null): Session["status"] | undefined {
-  return value && SESSION_STATUSES.has(value as Session["status"])
-    ? (value as Session["status"])
-    : undefined;
-}
 
 function compareWorkspaceListSessions(a: Session, b: Session): number {
   if (b.lastActivity !== a.lastActivity) {
@@ -67,9 +59,7 @@ function sessionMatchesWorkspaceListFilters(
   session: Session,
   filters: {
     cutoffMs?: number;
-    status?: Session["status"];
-    beforeLastActivity?: number;
-    beforeSessionId?: string;
+    untilMs?: number;
   },
 ): boolean {
   if (filters.cutoffMs !== undefined && session.status === "stopped") {
@@ -78,17 +68,10 @@ function sessionMatchesWorkspaceListFilters(
     }
   }
 
-  if (filters.status && session.status !== filters.status) {
-    return false;
-  }
-
-  if (filters.beforeLastActivity !== undefined && Number.isFinite(filters.beforeLastActivity)) {
-    return (
-      session.lastActivity < filters.beforeLastActivity ||
-      (filters.beforeSessionId !== undefined &&
-        session.lastActivity === filters.beforeLastActivity &&
-        session.id > filters.beforeSessionId)
-    );
+  if (filters.untilMs !== undefined && session.status === "stopped") {
+    if (session.lastActivity >= filters.untilMs) {
+      return false;
+    }
   }
 
   return true;
@@ -135,9 +118,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     workspaceId: string,
     filters: {
       cutoffMs?: number;
-      status?: Session["status"];
-      beforeLastActivity?: number;
-      beforeSessionId?: string;
+      untilMs?: number;
     },
   ): Session[] {
     const byId = new Map(projectedSessions.map((session) => [session.id, session]));
@@ -154,6 +135,266 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return Array.from(byId.values()).sort(compareWorkspaceListSessions);
   }
 
+  function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {
+    const asks: Array<Record<string, unknown>> = [];
+    for (const sessionId of ctx.sessions.getActiveSessionIds()) {
+      const session = ctx.sessions.getActiveSession(sessionId);
+      if (!session || session.workspaceId !== workspaceId) {
+        continue;
+      }
+
+      const message = ctx.sessions.getPendingAskMessage(sessionId);
+      if (
+        !message ||
+        message.type !== "extension_ui_request" ||
+        message.method !== "ask" ||
+        !message.questions
+      ) {
+        continue;
+      }
+
+      asks.push({
+        id: message.id,
+        sessionId: message.sessionId,
+        workspaceId,
+        questions: message.questions,
+        allowCustom: message.allowCustom ?? true,
+        ...(message.timeout !== undefined ? { timeout: message.timeout } : {}),
+        ...(message.timeoutAt !== undefined ? { timeoutAt: message.timeoutAt } : {}),
+      });
+    }
+    return asks;
+  }
+
+  function pendingPermissionSnapshots(
+    workspaceId: string,
+    nowMs: number,
+  ): Array<Record<string, unknown>> {
+    return ctx.gate
+      .getPendingForUser()
+      .filter((pending) => pending.workspaceId === workspaceId)
+      .filter((pending) => pending.expires !== true || pending.timeoutAt > nowMs)
+      .map((pending) => ({
+        ...buildPermissionMessage(pending),
+        workspaceId: pending.workspaceId,
+      }));
+  }
+
+  function collectKnownPiSessionFiles(): Set<string> {
+    const knownFiles = new Set<string>();
+    for (const session of ctx.storage.listSessions()) {
+      if (session.piSessionFile) {
+        knownFiles.add(session.piSessionFile);
+      }
+      for (const file of session.piSessionFiles ?? []) {
+        knownFiles.add(file);
+      }
+    }
+    return knownFiles;
+  }
+
+  function workspaceAttentionSnapshot(
+    workspaceId: string,
+    serverNow: number,
+  ): {
+    permissions: Array<Record<string, unknown>>;
+    asks: Array<Record<string, unknown>>;
+  } {
+    return {
+      permissions: pendingPermissionSnapshots(workspaceId, serverNow),
+      asks: pendingAskSnapshots(workspaceId),
+    };
+  }
+
+  function listWorkspaceImportableSessions(workspace: {
+    hostMount?: string;
+  }): LocalSessionCatalogSnapshot {
+    const knownPiSessionFiles = collectKnownPiSessionFiles();
+    const snapshot = listCatalogedLocalSessions(knownPiSessionFiles, {
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!workspace.hostMount) {
+      return snapshot;
+    }
+
+    return {
+      ...snapshot,
+      sessions: snapshot.sessions.filter((session) =>
+        validateCwdAlignment(session.cwd, workspace.hostMount ?? ""),
+      ),
+    };
+  }
+
+  function refreshLocalSessionCatalogIfStale(lastScannedAt: number | undefined): void {
+    if (
+      lastScannedAt !== undefined &&
+      Date.now() - lastScannedAt < LOCAL_SESSION_CATALOG_MAX_AGE_MS
+    ) {
+      return;
+    }
+
+    const knownPiSessionFiles = collectKnownPiSessionFiles();
+    void discoverLocalSessions(knownPiSessionFiles, {
+      dataDir: ctx.storage.getDataDir(),
+    }).catch((error: unknown) => {
+      log.warn("local_session_catalog.refresh_failed", {
+        error: safeErrorMessage(error),
+      });
+    });
+  }
+
+  type SessionListArchiveBucket = {
+    bucketId: string;
+    bucketKind: "day" | "month";
+    startMs: number;
+    endMs: number;
+    itemCount: number;
+    managedStoppedCount: number;
+    importableLocalCount: number;
+    latestActivity?: number;
+  };
+
+  function parseRequiredTimeRange(url: URL): { sinceMs: number; untilMs: number } | undefined {
+    const sinceMs = Number.parseInt(url.searchParams.get("sinceMs") ?? "", 10);
+    const untilMs = Number.parseInt(url.searchParams.get("untilMs") ?? "", 10);
+    if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs) || sinceMs >= untilMs) {
+      return undefined;
+    }
+    return { sinceMs, untilMs };
+  }
+
+  function localBucketForTimestamp(
+    timestampMs: number,
+    nowMs: number,
+  ): {
+    bucketId: string;
+    bucketKind: "day" | "month";
+    startMs: number;
+    endMs: number;
+  } {
+    const date = new Date(timestampMs);
+    const recentDayCutoffMs = nowMs - 30 * 86_400_000;
+    if (timestampMs >= recentDayCutoffMs) {
+      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return {
+        bucketId: `day:${y}-${m}-${d}`,
+        bucketKind: "day",
+        startMs: start,
+        endMs: start + 86_400_000,
+      };
+    }
+
+    const start = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+    const end = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    return {
+      bucketId: `month:${y}-${m}`,
+      bucketKind: "month",
+      startMs: start,
+      endMs: end,
+    };
+  }
+
+  function mergeWorkspaceArchiveBuckets(
+    managedBuckets: WorkspaceStoppedTimeBucketSnapshot[],
+    olderImportableSessions: LocalSession[],
+    nowMs: number,
+  ): SessionListArchiveBucket[] {
+    const merged = new Map<string, SessionListArchiveBucket>();
+
+    for (const bucket of managedBuckets) {
+      merged.set(bucket.bucketId, {
+        bucketId: bucket.bucketId,
+        bucketKind: bucket.bucketKind,
+        startMs: bucket.startMs,
+        endMs: bucket.endMs,
+        itemCount: bucket.itemCount,
+        managedStoppedCount: bucket.itemCount,
+        importableLocalCount: 0,
+        ...(bucket.latestActivity !== undefined ? { latestActivity: bucket.latestActivity } : {}),
+      });
+    }
+
+    for (const session of olderImportableSessions) {
+      const bucket = localBucketForTimestamp(session.lastModified, nowMs);
+      const existing = merged.get(bucket.bucketId);
+      if (existing) {
+        existing.itemCount += 1;
+        existing.importableLocalCount += 1;
+        if (
+          existing.latestActivity === undefined ||
+          session.lastModified > existing.latestActivity
+        ) {
+          existing.latestActivity = session.lastModified;
+        }
+        continue;
+      }
+
+      merged.set(bucket.bucketId, {
+        ...bucket,
+        itemCount: 1,
+        managedStoppedCount: 0,
+        importableLocalCount: 1,
+        latestActivity: session.lastModified,
+      });
+    }
+
+    return Array.from(merged.values()).sort((lhs, rhs) => {
+      const lhsLatest = lhs.latestActivity ?? lhs.startMs;
+      const rhsLatest = rhs.latestActivity ?? rhs.startMs;
+      if (lhsLatest !== rhsLatest) {
+        return rhsLatest - lhsLatest;
+      }
+      return lhs.bucketId.localeCompare(rhs.bucketId);
+    });
+  }
+
+  function splitImportableSessionsByRange(
+    sessions: LocalSession[],
+    sinceMs: number,
+    untilMs: number,
+  ): { visibleSessions: LocalSession[]; olderSessions: LocalSession[] } {
+    const visibleSessions: LocalSession[] = [];
+    const olderSessions: LocalSession[] = [];
+
+    for (const session of sessions) {
+      if (session.lastModified >= sinceMs && session.lastModified < untilMs) {
+        visibleSessions.push(session);
+      } else if (session.lastModified < sinceMs) {
+        olderSessions.push(session);
+      }
+    }
+
+    visibleSessions.sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
+    olderSessions.sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
+    return { visibleSessions, olderSessions };
+  }
+
+  function handleWorkspaceAttention(workspaceId: string, res: ServerResponse): void {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const serverNow = Date.now();
+    helpers.json(res, {
+      workspaceId,
+      serverNow,
+      attention: workspaceAttentionSnapshot(workspaceId, serverNow),
+    });
+  }
+
+  function summarizeWorkspaceListSessions(
+    sessions: Session[],
+  ): ReturnType<typeof buildSessionSummary>[] {
+    return sessions.map((session) => buildSessionSummary(ctx.ensureSessionContextWindow(session)));
+  }
+
   function handleListWorkspaceSessions(
     workspaceId: string,
     req: IncomingMessage,
@@ -167,59 +408,118 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const serverNow = Date.now();
     const url = new URL(req.url ?? "/", "http://localhost");
-    const recentDaysParam = url.searchParams.get("recentDays");
-    const recentDays = recentDaysParam ? Number.parseInt(recentDaysParam, 10) : 0;
-    const beforeLastActivityParam = url.searchParams.get("beforeLastActivity");
-    const beforeLastActivity = beforeLastActivityParam
-      ? Number.parseFloat(beforeLastActivityParam)
-      : undefined;
-    const beforeSessionId = url.searchParams.get("beforeSessionId") ?? undefined;
-    const limitParam = url.searchParams.get("limit");
-    const limit = limitParam ? Math.max(0, Number.parseInt(limitParam, 10) || 0) : 0;
-    const status = parseSessionStatus(url.searchParams.get("status"));
+    const recentDaysParam = Number.parseInt(url.searchParams.get("recentDays") ?? "", 10);
+    const recentDays =
+      Number.isFinite(recentDaysParam) && recentDaysParam > 0 ? recentDaysParam : 0;
 
-    const snapshot = ctx.storage.listWorkspaceSessionSnapshots(workspaceId, {
-      recentDays,
-      ...(status ? { status } : {}),
-      beforeLastActivity,
-      beforeSessionId,
-      limit,
-      nowMs: serverNow,
-    });
-    const mergedSessions = mergeActiveWorkspaceSessions(snapshot.sessions, workspaceId, {
-      cutoffMs: snapshot.cutoffMs,
-      ...(status ? { status } : {}),
-      beforeLastActivity,
-      beforeSessionId,
-    });
-    const sessions = mergedSessions.map((s) => ctx.ensureSessionContextWindow(s));
-    const scope =
-      recentDays > 0
-        ? {
-            kind: "recent",
-            workspaceId,
-            recentDays,
-            cutoffMs: snapshot.cutoffMs,
-            serverNow,
-          }
-        : status === "stopped"
-          ? {
-              kind: "stoppedPage",
-              workspaceId,
-              status,
-              beforeLastActivity,
-              beforeSessionId,
-              limit: snapshot.appliedLimit,
-              serverNow,
-            }
-          : { kind: "all", workspaceId, serverNow };
+    const sessions = summarizeWorkspaceListSessions(
+      mergeActiveWorkspaceSessions(
+        recentDays > 0
+          ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspaceId, recentDays, serverNow)
+          : ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId),
+        workspaceId,
+        recentDays > 0 ? { cutoffMs: serverNow - recentDays * 86_400_000 } : {},
+      ),
+    );
+
+    helpers.compressedJson(req, res, { sessions });
+  }
+
+  async function handleWorkspaceSessionList(
+    workspaceId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const timeRange = parseRequiredTimeRange(url);
+    if (!timeRange) {
+      helpers.error(res, 400, "sinceMs and untilMs are required and must form a valid range");
+      return;
+    }
+
+    const serverNow = Date.now();
+    const sessions = summarizeWorkspaceListSessions(
+      mergeActiveWorkspaceSessions(
+        ctx.storage.listWorkspaceTimeRangeSessionSnapshots(
+          workspaceId,
+          timeRange.sinceMs,
+          timeRange.untilMs,
+        ),
+        workspaceId,
+        {
+          cutoffMs: timeRange.sinceMs,
+          untilMs: timeRange.untilMs,
+        },
+      ),
+    );
+
+    const importableSnapshot = listWorkspaceImportableSessions(workspace);
+    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
+    const importableSplit = splitImportableSessionsByRange(
+      importableSnapshot.sessions,
+      timeRange.sinceMs,
+      timeRange.untilMs,
+    );
+    const archiveBuckets = mergeWorkspaceArchiveBuckets(
+      ctx.storage.listWorkspaceStoppedTimeBuckets(workspaceId, timeRange.sinceMs, serverNow),
+      importableSplit.olderSessions,
+      serverNow,
+    );
 
     helpers.compressedJson(req, res, {
-      sessions,
       workspace,
-      totalCount: snapshot.totalCount,
-      remainingCount: snapshot.remainingCount,
-      scope,
+      serverNow,
+      sessions,
+      attention: workspaceAttentionSnapshot(workspaceId, serverNow),
+      importableSessions: importableSplit.visibleSessions,
+      archiveBuckets,
+    });
+  }
+
+  async function handleWorkspaceSessionListBucket(
+    workspaceId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const timeRange = parseRequiredTimeRange(url);
+    if (!timeRange) {
+      helpers.error(res, 400, "sinceMs and untilMs are required and must form a valid range");
+      return;
+    }
+
+    const sessions = ctx.storage.listStoppedWorkspaceTimeRangeSessionSnapshots(
+      workspaceId,
+      timeRange.sinceMs,
+      timeRange.untilMs,
+    );
+    const importableSnapshot = listWorkspaceImportableSessions(workspace);
+    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
+    const importableSessions = importableSnapshot.sessions
+      .filter(
+        (session) =>
+          session.lastModified >= timeRange.sinceMs && session.lastModified < timeRange.untilMs,
+      )
+      .sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
+
+    helpers.compressedJson(req, res, {
+      workspaceId,
+      sinceMs: timeRange.sinceMs,
+      untilMs: timeRange.untilMs,
+      sessions: summarizeWorkspaceListSessions(sessions),
+      importableSessions,
     });
   }
 
@@ -317,7 +617,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session.piSessionFile = validation.path;
       session.piSessionFiles = [validation.path];
       ctx.storage.saveSession(session);
-      ctx.workspaceProjectionEmitter.emitSessionProjection(session, "session_imported");
       invalidateLocalSessionsCache();
 
       const hydrated = ctx.ensureSessionContextWindow(session);
@@ -350,7 +649,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session.ephemeral = true;
     }
     ctx.storage.saveSession(session);
-    ctx.workspaceProjectionEmitter.emitSessionProjection(session, "session_created");
 
     // ── Optional prompt: auto-resume + send first message ──
     const prompt = body.prompt?.trim();
@@ -374,7 +672,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         });
         session.firstMessage = prompt.slice(0, 200);
         ctx.storage.saveSession(session);
-        ctx.workspaceProjectionEmitter.emitSessionProjection(session, "session_prompted");
       } catch (_err: unknown) {
         // Session was created but prompt delivery failed — return it
         // with prompted: false so the client knows to retry or send manually.
@@ -488,7 +785,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     try {
       const started = await ctx.sessions.startSession(sessionId, workspace);
       const hydrated = ctx.ensureSessionContextWindow(started);
-      ctx.workspaceProjectionEmitter.emitSessionProjection(hydrated, "session_resumed");
       helpers.json(res, { session: hydrated });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
@@ -566,7 +862,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
 
     ctx.storage.saveSession(forkSession);
-    ctx.workspaceProjectionEmitter.emitSessionProjection(forkSession, "session_fork_created");
 
     try {
       await ctx.sessions.startSession(forkSession.id, workspace);
@@ -588,7 +883,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const created = ctx.storage.getSession(forkSession.id) || forkSession;
-    ctx.workspaceProjectionEmitter.emitSessionProjection(created, "session_forked");
     helpers.json(res, { session: ctx.ensureSessionContextWindow(created) }, 201);
   }
 
@@ -609,7 +903,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       hydratedSession.currentTurnStartedAt = undefined;
       hydratedSession.lastActivity = Date.now();
       ctx.storage.saveSession(hydratedSession);
-      ctx.workspaceProjectionEmitter.emitSessionProjection(hydratedSession, "session_stopped");
     }
 
     const updatedSession = ctx.storage.getSession(sessionId);
@@ -980,10 +1273,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       sessionId,
     };
 
-    // Notify connected clients before deleting from storage so workspace-scoped
-    // streams still have the authoritative workspace id available.
     ctx.userEventStore.recordEvent(sessionId, deletedMessage);
-    ctx.workspaceProjectionEmitter.emitSessionDeleted(workspaceId, sessionId);
 
     ctx.storage.deleteSession(sessionId);
     ctx.searchIndex?.deleteSession(sessionId);
@@ -1000,6 +1290,24 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     // ── Workspace-scoped session routes (v2 API) ──
+
+    const wsAttentionMatch = path.match(/^\/workspaces\/([^/]+)\/attention$/);
+    if (wsAttentionMatch && method === "GET") {
+      handleWorkspaceAttention(wsAttentionMatch[1], res);
+      return true;
+    }
+
+    const wsSessionListBucketMatch = path.match(/^\/workspaces\/([^/]+)\/session-list-bucket$/);
+    if (wsSessionListBucketMatch && method === "GET") {
+      await handleWorkspaceSessionListBucket(wsSessionListBucketMatch[1], req, res);
+      return true;
+    }
+
+    const wsSessionListMatch = path.match(/^\/workspaces\/([^/]+)\/session-list$/);
+    if (wsSessionListMatch && method === "GET") {
+      await handleWorkspaceSessionList(wsSessionListMatch[1], req, res);
+      return true;
+    }
 
     const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
     if (wsSessionsMatch) {

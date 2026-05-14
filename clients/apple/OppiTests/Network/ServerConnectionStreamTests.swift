@@ -58,7 +58,7 @@ struct ServerConnectionStreamTests {
                 "Should create task when none exists")
     }
 
-    @Test func prepareForSessionReentryRestoresFocusWithoutOpeningLegacyStream() {
+    @Test func prepareForSessionReentryRestoresFocusWithoutOpeningStream() {
         let (conn, _) = makeTestConnection(sessionId: "child")
         conn.sessionStore.upsert(makeTestSession(id: "parent", workspaceId: "w1"))
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -72,7 +72,7 @@ struct ServerConnectionStreamTests {
         #expect(conn.focusedSessionId == "parent",
                 "Re-entry should restore the parent as the focused command target before async connect runs")
         #expect(conn.streamConsumptionTask == nil,
-                "Re-entry should not reopen legacy /stream; the chat connect task owns the bound session stream")
+                "Re-entry should not reopen the stream; the chat connect task owns the bound session stream")
         #expect(conn.wsClient?.status == .disconnected)
     }
 
@@ -106,14 +106,14 @@ struct ServerConnectionStreamTests {
         let (conn, _) = makeTestConnection()
         conn.streamConsumptionTask = Task { }
 
-        let (_, continuation) = AsyncStream<ServerMessage>.makeStream()
-        conn.sessionContinuations["s1"] = continuation
+        let (_, continuation) = AsyncStream<SessionStreamEvent>.makeStream()
+        conn.sessionEventContinuations["s1"] = continuation
 
         conn.disconnectStream()
 
         #expect(conn.streamConsumptionTask == nil,
                 "Should nil out consumption task")
-        #expect(conn.sessionContinuations.isEmpty,
+        #expect(conn.sessionEventContinuations.isEmpty,
                 "Should clear all session continuations")
     }
 
@@ -124,8 +124,8 @@ struct ServerConnectionStreamTests {
         conn._setActiveSessionIdForTesting("s1")
 
         var yieldedToSession = false
-        let stream = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
         let consumeTask = Task {
             for await _ in stream {
@@ -135,10 +135,9 @@ struct ServerConnectionStreamTests {
 
         let streamMsg = StreamMessage(
             sessionId: nil,
-            streamSeq: nil,
             seq: nil,
             currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
         )
         conn.routeStreamMessage(streamMsg)
 
@@ -154,13 +153,13 @@ struct ServerConnectionStreamTests {
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedMessages: [ServerMessage] = []
-        let stream = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
 
         let consumeTask = Task {
-            for await msg in stream {
-                await MainActor.run { receivedMessages.append(msg) }
+            for await event in stream {
+                await MainActor.run { receivedMessages.append(event.message) }
             }
         }
 
@@ -172,8 +171,7 @@ struct ServerConnectionStreamTests {
         )
         let streamMsg = StreamMessage(
             sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .permissionRequest(permRequest)
         )
@@ -200,8 +198,7 @@ struct ServerConnectionStreamTests {
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "background",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .agentStart
         ))
@@ -222,8 +219,7 @@ struct ServerConnectionStreamTests {
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "background",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .agentStart
         ))
@@ -270,7 +266,7 @@ struct ServerConnectionStreamTests {
         #expect(receivedEvents.first?.meta?.transportPath == .lan)
     }
 
-    @Test func routeStreamMessageUsesStreamSeqWhenSessionSeqIsAbsent() async {
+    @Test func routeStreamMessageCarriesSessionSeqMetadata() async {
         let (conn, _) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -287,8 +283,7 @@ struct ServerConnectionStreamTests {
 
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s1",
-            streamSeq: 77,
-            seq: nil,
+            seq: 77,
             currentSeq: 80,
             message: .agentStart
         ))
@@ -302,74 +297,6 @@ struct ServerConnectionStreamTests {
         #expect(received, "Message should be yielded to event continuation")
         #expect(receivedEvents.first?.meta?.seq == 77)
         #expect(receivedEvents.first?.meta?.currentSeq == 80)
-    }
-
-    @Test func workspaceStreamAdvancesCursorForSessionScopedFrames() {
-        let (conn, _) = makeTestConnection()
-        conn._setWorkspaceStreamWorkspaceIdForTesting("w1")
-
-        let perm = PermissionRequest(
-            id: "p-workspace",
-            sessionId: "s-workspace",
-            tool: "bash",
-            input: [:],
-            displaySummary: "bash: test",
-            reason: "Needs approval",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
-
-        conn._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
-            sessionId: "s-workspace",
-            message: .permissionRequest(perm),
-            meta: InboundStreamMeta(seq: 12, currentSeq: 12)
-        ))
-
-        #expect(conn._workspaceStreamLastSeqForTesting(workspaceId: "w1") == 12)
-        #expect(conn.permissionStore.pending.first?.id == "p-workspace")
-
-        conn._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
-            sessionId: "s-workspace",
-            message: .permissionRequest(perm),
-            meta: InboundStreamMeta(seq: 8, currentSeq: 12)
-        ))
-
-        #expect(conn._workspaceStreamLastSeqForTesting(workspaceId: "w1") == 12)
-        #expect(conn.permissionStore.pending.count == 1)
-    }
-
-    @Test func workspaceStreamDefersPermissionExpiryWhenLiveSessionConsumerExists() {
-        let (conn, _) = makeTestConnection()
-        conn._setWorkspaceStreamWorkspaceIdForTesting("w1")
-
-        let perm = PermissionRequest(
-            id: "p-live",
-            sessionId: "s-live",
-            tool: "bash",
-            input: [:],
-            displaySummary: "bash: test",
-            reason: "Needs approval",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
-        conn.permissionStore.add(perm)
-
-        let stream = AsyncStream<SessionStreamEvent> { continuation in
-            conn.sessionEventContinuations["s-live"] = continuation
-        }
-        _ = stream
-
-        conn._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
-            sessionId: "s-live",
-            message: .permissionExpired(id: "p-live", reason: "Approval timeout"),
-            meta: InboundStreamMeta(seq: 13, currentSeq: 13)
-        ))
-
-        #expect(conn._workspaceStreamLastSeqForTesting(workspaceId: "w1") == 13)
-        #expect(conn.permissionStore.pending.first?.id == "p-live")
-
-        conn.sessionEventContinuations["s-live"]?.finish()
-        conn.sessionEventContinuations.removeValue(forKey: "s-live")
     }
 
     // MARK: - reconnectIfNeeded restarts dead stream
@@ -395,7 +322,7 @@ struct ServerConnectionStreamTests {
                 "reconnectIfNeeded should restart a prepared bound session stream")
 
         conn.streamConsumptionTask?.cancel()
-        conn.disconnectStream(disconnectWorkspace: false)
+        conn.disconnectStream()
     }
 
     @Test func reconnectIfNeededSkipsFocusedSessionWithoutBoundStreamEndpoint() async {
@@ -440,14 +367,13 @@ struct ServerConnectionStreamTests {
 
         // Per-session stream exists but nobody is consuming it — same as
         // in streamSession() where get_queue blocks before returning.
-        _ = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        _ = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
 
         let streamMsg = StreamMessage(
             sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .commandResult(
                 command: "get_queue", requestId: "req-q",
@@ -467,14 +393,13 @@ struct ServerConnectionStreamTests {
         let pending = PendingCommand(command: "set_model", requestId: "req-m")
         conn.commands.registerCommand(pending)
 
-        _ = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
+        _ = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
         }
 
         let streamMsg = StreamMessage(
             sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
+            seq: 1,
             currentSeq: nil,
             message: .commandResult(
                 command: "set_model", requestId: "req-m",
@@ -650,7 +575,7 @@ struct ServerConnectionStreamTests {
     @Test func streamSessionRequiresRequiredSplitCapabilities() async {
         let (conn, _) = makeTestConnection(sessionId: "s1")
         conn.wsClient?._setStatusForTesting(.connected)
-        conn.setSplitStreamCapabilitiesForTesting(sessionProjection: false)
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: false)
 
         let stream = await conn.streamSession("s1", workspaceId: "w1")
 

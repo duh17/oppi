@@ -50,6 +50,14 @@ export interface Workspace {
   updatedAt: number;
 }
 
+export interface WorkspaceListSummary {
+  workspaceId: string;
+  activeCount: number;
+  stoppedCount: number;
+  hasAttention: boolean;
+  latestActivity?: number;
+}
+
 // ─── Sessions ───
 
 export interface SessionSummaryChangeStats {
@@ -866,26 +874,9 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Client lag from command_result frame receipt to command waiter resolution.",
   },
-  // Removed: chat.stream_open_ms — p50=0ms, never measures real latency
-  "chat.subscribe_gate_ms": {
-    unit: "ms",
-    description: "Client-observed full subscription gate latency for session commands.",
-  },
   "chat.queue_sync_ms": {
     unit: "ms",
     description: "Latency for initial queue snapshot refresh (get_queue command).",
-  },
-  "chat.resubscribe_ms": {
-    unit: "ms",
-    description: "Client resubscribe duration after reconnect or not-subscribed recovery.",
-  },
-  "chat.silent_resubscribe_count": {
-    unit: "count",
-    description: "Silent resubscribe attempts triggered by not-subscribed recovery.",
-  },
-  "chat.subscription_race_count": {
-    unit: "count",
-    description: "Recovered not-subscribed race detections on the client stream.",
   },
   "chat.message_queue_ack_ms": {
     unit: "ms",
@@ -1095,6 +1086,11 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description:
       "Aggregate per-row computation latency for visible session rows. Tags: row_count, workspace_id.",
+  },
+  "chat.workspace_load_ms": {
+    unit: "ms",
+    description:
+      "Workspace screen load latency from view entry until the list is usable. Tags: path, workspace_id.",
   },
 
   // ── Device resource samples (10s interval) ──
@@ -1354,10 +1350,9 @@ export interface AskQuestion {
 export type ServerMessage = // ── Connection ──
   (
     | { type: "connected"; session: Session; currentSeq?: number }
-    | { type: "stream_connected"; userName: string; asrAvailable?: boolean }
+    | { type: "stream_connected"; userName: string; serverDictationAvailable: boolean }
     | { type: "state"; session: Session }
     | { type: "session_summary"; summary: SessionSummary }
-    | { type: "session_projection"; summary: SessionSummary }
     | { type: "session_ended"; reason: string }
     | { type: "session_deleted"; sessionId: string }
     | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }
@@ -1474,6 +1469,7 @@ export type ServerMessage = // ── Connection ──
         type: "permission_request";
         id: string;
         sessionId: string;
+        workspaceId: string;
         tool: string;
         input: Record<string, unknown>;
         displaySummary: string;
@@ -1547,10 +1543,6 @@ export type ServerMessage = // ── Connection ──
      * Bound session streams bind this in the URL but may still echo it on frames.
      */
     sessionId?: string;
-    /**
-     * User-wide notification event cursor.
-     */
-    streamSeq?: number;
   };
 
 // ─── Push ───

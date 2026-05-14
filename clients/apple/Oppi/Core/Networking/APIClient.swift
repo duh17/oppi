@@ -207,12 +207,6 @@ actor APIClient {
         let catchUpComplete: Bool
     }
 
-    struct WorkspaceEventsResponse: Sendable, Equatable {
-        let events: [SequencedServerEvent]
-        let currentSeq: Int
-        let catchUpComplete: Bool
-    }
-
     /// Fetch sequenced durable session events after `since` for reconnect catch-up.
     ///
     /// Decodes the response in a single pass using `Decodable` — no intermediate
@@ -234,16 +228,6 @@ actor APIClient {
         )
     }
 
-    func getWorkspaceStreamEvents(workspaceId: String, since: Int) async throws -> WorkspaceEventsResponse {
-        let data = try await get("/workspaces/\(workspaceId)/stream/events?since=\(since)")
-        let payload = try JSONDecoder().decode(WorkspaceEventsPayload.self, from: data)
-        return WorkspaceEventsResponse(
-            events: payload.events.map { SequencedServerEvent(seq: $0.seq, message: $0.message) },
-            currentSeq: payload.currentSeq,
-            catchUpComplete: payload.catchUpComplete
-        )
-    }
-
     /// Wire format for `/workspaces/:workspaceId/sessions/:id/events` response.
     ///
     /// Each event object has `seq` alongside the `ServerMessage` fields:
@@ -256,24 +240,17 @@ actor APIClient {
         let session: Session
     }
 
-    private struct WorkspaceEventsPayload: Decodable {
-        let events: [SequencedEventEntry]
-        let currentSeq: Int
-        let catchUpComplete: Bool
-    }
-
     private struct SequencedEventEntry: Decodable {
         let seq: Int
         let message: ServerMessage
 
         private enum CodingKeys: String, CodingKey {
-            case seq, streamSeq
+            case seq
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            seq = try container.decodeIfPresent(Int.self, forKey: .seq)
-                ?? container.decode(Int.self, forKey: .streamSeq)
+            seq = try container.decode(Int.self, forKey: .seq)
             message = try ServerMessage(from: decoder)
         }
     }
@@ -855,50 +832,131 @@ actor APIClient {
 
     // MARK: - Workspace-scoped Sessions (v2 API)
 
-    struct WorkspaceSessionsResponse: Decodable {
-        let sessions: [Session]
-        let totalCount: Int?
-    }
+    struct WorkspaceSessionSummariesResponse: Decodable {
+        let sessionSummaries: [SessionSummary]
 
-    /// List sessions for a specific workspace.
-    func listWorkspaceSessions(workspaceId: String, recentDays: Int? = nil) async throws -> WorkspaceSessionsResponse {
-        var path = "/workspaces/\(workspaceId)/sessions"
-        if let days = recentDays {
-            path += "?recentDays=\(days)"
+        enum CodingKeys: String, CodingKey {
+            case sessionSummaries = "sessions"
         }
-        let data = try await get(path)
-        return try JSONDecoder().decode(WorkspaceSessionsResponse.self, from: data)
     }
 
-    /// List recent sessions across known workspaces without using the legacy global `/sessions` endpoint.
-    func listWorkspaceSessions(workspaces: [Workspace], recentDays: Int? = 3) async throws -> [Session] {
+    struct WorkspaceAttentionResponse: Decodable, Sendable {
+        struct Attention: Decodable, Sendable {
+            let permissions: [PermissionRequest]
+            let asks: [AskRequest]
+        }
+
+        let workspaceId: String
+        let serverNow: Int64
+        let attention: Attention
+    }
+
+    struct WorkspaceSessionListResponse: Decodable, Sendable {
+        let workspace: Workspace
+        let serverNow: Int64
+        let sessionSummaries: [SessionSummary]
+        let attention: WorkspaceAttentionResponse.Attention
+        let importableSessions: [LocalSession]
+        let archiveBuckets: [WorkspaceSessionArchiveBucket]
+
+        enum CodingKeys: String, CodingKey {
+            case workspace, serverNow, attention, importableSessions, archiveBuckets
+            case sessionSummaries = "sessions"
+        }
+    }
+
+    struct WorkspaceSessionListBucketResponse: Decodable, Sendable {
+        let workspaceId: String
+        let sinceMs: Int64
+        let untilMs: Int64
+        let sessionSummaries: [SessionSummary]
+        let importableSessions: [LocalSession]
+
+        enum CodingKeys: String, CodingKey {
+            case workspaceId, sinceMs, untilMs, importableSessions
+            case sessionSummaries = "sessions"
+        }
+    }
+
+    struct WorkspaceSummariesResponse: Decodable, Sendable {
+        let serverNow: Int64
+        let summaries: [WorkspaceListSummary]
+    }
+
+    func listWorkspaceSummaries() async throws -> WorkspaceSummariesResponse {
+        let data = try await get("/workspace-summaries")
+        return try JSONDecoder().decode(WorkspaceSummariesResponse.self, from: data)
+    }
+
+    func getWorkspaceSessionList(
+        workspaceId: String,
+        since: Date,
+        until: Date
+    ) async throws -> WorkspaceSessionListResponse {
+        let sinceMs = Int(since.timeIntervalSince1970 * 1000)
+        let untilMs = Int(until.timeIntervalSince1970 * 1000)
+        let data = try await get("/workspaces/\(workspaceId)/session-list?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        return try JSONDecoder().decode(WorkspaceSessionListResponse.self, from: data)
+    }
+
+    func getWorkspaceSessionListBucket(
+        workspaceId: String,
+        since: Date,
+        until: Date
+    ) async throws -> WorkspaceSessionListBucketResponse {
+        let sinceMs = Int(since.timeIntervalSince1970 * 1000)
+        let untilMs = Int(until.timeIntervalSince1970 * 1000)
+        let data = try await get("/workspaces/\(workspaceId)/session-list-bucket?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        return try JSONDecoder().decode(WorkspaceSessionListBucketResponse.self, from: data)
+    }
+
+    /// List all workspace session summaries.
+    func listAllWorkspaceSessionSummaries(workspaceId: String) async throws -> [SessionSummary] {
+        let data = try await get("/workspaces/\(workspaceId)/sessions")
+        return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
+    }
+
+    /// List recent workspace session summaries for a bounded global refresh lane.
+    func listRecentWorkspaceSessionSummaries(
+        workspaceId: String,
+        recentDays: Int = 3
+    ) async throws -> [SessionSummary] {
+        let data = try await get("/workspaces/\(workspaceId)/sessions?recentDays=\(recentDays)")
+        return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
+    }
+
+    /// List recent session summaries across known workspaces without using the legacy global `/sessions` endpoint.
+    func listRecentWorkspaceSessionSummaries(
+        workspaces: [Workspace],
+        recentDays: Int = 3
+    ) async throws -> [SessionSummary] {
         let workspaceIds = workspaces.map(\.id)
-        return try await withThrowingTaskGroup(of: [Session].self) { group in
+        return try await withThrowingTaskGroup(of: [SessionSummary].self) { group in
             for workspaceId in workspaceIds {
                 group.addTask {
-                    try await self.listWorkspaceSessions(workspaceId: workspaceId, recentDays: recentDays).sessions
+                    try await self.listRecentWorkspaceSessionSummaries(
+                        workspaceId: workspaceId,
+                        recentDays: recentDays
+                    )
                 }
             }
 
-            var sessions: [Session] = []
+            var summaries: [SessionSummary] = []
             for try await batch in group {
-                sessions.append(contentsOf: batch)
+                summaries.append(contentsOf: batch)
             }
-            return sessions.sorted { $0.lastActivity > $1.lastActivity }
+            return summaries.sorted { $0.lastActivity > $1.lastActivity }
         }
     }
 
     /// Bootstrap helper for flows that have an API client but no populated workspace store yet.
-    func listSessionsFromWorkspaces(recentDays: Int? = 3) async throws -> [Session] {
+    func listSessionsFromWorkspaces(recentDays: Int = 3) async throws -> [Session] {
         let workspaces = try await listWorkspaces()
-        return try await listWorkspaceSessions(workspaces: workspaces, recentDays: recentDays)
-    }
-
-    /// Discover local pi TUI sessions not yet managed by oppi.
-    func listLocalSessions() async throws -> [LocalSession] {
-        let data = try await get("/local-sessions")
-        struct Response: Decodable { let sessions: [LocalSession] }
-        return try JSONDecoder().decode(Response.self, from: data).sessions
+        let summaries = try await listRecentWorkspaceSessionSummaries(
+            workspaces: workspaces,
+            recentDays: recentDays
+        )
+        return summaries.map(\.session)
     }
 
     /// Create a new session in a specific workspace.

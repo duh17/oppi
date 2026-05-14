@@ -5,7 +5,7 @@
  *   1. Concurrent prompts across split session streams (event isolation)
  *   2. Model switching mid-session via set_model
  *   3. Thinking level toggle via set_thinking_level
- *   4. Session deletion while workspace/session streams are open
+ *   4. Session deletion while the bound session stream is open
  *   5. Follow-up queue execution during an active turn
  *
  * Requires: Docker, OMLX server on localhost:8400 with a loaded model
@@ -15,7 +15,6 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
-  openWorkspaceStream,
   openSessionStream,
   closeStream,
   waitForEvent,
@@ -281,29 +280,19 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
   // ── 4. Session deletion across split lanes ──
 
-  it("receives workspace deletion projection when a session is deleted via REST", async () => {
+  it("removes a deleted session from the HTTP workspace snapshot", async () => {
     if (!lmsReady()) return;
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-session-delete");
-    const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
     const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
 
     try {
-      const workspaceStartIndex = workspaceStream.events.length;
-
       const delRes = await api(
         "DELETE",
         `/workspaces/${workspaceId}/sessions/${sessionId}`,
         deviceToken,
       );
       expect(delRes.status).toBe(200);
-
-      await waitForEvent(
-        workspaceStream,
-        (e) => e.direction === "in" && e.type === "session_deleted" && e.sessionId === sessionId,
-        "workspace session_deleted event",
-        { startIndex: workspaceStartIndex, timeoutMs: 30_000 },
-      );
 
       const listRes = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
       expect(listRes.status).toBe(200);
@@ -313,7 +302,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       expect(found).toBeUndefined();
     } finally {
       await closeStream(sessionStream);
-      await closeStream(workspaceStream);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
     }
   });

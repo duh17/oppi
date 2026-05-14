@@ -613,7 +613,7 @@ final class VoiceInputManager {
             mode: engineMode,
             fallback: fallback,
             serverCredentials: serverCredentials,
-            asrAvailable: serverConnection?.asrAvailable ?? false
+            serverDictationAvailable: serverConnection?.serverDictationAvailable ?? false
         )
 
         // Tests and previews often register only one on-device provider. Keep
@@ -635,7 +635,7 @@ final class VoiceInputManager {
         guard serverCredentials != nil, serverConnection != nil else {
             throw VoiceInputError.serverNotConnected
         }
-        guard serverConnection?.asrAvailable == true else {
+        guard serverConnection?.serverDictationAvailable == true else {
             throw VoiceInputError.serverAsrUnavailable
         }
     }

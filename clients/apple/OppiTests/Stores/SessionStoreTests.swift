@@ -304,6 +304,71 @@ struct SessionStorePartitioningTests {
         #expect(!ids.contains("old"))
     }
 
+    // MARK: - Workspace recent snapshots
+
+    @Test func workspaceRecentSnapshotPrunesMissingWorkspaceRows() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        store.upsert(makeTestSession(id: "active-old", workspaceId: "w1", status: .busy, lastActivity: now))
+        store.upsert(makeTestSession(
+            id: "old-stopped",
+            workspaceId: "w1",
+            status: .stopped,
+            lastActivity: now.addingTimeInterval(-10 * 86_400)
+        ))
+        store.upsert(makeTestSession(id: "other-workspace", workspaceId: "w2", status: .busy, lastActivity: now))
+
+        store.applyWorkspaceRecentSnapshot(
+            workspaceId: "w1",
+            summaries: [
+                SessionSummary(from: makeTestSession(id: "incoming", workspaceId: "w1", status: .ready, lastActivity: now)),
+                SessionSummary(from: makeTestSession(id: "recent-stopped", workspaceId: "w1", status: .stopped, lastActivity: now.addingTimeInterval(-60)))
+            ],
+            requestStartedAt: now
+        )
+
+        let ids = Set(store.sessions.map(\.id))
+        #expect(ids.contains("incoming"))
+        #expect(ids.contains("recent-stopped"))
+        #expect(ids.contains("other-workspace"))
+        #expect(!ids.contains("active-old"))
+        #expect(!ids.contains("old-stopped"))
+    }
+
+    @Test func workspaceRecentSnapshotPreservesExistingAncestors() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        store.upsert(makeTestSession(id: "parent", workspaceId: "w1", status: .stopped, lastActivity: now.addingTimeInterval(-5 * 86_400)))
+        var child = makeTestSession(id: "child", workspaceId: "w1", status: .ready, lastActivity: now)
+        child.parentSessionId = "parent"
+
+        store.applyWorkspaceRecentSnapshot(
+            workspaceId: "w1",
+            summaries: [SessionSummary(from: child)],
+            requestStartedAt: now
+        )
+
+        #expect(Set(store.sessions.map(\.id)) == Set(["parent", "child"]))
+    }
+
+    @Test func workspaceRecentSnapshotPreservesRecentOptimisticLocalRows() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        let justCreated = now.addingTimeInterval(10)
+        store.upsert(makeTestSession(id: "optimistic", workspaceId: "w1", status: .ready, createdAt: justCreated, lastActivity: justCreated))
+
+        store.applyWorkspaceRecentSnapshot(
+            workspaceId: "w1",
+            summaries: [],
+            requestStartedAt: now
+        )
+
+        #expect(store.sessions.map(\.id) == ["optimistic"])
+    }
+
     // MARK: - Freshness
 
     @Test func freshnessPerServer() {

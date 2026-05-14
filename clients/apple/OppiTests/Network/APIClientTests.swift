@@ -1027,7 +1027,6 @@ struct APIClientTests {
         #expect(invalid.errorDescription?.contains("Invalid") == true)
 
         let server = APIError.server(status: 500, message: "Internal error")
-        #expect(server.errorDescription?.contains("500") == true)
-        #expect(server.errorDescription?.contains("Internal error") == true)
+        #expect(server.errorDescription == "Internal error")
     }
 }

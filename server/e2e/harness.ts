@@ -103,10 +103,6 @@ function wsBaseURL(): string {
   return `${wsScheme}://127.0.0.1:${E2E_PORT}`;
 }
 
-export function workspaceStreamURL(workspaceId: string): string {
-  return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/stream`;
-}
-
 export function sessionStreamURL(workspaceId: string, sessionId: string): string {
   return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/stream`;
 }
@@ -543,7 +539,6 @@ export interface StreamEvent {
   sessionStatus?: string;
   sessionSeq?: number;
   currentSeq?: number;
-  streamSeq?: number;
   content?: string;
   delta?: string;
   seq: number;
@@ -600,13 +595,6 @@ async function openStreamAt(url: string, deviceToken: string): Promise<StreamCon
   await waitForEvent(connection, (e) => e.type === "stream_connected", "stream_connected");
 
   return connection;
-}
-
-export async function openWorkspaceStream(
-  deviceToken: string,
-  workspaceId: string,
-): Promise<StreamConnection> {
-  return openStreamAt(workspaceStreamURL(workspaceId), deviceToken);
 }
 
 export async function openSessionStream(
@@ -778,7 +766,6 @@ function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: num
   }
   if (typeof msg.seq === "number") event.sessionSeq = msg.seq;
   if (typeof msg.currentSeq === "number") event.currentSeq = msg.currentSeq;
-  if (typeof msg.streamSeq === "number") event.streamSeq = msg.streamSeq;
   if (typeof msg.content === "string") event.content = msg.content;
   if (typeof msg.delta === "string") event.delta = msg.delta;
   return event;

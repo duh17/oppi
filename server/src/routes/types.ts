@@ -4,14 +4,12 @@ import type { Storage } from "../storage.js";
 import type { SessionManager } from "../sessions.js";
 import type { GateServer } from "../gate.js";
 import type { SkillRegistry, UserSkillStore } from "../skills.js";
-import type { WorkspaceStreamMux } from "../stream.js";
 import type { UserEventStore } from "../user-event-store.js";
 import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
 import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update.js";
 import type { SearchIndex } from "../search-index.js";
 import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager.js";
-import type { WorkspaceProjectionEmitter } from "../workspace-projection-emitter.js";
 import type { CodexUsageStatus } from "../codex-usage.js";
 
 /** Services needed by route handlers — injected by Server. */
@@ -22,8 +20,6 @@ export interface RouteContext {
   skillRegistry: SkillRegistry;
   userSkillStore: UserSkillStore;
   userEventStore: UserEventStore;
-  workspaceStreamMux: WorkspaceStreamMux;
-  workspaceProjectionEmitter: WorkspaceProjectionEmitter;
   providerAuth: ProviderAuthManager;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;

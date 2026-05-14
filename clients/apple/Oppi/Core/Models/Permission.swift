@@ -13,6 +13,7 @@ enum PermissionScope: String, Codable, Sendable {
 struct PermissionRequest: Identifiable, Sendable, Equatable {
     let id: String
     let sessionId: String
+    let workspaceId: String?
     let tool: String
     let input: [String: JSONValue]
     let displaySummary: String
@@ -28,10 +29,12 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
         displaySummary: String,
         reason: String,
         timeoutAt: Date,
-        expires: Bool = true
+        expires: Bool = true,
+        workspaceId: String? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
+        self.workspaceId = workspaceId
         self.tool = tool
         self.input = input
         self.displaySummary = displaySummary
@@ -45,13 +48,14 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
 
 extension PermissionRequest: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, sessionId, tool, input, displaySummary, reason, timeoutAt, expires
+        case id, sessionId, workspaceId, tool, input, displaySummary, reason, timeoutAt, expires
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         sessionId = try c.decode(String.self, forKey: .sessionId)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
         tool = try c.decode(String.self, forKey: .tool)
         input = try c.decode([String: JSONValue].self, forKey: .input)
         displaySummary = try c.decode(String.self, forKey: .displaySummary)
@@ -66,6 +70,7 @@ extension PermissionRequest: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(sessionId, forKey: .sessionId)
+        try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
         try c.encode(tool, forKey: .tool)
         try c.encode(input, forKey: .input)
         try c.encode(displaySummary, forKey: .displaySummary)

@@ -29,6 +29,7 @@ import type {
   UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
+  WorkspaceListSummary,
   WorkspaceReviewSelectionResponse,
   WorkspaceReviewSessionResponse,
 } from "../types.js";
@@ -176,6 +177,60 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   function handleListWorkspaces(res: ServerResponse): void {
     const workspaces = ctx.storage.listWorkspaces().map(removeUnknownSkills);
     helpers.json(res, { workspaces });
+  }
+
+  function handleListWorkspaceSummaries(res: ServerResponse): void {
+    const workspaces = ctx.storage.listWorkspaces();
+    const snapshotByWorkspaceId = new Map(
+      ctx.storage
+        .listWorkspaceSessionSummarySnapshots()
+        .map((snapshot) => [snapshot.workspaceId, snapshot] as const),
+    );
+
+    const nowMs = Date.now();
+    const permissionWorkspaceIds = new Set(
+      ctx.gate
+        .getPendingForUser()
+        .filter((pending) => pending.expires !== true || pending.timeoutAt > nowMs)
+        .map((pending) => pending.workspaceId),
+    );
+    const askWorkspaceIds = new Set<string>();
+    for (const sessionId of ctx.sessions.getActiveSessionIds()) {
+      const session = ctx.sessions.getActiveSession(sessionId);
+      if (!session?.workspaceId) {
+        continue;
+      }
+
+      const message = ctx.sessions.getPendingAskMessage(sessionId);
+      if (
+        message &&
+        message.type === "extension_ui_request" &&
+        message.method === "ask" &&
+        message.questions
+      ) {
+        askWorkspaceIds.add(session.workspaceId);
+      }
+    }
+
+    const summaries: WorkspaceListSummary[] = workspaces.map((workspace) => {
+      const snapshot = snapshotByWorkspaceId.get(workspace.id);
+      const hasAttention =
+        permissionWorkspaceIds.has(workspace.id) ||
+        askWorkspaceIds.has(workspace.id) ||
+        snapshot?.hasErrorRoot === true;
+
+      return {
+        workspaceId: workspace.id,
+        activeCount: snapshot?.activeCount ?? 0,
+        stoppedCount: snapshot?.stoppedCount ?? 0,
+        hasAttention,
+        ...(snapshot?.latestActivity !== undefined
+          ? { latestActivity: snapshot.latestActivity }
+          : {}),
+      };
+    });
+
+    helpers.json(res, { serverNow: nowMs, summaries });
   }
 
   async function handleCreateWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -710,6 +765,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     if (path === "/workspaces" && method === "GET") {
       handleListWorkspaces(res);
+      return true;
+    }
+
+    if (path === "/workspace-summaries" && method === "GET") {
+      handleListWorkspaceSummaries(res);
       return true;
     }
 

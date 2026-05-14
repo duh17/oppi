@@ -97,6 +97,7 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
             type: "permission_request" as const,
             id: "p1",
             sessionId: "s1",
+            workspaceId: "w1",
             tool: "bash",
             input: { command: "rm -rf /" },
             displaySummary: "Run: rm -rf /",
@@ -184,7 +185,7 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
     it("every ServerMessage type round-trips to same discriminator", () => {
       const messages: ServerMessage[] = [
         { type: "connected", session: minimalSession() },
-        { type: "stream_connected", userName: "test" },
+        { type: "stream_connected", userName: "test", serverDictationAvailable: false },
         { type: "state", session: minimalSession() },
         { type: "session_summary", summary: minimalSessionSummary() },
         { type: "session_ended", reason: "done" },
@@ -198,6 +199,13 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
         { type: "message_end", role: "assistant", content: "done" },
         { type: "text_delta", delta: "hi" },
         { type: "thinking_delta", delta: "hmm" },
+        {
+          type: "audio_stream",
+          kind: "audio-stream",
+          id: "audio1",
+          event: "metadata",
+          mimeType: "audio/wav",
+        },
         { type: "tool_start", tool: "bash", args: {} },
         { type: "tool_output", output: "ok" },
         { type: "tool_end", tool: "bash" },
@@ -217,6 +225,7 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           type: "permission_request",
           id: "p1",
           sessionId: "s1",
+          workspaceId: "w1",
           tool: "bash",
           input: {},
           displaySummary: "run",
@@ -255,6 +264,10 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           item: { id: "qi1", message: "hi", createdAt: Date.now() },
           queueVersion: 1,
         },
+        { type: "dictation_ready", sttProvider: "test", sttModel: "model" },
+        { type: "dictation_result", text: "hel", snap: false },
+        { type: "dictation_final", text: "hello" },
+        { type: "dictation_error", error: "failed", fatal: true },
       ];
 
       for (const message of messages) {
@@ -358,6 +371,7 @@ describe("RQ-PROTO-002: cross-platform invariants", () => {
       type: "permission_request",
       id: "p1",
       sessionId: "s1",
+      workspaceId: "w1",
       tool: "bash",
       input: { command: "echo" },
       displaySummary: "Run: echo",
@@ -368,6 +382,7 @@ describe("RQ-PROTO-002: cross-platform invariants", () => {
     expect(parsed).toMatchObject({
       id: expect.any(String),
       sessionId: expect.any(String),
+      workspaceId: expect.any(String),
       tool: expect.any(String),
       input: expect.any(Object),
       displaySummary: expect.any(String),

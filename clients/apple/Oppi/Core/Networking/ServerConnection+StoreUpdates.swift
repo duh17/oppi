@@ -143,9 +143,8 @@ extension ServerConnection {
         case .state(let session):
             return applySessionProjection(session)
 
-        case .sessionSummary(let summary), .sessionProjection(let summary):
-            let session = summary.session
-            return applySessionProjection(session, source: .summary)
+        case .sessionSummary(let summary):
+            return applySessionSummary(summary)
 
         case .sessionEnded:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
@@ -172,25 +171,28 @@ extension ServerConnection {
         }
     }
 
-    private enum SessionProjectionSource {
-        case fullState
-        case summary
+    private func applySessionProjection(_ session: Session) -> StoreUpdateResult {
+        applySessionProjection(sessionId: session.id, fallbackSession: session) {
+            sessionStore.upsert(session)
+        }
+    }
+
+    private func applySessionSummary(_ summary: SessionSummary) -> StoreUpdateResult {
+        let fallbackSession = summary.session
+        return applySessionProjection(sessionId: summary.id, fallbackSession: fallbackSession) {
+            sessionStore.applySummary(summary)
+        }
     }
 
     private func applySessionProjection(
-        _ session: Session,
-        source: SessionProjectionSource = .fullState
+        sessionId: String,
+        fallbackSession: Session,
+        applyStoreUpdate: () -> Void
     ) -> StoreUpdateResult {
-        let previousSession = sessionStore.sessions.first(where: { $0.id == session.id })
+        let previousSession = sessionStore.sessions.first(where: { $0.id == sessionId })
+        applyStoreUpdate()
 
-        switch source {
-        case .fullState:
-            sessionStore.upsert(session)
-        case .summary:
-            sessionStore.applySummary(SessionSummary(from: session))
-        }
-
-        let currentSession = sessionStore.sessions.first(where: { $0.id == session.id }) ?? session
+        let currentSession = sessionStore.sessions.first(where: { $0.id == sessionId }) ?? fallbackSession
         let stateContext = StoreUpdateResult.SessionStateContext(
             previousSession: previousSession,
             currentSession: currentSession
@@ -207,6 +209,52 @@ extension ServerConnection {
 
         syncLiveActivityPermissions()
         return StoreUpdateResult(stateContext: stateContext, handled: true)
+    }
+
+    /// Apply an authoritative workspace-scoped attention snapshot fetched over HTTP.
+    ///
+    /// The snapshot is destructive only inside the target workspace: pending
+    /// permissions/asks missing from a successful response are stale and should
+    /// be removed from list badges.
+    func applyWorkspaceAttentionSnapshot(_ response: APIClient.WorkspaceAttentionResponse) {
+        let workspaceId = response.workspaceId
+        let workspaceSessionIds = Set(
+            sessionStore.sessions
+                .filter { $0.workspaceId == workspaceId }
+                .map(\.id)
+        )
+
+        let removedPermissions = permissionStore.applyWorkspaceSnapshot(
+            workspaceId: workspaceId,
+            requests: response.attention.permissions,
+            workspaceSessionIds: workspaceSessionIds
+        )
+        if ReleaseFeatures.pushNotificationsEnabled {
+            for permission in removedPermissions {
+                PermissionNotificationService.shared.cancelNotification(permissionId: permission.id)
+            }
+        }
+
+        let removedAskSessionIds = askRequestStore.applyWorkspaceSnapshot(
+            workspaceId: workspaceId,
+            asks: response.attention.asks,
+            workspaceSessionIds: workspaceSessionIds
+        )
+        for sessionId in removedAskSessionIds {
+            pendingAskRequests.removeValue(forKey: sessionId)
+            if activeAskRequest?.sessionId == sessionId {
+                activeAskRequest = nil
+            }
+        }
+        for ask in response.attention.asks {
+            if activeAskRequest?.sessionId == ask.sessionId {
+                activeAskRequest = ask
+            } else {
+                pendingAskRequests[ask.sessionId] = ask
+            }
+        }
+
+        syncLiveActivityPermissions()
     }
 
     /// Apply a session snapshot fetched outside the live WS stream.

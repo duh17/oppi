@@ -69,11 +69,7 @@ struct ProtocolSnapshotTests {
                 // Verify we didn't fall through to .unknown
                 switch decoded {
                 case .unknown(let type):
-                    // Server-only message types iOS intentionally ignores.
-                    let allowedUnknown: Set<String> = ["stream_connected"]
-                    if !allowedUnknown.contains(type) {
-                        failures.append("\(key): decoded as .unknown(\(type))")
-                    }
+                    failures.append("\(key): decoded as .unknown(\(type))")
                 default:
                     break
                 }
@@ -138,6 +134,7 @@ struct ProtocolSnapshotTests {
 
         #expect(perm.id == "perm-001")
         #expect(perm.sessionId == "test-session-1")
+        #expect(perm.workspaceId == "ws-1")
         #expect(perm.tool == "bash")
         #expect(perm.displaySummary == "Run: rm -rf node_modules")
         #expect(perm.reason == "Destructive file operation")
@@ -338,18 +335,20 @@ struct ProtocolSnapshotTests {
     @Test func snapshotCoversAllExpectedTypes() throws {
         let messages = try loadSnapshot()
 
-        // All type discriminators that iOS handles (excluding stream_connected which is mux-only)
         let expectedTypes: Set<String> = [
-            "connected", "state", "session_ended", "session_deleted",
+            "connected", "stream_connected", "state", "session_summary",
+            "session_ended", "session_deleted",
             "stop_requested", "stop_confirmed", "stop_failed", "error",
             "agent_start", "agent_end", "message_end",
-            "text_delta", "thinking_delta",
+            "text_delta", "thinking_delta", "audio_stream",
             "tool_start", "tool_update", "tool_output", "tool_end",
+            "queue_state", "queue_item_started",
             "turn_ack", "command_result",
             "compaction_start", "compaction_end",
             "retry_start", "retry_end",
-            "permission_request", "permission_expired", "permission_cancelled",
-            "extension_ui_request", "extension_ui_notification",
+            "permission_request", "permission_expired", "permission_cancelled", "permission_resolved",
+            "extension_ui_request", "extension_ui_notification", "git_status",
+            "dictation_ready", "dictation_result", "dictation_final", "dictation_error",
         ]
 
         let messageTypes = Set(messages.values.compactMap { value -> String? in

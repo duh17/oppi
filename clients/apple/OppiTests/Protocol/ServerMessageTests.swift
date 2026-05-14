@@ -32,14 +32,6 @@ struct ServerMessageTests {
         #expect(session.id == "abc")
     }
 
-    @Test func streamMessageUsesStreamSeqWhenSessionSeqIsAbsent() throws {
-        let json = #"{"type":"permission_request","streamSeq":17,"sessionId":"s1","id":"p1","tool":"bash","input":{},"displaySummary":"bash: test","reason":"Needs approval","timeoutAt":1700000000000}"#
-        let msg = try StreamMessage.decode(from: json)
-        #expect(msg.seq == nil)
-        #expect(msg.streamSeq == 17)
-        #expect(msg.effectiveSeq == 17)
-    }
-
     @Test func decodesState() throws {
         let json = """
         {"type":"state","session":{"id":"abc","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":5,"tokens":{"input":100,"output":200},"cost":0.05,"lastMessage":"hello"}}
@@ -52,21 +44,6 @@ struct ServerMessageTests {
         #expect(session.status == .busy)
         #expect(session.messageCount == 5)
         #expect(session.lastMessage == "hello")
-    }
-
-    @Test func decodesSessionProjection() throws {
-        let json = """
-        {"type":"session_projection","summary":{"id":"abc","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":5,"tokens":{"input":100,"output":200},"cost":0.05,"lastMessage":"hello"}}
-        """
-        let msg = try ServerMessage.decode(from: json)
-        guard case .sessionProjection(let summary) = msg else {
-            Issue.record("Expected .sessionProjection")
-            return
-        }
-        #expect(summary.session.id == "abc")
-        #expect(summary.session.status == .busy)
-        #expect(summary.session.messageCount == 5)
-        #expect(summary.session.lastMessage == "hello")
     }
 
     @Test func decodesSessionEnded() throws {

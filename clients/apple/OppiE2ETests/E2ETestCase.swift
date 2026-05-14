@@ -300,11 +300,6 @@ class E2ETestCase: XCTestCase {
     }
 
     @discardableResult
-    func waitForWorkspaceStreamConnected(timeout: TimeInterval = 20) -> String {
-        waitForE2EDiagnostic("e2e.stream.workspaceStatus", timeout: timeout) { $0 == "connected" }
-    }
-
-    @discardableResult
     func waitForSessionStreamEndpoint(_ expected: String = "split_session", timeout: TimeInterval = 20) -> String {
         waitForE2EDiagnostic("e2e.stream.sessionEndpoint", timeout: timeout) { $0 == expected }
     }

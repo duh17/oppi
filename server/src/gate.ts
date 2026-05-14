@@ -528,6 +528,7 @@ export function buildPermissionMessage(pending: PendingDecision): ServerMessage 
     type: "permission_request",
     id: pending.id,
     sessionId: pending.sessionId,
+    workspaceId: pending.workspaceId,
     tool: pending.tool,
     input: pending.input,
     displaySummary: pending.displaySummary,

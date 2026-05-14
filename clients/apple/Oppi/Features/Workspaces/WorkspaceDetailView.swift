@@ -25,6 +25,40 @@ func workspaceYourTurnSorted(
     }
 }
 
+struct WorkspaceRefreshPollingPolicy: Equatable {
+    private(set) var gracePollsRemaining: Int = 0
+    private var hadActiveWork = false
+    let postTransitionGracePolls: Int
+
+    init(postTransitionGracePolls: Int = 2) {
+        self.postTransitionGracePolls = postTransitionGracePolls
+    }
+
+    mutating func shouldRefresh(hasActiveWork: Bool, hasAttention: Bool) -> Bool {
+        if hasActiveWork {
+            hadActiveWork = true
+            gracePollsRemaining = postTransitionGracePolls
+            return true
+        }
+
+        if hadActiveWork {
+            hadActiveWork = false
+            gracePollsRemaining = max(gracePollsRemaining, postTransitionGracePolls)
+        }
+
+        if hasAttention {
+            return true
+        }
+
+        if gracePollsRemaining > 0 {
+            gracePollsRemaining -= 1
+            return true
+        }
+
+        return false
+    }
+}
+
 /// Detail view for a workspace — shows its sessions with management actions.
 ///
 /// Sessions are grouped into active (running/busy/ready) and stopped.
@@ -58,16 +92,31 @@ struct WorkspaceDetailView: View {
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
-    @State private var olderSessionCount: Int = 0
-    @State private var isLoadingOlder = false
+    @State private var archiveBuckets: [WorkspaceSessionArchiveBucket] = []
+    @State private var archiveStoppedSessionsByBucketID: [String: [Session]] = [:]
+    @State private var archiveLocalSessionsByBucketID: [String: [LocalSession]] = [:]
+    @State private var loadingArchiveBucketIDs: Set<String> = []
+    @State private var isRefreshingWorkspaceData = false
+    @State private var hasPresentedWorkspaceOnce = false
+    @State private var workspaceLoad: WorkspaceLoadMeasurement?
+
+    private struct WorkspaceLoadMeasurement {
+        let startedAtMs: Int64
+        let path: String
+        let hadImmediateContent: Bool
+    }
 
     // MARK: - Computed
 
-    /// Keep the cold workspace stream alive when this view disappears because
-    /// the stack is pushing a chat destination. Do not attach tap gestures to
+    /// Detect when the stack is pushing a chat destination so workspace-list
+    /// HTTP polling pauses behind focused chat. Do not attach tap gestures to
     /// `NavigationLink` rows for this; that can consume the row activation.
     private var isNavigatingDeeperInWorkspaceStack: Bool {
         navigation.workspacePath.count > 1 || navigateToSessionId != nil
+    }
+
+    private var workspaceRefreshPollingTaskId: String {
+        "\(workspace.id):\(isNavigatingDeeperInWorkspaceStack ? "covered" : "visible")"
     }
 
     private var normalizedSessionSearchQuery: String {
@@ -76,8 +125,14 @@ struct WorkspaceDetailView: View {
             .lowercased()
     }
 
+    private static let hotStoppedRangeDays = 3
+
     private var hasSessionSearchQuery: Bool {
         !normalizedSessionSearchQuery.isEmpty
+    }
+
+    private func hotStoppedRange(now: Date = Date()) -> (since: Date, until: Date) {
+        (since: now.addingTimeInterval(-Double(Self.hotStoppedRangeDays) * 86_400), until: now)
     }
 
     private var policyFallbackIconName: String {
@@ -413,10 +468,12 @@ struct WorkspaceDetailView: View {
                 },
                 expandedGroupIDs: $expandedStoppedGroupIDs,
                 collapsedGroupIDs: $collapsedStoppedGroupIDs,
-                olderSessionCount: olderSessionCount,
-                isLoadingOlder: isLoadingOlder,
-                onLoadOlder: {
-                    Task { await loadOlderSessions() }
+                archiveBuckets: archiveBuckets,
+                archiveStoppedSessions: archiveStoppedSessions(for:),
+                archiveLocalSessions: archiveLocalSessions(for:),
+                loadingArchiveBucketIDs: loadingArchiveBucketIDs,
+                onExpandArchiveBucket: { bucket in
+                    Task { await ensureArchiveBucketLoaded(bucket) }
                 }
             )
 
@@ -473,6 +530,15 @@ struct WorkspaceDetailView: View {
             WorkspaceSessionNavigationChromePolicy.bottomBarVisibility(on: .sessionList),
             for: .bottomBar
         )
+        .onAppear {
+            handleViewAppear()
+        }
+        .onDisappear {
+            workspaceLoad = nil
+        }
+        .onChange(of: isRefreshingWorkspaceData) { _, newValue in
+            handleWorkspaceRefreshStateChange(newValue)
+        }
         .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
         .onChange(of: sessionSearchText) { _, newValue in
             searchStore.search(
@@ -526,15 +592,12 @@ struct WorkspaceDetailView: View {
             }
         }
         .refreshable {
-            await refreshSessions()
-            await refreshLocalSessions()
+            await refreshWorkspaceData()
             await refreshPolicyFallback()
         }
         .task(id: workspace.id) {
-            await connectWorkspaceStreamIfSupported()
-            await refreshSessions()
-            await refreshLocalSessions()
-            await refreshPolicyFallback()
+            // Start git status immediately so the context bar does not wait for
+            // the workspace session-list refresh.
             if let api = apiClient {
                 gitStatusStore.loadInitial(
                     workspaceId: workspace.id,
@@ -542,11 +605,16 @@ struct WorkspaceDetailView: View {
                     gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
                 )
             }
+
+            async let workspaceDataRefreshTask: Void = refreshWorkspaceData()
+            async let policyFallbackTask: Void = refreshPolicyFallback()
+            _ = await (workspaceDataRefreshTask, policyFallbackTask)
         }
-        .onDisappear {
-            if !isNavigatingDeeperInWorkspaceStack {
-                connection.disconnectWorkspaceStream()
-            }
+        .task(id: workspaceRefreshPollingTaskId) {
+            guard !isNavigatingDeeperInWorkspaceStack else { return }
+            beginWorkspaceLoadIfNeeded(path: hasPresentedWorkspaceOnce ? "return_from_chat" : "open")
+            await refreshWorkspaceData()
+            await runWorkspaceRefreshPolling()
         }
         .overlay {
             if isCreating || isImportingLocal {
@@ -755,6 +823,7 @@ struct WorkspaceDetailView: View {
         do {
             let updated = try await api.resumeWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
             sessionStore.upsert(updated)
+            removeArchiveSession(session.id)
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"
         }
@@ -763,6 +832,7 @@ struct WorkspaceDetailView: View {
     private func deleteSession(_ session: Session) async {
         guard let api = apiClient else { return }
         sessionStore.remove(id: session.id)
+        removeArchiveSession(session.id)
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
         } catch let apiError as APIError {
@@ -789,6 +859,7 @@ struct WorkspaceDetailView: View {
 
             // Remove from local list immediately (server will also filter it on next fetch)
             localSessions.removeAll { $0.path == local.path }
+            removeArchiveLocalSession(local.path)
 
             isImportingLocal = false
             navigateToSessionId = session.id
@@ -798,48 +869,229 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    private func refreshSessions() async {
+    private func isArchiveBucketGroupID(_ id: String) -> Bool {
+        id.hasPrefix("day:") || id.hasPrefix("month:")
+    }
+
+    private func pruneArchiveState(validBucketIDs: Set<String>) {
+        archiveStoppedSessionsByBucketID = archiveStoppedSessionsByBucketID.filter { validBucketIDs.contains($0.key) }
+        archiveLocalSessionsByBucketID = archiveLocalSessionsByBucketID.filter { validBucketIDs.contains($0.key) }
+        loadingArchiveBucketIDs = loadingArchiveBucketIDs.filter { validBucketIDs.contains($0) }
+        expandedStoppedGroupIDs = expandedStoppedGroupIDs.filter { validBucketIDs.contains($0) || !isArchiveBucketGroupID($0) }
+        collapsedStoppedGroupIDs = collapsedStoppedGroupIDs.filter { validBucketIDs.contains($0) || !isArchiveBucketGroupID($0) }
+    }
+
+    private func archiveStoppedSessions(for bucket: WorkspaceSessionArchiveBucket) -> [Session] {
+        archiveStoppedSessionsByBucketID[bucket.id] ?? []
+    }
+
+    private func archiveLocalSessions(for bucket: WorkspaceSessionArchiveBucket) -> [LocalSession] {
+        archiveLocalSessionsByBucketID[bucket.id] ?? []
+    }
+
+    private func ensureArchiveBucketLoaded(_ bucket: WorkspaceSessionArchiveBucket) async {
+        if archiveStoppedSessionsByBucketID[bucket.id] != nil || archiveLocalSessionsByBucketID[bucket.id] != nil {
+            return
+        }
+        guard !loadingArchiveBucketIDs.contains(bucket.id) else { return }
         guard let api = apiClient else { return }
+
+        loadingArchiveBucketIDs.insert(bucket.id)
+        defer { loadingArchiveBucketIDs.remove(bucket.id) }
+
         do {
-            let response = try await api.listWorkspaceSessions(
+            let response = try await api.getWorkspaceSessionListBucket(
                 workspaceId: workspace.id,
-                recentDays: 3
+                since: bucket.startAt,
+                until: bucket.endAt
             )
-            sessionStore.upsertMany(response.sessions)
-            olderSessionCount = max(0, (response.totalCount ?? response.sessions.count) - response.sessions.count)
+            archiveStoppedSessionsByBucketID[bucket.id] = response.sessionSummaries.map(\.session)
+            archiveLocalSessionsByBucketID[bucket.id] = response.importableSessions
         } catch {
-            // Keep cached data
+            self.error = "Failed to load older sessions: \(error.localizedDescription)"
         }
     }
 
-    private func loadOlderSessions() async {
+    private func updateArchiveBucketCounts(
+        bucketId: String,
+        removedManagedStoppedCount: Int = 0,
+        removedImportableLocalCount: Int = 0
+    ) {
+        guard let index = archiveBuckets.firstIndex(where: { $0.id == bucketId }) else { return }
+        archiveBuckets[index].managedStoppedCount = max(
+            0,
+            archiveBuckets[index].managedStoppedCount - removedManagedStoppedCount
+        )
+        archiveBuckets[index].importableLocalCount = max(
+            0,
+            archiveBuckets[index].importableLocalCount - removedImportableLocalCount
+        )
+        archiveBuckets[index].itemCount = max(
+            0,
+            archiveBuckets[index].itemCount - removedManagedStoppedCount - removedImportableLocalCount
+        )
+        if archiveBuckets[index].itemCount == 0 {
+            let bucketId = archiveBuckets[index].id
+            archiveBuckets.remove(at: index)
+            archiveStoppedSessionsByBucketID.removeValue(forKey: bucketId)
+            archiveLocalSessionsByBucketID.removeValue(forKey: bucketId)
+            expandedStoppedGroupIDs.remove(bucketId)
+            collapsedStoppedGroupIDs.remove(bucketId)
+        }
+    }
+
+    private func removeArchiveSession(_ sessionId: String) {
+        for (bucketId, sessions) in archiveStoppedSessionsByBucketID {
+            if sessions.contains(where: { $0.id == sessionId }) {
+                archiveStoppedSessionsByBucketID[bucketId] = sessions.filter { $0.id != sessionId }
+                updateArchiveBucketCounts(bucketId: bucketId, removedManagedStoppedCount: 1)
+                break
+            }
+        }
+    }
+
+    private func removeArchiveLocalSession(_ path: String) {
+        for (bucketId, sessions) in archiveLocalSessionsByBucketID {
+            if sessions.contains(where: { $0.path == path }) {
+                archiveLocalSessionsByBucketID[bucketId] = sessions.filter { $0.path != path }
+                updateArchiveBucketCounts(bucketId: bucketId, removedImportableLocalCount: 1)
+                break
+            }
+        }
+    }
+
+    private func runWorkspaceRefreshPolling() async {
+        var policy = WorkspaceRefreshPollingPolicy()
+
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(Int.random(in: 10...15)))
+            guard !Task.isCancelled else { break }
+
+            let state = workspacePollingState()
+            guard policy.shouldRefresh(
+                hasActiveWork: state.hasActiveWork,
+                hasAttention: state.hasAttention
+            ) else {
+                continue
+            }
+
+            await refreshWorkspaceData()
+        }
+    }
+
+    private func workspacePollingState() -> (hasActiveWork: Bool, hasAttention: Bool) {
+        let sessions = workspaceSessions
+        let sessionIds = Set(sessions.map(\.id))
+        let hasActiveWork = sessions.contains { session in
+            switch session.status {
+            case .starting, .busy, .stopping:
+                return true
+            case .ready, .stopped, .error:
+                return false
+            }
+        }
+        let hasPermissionAttention = permissionStore.pending.contains { permission in
+            permission.workspaceId == workspace.id ||
+                (permission.workspaceId == nil && sessionIds.contains(permission.sessionId))
+        }
+        let hasAskAttention = askRequestStore.pending.values.contains { ask in
+            ask.workspaceId == workspace.id ||
+                (ask.workspaceId == nil && sessionIds.contains(ask.sessionId))
+        }
+
+        return (
+            hasActiveWork: hasActiveWork,
+            hasAttention: hasPermissionAttention || hasAskAttention
+        )
+    }
+
+    private func refreshWorkspaceData() async {
+        guard !isRefreshingWorkspaceData else { return }
+        isRefreshingWorkspaceData = true
+        defer { isRefreshingWorkspaceData = false }
+
         guard let api = apiClient else { return }
-        isLoadingOlder = true
-        defer { isLoadingOlder = false }
+        let hadVisibleData = !workspaceSessions.isEmpty || !localSessions.isEmpty || !archiveBuckets.isEmpty
+
         do {
-            let response = try await api.listWorkspaceSessions(workspaceId: workspace.id)
-            sessionStore.upsertMany(response.sessions)
-            olderSessionCount = 0
+            let startedAt = Date()
+            let range = hotStoppedRange(now: startedAt)
+            let response = try await api.getWorkspaceSessionList(
+                workspaceId: workspace.id,
+                since: range.since,
+                until: range.until
+            )
+            sessionStore.applyWorkspaceRecentSnapshot(
+                workspaceId: workspace.id,
+                summaries: response.sessionSummaries,
+                requestStartedAt: startedAt
+            )
+            archiveBuckets = response.archiveBuckets
+            pruneArchiveState(validBucketIDs: Set(response.archiveBuckets.map(\.id)))
+            localSessions = response.importableSessions
+            connection.applyWorkspaceAttentionSnapshot(
+                APIClient.WorkspaceAttentionResponse(
+                    workspaceId: workspace.id,
+                    serverNow: response.serverNow,
+                    attention: response.attention
+                )
+            )
         } catch {
-            // Keep cached data
+            if !hadVisibleData {
+                self.error = "Failed to load workspace: \(error.localizedDescription)"
+            }
         }
     }
 
-    private func refreshLocalSessions() async {
-        guard let api = apiClient else { return }
-        do {
-            localSessions = try await api.listLocalSessions()
-        } catch {
-            // Non-fatal — local sessions are a nice-to-have
+    @MainActor
+    private func handleViewAppear() {
+        let path = hasPresentedWorkspaceOnce ? "return_from_chat" : "open"
+        beginWorkspaceLoadIfNeeded(path: path)
+        hasPresentedWorkspaceOnce = true
+
+        if workspaceLoad?.hadImmediateContent == true {
+            scheduleWorkspaceLoadCompletionCheck()
         }
     }
 
-    private func connectWorkspaceStreamIfSupported() async {
-        guard apiClient != nil else { return }
-        await connection.refreshStreamCapabilitiesIfNeeded()
-        guard connection.hasRequiredSplitStreamCapabilities else { return }
-        await connection.catchUpWorkspaceStream(workspaceId: workspace.id)
-        connection.connectWorkspaceStream(workspaceId: workspace.id)
+    @MainActor
+    private func handleWorkspaceRefreshStateChange(_ isRefreshing: Bool) {
+        guard !isRefreshing else { return }
+        scheduleWorkspaceLoadCompletionCheck()
+    }
+
+    @MainActor
+    private func beginWorkspaceLoadIfNeeded(path: String) {
+        guard workspaceLoad == nil else { return }
+        workspaceLoad = WorkspaceLoadMeasurement(
+            startedAtMs: Date.nowMs(),
+            path: path,
+            hadImmediateContent: !workspaceSessions.isEmpty || !localSessions.isEmpty
+        )
+    }
+
+    @MainActor
+    private func scheduleWorkspaceLoadCompletionCheck() {
+        Task { @MainActor in
+            await Task.yield()
+            finishWorkspaceLoadIfReady()
+        }
+    }
+
+    @MainActor
+    private func finishWorkspaceLoadIfReady() {
+        guard let workspaceLoad else { return }
+        if !workspaceLoad.hadImmediateContent, isRefreshingWorkspaceData {
+            return
+        }
+
+        ChatSessionTelemetry.recordTimingMetric(
+            .workspaceLoadMs,
+            durationMs: Date.nowMs() - workspaceLoad.startedAtMs,
+            workspaceId: workspace.id,
+            tags: ["path": workspaceLoad.path]
+        )
+        self.workspaceLoad = nil
     }
 
     private func refreshPolicyFallback() async {

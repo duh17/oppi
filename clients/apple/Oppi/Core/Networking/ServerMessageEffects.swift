@@ -161,7 +161,7 @@ enum ServerMessageEffects {
             effects.clearAskSessionIds.insert(sessionId)
             effects.clearExtensionDialogSessionIds.insert(sessionId)
 
-        case .sessionSummary(let summary), .sessionProjection(let summary) where summary.status.isTerminal:
+        case .sessionSummary(let summary) where summary.status.isTerminal:
             if isFocusedSession {
                 effects.stopSilenceWatchdog = true
             }

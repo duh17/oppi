@@ -244,6 +244,100 @@ final class SessionStore {
         upsertMerged(summary.session)
     }
 
+    /// Insert or update several session summaries as a single store mutation.
+    @discardableResult
+    func upsertManySummaries(_ summaries: [SessionSummary]) -> Bool {
+        upsertMany(summaries.map(\.session))
+    }
+
+    /// Apply the authoritative recent workspace snapshot used by workspace detail.
+    ///
+    /// Anything missing from this hot recent lane should fall out of the active
+    /// workspace partition unless it is a likely optimistic local row or an
+    /// ancestor needed for visible tree structure. `requestStartedAt` protects
+    /// optimistic local creates from older in-flight refreshes.
+    @discardableResult
+    func applyWorkspaceRecentSnapshot(
+        workspaceId: String,
+        summaries incomingSummaries: [SessionSummary],
+        requestStartedAt: Date = Date(),
+        preserveRecentWindow: TimeInterval = 180
+    ) -> Bool {
+        let current = sessions
+        let incomingForWorkspace = incomingSummaries.map(\.session).compactMap { session -> Session? in
+            guard session.workspaceId == nil || session.workspaceId == workspaceId else { return nil }
+            var normalized = session
+            if normalized.workspaceId == nil {
+                normalized.workspaceId = workspaceId
+            }
+            return normalized
+        }
+
+        var incomingById: [String: Session] = [:]
+        var incomingOrder: [String] = []
+        for session in incomingForWorkspace {
+            if incomingById[session.id] == nil {
+                incomingOrder.append(session.id)
+            }
+            incomingById[session.id] = session
+        }
+
+        let incomingIds = Set(incomingById.keys)
+        let currentById = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        let ancestorIds = ancestorIdsForVisibleRows(incomingForWorkspace, currentById: currentById)
+        var nextById: [String: Session] = [:]
+
+        for existing in current where existing.workspaceId != workspaceId {
+            nextById[existing.id] = existing
+        }
+
+        for existing in current where existing.workspaceId == workspaceId {
+            if incomingIds.contains(existing.id) {
+                continue
+            }
+
+            if shouldPreserveMissingWorkspaceRecentRow(
+                existing,
+                requestStartedAt: requestStartedAt,
+                preserveRecentWindow: preserveRecentWindow,
+                ancestorIds: ancestorIds
+            ) {
+                nextById[existing.id] = existing
+            }
+        }
+
+        for incomingId in incomingOrder {
+            guard let incomingSession = incomingById[incomingId] else { continue }
+            if let existing = currentById[incomingSession.id] {
+                nextById[incomingSession.id] = mergePreservingContext(
+                    existing: existing,
+                    incoming: incomingSession
+                )
+            } else {
+                nextById[incomingSession.id] = incomingSession
+            }
+        }
+
+        let next = nextById.values.sorted { lhs, rhs in
+            if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
+            return lhs.id < rhs.id
+        }
+        guard next != current else { return false }
+
+        let nextIds = Set(next.map(\.id))
+        let removedIds = Set(current.map(\.id)).subtracting(nextIds)
+        let key = activeServerKey
+        for removedId in removedIds {
+            serverTurnEndedDates[key]?.removeValue(forKey: removedId)
+        }
+        if let activeSessionId, removedIds.contains(activeSessionId) {
+            self.activeSessionId = nil
+        }
+
+        setActiveSessionsPreservingListProjection(next)
+        return true
+    }
+
     private func upsertMerged(_ session: Session) -> Bool {
         var list = sessions
         guard merge(session, into: &list) else { return false }
@@ -282,6 +376,56 @@ final class SessionStore {
         let currentSummaries = current.map { SessionSummary(from: $0) }
         let newSummaries = newSessions.map { SessionSummary(from: $0) }
         return currentSummaries != newSummaries
+    }
+
+    private func shouldPreserveMissingWorkspaceRecentRow(
+        _ session: Session,
+        requestStartedAt: Date,
+        preserveRecentWindow: TimeInterval,
+        ancestorIds: Set<String>
+    ) -> Bool {
+        if ancestorIds.contains(session.id) { return true }
+
+        if isRecentOptimisticLocal(
+            session,
+            requestStartedAt: requestStartedAt,
+            preserveRecentWindow: preserveRecentWindow
+        ) {
+            return true
+        }
+
+        // Workspace recent snapshots are the hot navigation lane. Anything not
+        // returned for that lane should fall out of the hot store so old
+        // stopped history does not keep bloating workspace list rebuilds.
+        return false
+    }
+
+    private func isRecentOptimisticLocal(
+        _ session: Session,
+        requestStartedAt: Date,
+        preserveRecentWindow: TimeInterval
+    ) -> Bool {
+        if session.createdAt >= requestStartedAt { return true }
+        return requestStartedAt.timeIntervalSince(session.createdAt) <= preserveRecentWindow
+    }
+
+    private func ancestorIdsForVisibleRows(
+        _ visibleRows: [Session],
+        currentById: [String: Session]
+    ) -> Set<String> {
+        var ancestors: Set<String> = []
+        var pending = visibleRows.compactMap(\.parentSessionId)
+
+        while let parentId = pending.popLast() {
+            guard !ancestors.contains(parentId) else { continue }
+            guard let parent = currentById[parentId] else { continue }
+            ancestors.insert(parentId)
+            if let grandparentId = parent.parentSessionId {
+                pending.append(grandparentId)
+            }
+        }
+
+        return ancestors
     }
 
     private func mergePreservingContext(existing: Session, incoming: Session) -> Session {

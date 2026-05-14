@@ -4,12 +4,29 @@ import Foundation
 ///
 /// Agents use `ask` to pose clarifying questions with predefined options.
 /// The iOS client renders these as an inline card in the chat input capsule.
-struct AskRequest: Identifiable, Sendable, Equatable {
+struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
     let id: String
     let sessionId: String
     let questions: [AskQuestion]
     let allowCustom: Bool
     let timeout: Int? // ms
+    let workspaceId: String?
+
+    init(
+        id: String,
+        sessionId: String,
+        questions: [AskQuestion],
+        allowCustom: Bool,
+        timeout: Int?,
+        workspaceId: String? = nil
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.questions = questions
+        self.allowCustom = allowCustom
+        self.timeout = timeout
+        self.workspaceId = workspaceId
+    }
 }
 
 /// A single question within an ask request.
