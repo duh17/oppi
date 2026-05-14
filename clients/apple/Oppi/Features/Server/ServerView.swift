@@ -6,7 +6,7 @@ import SwiftUI
 /// Data flow:
 /// - Stats from `GET /server/stats?range=N` via per-server `APIClient`
 /// - Server info from `GET /server/info` via per-server `APIClient`
-/// - Pull-to-refresh + `.task(id:)` keyed on server + range
+/// - Stats reload on server/range changes; server metadata reloads on server changes
 /// - Multi-server picker when 2+ servers are paired
 struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
@@ -24,7 +24,6 @@ struct ServerView: View {
     @State private var selectedMetric: StatsMetric = .cost
     @State private var showAddServer = false
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
-    @State private var codexUsage: CodexUsageInfo?
 
     /// Resolves selected server, falling back to first available.
     private var selectedServer: PairedServer? {
@@ -37,9 +36,14 @@ struct ServerView: View {
         return APIClient(baseURL: baseURL, token: server.token, tlsCertFingerprint: server.tlsCertFingerprint)
     }
 
-    /// Combined task identity — reloads when server or range changes.
+    /// Metadata task identity — reloads only when the selected server changes.
+    private var metadataTaskIdentity: String {
+        Self.metadataTaskIdentity(selectedId: selectedServer?.id)
+    }
+
+    /// Combined stats task identity — reloads when server or range changes.
     private var taskIdentity: String {
-        Self.taskIdentity(selectedId: selectedServerId, range: selectedRange)
+        Self.taskIdentity(selectedId: selectedServer?.id, range: selectedRange)
     }
 
     // MARK: - Testable Logic
@@ -47,6 +51,11 @@ struct ServerView: View {
     /// Resolve the selected server by ID, falling back to the first server.
     static func resolveServer(selectedId: String?, from servers: [PairedServer]) -> PairedServer? {
         ServerSelection.resolve(selectedId: selectedId, from: servers)
+    }
+
+    /// Build task identity string for server-scoped metadata loads.
+    static func metadataTaskIdentity(selectedId: String?) -> String {
+        ServerSelection.metadataTaskIdentity(selectedId: selectedId)
     }
 
     /// Build task identity string from server ID and range.
@@ -125,10 +134,6 @@ struct ServerView: View {
                     providerSetupCard(for: selectedServer)
                 }
 
-                if let codexUsage, shouldShowCodexUsageCard(codexUsage) {
-                    CodexUsageSection(usage: codexUsage)
-                }
-
                 rangePicker
 
                 if isLoading, stats == nil {
@@ -144,13 +149,15 @@ struct ServerView: View {
             .padding(.bottom, 24)
         }
         .themedScrollSurface()
-        .task(id: taskIdentity) {
-            clearStatsState()
-            async let s: () = loadStats()
+        .task(id: metadataTaskIdentity) {
+            clearServerState()
             async let i: () = loadServerInfo()
             async let p: () = loadProviderStatus()
-            async let c: () = loadCodexUsage()
-            _ = await (s, i, p, c)
+            _ = await (i, p)
+        }
+        .task(id: taskIdentity) {
+            clearStatsState()
+            await loadStats()
         }
         .refreshable {
             dailyDetailCache = [:]
@@ -158,13 +165,7 @@ struct ServerView: View {
             async let s: () = loadStats()
             async let i: () = loadServerInfo()
             async let p: () = loadProviderStatus()
-            async let c: () = loadCodexUsage()
-            _ = await (s, i, p, c)
-        }
-        .onAppear {
-            Task {
-                await loadProviderStatus()
-            }
+            _ = await (s, i, p)
         }
     }
 
@@ -313,14 +314,16 @@ struct ServerView: View {
 
     // MARK: - State Management
 
+    private func clearServerState() {
+        serverInfo = nil
+        providerStatuses = []
+    }
+
     private func clearStatsState() {
         dailyDetail = nil
         dailyDetailCache = [:]
         stats = nil
-        serverInfo = nil
         error = nil
-        providerStatuses = []
-        codexUsage = nil
         isLoading = true
     }
 
@@ -373,22 +376,6 @@ struct ServerView: View {
         }
     }
 
-    private func loadCodexUsage() async {
-        guard let server = selectedServer,
-              let client = apiClient(for: server)
-        else { return }
-
-        do {
-            codexUsage = try await client.fetchCodexUsage()
-        } catch {
-            codexUsage = nil
-        }
-    }
-
-    private func shouldShowCodexUsageCard(_ usage: CodexUsageInfo) -> Bool {
-        usage.authenticated || usage.error != nil || usage.hasAnyUsageWindow
-    }
-
     private func loadDailyDetail(date: String) async {
         if let cached = dailyDetailCache[date] {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -414,99 +401,5 @@ struct ServerView: View {
         }
 
         isLoadingDetail = false
-    }
-}
-
-private struct CodexUsageSection: View {
-    let usage: CodexUsageInfo
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
-                ProviderIcon(provider: "openai-codex")
-                Text("Codex usage")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-
-                Spacer(minLength: 8)
-
-                if let plan = usage.planLabel {
-                    Text(plan)
-                        .font(.caption.bold())
-                        .foregroundStyle(.themeBlue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.themeBlue.opacity(0.14), in: Capsule())
-                }
-            }
-
-            if let window = usage.fiveHour {
-                usageRow(title: "5h", window: window, includeWeekday: false)
-            }
-
-            if let window = usage.weekly {
-                usageRow(title: "Weekly", window: window, includeWeekday: true)
-            }
-
-            if let error = usage.error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    @ViewBuilder
-    private func usageRow(title: String, window: CodexUsageInfo.Window, includeWeekday: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.themeComment)
-
-                Spacer(minLength: 8)
-
-                Text("\(Int(window.remainingPercent.rounded()))% left")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(remainingColor(window.remainingPercent))
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.themeComment.opacity(0.18))
-                        .frame(height: 6)
-
-                    Capsule()
-                        .fill(remainingColor(window.remainingPercent))
-                        .frame(
-                            width: geo.size.width * max(0, min(1, window.remainingPercent / 100)),
-                            height: 6
-                        )
-                }
-            }
-            .frame(height: 6)
-
-            Text(resetLabel(for: window.resetDate, includeWeekday: includeWeekday))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.themeComment)
-        }
-    }
-
-    private func remainingColor(_ remainingPercent: Double) -> Color {
-        if remainingPercent <= 20 { return .themeRed }
-        if remainingPercent <= 50 { return .themeOrange }
-        return .themeGreen
-    }
-
-    private func resetLabel(for date: Date, includeWeekday: Bool) -> String {
-        if includeWeekday {
-            return "resets \(date.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
-        }
-        return "resets \(date.formatted(.dateTime.hour().minute()))"
     }
 }

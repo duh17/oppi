@@ -132,6 +132,34 @@ struct ServerInfoTests {
         ])
     }
 
+    @Test func codexUsageSectionPresentationRequiresAuthUsageOrError() {
+        #expect(makeCodexUsageInfo().shouldPresentSection == false)
+        #expect(makeCodexUsageInfo(authenticated: true).shouldPresentSection)
+        #expect(makeCodexUsageInfo(error: "network timeout").shouldPresentSection)
+        #expect(makeCodexUsageInfo(fiveHour: makeCodexWindow(remainingPercent: 75)).shouldPresentSection)
+    }
+
+    @Test func codexProviderBadgesOnlyAppearForAuthenticatedCodexProvider() {
+        let usage = makeCodexUsageInfo(
+            authenticated: true,
+            fiveHour: makeCodexWindow(remainingPercent: 62),
+            weekly: makeCodexWindow(limitWindowSeconds: 7 * 24 * 60 * 60, remainingPercent: 18)
+        )
+
+        #expect(usage.providerBadges(for: "anthropic").isEmpty)
+        #expect(makeCodexUsageInfo(authenticated: false).providerBadges(for: "openai-codex").isEmpty)
+        #expect(usage.providerBadges(for: "openai-codex") == [
+            .init(label: "5h 62%", tone: .green),
+            .init(label: "7d 18%", tone: .red),
+        ])
+    }
+
+    @Test func codexBadgeToneThresholdsMatchUiColors() {
+        #expect(CodexUsageInfo.badgeTone(for: 80) == .green)
+        #expect(CodexUsageInfo.badgeTone(for: 50) == .orange)
+        #expect(CodexUsageInfo.badgeTone(for: 20) == .red)
+    }
+
     private func makeServerInfo(uptime: Int = 0, os: String = "darwin", arch: String = "arm64") -> ServerInfo {
         ServerInfo(
             name: "oppi",
@@ -148,6 +176,38 @@ struct ServerInfoTests {
             uploadProtocol: nil,
             capabilities: nil,
             stats: .init(workspaceCount: 0, activeSessionCount: 0, totalSessionCount: 0, skillCount: 0, modelCount: 0)
+        )
+    }
+
+    private func makeCodexUsageInfo(
+        authenticated: Bool = false,
+        fiveHour: CodexUsageInfo.Window? = nil,
+        weekly: CodexUsageInfo.Window? = nil,
+        error: String? = nil
+    ) -> CodexUsageInfo {
+        CodexUsageInfo(
+            providerId: "openai-codex",
+            authenticated: authenticated,
+            planType: nil,
+            rateLimitReachedType: nil,
+            fiveHour: fiveHour,
+            weekly: weekly,
+            credits: nil,
+            additionalRateLimits: [],
+            fetchedAt: 0,
+            error: error
+        )
+    }
+
+    private func makeCodexWindow(
+        limitWindowSeconds: Int = 5 * 60 * 60,
+        remainingPercent: Double
+    ) -> CodexUsageInfo.Window {
+        CodexUsageInfo.Window(
+            usedPercent: 100 - remainingPercent,
+            remainingPercent: remainingPercent,
+            limitWindowSeconds: limitWindowSeconds,
+            resetAt: 1_700_000_000
         )
     }
 }

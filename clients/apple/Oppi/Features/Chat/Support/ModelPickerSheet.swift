@@ -192,13 +192,15 @@ struct ModelPickerSheet: View {
                 let usageBadges = codexUsageBadges(for: provider)
                 if !usageBadges.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(usageBadges) { badge in
+                        ForEach(Array(usageBadges.indices), id: \.self) { index in
+                            let badge = usageBadges[index]
+                            let badgeColor = color(for: badge.tone)
                             Text(badge.label)
                                 .font(.caption2.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(badge.color)
+                                .foregroundStyle(badgeColor)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
-                                .background(badge.color.opacity(0.14), in: Capsule())
+                                .background(badgeColor.opacity(0.14), in: Capsule())
                         }
                     }
                 }
@@ -234,38 +236,19 @@ struct ModelPickerSheet: View {
         }
     }
 
-    private func codexUsageBadges(for provider: String) -> [ProviderUsageBadge] {
-        guard provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "openai-codex",
-              let usage = codexUsage,
-              usage.authenticated
-        else {
-            return []
-        }
-
-        var badges: [ProviderUsageBadge] = []
-        if let window = usage.fiveHour {
-            badges.append(
-                ProviderUsageBadge(
-                    label: "5h \(Int(window.remainingPercent.rounded()))%",
-                    color: remainingColor(window.remainingPercent)
-                )
-            )
-        }
-        if let window = usage.weekly {
-            badges.append(
-                ProviderUsageBadge(
-                    label: "7d \(Int(window.remainingPercent.rounded()))%",
-                    color: remainingColor(window.remainingPercent)
-                )
-            )
-        }
-        return badges
+    private func codexUsageBadges(for provider: String) -> [CodexUsageInfo.ProviderBadge] {
+        codexUsage?.providerBadges(for: provider) ?? []
     }
 
-    private func remainingColor(_ remainingPercent: Double) -> Color {
-        if remainingPercent <= 20 { return .themeRed }
-        if remainingPercent <= 50 { return .themeOrange }
-        return .themeGreen
+    private func color(for tone: CodexUsageInfo.BadgeTone) -> Color {
+        switch tone {
+        case .green:
+            return .themeGreen
+        case .orange:
+            return .themeOrange
+        case .red:
+            return .themeRed
+        }
     }
 }
 
@@ -334,12 +317,6 @@ enum ModelPickerProviderOrdering {
     }
 }
 
-private struct ProviderUsageBadge: Identifiable {
-    let label: String
-    let color: Color
-
-    var id: String { label }
-}
 
 // MARK: - Model Row
 

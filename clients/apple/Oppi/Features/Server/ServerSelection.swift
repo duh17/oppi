@@ -14,9 +14,17 @@ enum ServerSelection {
         return servers.first
     }
 
+    /// Build a task identity for server-scoped metadata loads.
+    ///
+    /// Used for server info and provider/configuration fetches that should only
+    /// reload when the selected server changes.
+    static func metadataTaskIdentity(selectedId: String?) -> String {
+        selectedId ?? ""
+    }
+
     /// Build a combined task identity string from server ID and range.
     ///
-    /// Used as `.task(id:)` key so SwiftUI re-fetches data when either
+    /// Used as `.task(id:)` key so SwiftUI re-fetches stats when either
     /// the selected server or the time range changes.
     static func taskIdentity(selectedId: String?, range: Int) -> String {
         "\(selectedId ?? "")-\(range)"

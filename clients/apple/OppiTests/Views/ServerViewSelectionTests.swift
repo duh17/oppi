@@ -62,6 +62,16 @@ struct ServerSelectionTests {
 
     // MARK: - Task Identity
 
+    @Test func metadataTaskIdentityIncludesServerOnly() {
+        let id = ServerSelection.metadataTaskIdentity(selectedId: "sha256:aaa")
+        #expect(id == "sha256:aaa")
+    }
+
+    @Test func metadataTaskIdentityNilServerUsesEmpty() {
+        let id = ServerSelection.metadataTaskIdentity(selectedId: nil)
+        #expect(id.isEmpty)
+    }
+
     @Test func taskIdentityIncludesServerAndRange() {
         let id = ServerSelection.taskIdentity(selectedId: "sha256:aaa", range: 7)
         #expect(id == "sha256:aaa-7")

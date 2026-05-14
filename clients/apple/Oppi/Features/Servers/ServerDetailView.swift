@@ -18,6 +18,7 @@ struct ServerDetailView: View {
     @State private var showRemoveConfirmation = false
 
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
+    @State private var codexUsage: CodexUsageInfo?
     @State private var isLoadingProviders = false
     @State private var providerError: String?
     @State private var providerActionInFlightId: String?
@@ -132,8 +133,16 @@ struct ServerDetailView: View {
                         .foregroundStyle(.themeRed)
                 } else if connectedProviders.isEmpty {
                     Text("Oppi needs at least one model provider before new sessions can run. Connect one here, or open the full provider list for more options.")
-                } else {
-                    Text("Connected providers are shown here. Use Configure Providers to add or manage all providers.")
+                }
+            }
+
+            if let codexUsage, codexUsage.shouldPresentSection {
+                Section {
+                    CodexUsageSection(usage: codexUsage)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                        .listRowBackground(Color.clear)
+                } header: {
+                    Text("Codex Usage")
                 }
             }
 
@@ -359,10 +368,10 @@ struct ServerDetailView: View {
                 }
             }
             .refreshable {
-                await loadProviderStatus()
+                await loadProviderConfiguration()
             }
             .task {
-                await loadProviderStatus()
+                await loadProviderConfiguration()
             }
         }
     }
@@ -679,7 +688,7 @@ struct ServerDetailView: View {
             self.error = error.localizedDescription
         }
 
-        await loadProviderStatus(api: api)
+        await loadProviderConfiguration(api: api)
         isLoading = false
     }
 
@@ -692,17 +701,30 @@ struct ServerDetailView: View {
         )
     }
 
-    private func loadProviderStatus(api: APIClient? = nil) async {
+    private func loadProviderConfiguration(api: APIClient? = nil) async {
         guard let client = api ?? makeAPIClient() else { return }
 
         isLoadingProviders = true
         defer { isLoadingProviders = false }
 
+        async let usage = loadCodexUsage(api: client)
+
         do {
             providerStatuses = try await client.listProviderAuthStatus()
             providerError = nil
         } catch {
+            providerStatuses = []
             providerError = "Failed to load provider status: \(error.localizedDescription)"
+        }
+
+        codexUsage = await usage
+    }
+
+    private func loadCodexUsage(api: APIClient) async -> CodexUsageInfo? {
+        do {
+            return try await api.fetchCodexUsage()
+        } catch {
+            return nil
         }
     }
 
@@ -760,7 +782,7 @@ struct ServerDetailView: View {
                 providerError = nil
                 apiKeyEditorProvider = nil
                 apiKeyDraft = ""
-                await loadProviderStatus(api: api)
+                await loadProviderConfiguration(api: api)
             } catch {
                 providerError = "Failed to save API key: \(error.localizedDescription)"
             }
@@ -779,7 +801,7 @@ struct ServerDetailView: View {
             do {
                 try await api.removeProviderCredential(providerId: provider.id)
                 providerError = nil
-                await loadProviderStatus(api: api)
+                await loadProviderConfiguration(api: api)
             } catch {
                 providerError = "Failed to remove credential: \(error.localizedDescription)"
             }
@@ -840,7 +862,7 @@ struct ServerDetailView: View {
                     activeFlow = flow
 
                     if flow.status.isTerminal {
-                        await loadProviderStatus(api: api)
+                        await loadProviderConfiguration(api: api)
                         break
                     }
                 } catch {
@@ -978,5 +1000,104 @@ struct ServerDetailView: View {
                 }
             }
         }
+    }
+}
+
+private struct CodexUsageSection: View {
+    let usage: CodexUsageInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 8) {
+                ProviderIcon(provider: "openai-codex")
+                Text("Codex usage")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+
+                Spacer(minLength: 8)
+
+                if let plan = usage.planLabel {
+                    Text(plan)
+                        .font(.caption.bold())
+                        .foregroundStyle(.themeBlue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.themeBlue.opacity(0.14), in: Capsule())
+                }
+            }
+
+            if let window = usage.fiveHour {
+                usageRow(title: "5h", window: window, includeWeekday: false)
+            }
+
+            if let window = usage.weekly {
+                usageRow(title: "7d", window: window, includeWeekday: true)
+            }
+
+            if let error = usage.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func usageRow(title: String, window: CodexUsageInfo.Window, includeWeekday: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.themeComment)
+
+                Spacer(minLength: 8)
+
+                Text("\(Int(window.remainingPercent.rounded()))% left")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(remainingColor(window.remainingPercent))
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.themeComment.opacity(0.18))
+                        .frame(height: 6)
+
+                    Capsule()
+                        .fill(remainingColor(window.remainingPercent))
+                        .frame(
+                            width: geo.size.width * max(0, min(1, window.remainingPercent / 100)),
+                            height: 6
+                        )
+                }
+            }
+            .frame(height: 6)
+
+            Text(resetLabel(for: window.resetDate, includeWeekday: includeWeekday))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.themeComment)
+        }
+    }
+
+    private func remainingColor(_ remainingPercent: Double) -> Color {
+        switch CodexUsageInfo.badgeTone(for: remainingPercent) {
+        case .green:
+            return .themeGreen
+        case .orange:
+            return .themeOrange
+        case .red:
+            return .themeRed
+        }
+    }
+
+    private func resetLabel(for date: Date, includeWeekday: Bool) -> String {
+        if includeWeekday {
+            return "resets \(date.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+        }
+        return "resets \(date.formatted(.dateTime.hour().minute()))"
     }
 }

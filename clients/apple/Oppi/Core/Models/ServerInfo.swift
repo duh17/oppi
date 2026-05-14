@@ -100,8 +100,23 @@ struct CodexUsageInfo: Codable, Sendable, Equatable {
         let weekly: Window?
     }
 
+    enum BadgeTone: Sendable, Equatable {
+        case green
+        case orange
+        case red
+    }
+
+    struct ProviderBadge: Sendable, Equatable {
+        let label: String
+        let tone: BadgeTone
+    }
+
     var hasAnyUsageWindow: Bool {
         fiveHour != nil || weekly != nil
+    }
+
+    var shouldPresentSection: Bool {
+        authenticated || error != nil || hasAnyUsageWindow
     }
 
     var planLabel: String? {
@@ -120,6 +135,39 @@ struct CodexUsageInfo: Codable, Sendable, Equatable {
                 }
                 .joined(separator: " ")
         }
+    }
+
+    static func badgeTone(for remainingPercent: Double) -> BadgeTone {
+        if remainingPercent <= 20 { return .red }
+        if remainingPercent <= 50 { return .orange }
+        return .green
+    }
+
+    func providerBadges(for provider: String) -> [ProviderBadge] {
+        guard provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "openai-codex",
+              authenticated
+        else {
+            return []
+        }
+
+        var badges: [ProviderBadge] = []
+        if let window = fiveHour {
+            badges.append(
+                ProviderBadge(
+                    label: "5h \(Int(window.remainingPercent.rounded()))%",
+                    tone: Self.badgeTone(for: window.remainingPercent)
+                )
+            )
+        }
+        if let window = weekly {
+            badges.append(
+                ProviderBadge(
+                    label: "7d \(Int(window.remainingPercent.rounded()))%",
+                    tone: Self.badgeTone(for: window.remainingPercent)
+                )
+            )
+        }
+        return badges
     }
 }
 
