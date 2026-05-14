@@ -132,6 +132,7 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
     preBuildScripts:
       - script: |
+          mkdir -p "$DERIVED_FILE_DIR"
           STAMP_FILE="$DERIVED_FILE_DIR/swiftlint.stamp"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
@@ -177,6 +178,7 @@ targets:
         shell: /bin/bash
         showEnvVars: false
       - script: |
+          mkdir -p "$DERIVED_FILE_DIR"
           STAMP_FILE="$DERIVED_FILE_DIR/architecture-boundaries.stamp"
           CHECK_SCRIPT="$SRCROOT/../../server/scripts/check-architecture-boundaries.ts"
           ARCH_RULES="$SRCROOT/../../.internal/ARCHITECTURE.md"
@@ -316,6 +318,8 @@ targets:
       path: OppiControlWidget/Info.plist
       properties:
         CFBundleDisplayName: Oppi
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
