@@ -698,8 +698,6 @@ struct WorkspaceDetailView: View {
         var totalCost = session.cost
         var aggregateCompactionCount = max(0, session.changeStats?.compactionCount ?? 0)
         var aggregateFilesChanged = max(0, session.changeStats?.filesChanged ?? 0)
-        var aggregateAddedLines = max(0, session.changeStats?.addedLines ?? 0)
-        var aggregateRemovedLines = max(0, session.changeStats?.removedLines ?? 0)
 
         for desc in descendants {
             counts.total += 1
@@ -712,8 +710,6 @@ struct WorkspaceDetailView: View {
             totalCost += desc.cost
             aggregateCompactionCount += max(0, desc.changeStats?.compactionCount ?? 0)
             aggregateFilesChanged += max(0, desc.changeStats?.filesChanged ?? 0)
-            aggregateAddedLines += max(0, desc.changeStats?.addedLines ?? 0)
-            aggregateRemovedLines += max(0, desc.changeStats?.removedLines ?? 0)
         }
 
         return .init(
@@ -721,9 +717,7 @@ struct WorkspaceDetailView: View {
             statusCounts: counts,
             aggregateCost: totalCost,
             aggregateCompactionCount: aggregateCompactionCount,
-            aggregateFilesChanged: aggregateFilesChanged,
-            aggregateAddedLines: aggregateAddedLines,
-            aggregateRemovedLines: aggregateRemovedLines
+            aggregateFilesChanged: aggregateFilesChanged
         )
     }
 

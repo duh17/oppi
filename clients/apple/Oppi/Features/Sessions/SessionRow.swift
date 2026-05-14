@@ -60,7 +60,7 @@ enum SessionModelSummaryBuilder {
 /// ```
 /// Title (bold if needs attention)                [time]
 /// model summary activity
-/// ▬ 25% · $27.45 · [doc] 4 · +20 −151  [status pill] [child badge if any]
+/// ▬ 25% · $27.45 · [doc] 4  [status pill] [child badge if any]
 /// ```
 ///
 /// Activity summary is passed in by the caller (computed from
@@ -83,8 +83,6 @@ struct SessionRow: View {
         let aggregateCost: Double
         let aggregateCompactionCount: Int
         let aggregateFilesChanged: Int
-        let aggregateAddedLines: Int
-        let aggregateRemovedLines: Int
     }
 
     init(
@@ -135,14 +133,6 @@ struct SessionRow: View {
 
     private var displayFilesChanged: Int {
         children?.aggregateFilesChanged ?? session.changeStats?.filesChanged ?? 0
-    }
-
-    private var displayAddedLines: Int {
-        children?.aggregateAddedLines ?? session.changeStats?.addedLines ?? 0
-    }
-
-    private var displayRemovedLines: Int {
-        children?.aggregateRemovedLines ?? session.changeStats?.removedLines ?? 0
     }
 
     private var currentTurnStartedAt: Date? {
@@ -224,13 +214,6 @@ struct SessionRow: View {
 
                 if displayFilesChanged > 0 {
                     fileCountView(displayFilesChanged)
-                }
-
-                if let lineDelta = SessionRowMetricsFormatting.lineDelta(
-                    addedLines: displayAddedLines,
-                    removedLines: displayRemovedLines
-                ) {
-                    lineDeltaView(lineDelta)
                 }
 
                 Spacer(minLength: 8)
@@ -328,23 +311,6 @@ struct SessionRow: View {
     }
 
     @ViewBuilder
-    private func lineDeltaView(_ lineDelta: SessionRowMetricsFormatting.LineDelta) -> some View {
-        HStack(spacing: 4) {
-            if let added = lineDelta.addedText {
-                Text(added)
-                    .foregroundStyle(.themeGreen)
-            }
-            if let removed = lineDelta.removedText {
-                Text(removed)
-                    .foregroundStyle(.themeRed)
-            }
-        }
-        .monospacedDigit()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(lineDelta.accessibilityLabel)
-    }
-
-    @ViewBuilder
     private func fileCountView(_ filesChanged: Int) -> some View {
         HStack(spacing: 3) {
             Image(systemName: "doc")
@@ -385,50 +351,12 @@ struct SessionRow: View {
 // MARK: - Row Metrics Formatting
 
 enum SessionRowMetricsFormatting {
-    struct LineDelta: Equatable {
-        let addedText: String?
-        let removedText: String?
-        let accessibilityLabel: String
-    }
-
-    static func lineDelta(_ stats: SessionChangeStats) -> LineDelta? {
-        lineDelta(addedLines: stats.addedLines, removedLines: stats.removedLines)
-    }
-
-    static func lineDelta(addedLines: Int, removedLines: Int) -> LineDelta? {
-        let added = max(0, addedLines)
-        let removed = max(0, removedLines)
-        guard added > 0 || removed > 0 else { return nil }
-
-        let addedText = added > 0 ? "+\(added)" : nil
-        let removedText = removed > 0 ? "-\(removed)" : nil
-
-        return LineDelta(
-            addedText: addedText,
-            removedText: removedText,
-            accessibilityLabel: lineDeltaAccessibilityLabel(added: added, removed: removed)
-        )
-    }
-
     static func filesTouchedAccessibilityLabel(_ filesChanged: Int) -> String {
         filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
     }
 
     static func compactionAccessibilityLabel(_ compactionCount: Int) -> String {
         compactionCount == 1 ? "1 compaction" : "\(compactionCount) compactions"
-    }
-
-    private static func lineDeltaAccessibilityLabel(added: Int, removed: Int) -> String {
-        switch (added, removed) {
-        case let (a, r) where a > 0 && r > 0:
-            return "\(a) lines added, \(r) lines removed"
-        case let (a, _) where a > 0:
-            return "\(a) lines added"
-        case let (_, r) where r > 0:
-            return "\(r) lines removed"
-        default:
-            return "No line changes"
-        }
     }
 }
 
@@ -439,7 +367,6 @@ enum SessionRowMetricsFormatting {
 /// Called by the parent view (WorkspaceDetailView) to compute the summary
 /// before passing it to SessionRow. Keeps SessionRow pure and testable.
 enum SessionActivitySummary {
-
     static func text(
         session: Session,
         pendingCount: Int,
