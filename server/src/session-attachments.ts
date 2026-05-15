@@ -138,7 +138,12 @@ function mimeExtension(mimeType: string, fallbackFileName?: string): string {
     case "image/bmp":
       return "bmp";
     case "image/tiff":
-      return "tiff";
+    case "image/tif":
+      return fallbackExt === "tif" ? "tif" : "tiff";
+    case "image/x-icon":
+    case "image/vnd.microsoft.icon":
+    case "image/icon":
+      return "ico";
     default:
       return "bin";
   }
@@ -156,6 +161,10 @@ function normalizeAudioMimeType(value: unknown): string {
 function normalizeImageMimeType(value: unknown): string {
   const mimeType = typeof value === "string" ? value.trim().toLowerCase() : "";
   return mimeType.startsWith("image/") ? mimeType : DEFAULT_IMAGE_MIME_TYPE;
+}
+
+function readUInt24LE(bytes: Buffer, offset: number): number {
+  return bytes[offset] + (bytes[offset + 1] << 8) + (bytes[offset + 2] << 16);
 }
 
 function safeFileName(
@@ -249,6 +258,158 @@ function sanitizeMediaDetails(
   return { ...root, [key]: sanitized };
 }
 
+function validDimensions(
+  width: number,
+  height: number,
+): { width: number; height: number } | undefined {
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    ? { width: Math.round(width), height: Math.round(height) }
+    : undefined;
+}
+
+function svgLength(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim();
+  if (!value || value.endsWith("%")) return undefined;
+  const match = value.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:px)?$/i);
+  if (!match) return undefined;
+  const number = Number(match[1]);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function svgAttribute(openingTag: string, name: string): string | undefined {
+  const match = openingTag.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(["'])(.*?)\\1`, "i"));
+  return match?.[2];
+}
+
+function svgDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  const text = bytes.subarray(0, Math.min(bytes.length, 8192)).toString("utf8");
+  const openingTag = text.match(/<svg\b[^>]*>/i)?.[0];
+  if (!openingTag) return undefined;
+
+  const viewBox = openingTag.match(
+    /viewBox\s*=\s*["']?\s*[-+]?\d*\.?\d+(?:,|\s)+[-+]?\d*\.?\d+(?:,|\s)+([-+]?\d*\.?\d+)(?:,|\s)+([-+]?\d*\.?\d+)/i,
+  );
+  if (viewBox) {
+    const width = Number(viewBox[1]);
+    const height = Number(viewBox[2]);
+    const dimensions = validDimensions(width, height);
+    if (dimensions) return dimensions;
+  }
+
+  return validDimensions(
+    svgLength(svgAttribute(openingTag, "width")) ?? 0,
+    svgLength(svgAttribute(openingTag, "height")) ?? 0,
+  );
+}
+
+function webpDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  if (
+    bytes.length < 30 ||
+    bytes.subarray(0, 4).toString("ascii") !== "RIFF" ||
+    bytes.subarray(8, 12).toString("ascii") !== "WEBP"
+  ) {
+    return undefined;
+  }
+
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const chunkType = bytes.subarray(offset, offset + 4).toString("ascii");
+    const chunkSize = bytes.readUInt32LE(offset + 4);
+    const payload = offset + 8;
+    if (payload + chunkSize > bytes.length) return undefined;
+
+    if (chunkType === "VP8X" && chunkSize >= 10) {
+      return validDimensions(
+        readUInt24LE(bytes, payload + 4) + 1,
+        readUInt24LE(bytes, payload + 7) + 1,
+      );
+    }
+    if (chunkType === "VP8L" && chunkSize >= 5 && bytes[payload] === 0x2f) {
+      const b0 = bytes[payload + 1];
+      const b1 = bytes[payload + 2];
+      const b2 = bytes[payload + 3];
+      const b3 = bytes[payload + 4];
+      const width = 1 + (((b1 & 0x3f) << 8) | b0);
+      const height = 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6));
+      return validDimensions(width, height);
+    }
+    if (
+      chunkType === "VP8 " &&
+      chunkSize >= 10 &&
+      bytes[payload + 3] === 0x9d &&
+      bytes[payload + 4] === 0x01 &&
+      bytes[payload + 5] === 0x2a
+    ) {
+      return validDimensions(
+        bytes.readUInt16LE(payload + 6) & 0x3fff,
+        bytes.readUInt16LE(payload + 8) & 0x3fff,
+      );
+    }
+
+    offset = payload + chunkSize + (chunkSize % 2);
+  }
+
+  return undefined;
+}
+
+function bmpDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  if (bytes.length < 26 || bytes.subarray(0, 2).toString("ascii") !== "BM") return undefined;
+  const dibSize = bytes.readUInt32LE(14);
+  if (dibSize === 12 && bytes.length >= 24) {
+    return validDimensions(bytes.readUInt16LE(18), bytes.readUInt16LE(20));
+  }
+  if (dibSize >= 40 && bytes.length >= 26) {
+    return validDimensions(bytes.readInt32LE(18), Math.abs(bytes.readInt32LE(22)));
+  }
+  return undefined;
+}
+
+function tiffDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  if (bytes.length < 8) return undefined;
+  const marker = bytes.subarray(0, 2).toString("ascii");
+  const littleEndian = marker === "II";
+  if (!littleEndian && marker !== "MM") return undefined;
+
+  const read16 = (offset: number): number =>
+    littleEndian ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
+  const read32 = (offset: number): number =>
+    littleEndian ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
+  if (read16(2) !== 42) return undefined;
+  const ifdOffset = read32(4);
+  if (ifdOffset < 8 || ifdOffset + 2 > bytes.length) return undefined;
+
+  const entryCount = read16(ifdOffset);
+  let width: number | undefined;
+  let height: number | undefined;
+  for (let index = 0; index < entryCount; index += 1) {
+    const entryOffset = ifdOffset + 2 + index * 12;
+    if (entryOffset + 12 > bytes.length) break;
+    const tag = read16(entryOffset);
+    if (tag !== 256 && tag !== 257) continue;
+    const type = read16(entryOffset + 2);
+    const value =
+      type === 3 ? read16(entryOffset + 8) : type === 4 ? read32(entryOffset + 8) : undefined;
+    if (tag === 256) width = value;
+    if (tag === 257) height = value;
+  }
+  return validDimensions(width ?? 0, height ?? 0);
+}
+
+function icoDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  if (
+    bytes.length < 8 ||
+    bytes.readUInt16LE(0) !== 0 ||
+    ![1, 2].includes(bytes.readUInt16LE(2)) ||
+    bytes.readUInt16LE(4) < 1
+  ) {
+    return undefined;
+  }
+  const width = bytes[6] === 0 ? 256 : bytes[6];
+  const height = bytes[7] === 0 ? 256 : bytes[7];
+  return validDimensions(width, height);
+}
+
 function imageDimensions(
   bytes: Buffer,
   mimeType: string,
@@ -257,15 +418,11 @@ function imageDimensions(
     bytes.length >= 24 &&
     bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
   ) {
-    const width = bytes.readUInt32BE(16);
-    const height = bytes.readUInt32BE(20);
-    return width > 0 && height > 0 ? { width, height } : undefined;
+    return validDimensions(bytes.readUInt32BE(16), bytes.readUInt32BE(20));
   }
 
   if (bytes.length >= 10 && bytes.subarray(0, 3).toString("ascii") === "GIF") {
-    const width = bytes.readUInt16LE(6);
-    const height = bytes.readUInt16LE(8);
-    return width > 0 && height > 0 ? { width, height } : undefined;
+    return validDimensions(bytes.readUInt16LE(6), bytes.readUInt16LE(8));
   }
 
   if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
@@ -284,23 +441,19 @@ function imageDimensions(
         (marker >= 0xc9 && marker <= 0xcb) ||
         (marker >= 0xcd && marker <= 0xcf);
       if (isSOF && offset + 8 < bytes.length) {
-        const height = bytes.readUInt16BE(offset + 5);
-        const width = bytes.readUInt16BE(offset + 7);
-        return width > 0 && height > 0 ? { width, height } : undefined;
+        return validDimensions(bytes.readUInt16BE(offset + 7), bytes.readUInt16BE(offset + 5));
       }
       offset += 2 + length;
     }
   }
 
-  if (mimeType === "image/svg+xml") {
-    const text = bytes.subarray(0, Math.min(bytes.length, 8192)).toString("utf8");
-    const viewBox = text.match(/viewBox\s*=\s*["']?[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)/i);
-    const width = viewBox ? Number(viewBox[1]) : undefined;
-    const height = viewBox ? Number(viewBox[2]) : undefined;
-    if (width && height && width > 0 && height > 0) return { width, height };
-  }
-
-  return undefined;
+  return (
+    webpDimensions(bytes) ??
+    bmpDimensions(bytes) ??
+    tiffDimensions(bytes) ??
+    icoDimensions(bytes) ??
+    (mimeType === "image/svg+xml" ? svgDimensions(bytes) : undefined)
+  );
 }
 
 function attachmentDetails(record: SessionAttachmentRecord): Record<string, unknown> {

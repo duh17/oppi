@@ -25,7 +25,18 @@ const GIT_TIMEOUT_MS = 5000;
 const WALK_MAX_FILES = 10_000;
 const WALK_MAX_DEPTH = 12;
 
-export const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+export const ALLOWED_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".tif",
+  ".tiff",
+  ".ico",
+  ".svg",
+]);
 
 const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application/x-mpegurl"]);
 

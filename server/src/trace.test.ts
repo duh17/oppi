@@ -61,6 +61,65 @@ describe("trace media replay", () => {
     expect(toolResult.details?.media).toBeUndefined();
   });
 
+  it("replays final inline media from non-PNG session attachments with metadata", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-trace-"));
+    tempDirs.push(dataDir);
+    const icoBytes = makeICO(32, 16);
+    const icoBase64 = icoBytes.toString("base64");
+
+    const blocks = materializeToolMediaContentBlocks({
+      dataDir,
+      sessionId: "session-ico",
+      toolCallId: "tool-ico",
+      contents: [
+        {
+          type: "image",
+          data: icoBase64,
+          mimeType: "image/x-icon",
+          fileName: "favicon.ico",
+        },
+      ],
+    }) as Array<{ id: string }>;
+
+    const trace = parseJsonl(
+      `${JSON.stringify({
+        type: "message",
+        id: "entry-ico",
+        timestamp: "2026-05-13T00:00:00.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-ico",
+          toolName: "screenshot",
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: icoBase64, mimeType: "image/x-icon", fileName: "favicon.ico" },
+          ],
+        },
+      })}\n`,
+      { attachmentDataDir: dataDir, attachmentSessionId: "session-ico" },
+    );
+
+    const toolResult = trace[0] as {
+      type: string;
+      output?: string;
+      details?: { media?: Array<{ id: string; mimeType: string; storageKey: string }> };
+    };
+    expect(toolResult.type).toBe("toolResult");
+    expect(toolResult.output).toBe("captured");
+    expect(toolResult.details?.media).toMatchObject([
+      {
+        kind: "image",
+        id: blocks[0]!.id,
+        mimeType: "image/x-icon",
+        fileName: "favicon.ico",
+        storageKey: expect.stringMatching(/\.ico$/),
+        sizeBytes: icoBytes.length,
+        width: 32,
+        height: 16,
+      },
+    ]);
+  });
+
   it("replays final inline media from session attachments without leaking base64", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-trace-"));
     tempDirs.push(dataDir);
@@ -123,3 +182,19 @@ describe("trace media replay", () => {
     expect(attachment ? await readFile(attachment.path) : null).toEqual(pngBytes);
   });
 });
+
+function makeICO(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(22);
+  bytes.writeUInt16LE(0, 0);
+  bytes.writeUInt16LE(1, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes[6] = width === 256 ? 0 : width;
+  bytes[7] = height === 256 ? 0 : height;
+  bytes[8] = 0;
+  bytes[9] = 0;
+  bytes.writeUInt16LE(1, 10);
+  bytes.writeUInt16LE(32, 12);
+  bytes.writeUInt32LE(0, 14);
+  bytes.writeUInt32LE(22, 18);
+  return bytes;
+}

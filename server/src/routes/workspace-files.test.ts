@@ -22,7 +22,18 @@ import {
 
 describe("ALLOWED_EXTENSIONS", () => {
   test("allows image extensions", () => {
-    for (const ext of [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]) {
+    for (const ext of [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".webp",
+      ".bmp",
+      ".tif",
+      ".tiff",
+      ".ico",
+      ".svg",
+    ]) {
       expect(ALLOWED_EXTENSIONS.has(ext), `should allow ${ext}`).toBe(true);
     }
   });

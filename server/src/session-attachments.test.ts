@@ -179,6 +179,87 @@ describe("session attachments", () => {
     expect(attachment ? await readFile(attachment.path) : null).toEqual(png);
   });
 
+  it("extracts cheap dimensions for WebP, BMP, TIFF, and ICO attachments", () => {
+    const cases = [
+      {
+        name: "webp",
+        mimeType: "image/webp",
+        fileName: "preview.webp",
+        bytes: makeWebPVP8X(17, 23),
+        width: 17,
+        height: 23,
+      },
+      {
+        name: "bmp",
+        mimeType: "image/bmp",
+        fileName: "preview.bmp",
+        bytes: makeBMP(31, 19),
+        width: 31,
+        height: 19,
+      },
+      {
+        name: "tiff",
+        mimeType: "image/tiff",
+        fileName: "preview.tif",
+        bytes: makeTIFF(41, 37),
+        width: 41,
+        height: 37,
+      },
+      {
+        name: "ico",
+        mimeType: "image/x-icon",
+        fileName: "preview.ico",
+        bytes: makeICO(32, 16),
+        width: 32,
+        height: 16,
+      },
+    ];
+
+    for (const item of cases) {
+      const blocks = materializeToolMediaContentBlocks({
+        dataDir: root,
+        sessionId: `s-${item.name}`,
+        toolCallId: `tool-${item.name}`,
+        contents: [
+          {
+            type: "image",
+            data: item.bytes.toString("base64"),
+            mimeType: item.mimeType,
+            fileName: item.fileName,
+          },
+        ],
+      }) as Array<{ width?: number; height?: number; storageKey?: string }>;
+
+      expect(blocks[0]?.width).toBe(item.width);
+      expect(blocks[0]?.height).toBe(item.height);
+      if (item.name === "ico") expect(blocks[0]?.storageKey).toMatch(/\.ico$/);
+      if (item.name === "tiff") expect(blocks[0]?.storageKey).toMatch(/\.tif$/);
+    }
+  });
+
+  it("extracts SVG dimensions from root width and height", () => {
+    const svg = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180"/></svg>',
+    );
+
+    const blocks = materializeToolMediaContentBlocks({
+      dataDir: root,
+      sessionId: "s-svg-wh",
+      toolCallId: "tool-svg-wh",
+      contents: [
+        {
+          type: "image",
+          data: svg.toString("base64"),
+          mimeType: "image/svg+xml",
+          fileName: "chart.svg",
+        },
+      ],
+    }) as Array<{ width?: number; height?: number }>;
+
+    expect(blocks[0]?.width).toBe(320);
+    expect(blocks[0]?.height).toBe(180);
+  });
+
   it("preserves image base64 when materializing details for collapsed previews", () => {
     const pngBase64 =
       "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
@@ -304,3 +385,61 @@ describe("session attachments", () => {
     expect(replayed.audio.path).toBeUndefined();
   });
 });
+
+function makeWebPVP8X(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(30);
+  bytes.write("RIFF", 0, "ascii");
+  bytes.writeUInt32LE(22, 4);
+  bytes.write("WEBP", 8, "ascii");
+  bytes.write("VP8X", 12, "ascii");
+  bytes.writeUInt32LE(10, 16);
+  bytes.writeUIntLE(width - 1, 24, 3);
+  bytes.writeUIntLE(height - 1, 27, 3);
+  return bytes;
+}
+
+function makeBMP(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(54);
+  bytes.write("BM", 0, "ascii");
+  bytes.writeUInt32LE(bytes.length, 2);
+  bytes.writeUInt32LE(54, 10);
+  bytes.writeUInt32LE(40, 14);
+  bytes.writeInt32LE(width, 18);
+  bytes.writeInt32LE(height, 22);
+  bytes.writeUInt16LE(1, 26);
+  bytes.writeUInt16LE(24, 28);
+  return bytes;
+}
+
+function makeTIFF(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(38);
+  bytes.write("II", 0, "ascii");
+  bytes.writeUInt16LE(42, 2);
+  bytes.writeUInt32LE(8, 4);
+  bytes.writeUInt16LE(2, 8);
+  bytes.writeUInt16LE(256, 10);
+  bytes.writeUInt16LE(4, 12);
+  bytes.writeUInt32LE(1, 14);
+  bytes.writeUInt32LE(width, 18);
+  bytes.writeUInt16LE(257, 22);
+  bytes.writeUInt16LE(4, 24);
+  bytes.writeUInt32LE(1, 26);
+  bytes.writeUInt32LE(height, 30);
+  return bytes;
+}
+
+function makeICO(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(22);
+  bytes.writeUInt16LE(0, 0);
+  bytes.writeUInt16LE(1, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes[6] = width === 256 ? 0 : width;
+  bytes[7] = height === 256 ? 0 : height;
+  bytes[8] = 0;
+  bytes[9] = 0;
+  bytes.writeUInt16LE(1, 10);
+  bytes.writeUInt16LE(32, 12);
+  bytes.writeUInt32LE(0, 14);
+  bytes.writeUInt32LE(22, 18);
+  return bytes;
+}
