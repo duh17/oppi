@@ -380,6 +380,30 @@ struct MarkdownSegmentCacheTests {
         #expect(result == nil, "Different theme should produce a cache miss")
     }
 
+    @Test func cacheKeyDiffersByImageResolutionContext() {
+        let cache = MarkdownSegmentCache()
+        cache.set(
+            "![image](/tmp/chart.png)",
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sessionID: nil,
+            serverBaseURL: URL(string: "https://example.com/api")!,
+            sourceDirectory: nil,
+            segments: [.thematicBreak]
+        )
+
+        let result = cache.get(
+            "![image](/tmp/chart.png)",
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: URL(string: "https://example.com/api")!,
+            sourceDirectory: nil
+        )
+
+        #expect(result == nil, "Markdown segment cache must not reuse image segments across different session resolution contexts")
+    }
+
     @Test func clearAllRemovesEverything() {
         let cache = MarkdownSegmentCache()
         cache.set("a", segments: [.thematicBreak])
@@ -1025,10 +1049,41 @@ struct NativeMarkdownImageViewTests {
         let url = URL(string: "https://example.com/test.png")!
         view.apply(url: url, alt: "Loading test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
 
-        // The view should have a height constraint of 80 (loading placeholder)
+        // The view should reserve a medium inline-prose placeholder while loading.
+        let expectedHeight = ImageViewportSizing.policy(for: .inlineProse, screenHeight: UIScreen.main.bounds.height).placeholderHeight
         let heightConstraints = view.constraints.filter { $0.firstAttribute == .height }
-        let hasPlaceholderHeight = heightConstraints.contains { $0.constant == 80 }
-        #expect(hasPlaceholderHeight, "Should have 80pt loading placeholder height. Constraints: \(heightConstraints.map { "\($0.constant)" })")
+        let hasPlaceholderHeight = heightConstraints.contains { $0.constant == expectedHeight }
+        #expect(hasPlaceholderHeight, "Should have inline-prose loading placeholder height. Constraints: \(heightConstraints.map { "\($0.constant)" })")
+    }
+
+    @Test func svgLoadedStateInstallsTapOverlayForFullscreen() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        view.layoutIfNeeded()
+
+        let svg = """
+        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"300\" height=\"180\">
+          <rect width=\"300\" height=\"180\" fill=\"#111827\"/>
+        </svg>
+        """
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://example.com/api")!,
+            workspaceID: "workspace-1",
+            filePath: "chart.svg"
+        ))
+        view.apply(
+            url: url,
+            alt: "Chart",
+            fetchWorkspaceFile: { _, _ in Data(svg.utf8) },
+            fetchSessionFile: nil
+        )
+
+        let hasTapOverlay = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            view.layoutIfNeeded()
+            return timelineAllViews(in: view).contains { $0.accessibilityIdentifier == "markdown-image.svg.tap-overlay" }
+        }
+
+        #expect(hasTapOverlay, "SVG markdown images need an explicit tap target for fullscreen")
     }
 
     @Test func unsupportedURLWithEmptyAltShowsGenericPlaceholder() async throws {
@@ -1055,6 +1110,73 @@ struct NativeMarkdownImageViewTests {
 
         #expect(showedPlaceholder, "Broken markdown image should show a generic placeholder instead of collapsing")
         #expect(!view.isHidden)
+    }
+
+    @Test func loadedSVGRendererIsFocusable() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 180)
+        view.layoutIfNeeded()
+
+        let svgData = Data("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+          <rect width="100" height="60" fill="red"/>
+        </svg>
+        """.utf8)
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://example.com/api")!,
+            workspaceID: "workspace-1",
+            filePath: "images/diagram.svg"
+        ))
+
+        view.apply(
+            url: url,
+            alt: "Diagram",
+            fetchWorkspaceFile: { _, _ in svgData },
+            fetchSessionFile: nil
+        )
+
+        var visibleWebRenderer: UIView?
+        for _ in 0..<20 {
+            try await Task.sleep(for: .milliseconds(50))
+            visibleWebRenderer = view.subviews.first {
+                String(describing: type(of: $0)).contains("WKWebView") && !$0.isHidden
+            }
+            if visibleWebRenderer != nil { break }
+        }
+
+        let renderer = try #require(visibleWebRenderer)
+        let hasTapGesture = renderer.gestureRecognizers?.contains { $0 is UITapGestureRecognizer } == true
+        #expect(hasTapGesture, "SVG markdown images should be focusable just like raster images")
+    }
+
+    @Test func fullScreenMarkdownBodyCreatesImageViewsForSessionAbsolutePaths() {
+        let body = NativeFullScreenMarkdownBody(
+            content: "![Generated chart](/tmp/chart.png)",
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            plainTextFallbackThreshold: nil,
+            selectedTextPiRouter: nil,
+            selectedTextSourceContext: nil,
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: URL(string: "https://example.com/api")!,
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: { _, _, _ in Data() }
+        )
+
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 600, height: 1000))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: body)
+        #expect(imageView != nil, "Full-screen markdown should resolve absolute session image paths the same way assistant messages do")
     }
 }
 

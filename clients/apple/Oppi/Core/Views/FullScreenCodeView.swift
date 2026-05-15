@@ -204,11 +204,27 @@ indirect enum FullScreenCodeContent {
     case mermaid(content: String, filePath: String?)
     case graphviz(content: String, filePath: String?)
 
-    /// Workspace context for resolving relative image paths in markdown files.
+    /// Workspace/session context for resolving image paths in markdown files.
     struct WorkspaceContext: @unchecked Sendable {
         let workspaceID: String
         let serverBaseURL: URL
         let fetchWorkspaceFile: (_ workspaceID: String, _ path: String) async throws -> Data
+        let sessionID: String?
+        let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+
+        init(
+            workspaceID: String,
+            serverBaseURL: URL,
+            fetchWorkspaceFile: @escaping (_ workspaceID: String, _ path: String) async throws -> Data,
+            sessionID: String? = nil,
+            fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
+        ) {
+            self.workspaceID = workspaceID
+            self.serverBaseURL = serverBaseURL
+            self.fetchWorkspaceFile = fetchWorkspaceFile
+            self.sessionID = sessionID
+            self.fetchSessionFile = fetchSessionFile
+        }
     }
 
     /// Build content from raw text and a file path by detecting the file type.

@@ -683,6 +683,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let selectedTextSourceContext: SelectedTextSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private let workspaceID: String?
+    private let sessionID: String?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
 
@@ -709,10 +710,12 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         selectedTextSourceContext: SelectedTextSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
         workspaceID: String? = nil,
+        sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.stream = stream
         self.perfSurface = perfSurface
@@ -721,6 +724,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.selectedTextSourceContext = selectedTextSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
         self.workspaceID = workspaceID
+        self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         let initialSnapshot = stream?.snapshot
@@ -763,6 +767,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         ])
 
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
+        markdownView.fetchSessionFile = fetchSessionFile
         render(snapshot: initialSnapshot)
 
         // Static markdown (stream == nil): no observer needed, tail-follow stays off
@@ -811,6 +816,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             selectedTextSourceContext: selectedTextSourceContext,
             reviewCommentAnnotations: reviewCommentAnnotations,
             workspaceID: workspaceID,
+            sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             perfSurface: perfSurface

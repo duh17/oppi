@@ -42,10 +42,20 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     func get(
         _ content: String,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
-        workspaceID: String? = nil
+        workspaceID: String? = nil,
+        sessionID: String? = nil,
+        serverBaseURL: URL? = nil,
+        sourceDirectory: String? = nil
     ) -> [FlatSegment]? {
         guard shouldCache(content) else { return nil }
-        let key = stableKey(for: content, themeID: themeID, workspaceID: workspaceID)
+        let key = stableKey(
+            for: content,
+            themeID: themeID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory
+        )
         lock.lock()
         defer { lock.unlock() }
         guard var entry = entries[key] else { return nil }
@@ -59,12 +69,22 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         _ content: String,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
         workspaceID: String? = nil,
+        sessionID: String? = nil,
+        serverBaseURL: URL? = nil,
+        sourceDirectory: String? = nil,
         segments: [FlatSegment]
     ) {
         let sourceBytes = content.utf8.count
         guard sourceBytes <= maxEntrySourceBytes else { return }
 
-        let key = stableKey(for: content, themeID: themeID, workspaceID: workspaceID)
+        let key = stableKey(
+            for: content,
+            themeID: themeID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory
+        )
         lock.lock()
         defer { lock.unlock() }
 
@@ -102,31 +122,32 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         }
     }
 
-    private func stableKey(for content: String, themeID: ThemeID, workspaceID: String? = nil) -> UInt64 {
+    private func stableKey(
+        for content: String,
+        themeID: ThemeID,
+        workspaceID: String? = nil,
+        sessionID: String? = nil,
+        serverBaseURL: URL? = nil,
+        sourceDirectory: String? = nil
+    ) -> UInt64 {
         // FNV-1a 64-bit hash (stable across process launches).
         var hash: UInt64 = 14_695_981_039_346_656_037
 
-        for byte in themeID.rawValue.utf8 {
-            hash ^= UInt64(byte)
+        func mix(_ string: String?, separator: UInt64) {
+            hash ^= separator
             hash &*= 1_099_511_628_211
+            for byte in (string ?? "").utf8 {
+                hash ^= UInt64(byte)
+                hash &*= 1_099_511_628_211
+            }
         }
 
-        // Separator to avoid accidental collisions between field boundaries.
-        hash ^= 0xFF
-        hash &*= 1_099_511_628_211
-
-        for byte in (workspaceID ?? "").utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-
-        hash ^= 0xFE
-        hash &*= 1_099_511_628_211
-
-        for byte in content.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
+        mix(themeID.rawValue, separator: 0xFF)
+        mix(workspaceID, separator: 0xFE)
+        mix(sessionID, separator: 0xFD)
+        mix(serverBaseURL?.absoluteString, separator: 0xFC)
+        mix(sourceDirectory, separator: 0xFB)
+        mix(content, separator: 0xFA)
         return hash
     }
 }

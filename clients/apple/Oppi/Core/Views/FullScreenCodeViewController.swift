@@ -334,10 +334,12 @@ final class FullScreenCodeViewController: UIViewController {
                 ),
                 reviewCommentAnnotations: reviewCommentAnnotations,
                 workspaceID: wsContext?.workspaceID,
+                sessionID: wsContext?.sessionID,
                 serverBaseURL: wsContext?.serverBaseURL,
                 sourceFilePath: filePath,
                 perfSurface: .fullScreenMarkdown,
-                fetchWorkspaceFile: wsContext?.fetchWorkspaceFile
+                fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
+                fetchSessionFile: wsContext?.fetchSessionFile
             )
             return body
         case .html(let text, let filePath):

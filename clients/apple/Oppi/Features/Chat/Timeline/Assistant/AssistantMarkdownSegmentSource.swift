@@ -39,7 +39,10 @@ final class AssistantMarkdownSegmentSource {
            let cached = MarkdownSegmentCache.shared.get(
                content,
                themeID: config.themeID,
-               workspaceID: config.workspaceID
+               workspaceID: config.workspaceID,
+               sessionID: config.sessionID,
+               serverBaseURL: config.serverBaseURL,
+               sourceDirectory: config.sourceDirectory
            ) {
             return cached
         }
@@ -73,6 +76,9 @@ final class AssistantMarkdownSegmentSource {
             content,
             themeID: config.themeID,
             workspaceID: config.workspaceID,
+            sessionID: config.sessionID,
+            serverBaseURL: config.serverBaseURL,
+            sourceDirectory: config.sourceDirectory,
             segments: segments
         )
         return segments
