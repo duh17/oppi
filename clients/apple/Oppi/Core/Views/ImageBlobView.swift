@@ -92,9 +92,8 @@ struct ImageBlobView: View {
                     return .staticImage(image)
                 }
 
-                if let normalizedMimeType = info.normalizedMimeType,
-                   normalizedMimeType.hasPrefix("image/") {
-                    return .animated(data, mimeType)
+                if MediaMimeType.isSupportedImageMimeType(info.normalizedMimeType) {
+                    return .animated(data, MediaMimeType.safeImageMimeType(info.normalizedMimeType))
                 }
 
                 return .failure

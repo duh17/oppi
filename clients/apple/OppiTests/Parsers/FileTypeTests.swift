@@ -43,6 +43,9 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "photo.jpg") == .image)
         #expect(FileType.detect(from: "anim.gif") == .image)
         #expect(FileType.detect(from: "icon.webp") == .image)
+        #expect(FileType.detect(from: "scan.tif") == .image)
+        #expect(FileType.detect(from: "scan.tiff") == .image)
+        #expect(FileType.detect(from: "favicon.ico") == .image)
         #expect(FileType.detect(from: "icon.svg") == .image)
         #expect(FileType.detect(from: "logo.png").previewCategory == .image)
     }

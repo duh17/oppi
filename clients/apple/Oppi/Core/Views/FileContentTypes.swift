@@ -83,7 +83,7 @@ enum FileType: Equatable {
             return .markdown
         case "html", "htm":
             return .html
-        case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tiff":
+        case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tif", "tiff":
             return .image
         case "svg":
             return .image

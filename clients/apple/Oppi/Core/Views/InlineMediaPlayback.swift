@@ -8,26 +8,101 @@ import WebKit
 
 // MARK: - Image Viewport Sizing
 
+enum ImagePresentationSurface: Equatable {
+    case thumbnail
+    case inlineProse
+    case primaryMedia
+    case fullscreen
+}
+
+struct ImagePresentationPolicy: Equatable {
+    let surface: ImagePresentationSurface
+    let minimumHeight: CGFloat
+    let placeholderHeight: CGFloat
+    let maximumHeight: CGFloat?
+    let maxPixelSize: CGFloat
+
+    var allowsNaturalHeight: Bool { maximumHeight == nil || surface == .primaryMedia || surface == .fullscreen }
+}
+
 enum ImageViewportSizing {
     enum HeightMode: Equatable {
         case singleScreenFit
+        case primaryMedia
         case unrestricted
         case fixed(CGFloat)
     }
 
     static let minInlineHeight: CGFloat = 80
+    static let defaultPlaceholderHeight: CGFloat = 160
+    static let maxPrimaryTimelineHeight: CGFloat = 10_000
     private static let maxScreenFraction: CGFloat = 0.66
+    private static let maxPrimaryScreenMultiplier: CGFloat = 3.0
+    private static let minimumValidHeightToWidthRatio: CGFloat = 1.0 / 50.0
+    private static let maximumValidHeightToWidthRatio: CGFloat = 50.0
+
+    static func policy(for surface: ImagePresentationSurface, screenHeight: CGFloat?) -> ImagePresentationPolicy {
+        switch surface {
+        case .thumbnail:
+            return ImagePresentationPolicy(
+                surface: surface,
+                minimumHeight: 80,
+                placeholderHeight: 80,
+                maximumHeight: 80,
+                maxPixelSize: 512
+            )
+        case .inlineProse:
+            return ImagePresentationPolicy(
+                surface: surface,
+                minimumHeight: minInlineHeight,
+                placeholderHeight: defaultPlaceholderHeight,
+                maximumHeight: maxHeight(for: .singleScreenFit, screenHeight: screenHeight),
+                maxPixelSize: 1_600
+            )
+        case .primaryMedia:
+            return ImagePresentationPolicy(
+                surface: surface,
+                minimumHeight: minInlineHeight,
+                placeholderHeight: defaultPlaceholderHeight,
+                maximumHeight: maxHeight(for: .primaryMedia, screenHeight: screenHeight),
+                maxPixelSize: 1_600
+            )
+        case .fullscreen:
+            return ImagePresentationPolicy(
+                surface: surface,
+                minimumHeight: minInlineHeight,
+                placeholderHeight: defaultPlaceholderHeight,
+                maximumHeight: nil,
+                maxPixelSize: 2_400
+            )
+        }
+    }
+
+    static func validatedHeightToWidthRatio(_ ratio: CGFloat?) -> CGFloat? {
+        guard let ratio,
+              ratio.isFinite,
+              ratio >= minimumValidHeightToWidthRatio,
+              ratio <= maximumValidHeightToWidthRatio else {
+            return nil
+        }
+        return ratio
+    }
+
+    static func validatedHeightToWidthRatio(width: CGFloat, height: CGFloat) -> CGFloat? {
+        guard width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+        return validatedHeightToWidthRatio(height / width)
+    }
 
     static func naturalHeight(
         forWidth width: CGFloat,
         heightToWidthRatio: CGFloat
     ) -> CGFloat {
         guard width.isFinite, width > 0,
-              heightToWidthRatio.isFinite, heightToWidthRatio > 0 else {
+              let validRatio = validatedHeightToWidthRatio(heightToWidthRatio) else {
             return minInlineHeight
         }
 
-        return max(minInlineHeight, width * heightToWidthRatio)
+        return max(minInlineHeight, width * validRatio)
     }
 
     static func fittedHeight(
@@ -35,9 +110,26 @@ enum ImageViewportSizing {
         aspectRatio: CGFloat,
         screenHeight: CGFloat?
     ) -> CGFloat {
-        let naturalHeight = naturalHeight(forWidth: width, heightToWidthRatio: aspectRatio)
-        let limit = maxHeight(for: .singleScreenFit, screenHeight: screenHeight) ?? naturalHeight
-        return min(limit, naturalHeight)
+        fittedHeight(
+            forWidth: width,
+            heightToWidthRatio: aspectRatio,
+            surface: .inlineProse,
+            screenHeight: screenHeight
+        )
+    }
+
+    static func fittedHeight(
+        forWidth width: CGFloat,
+        heightToWidthRatio: CGFloat,
+        surface: ImagePresentationSurface,
+        screenHeight: CGFloat?
+    ) -> CGFloat {
+        let policy = policy(for: surface, screenHeight: screenHeight)
+        let naturalHeight = naturalHeight(forWidth: width, heightToWidthRatio: heightToWidthRatio)
+        let minimumHeight = max(minInlineHeight, policy.minimumHeight)
+        let height = max(minimumHeight, naturalHeight)
+        guard let maximumHeight = policy.maximumHeight else { return height }
+        return min(maximumHeight, height)
     }
 
     static func maxHeight(for mode: HeightMode, screenHeight: CGFloat?) -> CGFloat? {
@@ -45,6 +137,9 @@ enum ImageViewportSizing {
         case .singleScreenFit:
             let height = max(320, screenHeight ?? UIScreen.main.bounds.height)
             return max(minInlineHeight, floor(height * maxScreenFraction))
+        case .primaryMedia:
+            let height = max(320, screenHeight ?? UIScreen.main.bounds.height)
+            return min(maxPrimaryTimelineHeight, max(minInlineHeight, floor(height * maxPrimaryScreenMultiplier)))
         case .unrestricted:
             return nil
         case .fixed(let value):
@@ -136,6 +231,22 @@ enum MediaMimeType {
         var value = 0.0
         guard scanner.scanDouble(&value), value > 0 else { return nil }
         return CGFloat(value)
+    }
+
+    static func isSupportedImageMimeType(_ mimeType: String?) -> Bool {
+        switch normalized(mimeType) {
+        case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
+             "image/bmp", "image/tiff", "image/svg+xml", "image/x-icon",
+             "image/vnd.microsoft.icon":
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func safeImageMimeType(_ mimeType: String?, fallback: String = "image/png") -> String {
+        let normalizedMimeType = normalized(mimeType)
+        return isSupportedImageMimeType(normalizedMimeType) ? normalizedMimeType ?? fallback : fallback
     }
 
     static func imageMimeType(forPathExtension pathExtension: String?) -> String? {
@@ -295,17 +406,44 @@ enum ImageMediaInspector {
     }
 }
 
+// MARK: - Image Preview Web Security
+
+enum ImagePreviewWebSecurity {
+    static let contentSecurityPolicy = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; media-src data:"
+
+    static func makeConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        if #available(iOS 14.0, *) {
+            configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        }
+        return configuration
+    }
+}
+
 // MARK: - Animated Image Web View
+
+final class ImagePreviewNavigationBlocker: NSObject, WKNavigationDelegate {
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
+    }
+}
 
 final class AnimatedImageWebContainerView: UIView {
     private let webView: PiWKWebView
+    private let navigationBlocker = ImagePreviewNavigationBlocker()
     private var currentSignature: Int?
     private var loadedSignature: Int?
     private var pendingDataURLString: String?
 
     override init(frame: CGRect) {
-        let configuration = WKWebViewConfiguration()
-        self.webView = PiWKWebView(frame: .zero, configuration: configuration)
+        self.webView = PiWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
         super.init(frame: frame)
         setupViews()
     }
@@ -361,6 +499,7 @@ final class AnimatedImageWebContainerView: UIView {
         <html>
         <head>
           <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover\">
+          <meta http-equiv="Content-Security-Policy" content="\(ImagePreviewWebSecurity.contentSecurityPolicy)">
           <style>
             html, body {
               margin: 0;
@@ -406,6 +545,7 @@ final class AnimatedImageWebContainerView: UIView {
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isUserInteractionEnabled = false
+        webView.navigationDelegate = navigationBlocker
         if #available(iOS 16.4, *) {
             webView.isInspectable = false
         }
@@ -432,13 +572,174 @@ struct AnimatedImageWebView: UIViewRepresentable {
     }
 }
 
+// MARK: - Fullscreen Data Image Preview
+
+@MainActor
+enum FullScreenImageDataPreviewPresenter {
+    static func present(data: Data, mimeType: String?, title: String = "Preview") {
+        guard let presenter = activePresenter() else { return }
+        present(data: data, mimeType: mimeType, title: title, from: presenter)
+    }
+
+    static func present(data: Data, mimeType: String?, title: String = "Preview", from presenter: UIViewController) {
+        presenter.present(
+            FullScreenImageDataPreviewViewController.makeSlideDownController(
+                data: data,
+                mimeType: mimeType,
+                title: title
+            ),
+            animated: true
+        )
+    }
+
+    private static func activePresenter() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        var controller = scene?.windows.first { $0.isKeyWindow }?.rootViewController
+        while let presented = controller?.presentedViewController {
+            controller = presented
+        }
+        return controller
+    }
+}
+
+final class FullScreenImageDataPreviewViewController: UIViewController, UIScrollViewDelegate {
+    private let data: Data
+    private let mimeType: String?
+    private let previewTitle: String
+    private let palette: ThemePalette
+    private let scrollView = UIScrollView()
+    private let containerView = AnimatedImageWebContainerView()
+
+    init(data: Data, mimeType: String?, title: String) {
+        self.data = data
+        self.mimeType = mimeType
+        self.previewTitle = title
+        self.palette = ThemeRuntimeState.currentThemeID().palette
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor(palette.bgDark)
+        title = previewTitle
+        setupNavigationChrome()
+        setupScrollView()
+        setupPreviewView()
+        setupDoubleTap()
+        loadPreview()
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        containerView
+    }
+
+    private func setupNavigationChrome() {
+        let doneButton = UIBarButtonItem(
+            image: UIImage(systemName: "chevron.down"),
+            style: .plain,
+            target: self,
+            action: #selector(dismissTapped)
+        )
+        doneButton.tintColor = UIColor(palette.cyan)
+        doneButton.accessibilityLabel = String(localized: "Done")
+        doneButton.accessibilityIdentifier = "fullscreen-image-data.dismiss"
+        navigationItem.leftBarButtonItem = doneButton
+    }
+
+    private func setupScrollView() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.minimumZoomScale = 1.0
+        scrollView.maximumZoomScale = 6.0
+        scrollView.delegate = self
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.contentInsetAdjustmentBehavior = .never
+        view.addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+
+    private func setupPreviewView() {
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(containerView)
+
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            containerView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            containerView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            containerView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            containerView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            containerView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+        ])
+    }
+
+    private func setupDoubleTap() {
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+    }
+
+    private func loadPreview() {
+        let normalizedMimeType = MediaMimeType.safeImageMimeType(mimeType, fallback: "image/svg+xml")
+        let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
+        containerView.apply(dataURLString: dataURLString)
+    }
+
+    @objc private func dismissTapped() {
+        dismiss(animated: true)
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        if scrollView.zoomScale > 1.0 {
+            scrollView.setZoomScale(1.0, animated: true)
+        } else {
+            let point = gesture.location(in: containerView)
+            let size = CGSize(
+                width: scrollView.bounds.width / 2.5,
+                height: scrollView.bounds.height / 2.5
+            )
+            let origin = CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2)
+            scrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
+        }
+    }
+}
+
+extension FullScreenImageDataPreviewViewController {
+    static func makeSlideDownController(data: Data, mimeType: String?, title: String) -> UIViewController {
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let viewer = FullScreenImageDataPreviewViewController(data: data, mimeType: mimeType, title: title)
+        let navigation = UINavigationController(rootViewController: viewer)
+        navigation.modalPresentationStyle = .pageSheet
+        navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
+
+        if let sheet = navigation.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+
+        navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        return navigation
+    }
+}
+
 // MARK: - SwiftUI Image Preview
 
 struct DataImagePreviewView: View {
     private enum Phase {
         case loading
         case staticImage(UIImage, CGFloat?)
-        case animated(String, CGFloat?)
+        case animated(String, CGFloat?, Data, String?)
         case failure
     }
 
@@ -456,7 +757,7 @@ struct DataImagePreviewView: View {
             case .loading:
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.themeBgHighlight)
-                    .frame(height: 100)
+                    .frame(height: placeholderHeight)
                     .overlay {
                         ProgressView()
                             .controlSize(.small)
@@ -464,7 +765,7 @@ struct DataImagePreviewView: View {
             case .failure:
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.themeBgHighlight)
-                    .frame(height: 100)
+                    .frame(height: placeholderHeight)
                     .overlay {
                         VStack(spacing: 4) {
                             Image(systemName: "photo.badge.exclamationmark")
@@ -486,9 +787,12 @@ struct DataImagePreviewView: View {
                         },
                     aspectRatio: aspectRatio
                 )
-            case .animated(let dataURLString, let aspectRatio):
+            case .animated(let dataURLString, let aspectRatio, let data, let mimeType):
                 renderedImage(
-                    AnimatedImageWebView(dataURLString: dataURLString),
+                    AnimatedImageWebView(dataURLString: dataURLString)
+                        .onTapGesture {
+                            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                        },
                     aspectRatio: aspectRatio
                 )
             }
@@ -496,21 +800,21 @@ struct DataImagePreviewView: View {
         .task(id: cacheKey) {
             phase = await Task.detached(priority: .userInitiated) {
                 let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
-                let aspectRatio = info.aspectRatio
+                let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
                 if info.prefersWebRenderer {
-                    let normalizedMimeType = info.normalizedMimeType ?? "image/gif"
+                    let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
                     let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
-                    return Phase.animated(dataURLString, aspectRatio)
+                    return Phase.animated(dataURLString, aspectRatio, data, normalizedMimeType)
                 }
 
                 if let image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: maxPixelSize) {
                     return Phase.staticImage(image, aspectRatio)
                 }
 
-                if let normalizedMimeType = info.normalizedMimeType,
-                   normalizedMimeType.hasPrefix("image/") {
+                if MediaMimeType.isSupportedImageMimeType(info.normalizedMimeType) {
+                    let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType)
                     let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
-                    return Phase.animated(dataURLString, aspectRatio)
+                    return Phase.animated(dataURLString, aspectRatio, data, normalizedMimeType)
                 }
 
                 return .failure
@@ -523,10 +827,25 @@ struct DataImagePreviewView: View {
         return "\(mime)-\(data.count)-\(data.prefix(32))-\(data.suffix(32))-\(maxPixelSize)-\(cacheHeightModeKey)"
     }
 
+    private var placeholderHeight: CGFloat {
+        switch heightMode {
+        case .fixed(let value):
+            return max(1, value)
+        case .singleScreenFit:
+            return ImageViewportSizing.policy(for: .inlineProse, screenHeight: UIScreen.main.bounds.height).placeholderHeight
+        case .primaryMedia:
+            return ImageViewportSizing.policy(for: .primaryMedia, screenHeight: UIScreen.main.bounds.height).placeholderHeight
+        case .unrestricted:
+            return ImageViewportSizing.policy(for: .fullscreen, screenHeight: UIScreen.main.bounds.height).placeholderHeight
+        }
+    }
+
     private var cacheHeightModeKey: String {
         switch heightMode {
         case .singleScreenFit:
             return "fit"
+        case .primaryMedia:
+            return "primary"
         case .unrestricted:
             return "full"
         case .fixed(let value):
