@@ -150,7 +150,7 @@ oppi pair [name]             # regenerate pairing QR
 oppi status                  # server config overview
 oppi doctor                  # check prerequisites
 oppi update                  # update mutable runtime dependencies only
-oppi update --self           # show how to update the Oppi server install
+oppi update --self           # update the global npm server install
 oppi config show             # show config
 oppi config get <key>        # get a config value, including nested paths
 oppi config set <key> <val>  # update config, e.g. asr.sttEndpoint
@@ -168,9 +168,9 @@ oppi server stop             # stop background server
 - **App-managed runtime:** Oppi.app owns server code and seeds
   `~/.config/oppi/server-runtime`. `oppi update` updates mutable runtime
   dependencies only; update Oppi.app to update server code.
-- **npm global install:** npm owns server code. Use
-  `npm install -g oppi-server@latest` to upgrade and `npm uninstall -g
-oppi-server` to remove. `oppi update` does not upgrade the global package.
+- **npm global install:** npm owns server code. Use `oppi update --self` or
+  `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g
+oppi-server` to remove. `oppi update` updates mutable runtime dependencies only.
 - **Git/bootstrap install:** git owns server code. Use
   `git pull && npm install && npm run build` to upgrade a checkout.
 

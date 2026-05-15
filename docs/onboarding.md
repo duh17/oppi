@@ -1,14 +1,19 @@
 # Onboarding and Pairing
 
-All commands run from `server/`.
+Install the server with npm first:
+
+```bash
+npm install -g oppi-server
+```
+
+Use `oppi ...` commands for normal installs. Source checkouts can use `node dist/src/cli.js ...` from `server/`.
 
 ## First device
 
 1. Start the server:
 
    ```bash
-   cd server
-   node dist/src/cli.js serve
+   oppi serve
    ```
 
    On first run, Oppi shows:
@@ -35,8 +40,7 @@ Notes:
 If your phone is not on the same LAN (for example Tailscale or VPS), generate an invite with an explicit host:
 
 ```bash
-cd server
-node dist/src/cli.js pair --host <hostname-or-ip>
+oppi pair --host <hostname-or-ip>
 ```
 
 Host override notes:
@@ -45,13 +49,13 @@ Host override notes:
 - Invite port comes from server config:
 
   ```bash
-  node dist/src/cli.js config get port
+  oppi config get port
   ```
 
 - If clients must connect on a different port, set it first, restart `serve`, then generate a fresh invite:
 
   ```bash
-  node dist/src/cli.js config set port <public-port>
+  oppi config set port <public-port>
   ```
 
 ## Additional devices
@@ -59,8 +63,7 @@ Host override notes:
 1. Generate a new invite:
 
    ```bash
-   cd server
-   node dist/src/cli.js pair
+   oppi pair
    ```
 
 2. On the new phone, scan the QR code or paste the invite link.
@@ -78,8 +81,7 @@ Host override notes:
 1. Generate a new invite:
 
    ```bash
-   cd server
-   node dist/src/cli.js pair
+   oppi pair
    ```
 
 2. Retry pairing immediately.
@@ -91,16 +93,14 @@ Host override notes:
 2. Check server health and config:
 
    ```bash
-   cd server
-   node dist/src/cli.js status
-   node dist/src/cli.js doctor
+   oppi status
+   oppi doctor
    ```
 
 3. Regenerate invite with explicit host:
 
    ```bash
-   cd server
-   node dist/src/cli.js pair --host <hostname-or-ip>
+   oppi pair --host <hostname-or-ip>
    ```
 
 4. Retry pairing.

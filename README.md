@@ -37,58 +37,67 @@ The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly —
 
 Requires Node.js 23.6+ and [pi](https://github.com/badlogic/pi-mono) with at least one provider authenticated (`pi auth`). Linux self-signed TLS also requires `openssl` on PATH.
 
-One-line bootstrap (choose one):
+Use the npm package for normal installs:
 
 ```bash
-# Start in foreground (recommended for first run)
-curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | bash
-
-# Install as a background service on macOS (launchd)
-curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | bash -s -- --install
+npm install -g oppi-server
+oppi serve
 ```
 
-Local clone flow (equivalent, choose one):
+On first run, `oppi serve` creates `~/.config/oppi/`, generates owner credentials, boots local HTTPS/WSS, and prints a pairing QR code and invite link. In the iOS TestFlight app, choose **Pair with server** and scan the QR code.
+
+To run Oppi as a background service on macOS:
 
 ```bash
-git clone https://github.com/duh17/oppi.git
-cd oppi
-
-# Foreground first run
-bash install.sh
-
-# Background service on macOS
-bash install.sh --install
+oppi server install
+oppi server status
 ```
 
-`install.sh` installs dependencies, builds, and either starts the server or installs a LaunchAgent. On first run, the server prints a pairing QR code and invite link.
+Upgrade or uninstall with npm:
+
+```bash
+npm install -g oppi-server@latest
+npm uninstall -g oppi-server
+```
 
 Your phone and server must be reachable over LAN, Tailscale, or a public hostname. For remote pairing (Tailscale or VPS), generate invites with an explicit host:
 
 ```bash
-cd server
-node dist/src/cli.js pair --host <hostname-or-ip>
+oppi pair --host <hostname-or-ip>
 ```
 
 Notes:
 
 - `--host` expects host/IP only (no `https://`, no `:port`).
 - Invite is single-use and short-lived (90 seconds by default). If pairing fails, generate a fresh invite.
-- Invite port comes from server config (`node dist/src/cli.js config get port`).
+- Invite port comes from server config (`oppi config get port`).
 
 If you want first-run QR output from `serve` to already use your Tailscale host, start with:
 
 ```bash
-node dist/src/cli.js serve --host <your-host>.ts.net
+oppi serve --host <your-host>.ts.net
 ```
+
+### Source checkout (development)
+
+Use the repo bootstrapper only when you are developing Oppi or testing unreleased server changes:
+
+```bash
+git clone https://github.com/duh17/oppi.git
+cd oppi
+bash install.sh
+```
+
+For regular use, prefer the npm route above so updates are just `npm install -g oppi-server@latest`.
 
 ### Background service (macOS)
 
-If you used `bash install.sh --install`, the server runs as a LaunchAgent that starts on login and restarts on crash. Manage it with:
+If you used `oppi server install`, the server runs as a LaunchAgent that starts on login and restarts on crash. Manage it with:
 
 ```bash
-node dist/src/cli.js server status     # check if running
-node dist/src/cli.js server restart    # restart
-node dist/src/cli.js server uninstall  # remove
+oppi server status     # check if running
+oppi server restart    # restart
+oppi server uninstall  # remove
 ```
 
 ## What you can do
@@ -97,24 +106,25 @@ node dist/src/cli.js server uninstall  # remove
 
 ## Commands
 
-All commands run from the `server/` directory.
+Use `oppi ...` after installing `oppi-server` from npm.
 
 ```
-node dist/src/cli.js serve [--host <h>]      start server
-node dist/src/cli.js pair [--host <h>]       regenerate pairing QR
-node dist/src/cli.js status                  server config overview
-node dist/src/cli.js doctor                  check prerequisites
-node dist/src/cli.js update                  update dependencies
-node dist/src/cli.js init                    interactive first-time setup
-node dist/src/cli.js config show             current config
-node dist/src/cli.js config set <k> <v>      update config value
-node dist/src/cli.js config validate         validate config file
-node dist/src/cli.js token rotate            rotate owner auth token
-node dist/src/cli.js server install          install LaunchAgent (macOS)
-node dist/src/cli.js server uninstall        remove LaunchAgent
-node dist/src/cli.js server status           check background service
-node dist/src/cli.js server restart          restart background server
-node dist/src/cli.js server stop             stop background server
+oppi serve [--host <h>]      start server
+oppi pair [--host <h>]       regenerate pairing QR
+oppi status                  server config overview
+oppi doctor                  check prerequisites
+oppi update                  update mutable runtime dependencies
+oppi update --self           update the global npm server install
+oppi init                    interactive first-time setup
+oppi config show             current config
+oppi config set <k> <v>      update config value
+oppi config validate         validate config file
+oppi token rotate            rotate owner auth token
+oppi server install          install LaunchAgent (macOS)
+oppi server uninstall        remove LaunchAgent
+oppi server status           check background service
+oppi server restart          restart background server
+oppi server stop             stop background server
 ```
 
 ## Mac App (experimental)

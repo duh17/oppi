@@ -17,10 +17,11 @@
 import * as c from "./ansi.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
-import { readFileSync, existsSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
+import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir, hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
@@ -1223,20 +1224,134 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
   process.exit(1);
 }
 
-async function cmdUpdate(flags: Record<string, string>): Promise<void> {
-  printHeader();
+function parseVersionParts(version: string): number[] {
+  return version
+    .replace(/^v/, "")
+    .split(/[.-]/)
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+}
 
-  const mode = flags.self === "true" ? "self" : "runtime";
-  if (mode === "self") {
-    console.log("  " + c.bold("Updating Oppi server"));
+function isVersionNewer(candidate: string, current: string): boolean {
+  const a = parseVersionParts(candidate);
+  const b = parseVersionParts(current);
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av > bv) return true;
+    if (av < bv) return false;
+  }
+  return false;
+}
+
+function currentPackageDir(): string | undefined {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    const candidate = join(dir, "package.json");
+    if (existsSync(candidate)) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+function isLikelyGlobalNpmInstall(packageName: string): boolean {
+  try {
+    const packageDir = currentPackageDir();
+    if (!packageDir) return false;
+    const globalRoot = execSync("npm root -g", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (!globalRoot) return false;
+    const installed = realpathSync(packageDir);
+    const expected = realpathSync(join(globalRoot, packageName));
+    return installed === expected;
+  } catch {
+    return false;
+  }
+}
+
+async function runInherited(command: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) resolve();
+      else if (signal) reject(new Error(`${command} ${args.join(" ")} terminated by ${signal}`));
+      else reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
+    });
+  });
+}
+
+async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
+  const info = getPackageInfo();
+  console.log("  " + c.bold("Updating Oppi server"));
+  console.log("");
+  console.log(`  Current: ${c.dim(`${info.name}@${info.version}`)}`);
+
+  let latest = "latest";
+  try {
+    latest = execSync(`npm view ${info.name} version`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (latest) {
+      const newer = isVersionNewer(latest, info.version);
+      const currentAhead = isVersionNewer(info.version, latest);
+      const label = newer
+        ? `${c.green(latest)} ${c.yellow("(update available)")}`
+        : currentAhead
+          ? `${c.dim(latest)} ${c.yellow("(registry is behind this install)")}`
+          : c.dim(`${latest} (current)`);
+      console.log(`  Latest:  ${label}`);
+    }
+  } catch {
+    console.log(c.yellow("  Could not check npm for the latest version."));
+    console.log(c.dim("  Continuing with npm install -g oppi-server@latest."));
+  }
+  console.log("");
+
+  if (flags.check === "true" || flags.dry === "true") {
+    if (latest !== "latest" && !isVersionNewer(latest, info.version)) {
+      console.log(c.green("  Oppi server is already current."));
+    } else {
+      console.log(c.yellow("  Update available."));
+    }
+    console.log(c.dim(`  Command: npm install -g ${info.name}@latest`));
     console.log("");
-    console.log(c.yellow("  Self-update depends on how Oppi was installed."));
+    return;
+  }
+
+  if (!isLikelyGlobalNpmInstall(info.name)) {
+    console.log(c.yellow("  This Oppi CLI does not look like a global npm install."));
     console.log(c.dim("  npm global:   npm install -g oppi-server@latest"));
     console.log(c.dim("  git checkout: git pull && npm install && npm run build"));
     console.log(
       c.dim("  Mac app:      update Oppi.app; the app manages its bundled server runtime"),
     );
     console.log("");
+    process.exit(1);
+  }
+
+  await runInherited("npm", ["install", "-g", `${info.name}@latest`]);
+  console.log("");
+  console.log(c.green("  Updated Oppi server."));
+  console.log(c.dim("  Restart any running Oppi server process to use the new version."));
+  console.log("");
+}
+
+async function cmdUpdate(flags: Record<string, string>): Promise<void> {
+  printHeader();
+
+  const mode = flags.self === "true" ? "self" : "runtime";
+  if (mode === "self") {
+    await cmdSelfUpdate(flags);
     return;
   }
 
