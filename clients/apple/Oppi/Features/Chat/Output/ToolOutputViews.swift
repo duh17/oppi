@@ -391,7 +391,7 @@ extension ToolPresentationBuilder {
             let attachment = ToolMediaAttachment(
                 kind: "image",
                 id: id,
-                mimeType: image.mimeType,
+                mimeType: MediaMimeType.safeImageMimeType(image.mimeType),
                 fileName: image.fileName,
                 sizeBytes: image.sizeBytes,
                 width: image.width,
@@ -405,7 +405,7 @@ extension ToolPresentationBuilder {
             outputLines.append(message)
         }
         if let base64 = image.base64, !base64.isEmpty {
-            outputLines.append("data:\(image.mimeType);base64,\(base64)")
+            outputLines.append("data:\(MediaMimeType.safeImageMimeType(image.mimeType));base64,\(base64)")
         }
         let output = outputLines.joined(separator: "\n")
         return (.readMedia(output: output, filePath: title, startLine: 1, attachments: []), message.isEmpty ? title : message)

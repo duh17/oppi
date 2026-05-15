@@ -87,7 +87,8 @@ enum ToolPresentationBuilder {
             outputPreview: outputPreview
         )
 
-        let previewImage = isDone ? Self.toolImageAttachmentDetails(from: context.details) : nil
+        let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
+        let previewImage = isDone && !isBuiltInFileTool ? Self.toolImageAttachmentDetails(from: context.details) : nil
         let isVoicePresentationResult = Self.toolAudioAttachmentDetails(from: context.details) != nil
             || Self.toolVoicePresentationDetails(from: context.details) != nil
 
@@ -146,7 +147,6 @@ enum ToolPresentationBuilder {
         // Expanded bash rows render a dedicated command panel, so we suppress
         // segment title commands there to avoid duplicate command text.
         let segmentAttributedTitle: NSAttributedString?
-        let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
         if isVoicePresentationResult || isBuiltInFileTool || (isExpanded && normalizedTool == "bash") {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {

@@ -312,6 +312,49 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("user row renders uploaded SVG thumbnail through shared web preview")
+    func userRowRendersUploadedSVGThumbnailThroughSharedWebPreview() async throws {
+        let svg = """
+        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"80\">
+          <rect width=\"120\" height=\"80\" fill=\"#7c3aed\"/>
+        </svg>
+        """
+        let attachment = ImageAttachment(data: Data(svg.utf8).base64EncodedString(), mimeType: "image/svg+xml")
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "",
+                images: [attachment],
+                canFork: false,
+                onFork: nil
+            )
+        )
+
+        let host = UIViewController()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        view.frame = host.view.bounds
+        host.view.addSubview(view)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let rendered = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            guard let thumbnail = firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.0", in: view) else {
+                return false
+            }
+            let hasHostedPreview = thumbnail.subviews.contains { String(describing: type(of: $0)).contains("Hosting") }
+            return hasHostedPreview && abs(thumbnail.bounds.width - 80) < 0.5 && abs(thumbnail.bounds.height - 80) < 0.5
+        }
+
+        #expect(rendered, "Uploaded SVG thumbnail should stay square and use the shared preview path")
+    }
+
+    @MainActor
     @Test("user row suppresses duplicate uploaded image inline preview when local image is present")
     func userRowSuppressesDuplicateUploadedImageInlinePreviewWhenLocalImageIsPresent() throws {
         let imageData = try #require(makeTestImage().pngData())

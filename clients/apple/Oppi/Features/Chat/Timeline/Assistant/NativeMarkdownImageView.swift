@@ -1,4 +1,5 @@
 import OSLog
+import SwiftUI
 import UIKit
 import WebKit
 
@@ -27,7 +28,10 @@ final class NativeMarkdownImageView: UIView {
     /// Created lazily on first SVG load to avoid WKWebView overhead for
     /// raster-image-only messages.
     private var svgWebView: PiWKWebView?
+    private var svgTapOverlay: UIView?
+    private let svgNavigationBlocker = ImagePreviewNavigationBlocker()
     private let svgHTMLTracker = HTMLContentTracker()
+    private var svgPreviewData: Data?
 
     private var currentURL: URL?
     private var loadTask: Task<Void, Never>?
@@ -44,12 +48,15 @@ final class NativeMarkdownImageView: UIView {
     required init?(coder: NSCoder) { nil }
 
     /// Active height constraint — managed explicitly so we can swap between
-    /// loading placeholder (80pt), loaded (aspect-fit), and error (collapsed) states.
+    /// loading placeholder, loaded aspect-fit media, and error states.
     private var heightConstraint: NSLayoutConstraint?
 
     /// Placeholder height shown while loading. Ensures the view is visible
     /// in the stack view during async fetches (workspace or URLSession).
-    private static let loadingPlaceholderHeight: CGFloat = 80
+    private static let loadingPlaceholderHeight = ImageViewportSizing.policy(
+        for: .inlineProse,
+        screenHeight: UIScreen.main.bounds.height
+    ).placeholderHeight
 
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
@@ -187,7 +194,7 @@ final class NativeMarkdownImageView: UIView {
                     components.filePath
                 )
                 guard !Task.isCancelled else { return }
-                if let image = UIImage(data: data) {
+                if let image = await Self.decodeRasterImage(data: data) {
                     Self.imageCache.setObject(image, forKey: url as NSURL)
                     showLoadedState(image: image)
                     return
@@ -210,12 +217,12 @@ final class NativeMarkdownImageView: UIView {
             do {
                 let data = try await fetchWorkspaceFile(components.workspaceID, components.filePath)
                 guard !Task.isCancelled else { return }
-                if let image = UIImage(data: data) {
+                if let image = await Self.decodeRasterImage(data: data) {
                     Self.imageCache.setObject(image, forKey: url as NSURL)
                     showLoadedState(image: image)
                     return
                 }
-                // UIImage failed — try SVG via web view.
+                // Raster decode failed — try SVG via web view.
                 if MediaMimeType.isSVGData(data)
                     || components.filePath.lowercased().hasSuffix(".svg") {
                     Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
@@ -246,13 +253,13 @@ final class NativeMarkdownImageView: UIView {
                 return
             }
 
-            if let image = UIImage(data: data) {
+            if let image = await Self.decodeRasterImage(data: data) {
                 Self.imageCache.setObject(image, forKey: url as NSURL)
                 showLoadedState(image: image)
                 return
             }
 
-            // UIImage failed — try SVG via web view.
+            // Raster decode failed — try SVG via web view.
             if MediaMimeType.isSVGData(data) || url.pathExtension.lowercased() == "svg" {
                 Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
                 showSVGLoadedState(data: data)
@@ -264,6 +271,12 @@ final class NativeMarkdownImageView: UIView {
             guard !Task.isCancelled else { return }
             showErrorState(alt: alt)
         }
+    }
+
+    private static func decodeRasterImage(data: Data) async -> UIImage? {
+        await Task.detached(priority: .userInitiated) {
+            ImageMediaInspector.downsampledImage(data: data, maxPixelSize: 1_600)
+        }.value
     }
 
     private func normalizedAltText(_ alt: String) -> String? {
@@ -294,6 +307,7 @@ final class NativeMarkdownImageView: UIView {
         imageView.isHidden = true
         errorLabel.isHidden = true
         svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
     }
 
     private func showLoadingState(alt: String) {
@@ -313,6 +327,7 @@ final class NativeMarkdownImageView: UIView {
         imageView.isHidden = true
         errorLabel.isHidden = true
         svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
     }
 
     private func showLoadedState(image: UIImage) {
@@ -320,14 +335,19 @@ final class NativeMarkdownImageView: UIView {
         altLabel.isHidden = true
         errorLabel.isHidden = true
         svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
 
-        let aspectRatio = image.size.height / max(image.size.width, 1)
+        let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
+            width: image.size.width,
+            height: image.size.height
+        ) ?? 1
         let displayWidth = bounds.width > 0
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
         let displayHeight = ImageViewportSizing.fittedHeight(
             forWidth: displayWidth,
-            aspectRatio: aspectRatio,
+            heightToWidthRatio: heightToWidthRatio,
+            surface: .inlineProse,
             screenHeight: window?.windowScene?.screen.bounds.height
         )
 
@@ -355,24 +375,23 @@ final class NativeMarkdownImageView: UIView {
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
 
-        if let aspectRatio {
+        if let aspectRatio,
+           let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(1.0 / aspectRatio) {
             let displayHeight = ImageViewportSizing.fittedHeight(
                 forWidth: displayWidth,
-                aspectRatio: 1.0 / aspectRatio,
+                heightToWidthRatio: heightToWidthRatio,
+                surface: .inlineProse,
                 screenHeight: window?.windowScene?.screen.bounds.height
             )
             heightConstraint?.constant = max(displayHeight, Self.loadingPlaceholderHeight)
         } else {
-            // No viewBox — use a square-ish fallback, still capped by the shared inline image policy.
-            let cappedHeight = ImageViewportSizing.maxHeight(
-                for: .singleScreenFit,
-                screenHeight: window?.windowScene?.screen.bounds.height
-            ) ?? displayWidth
-            heightConstraint?.constant = min(displayWidth, cappedHeight)
+            heightConstraint?.constant = Self.loadingPlaceholderHeight
         }
 
+        svgPreviewData = data
         let webView = ensureSVGWebView()
         webView.isHidden = false
+        ensureSVGTapOverlay().isHidden = false
         if let html = svgHTMLTracker.setContent(makeSVGHTML(data: data)) {
             webView.loadHTMLString(html, baseURL: nil)
         }
@@ -393,6 +412,7 @@ final class NativeMarkdownImageView: UIView {
         <html>
         <head>
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+          <meta http-equiv="Content-Security-Policy" content="\(ImagePreviewWebSecurity.contentSecurityPolicy)">
           <style>
             html, body {
               margin: 0; padding: 0;
@@ -429,20 +449,47 @@ final class NativeMarkdownImageView: UIView {
         }
     }
 
+    private func ensureSVGTapOverlay() -> UIView {
+        if let existing = svgTapOverlay {
+            return existing
+        }
+
+        let overlay = UIView()
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        overlay.backgroundColor = .clear
+        overlay.isUserInteractionEnabled = true
+        overlay.accessibilityIdentifier = "markdown-image.svg.tap-overlay"
+        overlay.accessibilityLabel = "Open image preview"
+        overlay.accessibilityTraits = [.image, .button]
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleSVGTap))
+        overlay.addGestureRecognizer(tapGesture)
+
+        addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        svgTapOverlay = overlay
+        return overlay
+    }
+
     /// Lazily create and configure the WKWebView for SVG rendering.
     private func ensureSVGWebView() -> PiWKWebView {
         if let existing = svgWebView {
             return existing
         }
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.mediaTypesRequiringUserActionForPlayback = .all
-        let webView = PiWKWebView(frame: .zero, configuration: configuration)
+        let webView = PiWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.backgroundColor = .clear
+        webView.navigationDelegate = svgNavigationBlocker
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleSVGTap))
+        tapGesture.cancelsTouchesInView = false
+        webView.addGestureRecognizer(tapGesture)
         if #available(iOS 16.4, *) {
             webView.isInspectable = false
         }
@@ -465,13 +512,13 @@ final class NativeMarkdownImageView: UIView {
         altLabel.isHidden = true
         imageView.isHidden = true
         svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
 
         let palette = ThemeRuntimeState.currentPalette()
         errorLabel.textColor = UIColor(palette.comment)
         errorLabel.text = bracketedFallbackText(for: alt)
         errorLabel.isHidden = false
-        // Shrink to fit the placeholder instead of holding loading height.
-        heightConstraint?.constant = 40
+        heightConstraint?.constant = Self.loadingPlaceholderHeight
         backgroundColor = UIColor(palette.bgHighlight)
         isHidden = false
 
@@ -487,5 +534,52 @@ final class NativeMarkdownImageView: UIView {
     @objc private func handleTap() {
         guard let image = imageView.image else { return }
         FullScreenImageViewController.present(image: image)
+    }
+
+    @objc private func handleSVGTap() {
+        guard let data = svgPreviewData,
+              let presenter = nearestViewController() else { return }
+
+        FullScreenImageDataPreviewPresenter.present(data: data, mimeType: "image/svg+xml", from: presenter)
+    }
+
+    private func nearestViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                return viewController
+            }
+            responder = current.next
+        }
+        return nil
+    }
+}
+
+private struct FullScreenMarkdownImageDataPreview: View {
+    let data: Data
+    let mimeType: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.vertical, .horizontal]) {
+                DataImagePreviewView(
+                    data: data,
+                    mimeType: mimeType,
+                    maxPixelSize: 2_400,
+                    heightMode: .unrestricted,
+                    allowsFullscreenStaticImage: true
+                )
+                .padding()
+            }
+            .background(Color.themeBg)
+            .navigationTitle("Preview")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }

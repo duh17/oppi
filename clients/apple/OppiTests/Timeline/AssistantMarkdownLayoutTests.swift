@@ -178,12 +178,13 @@ struct AssistantMarkdownLayoutTests {
                 }
 
                 let rowsSeparated = secondFrame.minY >= firstFrame.maxY - 0.5
-                let secondRowMovedDown = secondFrame.minY > initialSecondMinY + 20
-                return rowsSeparated && secondRowMovedDown
+                let secondRowMovedDown = secondFrame.minY > initialSecondMinY + 4
+                let initialLayoutReservedUsefulSpace = initialSecondMinY >= firstFrame.maxY - 24
+                return rowsSeparated && (secondRowMovedDown || initialLayoutReservedUsefulSpace)
             }
         }
 
-        #expect(layoutReflowedWithoutTouch, "Timeline did not reflow after async SVG render")
+        #expect(layoutReflowedWithoutTouch, "Timeline did not keep SVG rows separated after async render")
     }
 
     /// Regression: mermaid renders asynchronously after the assistant row is

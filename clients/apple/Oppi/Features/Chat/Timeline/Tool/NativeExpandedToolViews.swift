@@ -120,11 +120,13 @@ final class NativeExpandedReadMediaView: UIView {
         let imageAttachments = attachments.filter { $0.kind == "image" }
         let totalImageCount = displayImages.count + imageAttachments.count
         if totalImageCount > 0 {
-            let countLabel = UILabel()
-            countLabel.font = ToolFont.smallBold
-            countLabel.textColor = UIColor(palette.comment)
-            countLabel.text = totalImageCount == 1 ? "Image" : "Images (\(totalImageCount))"
-            rootStack.addArrangedSubview(countLabel)
+            if totalImageCount > 1 || !displayText.isEmpty {
+                let countLabel = UILabel()
+                countLabel.font = ToolFont.smallBold
+                countLabel.textColor = UIColor(palette.comment)
+                countLabel.text = totalImageCount == 1 ? "Image" : "Images (\(totalImageCount))"
+                rootStack.addArrangedSubview(countLabel)
+            }
 
             var renderedCount = 0
             for image in displayImages.prefix(6) {
@@ -459,10 +461,14 @@ private enum ToolAudioAttachmentCache {
 }
 
 final class NativeExpandedInlineImageView: UIView {
-    private static let minPreviewHeight: CGFloat = 80
+    private static let minPreviewHeight = ImageViewportSizing.policy(
+        for: .primaryMedia,
+        screenHeight: UIScreen.main.bounds.height
+    ).placeholderHeight
 
     private let imageView = UIImageView()
     private let placeholder = UIActivityIndicatorView(style: .medium)
+    private let overflowLabel = UILabel()
     private var heightConstraint: NSLayoutConstraint?
     private var naturalHeightToWidthRatio: CGFloat?
     private var decodeTask: Task<Void, Never>?
@@ -535,8 +541,11 @@ final class NativeExpandedInlineImageView: UIView {
         guard key != decodedKey else { return }
         decodedKey = key
 
-        if let width = attachment.width, let height = attachment.height, width > 0, height > 0 {
-            naturalHeightToWidthRatio = CGFloat(height) / CGFloat(width)
+        if let width = attachment.width, let height = attachment.height {
+            naturalHeightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
+                width: CGFloat(width),
+                height: CGFloat(height)
+            )
             updatePreviewHeightIfNeeded()
         } else {
             naturalHeightToWidthRatio = nil
@@ -569,6 +578,7 @@ final class NativeExpandedInlineImageView: UIView {
         animatedImageView.isHidden = true
         placeholder.isHidden = false
         placeholder.startAnimating()
+        overflowLabel.isHidden = true
         previewMimeType = nil
         previewData = nil
     }
@@ -581,7 +591,7 @@ final class NativeExpandedInlineImageView: UIView {
     ) async {
         let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
         if info.prefersWebRenderer {
-            let normalizedMimeType = info.normalizedMimeType ?? "image/gif"
+            let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
             let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
             let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
             await MainActor.run { [weak self] in
@@ -621,6 +631,17 @@ final class NativeExpandedInlineImageView: UIView {
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(placeholder)
 
+        overflowLabel.translatesAutoresizingMaskIntoConstraints = false
+        overflowLabel.text = "Tap to open full image"
+        overflowLabel.font = ToolFont.small
+        overflowLabel.textColor = UIColor(Color.themeFg)
+        overflowLabel.backgroundColor = UIColor(Color.themeBgDark).withAlphaComponent(0.82)
+        overflowLabel.layer.cornerRadius = 6
+        overflowLabel.layer.masksToBounds = true
+        overflowLabel.textAlignment = .center
+        overflowLabel.isHidden = true
+        addSubview(overflowLabel)
+
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -632,6 +653,10 @@ final class NativeExpandedInlineImageView: UIView {
             animatedImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
+            overflowLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            overflowLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            overflowLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            overflowLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
         ])
 
         let heightConstraint = heightAnchor.constraint(equalToConstant: Self.minPreviewHeight)
@@ -650,24 +675,59 @@ final class NativeExpandedInlineImageView: UIView {
     private func updatePreviewHeightIfNeeded() {
         guard let naturalHeightToWidthRatio else {
             heightConstraint?.constant = Self.minPreviewHeight
+            overflowLabel.isHidden = true
             return
         }
 
         let availableWidth = bounds.width > 1
             ? bounds.width
             : (superview?.bounds.width ?? UIScreen.main.bounds.width)
-        heightConstraint?.constant = targetPreviewHeight(
-            forWidth: max(1, availableWidth),
+        let width = max(1, availableWidth)
+        let naturalHeight = ImageViewportSizing.naturalHeight(
+            forWidth: width,
+            heightToWidthRatio: naturalHeightToWidthRatio
+        )
+        let targetHeight = targetPreviewHeight(
+            forWidth: width,
             ratio: naturalHeightToWidthRatio
         )
+        heightConstraint?.constant = targetHeight
+        overflowLabel.isHidden = targetHeight >= naturalHeight - 0.5
+    }
+
+    private func notifyPreviewSizeChanged() {
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+
+        var ancestor = superview
+        var enclosingToolRow: ToolTimelineRowContentView?
+        while let current = ancestor {
+            current.setNeedsLayout()
+            if enclosingToolRow == nil, let row = current as? ToolTimelineRowContentView {
+                enclosingToolRow = row
+            }
+            ancestor = current.superview
+        }
+
+        // Pre-layout the enclosing tool row so its viewport-height constraint
+        // sees the new inline image height before the collection view asks the
+        // cell for a fresh fitting size.
+        enclosingToolRow?.layoutIfNeeded()
+
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     private func targetPreviewHeight(forWidth width: CGFloat, ratio: CGFloat) -> CGFloat {
         // Expanded read-media rows should grow to the image's natural
-        // aspect-fit height. The outer timeline owns vertical scrolling;
-        // applying the single-screen inline preview clamp here clips tall
-        // images inside the expanded tool row.
-        ImageViewportSizing.naturalHeight(forWidth: width, heightToWidthRatio: ratio)
+        // aspect-fit height until the primary-media timeline safety limit.
+        // The outer timeline owns vertical scrolling; fullscreen remains the
+        // unrestricted inspection surface for pathological/tall media.
+        ImageViewportSizing.fittedHeight(
+            forWidth: width,
+            heightToWidthRatio: ratio,
+            surface: .primaryMedia,
+            screenHeight: window?.bounds.height
+        )
     }
 
     private func applyDecodedImage(_ image: UIImage?) {
@@ -683,13 +743,16 @@ final class NativeExpandedInlineImageView: UIView {
         guard let image, image.size.width > 0, image.size.height > 0 else {
             naturalHeightToWidthRatio = nil
             heightConstraint?.constant = Self.minPreviewHeight
-            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+            notifyPreviewSizeChanged()
             return
         }
 
-        naturalHeightToWidthRatio = image.size.height / image.size.width
+        naturalHeightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
+            width: image.size.width,
+            height: image.size.height
+        )
         updatePreviewHeightIfNeeded()
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        notifyPreviewSizeChanged()
     }
 
     private func applyAnimatedImage(
@@ -709,13 +772,12 @@ final class NativeExpandedInlineImageView: UIView {
         previewMimeType = mimeType
 
         if let aspectRatio, aspectRatio > 0 {
-            naturalHeightToWidthRatio = 1 / aspectRatio
+            naturalHeightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(1 / aspectRatio)
         } else {
             naturalHeightToWidthRatio = nil
         }
         updatePreviewHeightIfNeeded()
-
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        notifyPreviewSizeChanged()
     }
 
     @objc private func handleTap() {
@@ -728,14 +790,7 @@ final class NativeExpandedInlineImageView: UIView {
               let mimeType = previewMimeType,
               let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
 
-        let rootView = FullScreenMediaPreview(data: data, mimeType: mimeType)
-        let controller = UIHostingController(rootView: rootView)
-        controller.modalPresentationStyle = .pageSheet
-        if let sheet = controller.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
-        }
-        presenter.present(controller, animated: true)
+        FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, from: presenter)
     }
 }
 

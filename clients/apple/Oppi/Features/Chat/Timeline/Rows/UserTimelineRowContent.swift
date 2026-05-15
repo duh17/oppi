@@ -607,31 +607,34 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 accessibilityLabel: "Attached image \(index + 1)"
             )
 
-            let imageView = UIImageView()
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.contentMode = .scaleAspectFill
-            imageView.clipsToBounds = true
-            container.addSubview(imageView)
-            pinThumbnailContent(imageView, in: container)
-
-            let tap = UITapGestureRecognizer(target: self, action: #selector(thumbnailTapped(_:)))
-            container.addGestureRecognizer(tap)
             container.isUserInteractionEnabled = true
 
             imageStack.addArrangedSubview(container)
             thumbnailViews.append(container)
 
-            let task = Task { [weak imageView] in
-                let decoded = await Task.detached(priority: .userInitiated) {
-                    guard let data = Data(base64Encoded: attachment.data, options: .ignoreUnknownCharacters) else {
-                        return nil as UIImage?
-                    }
-                    return UIImage(data: data)
-                }.value
-                guard !Task.isCancelled, let imageView else { return }
-                imageView.image = decoded
+            if let data = Data(base64Encoded: attachment.data, options: .ignoreUnknownCharacters) {
+                let host = UIHostingController(
+                    rootView: DataImagePreviewView(
+                        data: data,
+                        mimeType: attachment.mimeType,
+                        maxPixelSize: 512,
+                        heightMode: .fixed(Self.thumbnailSize),
+                        allowsFullscreenStaticImage: true
+                    )
+                )
+                host.view.translatesAutoresizingMaskIntoConstraints = false
+                host.view.backgroundColor = .clear
+                container.addSubview(host.view)
+                pinThumbnailContent(host.view, in: container)
+                thumbnailHostingControllers.append(host)
+            } else {
+                let fallback = UIImageView(image: UIImage(systemName: "photo.badge.exclamationmark"))
+                fallback.translatesAutoresizingMaskIntoConstraints = false
+                fallback.tintColor = UIColor(palette.comment)
+                fallback.contentMode = .scaleAspectFit
+                container.addSubview(fallback)
+                pinThumbnailContent(fallback, in: container, inset: 18)
             }
-            decodeTasks.append(task)
         }
 
         for (offset, pill) in inlineImagePathPills.enumerated() {

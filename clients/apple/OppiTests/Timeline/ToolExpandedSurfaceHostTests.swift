@@ -248,6 +248,120 @@ struct ToolExpandedSurfaceHostTests {
         #expect(FileManager.default.fileExists(atPath: horizontal.outputURL.path))
     }
 
+    @Test func svgReadMediaAttachmentReflowsTimelineAfterAsyncDecodeWithoutDimensionMetadata() async throws {
+        let hostSize = CGSize(width: 393, height: 852)
+        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let collectionView = UICollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: layout
+        )
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.addSubview(collectionView)
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let svg = #"""
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420">
+  <rect width="100%" height="100%" fill="#111827"/>
+  <text x="32" y="48" font-family="-apple-system" font-size="28" fill="white">AMZN past week</text>
+  <circle cx="84" cy="120" r="10" fill="#60a5fa"/>
+  <circle cx="636" cy="320" r="10" fill="#60a5fa"/>
+  <text x="40" y="388" font-family="-apple-system" font-size="22" fill="#cbd5e1">May 8</text>
+  <text x="580" y="388" font-family="-apple-system" font-size="22" fill="#cbd5e1">May 14</text>
+</svg>
+"""#
+        let svgData = Data(svg.utf8)
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "att-read-svg-no-size",
+            mimeType: "image/svg+xml",
+            fileName: "amzn-week.svg",
+            sizeBytes: svgData.count,
+            width: nil,
+            height: nil
+        )
+
+        let items: [(String, ToolTimelineRowConfiguration)] = [
+            (
+                "tool-svg",
+                makeTimelineToolConfiguration(
+                    title: "read /tmp/amzn-week.svg",
+                    expandedContent: .readMedia(output: "", filePath: "/tmp/amzn-week.svg", startLine: 1, attachments: [attachment]),
+                    toolNamePrefix: "read",
+                    isExpanded: true
+                ).withSessionAttachmentFetcher { attachmentId in
+                    #expect(attachmentId == "att-read-svg-no-size")
+                    try await Task.sleep(for: .milliseconds(50))
+                    return svgData
+                }
+            ),
+            (
+                "tool-after",
+                makeTimelineToolConfiguration(
+                    title: "read /tmp/after.txt",
+                    expandedContent: .text(text: "This row must move down after the SVG preview grows.", language: nil),
+                    toolNamePrefix: "read",
+                    isExpanded: true
+                )
+            ),
+        ]
+
+        let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> { cell, _, itemID in
+            guard let config = items.first(where: { $0.0 == itemID })?.1 else { return }
+            cell.contentConfiguration = config
+        }
+
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) { cv, indexPath, itemID in
+            cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: itemID)
+        }
+
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(items.map(\.0))
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        hostController.view.setNeedsLayout()
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+
+        let firstIP = IndexPath(item: 0, section: 0)
+        let secondIP = IndexPath(item: 1, section: 0)
+        let initialSecondMinY = try #require(collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
+
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 2_500) { @MainActor in
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            guard let firstCell = collectionView.cellForItem(at: firstIP),
+                  let inlinePreview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: firstCell.contentView),
+                  let webView = firstToolSubview(ofType: PiWKWebView.self, in: inlinePreview) else {
+                return false
+            }
+            let imageReady = (try? await webView.evaluateJavaScript("document.images.length === 1 && document.images[0].complete && document.images[0].naturalWidth > 0") as? Bool) == true
+            return imageReady && inlinePreview.bounds.height > 180
+        }
+
+        #expect(imageRendered, "Expected SVG attachment preview to render and grow beyond the placeholder height")
+
+        let layoutReflowed = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                  let secondFrame = collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
+                return false
+            }
+            let rowsSeparated = secondFrame.minY >= firstFrame.maxY - 0.5
+            let secondRowMovedDown = secondFrame.minY > initialSecondMinY + 4
+            let initialLayoutReservedUsefulSpace = initialSecondMinY >= firstFrame.maxY - 24
+            return rowsSeparated && (secondRowMovedDown || initialLayoutReservedUsefulSpace)
+        }
+
+        #expect(layoutReflowed, "Tool timeline did not keep SVG attachment rows separated after async decode")
+    }
+
     @Test func brentSVGPreviewSnapshotFillsWidthAndShowsLowerAxis() async throws {
         let outputDirectory = URL(fileURLWithPath: "/Users/chenda/workspace/oppi/.pi/reports/svg-regression", isDirectory: true)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)

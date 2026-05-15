@@ -113,19 +113,14 @@ struct SessionTouchedFileContentView: View {
 
     @ViewBuilder
     private func imageView(_ data: Data) -> some View {
-        if let uiImage = UIImage(data: data) {
-            ScrollView {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFit()
-                    .padding()
-            }
-        } else {
-            ContentUnavailableView(
-                "Invalid Image",
-                systemImage: "photo.badge.exclamationmark",
-                description: Text("Could not decode image data.")
+        ScrollView {
+            DataImagePreviewView(
+                data: data,
+                mimeType: MediaMimeType.imageMimeType(forPathExtension: (filePath as NSString).pathExtension),
+                maxPixelSize: 2_400,
+                heightMode: .unrestricted
             )
+            .padding()
         }
     }
 
@@ -152,7 +147,7 @@ struct SessionTouchedFileContentView: View {
             )
 
             let ext = (filePath as NSString).pathExtension.lowercased()
-            let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff"]
+            let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff"]
 
             if imageExts.contains(ext) {
                 phase = .image(data)
