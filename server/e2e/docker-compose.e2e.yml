@@ -4,6 +4,8 @@
 # Usage:
 #   docker compose -f e2e/docker-compose.e2e.yml up -d
 #   docker compose -f e2e/docker-compose.e2e.yml down -v
+# Run from server/. The build context is the repository root so the image can
+# include both server/ and first-party oppi-extensions/ sources.
 #
 # The test harness manages lifecycle automatically.
 
@@ -11,8 +13,8 @@ services:
   oppi-e2e:
     container_name: oppi-e2e
     build:
-      context: ..
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: server/Dockerfile
     ports:
       - "${E2E_PORT:-17760}:${E2E_PORT:-17760}"
     environment:

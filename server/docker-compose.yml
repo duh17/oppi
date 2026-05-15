@@ -2,8 +2,8 @@ services:
   oppi-server:
     container_name: oppi-server
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     ports:
       - "${OPPI_PORT:-7750}:${OPPI_PORT:-7750}"
