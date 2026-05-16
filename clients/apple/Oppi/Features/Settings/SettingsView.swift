@@ -192,8 +192,8 @@ struct SettingsView: View {
                 Text("Voice")
             } footer: {
                 Text(
-                    "Choose whether voice replies autoplay by default or appear as tap-to-play cards. "
-                        + "The agent can still switch behavior for the current session if you ask. "
+                    "Choose whether voice replies stay manual or follow each reply's playback behavior. "
+                        + "You can still ask the agent to change this for the current session. "
                         + "Server dictation uses your Mac's ASR model. On-device uses Apple's local dictation."
                 )
             }

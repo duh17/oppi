@@ -1087,12 +1087,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Replay this exact session-owned attachment.",
                 attachmentId: "att-session-owned-voice",
                 mimeType: "audio/wav",
                 durationSeconds: 1.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1114,12 +1114,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func collapsedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Replay this exact session-owned attachment.",
                 attachmentId: "att-session-owned-voice",
                 mimeType: "audio/wav",
                 durationSeconds: 1.0,
-                delivery: .voiceMessage
+                playbackBehavior: .tapToPlay
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1141,12 +1141,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedVoiceMessageOnlyShowsHeaderPlaybackControl() throws {
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Got it. I will treat both collapsed and expanded playback as broken, not just the expanded card.",
                 attachmentId: "att-session-owned-voice",
                 mimeType: "audio/wav",
                 durationSeconds: 1.0,
-                delivery: .voiceMessage
+                playbackBehavior: .tapToPlay
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1181,12 +1181,12 @@ struct ToolTimelineRowContentViewTests {
         let fetchSpy = FetchSpy()
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Replay this exact session-owned attachment.",
                 attachmentId: "att-session-owned-voice",
                 mimeType: "audio/wav",
                 durationSeconds: 1.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1251,12 +1251,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedVoiceMessageDoesNotDuplicateVoiceMessageTitleInsideCard() throws {
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
                 attachmentId: "att-voice-1",
                 mimeType: "audio/wav",
                 durationSeconds: 4.2,
-                delivery: nil
+                playbackBehavior: nil
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1275,12 +1275,12 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceMessageKeepsPlaybackButtonInHeaderTrailingArea() throws {
         let config = makeTimelineToolConfiguration(
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
                 attachmentId: "att-voice-1",
                 mimeType: "audio/wav",
                 durationSeconds: 4.2,
-                delivery: nil
+                playbackBehavior: nil
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1326,12 +1326,12 @@ struct ToolTimelineRowContentViewTests {
         let transcript = "Fixed and installed. Empty voice transcripts no longer reserve that giant expanded body; the row collapses to the header unless there is actual transcript text to show."
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: transcript,
                 attachmentId: "att-wrapped-voice",
                 mimeType: "audio/wav",
                 durationSeconds: 4.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1348,12 +1348,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedVoiceMessageWithEmptyTranscriptDoesNotReserveBodySpace() {
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "",
                 attachmentId: "att-empty-voice",
                 mimeType: "audio/wav",
                 durationSeconds: 1.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1370,12 +1370,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func streamingVoiceMessageWithNoTranscriptOrAttachmentDoesNotReserveViewport() {
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "",
                 attachmentId: "",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1394,12 +1394,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func streamingVoiceMessageHeightTransitionsFromEmptyToTranscriptWithoutViewportJump() {
         let empty = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "",
                 attachmentId: "",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1408,12 +1408,12 @@ struct ToolTimelineRowContentViewTests {
         )
         let withTranscript = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Direct voice is streaming now. The card should grow to the transcript, not jump to a generic streaming viewport.",
                 attachmentId: "",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1437,12 +1437,12 @@ struct ToolTimelineRowContentViewTests {
         let transcript = "Direct voice is working now, and this transcript should be visible immediately without waiting for a second expand pass."
         let collapsed = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: transcript,
                 attachmentId: "att-voice-first-height",
                 mimeType: "audio/wav",
                 durationSeconds: 2.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1458,7 +1458,7 @@ struct ToolTimelineRowContentViewTests {
 
         view.configuration = expanded
         let firstExpandSize = fittedTimelineSize(for: view, width: 370)
-        let voiceView = try #require(timelineFirstView(ofType: NativeVoiceMessageView.self, in: view))
+        let voiceView = try #require(timelineFirstView(ofType: NativeAudioMessageView.self, in: view))
 
         #expect(firstExpandSize.height >= 104)
         #expect(voiceView.bounds.width >= 320)
@@ -1469,12 +1469,12 @@ struct ToolTimelineRowContentViewTests {
         let transcript = "Direct voice is working now, and this transcript should be visible immediately."
         let collapsed = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: transcript,
                 attachmentId: "att-voice-first-expand",
                 mimeType: "audio/wav",
                 durationSeconds: 2.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1512,12 +1512,12 @@ struct ToolTimelineRowContentViewTests {
         let audioPlayer = AudioPlayerService()
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: "Already spoke this once.",
                 attachmentId: "att-direct-speak-fresh-expand",
                 mimeType: "audio/wav",
                 durationSeconds: 2.0,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1531,7 +1531,7 @@ struct ToolTimelineRowContentViewTests {
 
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
-        let voiceView = try #require(timelineFirstView(ofType: NativeVoiceMessageView.self, in: view))
+        let voiceView = try #require(timelineFirstView(ofType: NativeAudioMessageView.self, in: view))
         #expect(!voiceView.isHidden)
 
         let didFetch = await waitUntil(timeoutMs: 150) {
@@ -1547,12 +1547,12 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedVoiceMessageShowsReadableTranscriptWithoutDuplicateTitle() throws {
         let transcript = "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly."
         let config = makeTimelineToolConfiguration(
-            expandedContent: .voiceMessage(
+            expandedContent: .audioMessage(
                 text: transcript,
                 attachmentId: "att-voice-1",
                 mimeType: "audio/wav",
                 durationSeconds: 4.2,
-                delivery: nil
+                playbackBehavior: nil
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,

@@ -9,16 +9,16 @@ struct AudioLifecycleCoordinatorTests {
     @Test func streamingVoiceTextProjectsCompactTimelinePresentation() {
         let coordinator = AudioLifecycleCoordinator()
 
-        coordinator.updateVoiceText(
+        coordinator.updateAudioText(
             itemID: "voice-1",
             text: "  Hello from direct voice.  ",
-            delivery: .directSpeak
+            playbackBehavior: .playNow
         )
 
         #expect(coordinator.mode == .idle)
         #expect(
             coordinator.presentation.timelinePresentation(for: "voice-1") ==
-                .streamingTranscript(text: "Hello from direct voice.", delivery: .directSpeak)
+                .streamingTranscript(text: "Hello from direct voice.", playbackBehavior: .playNow)
         )
     }
 
@@ -32,7 +32,7 @@ struct AudioLifecycleCoordinatorTests {
                 .speakingTranscript(text: "Speaking now.", isStopping: false)
         )
 
-        coordinator.finishVoiceMessage(
+        coordinator.finishAudioMessage(
             itemID: "voice-1",
             attachmentID: "att-1",
             transcript: "Speaking now."
@@ -57,7 +57,7 @@ struct AudioLifecycleCoordinatorTests {
         #expect(coordinator.stopRequests.first?.reason == .microphoneStarted)
         #expect(
             coordinator.presentation.timelinePresentation(for: "voice-1") ==
-                .streamingTranscript(text: "Do not record this.", delivery: .directSpeak)
+                .streamingTranscript(text: "Do not record this.", playbackBehavior: .playNow)
         )
     }
 
@@ -91,7 +91,7 @@ struct AudioLifecycleCoordinatorTests {
         #expect(coordinator.mode == .playing(itemID: "voice-1", source: .directSpeak))
 
         coordinator.syncPlaybackState(playingItemID: nil, loadingItemID: "voice-2")
-        #expect(coordinator.mode == .preparingPlayback(itemID: "voice-2", source: .voiceMessageReplay))
+        #expect(coordinator.mode == .preparingPlayback(itemID: "voice-2", source: .audioMessageReplay))
 
         coordinator.syncPlaybackState(playingItemID: nil, loadingItemID: nil)
         #expect(coordinator.mode == .idle)
@@ -127,7 +127,7 @@ struct AudioLifecycleCoordinatorTests {
     @Test func emptyVoiceTextProjectsHiddenTimelineState() {
         let coordinator = AudioLifecycleCoordinator()
 
-        coordinator.updateVoiceText(itemID: "voice-1", text: "   \n", delivery: .voiceMessage)
+        coordinator.updateAudioText(itemID: "voice-1", text: "   \n", playbackBehavior: .tapToPlay)
 
         #expect(coordinator.presentation.timelinePresentation(for: "voice-1") == .hidden)
     }
@@ -141,13 +141,13 @@ struct AudioLifecycleCoordinatorTests {
     @Test func audioPlayerAutoplayIsSuppressedDuringCapture() {
         let player = AudioPlayerService()
 
-        #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-1", delivery: .directSpeak))
+        #expect(player.shouldAutoplayAudioMessage(itemID: "voice-1", playbackBehavior: .playNow))
 
         player.beginCaptureInterruption()
-        #expect(!player.shouldAutoplayVoiceMessage(itemID: "voice-2", delivery: .directSpeak))
+        #expect(!player.shouldAutoplayAudioMessage(itemID: "voice-2", playbackBehavior: .playNow))
 
         player.endCaptureInterruption()
-        #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-3", delivery: .directSpeak))
+        #expect(player.shouldAutoplayAudioMessage(itemID: "voice-3", playbackBehavior: .playNow))
     }
 
     @Test func audioPlayerUsesSessionReplyModeOverrideForAutoplay() {
@@ -163,8 +163,20 @@ struct AudioLifecycleCoordinatorTests {
         AppPreferences.Voice.setReplyMode(.autoplay)
         AppPreferences.Voice.setSessionReplyMode(.manual, for: sessionId)
 
-        #expect(!player.shouldAutoplayVoiceMessage(itemID: "voice-session-manual", delivery: .voiceMessage, sessionId: sessionId))
-        #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-session-direct", delivery: .directSpeak, sessionId: sessionId))
+        #expect(!player.shouldAutoplayAudioMessage(itemID: "voice-session-manual", playbackBehavior: .tapToPlay, sessionId: sessionId))
+        #expect(!player.shouldAutoplayAudioMessage(itemID: "voice-session-direct", playbackBehavior: .playNow, sessionId: sessionId))
+    }
+
+    @Test func audioPlayerAgentDecidesModeOnlyAutoplaysPlayNowReplies() {
+        let player = AudioPlayerService()
+        let previousReplyMode = AppPreferences.Voice.replyMode
+        defer { AppPreferences.Voice.setReplyMode(previousReplyMode) }
+
+        AppPreferences.Voice.setReplyMode(.autoplay)
+
+        #expect(player.shouldAutoplayAudioMessage(itemID: "voice-agent-direct", playbackBehavior: .playNow))
+        #expect(!player.shouldAutoplayAudioMessage(itemID: "voice-agent-manual", playbackBehavior: .tapToPlay))
+        #expect(!player.shouldAutoplayAudioMessage(itemID: "voice-agent-default", playbackBehavior: nil))
     }
 
     @Test func audioPlayerNowPlayingInfoDoesNotInstallArtwork() {

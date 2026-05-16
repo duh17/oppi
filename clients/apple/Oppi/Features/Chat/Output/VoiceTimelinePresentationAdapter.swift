@@ -6,9 +6,9 @@ import Foundation
 /// Keep this mapping outside `ToolTimelineRowContentView`: the row view should
 /// render `ToolExpandedContent`, while lifecycle policy decides which voice
 /// presentation state should be shown.
-enum VoiceTimelinePresentationAdapter {
+enum AudioTimelinePresentationAdapter {
     static func expandedContent(
-        from presentation: VoiceTimelinePresentation?,
+        from presentation: AudioTimelinePresentation?,
         fallback: ToolPresentationBuilder.ToolExpandedContent?
     ) -> ToolPresentationBuilder.ToolExpandedContent? {
         guard let presentation else { return fallback }
@@ -16,29 +16,29 @@ enum VoiceTimelinePresentationAdapter {
         switch presentation {
         case .hidden:
             return fallback
-        case .streamingTranscript(let text, let delivery):
-            return .voiceMessage(
+        case .streamingTranscript(let text, let playbackBehavior):
+            return .audioMessage(
                 text: text,
                 attachmentId: "",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: delivery
+                playbackBehavior: playbackBehavior
             )
         case .speakingTranscript(let text, _):
-            return .voiceMessage(
+            return .audioMessage(
                 text: text,
                 attachmentId: "",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: .directSpeak
+                playbackBehavior: .playNow
             )
         case .finalCard(let transcript, let attachmentID, _):
-            return .voiceMessage(
+            return .audioMessage(
                 text: transcript,
                 attachmentId: attachmentID ?? "",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: .voiceMessage
+                playbackBehavior: .tapToPlay
             )
         case .error(let message):
             return .status(message: message)

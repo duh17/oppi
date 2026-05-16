@@ -1,37 +1,37 @@
 import Testing
 @testable import Oppi
 
-@Suite("VoiceTimelinePresentationAdapter")
-struct VoiceTimelinePresentationAdapterTests {
+@Suite("AudioTimelinePresentationAdapter")
+struct AudioTimelinePresentationAdapterTests {
     @Test func streamingTranscriptMapsToCompactVoiceMessage() throws {
-        let content = VoiceTimelinePresentationAdapter.expandedContent(
-            from: .streamingTranscript(text: "Projected transcript", delivery: .directSpeak),
+        let content = AudioTimelinePresentationAdapter.expandedContent(
+            from: .streamingTranscript(text: "Projected transcript", playbackBehavior: .playNow),
             fallback: .text(text: "raw fallback", language: nil)
         )
 
-        guard case .voiceMessage(let text, let attachmentId, let mimeType, _, let delivery) = content else {
+        guard case .audioMessage(let text, let attachmentId, let mimeType, _, let playbackBehavior) = content else {
             Issue.record("Expected projected voice message content")
             return
         }
         #expect(text == "Projected transcript")
         #expect(attachmentId == "")
         #expect(mimeType == "audio/wav")
-        #expect(delivery == .directSpeak)
+        #expect(playbackBehavior == .playNow)
     }
 
     @Test func finalCardMapsToReplayableVoiceMessage() throws {
-        let content = VoiceTimelinePresentationAdapter.expandedContent(
+        let content = AudioTimelinePresentationAdapter.expandedContent(
             from: .finalCard(transcript: "new", attachmentID: "new-att", replayState: .idle),
-            fallback: .voiceMessage(
+            fallback: .audioMessage(
                 text: "old",
                 attachmentId: "old-att",
                 mimeType: "audio/wav",
                 durationSeconds: nil,
-                delivery: .voiceMessage
+                playbackBehavior: .tapToPlay
             )
         )
 
-        guard case .voiceMessage(let text, let attachmentId, _, _, _) = content else {
+        guard case .audioMessage(let text, let attachmentId, _, _, _) = content else {
             Issue.record("Expected projected final voice card")
             return
         }
@@ -40,7 +40,7 @@ struct VoiceTimelinePresentationAdapterTests {
     }
 
     @Test func hiddenPresentationKeepsFallback() throws {
-        let content = VoiceTimelinePresentationAdapter.expandedContent(
+        let content = AudioTimelinePresentationAdapter.expandedContent(
             from: .hidden,
             fallback: .text(text: "fallback", language: nil)
         )
@@ -53,7 +53,7 @@ struct VoiceTimelinePresentationAdapterTests {
     }
 
     @Test func errorPresentationMapsToStatus() throws {
-        let content = VoiceTimelinePresentationAdapter.expandedContent(
+        let content = AudioTimelinePresentationAdapter.expandedContent(
             from: .error(message: "Playback failed"),
             fallback: nil
         )

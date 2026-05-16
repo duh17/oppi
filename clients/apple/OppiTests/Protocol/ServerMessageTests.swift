@@ -149,6 +149,16 @@ struct ServerMessageTests {
         #expect(stream.durationSeconds == 0.2)
     }
 
+    @Test func decodesAudioStreamPlaybackBehavior() throws {
+        let json = #"{"type":"audio_stream","kind":"audio-stream","id":"audio-1","event":"metadata","mimeType":"audio/wav","playbackBehavior":"playNow","text":"hello"}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .audioStream(let stream) = msg else {
+            Issue.record("Expected .audioStream")
+            return
+        }
+        #expect(stream.playbackBehavior == .playNow)
+    }
+
     // MARK: - Tool execution
 
     @Test func decodesToolStart() throws {

@@ -528,19 +528,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return CGSize(width: width, height: height)
     }
 
-    private func installExpandedVoiceMessageView(
+    private func installExpandedAudioMessageView(
         text: String,
         attachmentId: String,
         mimeType: String,
-        delivery: VoiceReplyDelivery?,
+        playbackBehavior: AudioPlaybackBehavior?,
         suppressAutoplay: Bool
     ) {
-        let native: NativeVoiceMessageView
-        if let existing = expandedReadMediaContentView as? NativeVoiceMessageView {
+        let native: NativeAudioMessageView
+        if let existing = expandedReadMediaContentView as? NativeAudioMessageView {
             native = existing
         } else {
             clearExpandedReadMediaView()
-            native = NativeVoiceMessageView()
+            native = NativeAudioMessageView()
             installExpandedEmbeddedView(native)
         }
 
@@ -550,7 +550,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 message: text,
                 attachmentId: attachmentId,
                 mimeType: mimeType,
-                delivery: delivery,
+                playbackBehavior: playbackBehavior,
                 sessionId: currentConfiguration.selectedTextSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: nil,
@@ -563,7 +563,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 message: text,
                 attachmentId: attachmentId,
                 mimeType: mimeType,
-                delivery: delivery,
+                playbackBehavior: playbackBehavior,
                 sessionId: currentConfiguration.selectedTextSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
@@ -1187,7 +1187,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func shouldRenderExpandedContent(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Bool {
         switch content {
-        case .voiceMessage(let text, let attachmentId, _, _, _):
+        case .audioMessage(let text, let attachmentId, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentId.isEmpty
         case .bash, .diff, .code, .markdown, .readMedia, .status, .text:
             return true
@@ -1196,7 +1196,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func isVoiceMessageExpandedContent(_ configuration: ToolTimelineRowConfiguration) -> Bool {
         switch configuration.expandedContent {
-        case .voiceMessage:
+        case .audioMessage:
             return true
         case .readMedia(_, let filePath, _, _):
             return filePath == "Voice message"
@@ -1416,7 +1416,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
             )
 
-        case .voiceMessage(let text, let attachmentId, let mimeType, _, let delivery):
+        case .audioMessage(let text, let attachmentId, let mimeType, _, let playbackBehavior):
             let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             var hasher = Hasher()
             hasher.combine(trimmedText)
@@ -1434,7 +1434,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 horizontalScroll: false,
                 deferredHighlight: nil,
                 invalidateLayout: true,
-                installAction: trimmedText.isEmpty ? .none : .voiceMessage(text: trimmedText, attachmentId: attachmentId, mimeType: mimeType, delivery: delivery)
+                installAction: trimmedText.isEmpty ? .none : .audioMessage(text: trimmedText, attachmentId: attachmentId, mimeType: mimeType, playbackBehavior: playbackBehavior)
             )
 
         case .status(let message):
@@ -1485,13 +1485,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             break
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine, let attachments):
             installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine, attachments: attachments)
-        case .voiceMessage(let text, let attachmentId, let mimeType, let delivery):
-            let suppressVoiceAutoplay = isExpandingTransition || delivery == .directSpeak
-            installExpandedVoiceMessageView(
+        case .audioMessage(let text, let attachmentId, let mimeType, let playbackBehavior):
+            let suppressVoiceAutoplay = isExpandingTransition || playbackBehavior == .playNow
+            installExpandedAudioMessageView(
                 text: text,
                 attachmentId: attachmentId,
                 mimeType: mimeType,
-                delivery: delivery,
+                playbackBehavior: playbackBehavior,
                 suppressAutoplay: suppressVoiceAutoplay
             )
         }

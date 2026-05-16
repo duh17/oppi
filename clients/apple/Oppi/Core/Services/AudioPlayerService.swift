@@ -199,9 +199,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         clearGlobalPlaybackOwnershipIfNeeded()
     }
 
-    func shouldAutoplayVoiceMessage(itemID: String, delivery: VoiceReplyDelivery?, sessionId: String? = nil) -> Bool {
+    func shouldAutoplayAudioMessage(itemID: String, playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
         !playbackSuppressedForCapture
-            && AppPreferences.Voice.shouldAutoplay(delivery: delivery, sessionId: sessionId)
+            && AppPreferences.Voice.shouldAutoplay(playbackBehavior: playbackBehavior, sessionId: sessionId)
             && !autoPlayedVoiceReplyItemIDs.contains(itemID)
     }
 
@@ -235,8 +235,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        guard AppPreferences.Voice.shouldAutoplay(delivery: stream.delivery, sessionId: sessionId) else {
-            if stream.event == .error, stream.delivery == .directSpeak {
+        let playbackBehavior = stream.playbackBehavior
+        guard AppPreferences.Voice.shouldAutoplay(playbackBehavior: playbackBehavior, sessionId: sessionId) else {
+            if stream.event == .error, playbackBehavior == .playNow {
                 logger.error("Suppressed audio stream \(stream.id, privacy: .public) reported error: \(stream.text ?? "unknown", privacy: .public)")
             }
             return

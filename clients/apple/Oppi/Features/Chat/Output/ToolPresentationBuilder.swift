@@ -89,8 +89,7 @@ enum ToolPresentationBuilder {
 
         let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
         let previewImage = isDone && !isBuiltInFileTool ? Self.toolImageAttachmentDetails(from: context.details) : nil
-        let isVoicePresentationResult = Self.toolAudioAttachmentDetails(from: context.details) != nil
-            || Self.toolVoicePresentationDetails(from: context.details) != nil
+        let isVoicePresentationResult = Self.toolAudioPresentationDetails(from: context.details) != nil
 
         // Expanded presentation
         let expanded: ExpandedPresentation
@@ -285,8 +284,7 @@ enum ToolPresentationBuilder {
         default:
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
-            if Self.toolAudioAttachmentDetails(from: details) != nil
-                || Self.toolVoicePresentationDetails(from: details) != nil {
+            if Self.toolAudioPresentationDetails(from: details) != nil {
                 result.title = "Voice message"
                 result.languageBadge = nil
                 result.toolNamePrefix = normalizedTool
@@ -318,8 +316,8 @@ enum ToolPresentationBuilder {
         case markdown(text: String)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
-        /// Voice message with server-owned session attachment replay.
-        case voiceMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?, delivery: VoiceReplyDelivery?)
+        /// Audio message card with server-owned session attachment replay.
+        case audioMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?, playbackBehavior: AudioPlaybackBehavior?)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
         case status(message: String)
         /// Plain/ANSI text with optional syntax highlighting
@@ -447,29 +445,28 @@ enum ToolPresentationBuilder {
             }
 
         default:
-            let voicePresentation = Self.toolVoicePresentationDetails(from: details)
-            let hasStructuredVoiceContent = Self.toolAudioAttachmentDetails(from: details) != nil
-                || voicePresentation != nil
+            let audioPresentation = Self.toolAudioPresentationDetails(from: details)
+            let hasStructuredVoiceContent = audioPresentation != nil
             let hasStructuredMediaContent = !mediaAttachments.isEmpty
                 || Self.toolImageAttachmentDetails(from: details) != nil
             if !outputTrimmed.isEmpty || hasStructuredVoiceContent || hasStructuredMediaContent {
                 if !isError,
-                   let voicePresentation,
-                   Self.toolAudioAttachmentDetails(from: details) == nil {
-                    let transcript = voicePresentationTranscript(
+                   let audioPresentation,
+                   audioPresentation.audio == nil {
+                    let transcript = audioPresentationTranscript(
                         output: outputTrimmed,
-                        details: voicePresentation,
+                        details: audioPresentation,
                         args: args
                     )
-                    content = .voiceMessage(
+                    content = .audioMessage(
                         text: transcript,
                         attachmentId: "",
                         mimeType: "audio/wav",
                         durationSeconds: nil,
-                        delivery: voicePresentation.delivery
+                        playbackBehavior: audioPresentation.playbackBehavior
                     )
                     copyOutput = transcript.isEmpty ? nil : transcript
-                } else if !mediaAttachments.isEmpty && Self.toolAudioAttachmentDetails(from: details) == nil {
+                } else if !mediaAttachments.isEmpty && Self.toolAudioPresentationDetails(from: details) == nil {
                     content = .readMedia(
                         output: outputTrimmed,
                         filePath: rawToolName,
@@ -624,13 +621,13 @@ enum ToolPresentationBuilder {
         return editText.oldText
     }
 
-    private static func voicePresentationTranscript(
+    private static func audioPresentationTranscript(
         output: String,
-        details: ToolVoicePresentationDetails,
+        details: ToolAudioPresentationDetails,
         args: [String: JSONValue]?
     ) -> String {
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let explicitMessage = details.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let explicitMessage = details.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let argText = args?["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !explicitMessage.isEmpty {
             return explicitMessage

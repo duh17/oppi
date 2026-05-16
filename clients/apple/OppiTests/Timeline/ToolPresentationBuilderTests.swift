@@ -158,13 +158,13 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == "Markdown")
     }
 
-    @Test("streaming generic voice details use compact voice transcript presentation")
-    func streamingGenericVoiceDetailsUseCompactVoiceTranscriptPresentation() {
+    @Test("streaming audio presentation uses compact spoken transcript presentation")
+    func streamingAudioPresentationUsesCompactSpokenTranscriptPresentation() {
         let transcript = "This voice text is still streaming but should render like spoken output, not a large generic text viewport."
         let details: JSONValue = .object([
-            "presentation": .string("voice"),
-            "message": .string(transcript),
-            "delivery": .string("directSpeak"),
+            "kind": .string("audio_presentation"),
+            "text": .string(transcript),
+            "playbackBehavior": .string("playNow"),
         ])
 
         let config = ToolPresentationBuilder.build(
@@ -180,14 +180,14 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.title == "Voice message")
-        guard case .voiceMessage(let text, let attachmentId, let mimeType, _, let delivery) = config.expandedContent else {
-            Issue.record("Expected generic voice presentation to use .voiceMessage compact content")
+        guard case .audioMessage(let text, let attachmentId, let mimeType, _, let delivery) = config.expandedContent else {
+            Issue.record("Expected audio presentation to use .audioMessage compact content")
             return
         }
         #expect(text == transcript)
         #expect(attachmentId.isEmpty)
         #expect(mimeType == "audio/wav")
-        #expect(delivery == .directSpeak)
+        #expect(delivery == .playNow)
     }
 
     @Test("voice_speak errors render generic text instead of a voice card")
@@ -218,6 +218,7 @@ struct ToolPresentationBuilderTests {
     @Test("voice tool uses args transcript when attachment output is placeholder")
     func voiceAttachmentPresentationFallsBackToArgsTranscript() {
         let details: JSONValue = .object([
+            "kind": .string("audio_presentation"),
             "audio": .object([
                 "kind": .string("audio"),
                 "id": .string("att-1"),
@@ -235,8 +236,8 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(args: ["text": .string(transcript)], details: details)
         )
 
-        guard case .voiceMessage(let text, let attachmentId, _, _, _) = config.expandedContent else {
-            Issue.record("Expected .voiceMessage content")
+        guard case .audioMessage(let text, let attachmentId, _, _, _) = config.expandedContent else {
+            Issue.record("Expected .audioMessage content")
             return
         }
         #expect(text == transcript)
@@ -246,6 +247,7 @@ struct ToolPresentationBuilderTests {
     @Test("voice tool uses output transcript when attachment details omit message")
     func voiceAttachmentPresentationFallsBackToOutputTranscript() {
         let details: JSONValue = .object([
+            "kind": .string("audio_presentation"),
             "audio": .object([
                 "kind": .string("audio"),
                 "id": .string("att-1"),
@@ -263,8 +265,8 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(details: details)
         )
 
-        guard case .voiceMessage(let text, let attachmentId, _, _, _) = config.expandedContent else {
-            Issue.record("Expected .voiceMessage content")
+        guard case .audioMessage(let text, let attachmentId, _, _, _) = config.expandedContent else {
+            Issue.record("Expected .audioMessage content")
             return
         }
         #expect(text == transcript)
@@ -274,7 +276,8 @@ struct ToolPresentationBuilderTests {
     @Test("voice tool uses compact voice message title for attachment expanded content")
     func voiceAttachmentPresentation() {
         let details: JSONValue = .object([
-            "message": .string("You need to restart the server."),
+            "kind": .string("audio_presentation"),
+            "text": .string("You need to restart the server."),
             "audio": .object([
                 "kind": .string("audio"),
                 "id": .string("att-1"),
@@ -293,8 +296,8 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.title == "Voice message")
         #expect(config.toolNamePrefix == "voice_speak")
-        guard case .voiceMessage(let text, let attachmentId, let mimeType, let durationSeconds, let delivery) = config.expandedContent else {
-            Issue.record("Expected .voiceMessage content")
+        guard case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, let delivery) = config.expandedContent else {
+            Issue.record("Expected .audioMessage content")
             return
         }
         #expect(text == "You need to restart the server.")
@@ -304,11 +307,11 @@ struct ToolPresentationBuilderTests {
         #expect(delivery == nil)
     }
 
-    @Test("generic voice attachment renders even when output text is empty")
-    func genericVoiceAttachmentRendersWithEmptyOutput() {
+    @Test("generic audio attachment renders even when output text is empty")
+    func genericAudioAttachmentRendersWithEmptyOutput() {
         let details: JSONValue = .object([
-            "presentation": .string("voice"),
-            "message": .string("This should still be replayable."),
+            "kind": .string("audio_presentation"),
+            "text": .string("This should still be replayable."),
             "audio": .object([
                 "kind": .string("audio"),
                 "id": .string("att-generic-1"),
@@ -326,14 +329,47 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.title == "Voice message")
-        guard case .voiceMessage(let text, let attachmentId, let mimeType, let durationSeconds, _) = config.expandedContent else {
-            Issue.record("Expected generic voice attachment content")
+        guard case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, _) = config.expandedContent else {
+            Issue.record("Expected generic audio attachment content")
             return
         }
         #expect(text == "This should still be replayable.")
         #expect(attachmentId == "att-generic-1")
         #expect(mimeType == "audio/wav")
         #expect(durationSeconds == 2.4)
+    }
+
+    @Test("audio presentation details map playNow to directSpeak without breaking voice card rendering")
+    func audioPresentationPlaybackBehaviorMapsToVoiceDelivery() {
+        let details: JSONValue = .object([
+            "kind": .string("audio_presentation"),
+            "text": .string("Play this now."),
+            "playbackBehavior": .string("playNow"),
+            "audio": .object([
+                "kind": .string("audio"),
+                "id": .string("att-audio-1"),
+                "mimeType": .string("audio/wav"),
+                "durationSeconds": .number(1.0),
+            ]),
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "generic-audio-1", tool: "example_audio_tool",
+            argsSummary: "text: hi",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(details: details)
+        )
+
+        guard case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, let delivery) = config.expandedContent else {
+            Issue.record("Expected generic audio presentation content")
+            return
+        }
+        #expect(text == "Play this now.")
+        #expect(attachmentId == "att-audio-1")
+        #expect(mimeType == "audio/wav")
+        #expect(durationSeconds == 1.0)
+        #expect(delivery == .playNow)
     }
 
     // MARK: - Read
@@ -1726,8 +1762,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "markdown"
     case .readMedia:
         return "readMedia"
-    case .voiceMessage:
-        return "voiceMessage"
+    case .audioMessage:
+        return "audioMessage"
     case .status:
         return "status"
     case .text:

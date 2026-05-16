@@ -101,10 +101,16 @@ struct AsyncAudioBlob: View {
 extension ToolPresentationBuilder {
     private static let extensionStructuredParseBudgetBytes = 64 * 1024
 
-    /// Pi/Yuwp voice tools (`voice_create`, `voice_speak`) may return
-    /// `tool_end.details.audio` with `{ kind: "audio", id?, mimeType,
-    /// storageKey?, fileName?, durationSeconds? }`. New results replay by fetching
-    /// the session attachment from the Oppi server; base64/path are legacy fallbacks.
+    struct ToolAudioPresentationDetails: Equatable {
+        let text: String?
+        let playbackBehavior: AudioPlaybackBehavior?
+        let audio: ToolAudioAttachmentDetails?
+    }
+
+    /// Audio-producing tools may return `tool_end.details.audio` with
+    /// `{ kind: "audio", id?, mimeType, storageKey?, fileName?, durationSeconds? }`.
+    /// New results replay by fetching the session attachment from the Oppi server;
+    /// base64/path are fallback paths.
     struct ToolAudioAttachmentDetails: Equatable {
         let id: String?
         let mimeType: String
@@ -114,13 +120,14 @@ extension ToolPresentationBuilder {
         let storageKey: String?
         let sizeBytes: Int?
         let durationSeconds: Double?
-        let message: String?
-        let delivery: VoiceReplyDelivery?
     }
 
-    struct ToolVoicePresentationDetails: Equatable {
-        let message: String?
-        let delivery: VoiceReplyDelivery?
+    private static func audioPlaybackBehavior(from object: [String: JSONValue]) -> AudioPlaybackBehavior? {
+        switch object["playbackBehavior"]?.stringValue {
+        case "tapToPlay": return .tapToPlay
+        case "playNow": return .playNow
+        default: return nil
+        }
     }
 
     struct ToolImageAttachmentDetails: Equatable {
@@ -156,8 +163,8 @@ extension ToolPresentationBuilder {
             let sanitized = sanitizeGenericExtensionOutput(output, toolName: toolName)
             textOutput = sanitized.isEmpty ? output : sanitized
         }
-        if let audio = toolAudioAttachmentDetails(from: details) {
-            return voiceAudioExpandedContent(audio: audio, fallbackText: textOutput, args: args)
+        if let presentation = toolAudioPresentationDetails(from: details) {
+            return voiceAudioExpandedContent(presentation: presentation, fallbackText: textOutput, args: args)
         }
         if let image = toolImageAttachmentDetails(from: details) {
             return imageExpandedContent(image: image, fallbackText: textOutput)
@@ -231,16 +238,17 @@ extension ToolPresentationBuilder {
         return (.text(text: textOutput, language: nil), textOutput)
     }
 
-    static func toolVoicePresentationDetails(from details: JSONValue?) -> ToolVoicePresentationDetails? {
+    static func toolAudioPresentationDetails(from details: JSONValue?) -> ToolAudioPresentationDetails? {
         guard let object = details?.objectValue,
-              object["presentation"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "voice" else {
+              object["kind"]?.stringValue == "audio_presentation" else {
             return nil
         }
 
-        let message = object["message"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return ToolVoicePresentationDetails(
-            message: message?.isEmpty == false ? message : nil,
-            delivery: object["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
+        let text = object["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ToolAudioPresentationDetails(
+            text: text?.isEmpty == false ? text : nil,
+            playbackBehavior: audioPlaybackBehavior(from: object),
+            audio: toolAudioAttachmentDetails(from: details)
         )
     }
 
@@ -262,9 +270,7 @@ extension ToolPresentationBuilder {
                 path: audio["path"]?.stringValue,
                 storageKey: audio["storageKey"]?.stringValue,
                 sizeBytes: audio["sizeBytes"]?.numberValue.map(Int.init),
-                durationSeconds: audio["durationSeconds"]?.numberValue,
-                message: object["message"]?.stringValue,
-                delivery: object["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
+                durationSeconds: audio["durationSeconds"]?.numberValue
             )
         }
 
@@ -277,9 +283,7 @@ extension ToolPresentationBuilder {
             path: audio["path"]?.stringValue,
             storageKey: audio["storageKey"]?.stringValue,
             sizeBytes: audio["sizeBytes"]?.numberValue.map(Int.init),
-            durationSeconds: audio["durationSeconds"]?.numberValue,
-            message: object["message"]?.stringValue,
-            delivery: object["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
+            durationSeconds: audio["durationSeconds"]?.numberValue
         )
     }
 
@@ -337,16 +341,30 @@ extension ToolPresentationBuilder {
     }
 
     private static func voiceAudioExpandedContent(
-        audio: ToolAudioAttachmentDetails,
+        presentation: ToolAudioPresentationDetails,
         fallbackText: String,
         args: [String: JSONValue]?
     ) -> (content: ToolExpandedContent, copyOutput: String) {
         let title = "Voice message"
-        let explicitMessage = audio.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let explicitMessage = presentation.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let argMessage = args?["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let fallbackMessage = fallbackText.trimmingCharacters(in: .whitespacesAndNewlines)
         let outputMessage = fallbackMessage == title ? "" : fallbackMessage
         let message = !explicitMessage.isEmpty ? explicitMessage : (!argMessage.isEmpty ? argMessage : outputMessage)
+
+        guard let audio = presentation.audio else {
+            let displayText = message.isEmpty ? title : message
+            return (
+                .audioMessage(
+                    text: displayText,
+                    attachmentId: "",
+                    mimeType: "audio/wav",
+                    durationSeconds: nil,
+                    playbackBehavior: presentation.playbackBehavior
+                ),
+                displayText
+            )
+        }
 
         guard audio.mimeType == "audio/wav" else {
             let message = "Audio unavailable on iOS: unsupported MIME type \(audio.mimeType)"
@@ -356,12 +374,12 @@ extension ToolPresentationBuilder {
         if let attachmentId = audio.id, !attachmentId.isEmpty {
             let displayText = message.isEmpty ? title : message
             return (
-                .voiceMessage(
+                .audioMessage(
                     text: displayText,
                     attachmentId: attachmentId,
                     mimeType: audio.mimeType,
                     durationSeconds: audio.durationSeconds,
-                    delivery: audio.delivery
+                    playbackBehavior: presentation.playbackBehavior
                 ),
                 displayText
             )

@@ -1,7 +1,7 @@
 import UIKit
 
 @MainActor
-final class NativeVoiceMessageView: UIView {
+final class NativeAudioMessageView: UIView {
     private let container = UIView()
     private let stack = UIStackView()
     private let headerRow = UIStackView()
@@ -17,7 +17,7 @@ final class NativeVoiceMessageView: UIView {
     private var decodedData: Data?
     private var attachmentId: String?
     private var attachmentFetcher: ((String) async throws -> Data)?
-    private var delivery: VoiceReplyDelivery?
+    private var playbackBehavior: AudioPlaybackBehavior?
     private var sessionId: String?
     private var decodeTask: Task<Void, Never>?
     private var fetchTask: Task<Void, Never>?
@@ -64,13 +64,13 @@ final class NativeVoiceMessageView: UIView {
         message: String,
         base64: String,
         mimeType: String?,
-        delivery: VoiceReplyDelivery?,
+        playbackBehavior: AudioPlaybackBehavior?,
         sessionId: String?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette,
         suppressAutoplay: Bool = false
     ) {
-        prepareForApply(id: id, message: message, delivery: delivery, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(id: id, message: message, playbackBehavior: playbackBehavior, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
         self.suppressAutoplay = suppressAutoplay
         attachmentId = nil
         attachmentFetcher = nil
@@ -111,14 +111,14 @@ final class NativeVoiceMessageView: UIView {
         message: String,
         attachmentId: String,
         mimeType: String?,
-        delivery: VoiceReplyDelivery?,
+        playbackBehavior: AudioPlaybackBehavior?,
         sessionId: String?,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
         palette: ThemePalette,
         suppressAutoplay: Bool = false
     ) {
-        prepareForApply(id: id, message: message, delivery: delivery, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(id: id, message: message, playbackBehavior: playbackBehavior, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
         self.suppressAutoplay = suppressAutoplay
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
@@ -139,14 +139,14 @@ final class NativeVoiceMessageView: UIView {
     private func prepareForApply(
         id: String,
         message: String,
-        delivery: VoiceReplyDelivery?,
+        playbackBehavior: AudioPlaybackBehavior?,
         sessionId: String?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette
     ) {
         self.id = id
         self.audioPlayer = audioPlayer
-        self.delivery = delivery
+        self.playbackBehavior = playbackBehavior
         self.sessionId = sessionId
         self.decodedData = nil
         self.attachmentId = nil
@@ -276,7 +276,7 @@ final class NativeVoiceMessageView: UIView {
     private func maybeAutoplayDecodedDataIfNeeded(palette: ThemePalette) {
         guard !suppressAutoplay,
               let id, let decodedData, let audioPlayer,
-              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery, sessionId: sessionId) else {
+              audioPlayer.shouldAutoplayAudioMessage(itemID: id, playbackBehavior: playbackBehavior, sessionId: sessionId) else {
             return
         }
         audioPlayer.markVoiceReplyAutoplayed(itemID: id)
@@ -287,7 +287,7 @@ final class NativeVoiceMessageView: UIView {
     private func maybeAutoplayAttachmentIfNeeded(palette: ThemePalette) {
         guard !suppressAutoplay,
               let id, let attachmentId, let attachmentFetcher, let audioPlayer,
-              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery, sessionId: sessionId) else {
+              audioPlayer.shouldAutoplayAudioMessage(itemID: id, playbackBehavior: playbackBehavior, sessionId: sessionId) else {
             return
         }
         spinner.startAnimating()

@@ -14,7 +14,7 @@ enum AudioLifecycleMode: Equatable, Sendable {
 
 enum AudioPlaybackSource: Equatable, Sendable {
     case directSpeak
-    case voiceMessageReplay
+    case audioMessageReplay
 }
 
 enum AudioStopReason: Equatable, Sendable {
@@ -40,9 +40,9 @@ enum VoiceComposerPresentation: Equatable, Sendable {
     case disabled(reason: String)
 }
 
-enum VoiceTimelinePresentation: Equatable, Sendable {
+enum AudioTimelinePresentation: Equatable, Sendable {
     case hidden
-    case streamingTranscript(text: String, delivery: VoiceReplyDelivery?)
+    case streamingTranscript(text: String, playbackBehavior: AudioPlaybackBehavior?)
     case speakingTranscript(text: String, isStopping: Bool)
     case finalCard(transcript: String, attachmentID: String?, replayState: ReplayState)
     case error(message: String)
@@ -50,11 +50,11 @@ enum VoiceTimelinePresentation: Equatable, Sendable {
 
 struct AudioPresentationState: Equatable, Sendable {
     var mode: AudioLifecycleMode = .idle
-    var timelineItems: [String: VoiceTimelinePresentation] = [:]
+    var timelineItems: [String: AudioTimelinePresentation] = [:]
     var composer: VoiceComposerPresentation = .idle
     var routeWarning: String?
 
-    func timelinePresentation(for itemID: String) -> VoiceTimelinePresentation {
+    func timelinePresentation(for itemID: String) -> AudioTimelinePresentation {
         timelineItems[itemID] ?? .hidden
     }
 }
@@ -103,7 +103,7 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
         }
     }
 
-    func updateVoiceText(itemID: String, text: String, delivery: VoiceReplyDelivery?) {
+    func updateAudioText(itemID: String, text: String, playbackBehavior: AudioPlaybackBehavior?) {
         let transcript = normalizedTranscript(text)
         guard !transcript.isEmpty else {
             presentation.timelineItems[itemID] = .hidden
@@ -114,7 +114,7 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
         case .playing(let activeID, .directSpeak) where activeID == itemID:
             presentation.timelineItems[itemID] = .speakingTranscript(text: transcript, isStopping: false)
         default:
-            presentation.timelineItems[itemID] = .streamingTranscript(text: transcript, delivery: delivery)
+            presentation.timelineItems[itemID] = .streamingTranscript(text: transcript, playbackBehavior: playbackBehavior)
         }
     }
 
@@ -125,7 +125,7 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
         presentation.timelineItems[itemID] = .speakingTranscript(text: text, isStopping: false)
     }
 
-    func finishVoiceMessage(itemID: String, attachmentID: String?, transcript: String?) {
+    func finishAudioMessage(itemID: String, attachmentID: String?, transcript: String?) {
         let text = normalizedTranscript(transcript ?? "")
         presentation.timelineItems[itemID] = .finalCard(
             transcript: text,
@@ -137,9 +137,9 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
         }
     }
 
-    func playVoiceMessage(itemID: String, transcript: String, attachmentID: String?) {
+    func playAudioMessage(itemID: String, transcript: String, attachmentID: String?) {
         let text = normalizedTranscript(transcript)
-        presentation.mode = .playing(itemID: itemID, source: .voiceMessageReplay)
+        presentation.mode = .playing(itemID: itemID, source: .audioMessageReplay)
         presentation.timelineItems[itemID] = .finalCard(
             transcript: text,
             attachmentID: attachmentID,
@@ -191,7 +191,7 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
     private func markStoppedForCapture(itemID: String) {
         switch presentation.timelineItems[itemID] {
         case .speakingTranscript(let text, _):
-            presentation.timelineItems[itemID] = .streamingTranscript(text: text, delivery: .directSpeak)
+            presentation.timelineItems[itemID] = .streamingTranscript(text: text, playbackBehavior: .playNow)
         case .finalCard(let transcript, let attachmentID, _):
             presentation.timelineItems[itemID] = .finalCard(
                 transcript: transcript,
@@ -213,7 +213,7 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
     }
 
     private func playbackSource(fromPlaybackID playbackID: String) -> AudioPlaybackSource {
-        isDirectSpeakPlaybackID(playbackID) ? .directSpeak : .voiceMessageReplay
+        isDirectSpeakPlaybackID(playbackID) ? .directSpeak : .audioMessageReplay
     }
 
     private func canonicalItemID(fromPlaybackID playbackID: String) -> String {

@@ -1,11 +1,5 @@
 import Foundation
 
-enum VoiceReplyDelivery: String, Codable, Sendable, Equatable {
-    case voiceMessage
-    case directSpeak
-}
-
-
 /// Unified preference system for all UserDefaults-backed settings.
 ///
 /// Organized by domain — each is an enum with static getters and setters,
@@ -130,17 +124,17 @@ enum AppPreferences {
 
             var label: String {
                 switch self {
-                case .manual: return "Tap to play"
-                case .autoplay: return "Autoplay"
+                case .manual: return "Manual"
+                case .autoplay: return "Agent decides"
                 }
             }
 
             var detail: String {
                 switch self {
                 case .manual:
-                    return "Default to playable voice cards. The agent can still speak out loud in this session if you ask."
+                    return "Keep voice replies tap-to-play in this app until you change the setting or session mode."
                 case .autoplay:
-                    return "Default to speaking voice replies out loud. The agent can still switch this session back to tap-to-play if you ask."
+                    return "Let each reply choose whether to play now or stay tap-to-play."
                 }
             }
         }
@@ -167,7 +161,7 @@ enum AppPreferences {
                 return .autoplay
             }
             switch raw {
-            case ReplyMode.manual.rawValue, "voice", "voiceMessage":
+            case ReplyMode.manual.rawValue, "voice", "audioMessage":
                 return .manual
             case ReplyMode.autoplay.rawValue, "directSpeak":
                 return .autoplay
@@ -221,12 +215,13 @@ enum AppPreferences {
             }
         }
 
-        static func shouldAutoplay(delivery: VoiceReplyDelivery?, sessionId: String? = nil) -> Bool {
+        static func shouldAutoplay(playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
+            let resolvedBehavior = playbackBehavior ?? .tapToPlay
             switch sessionReplyMode(for: sessionId) ?? replyMode {
             case .manual:
-                return delivery == .directSpeak
+                return false
             case .autoplay:
-                return delivery != .voiceMessage
+                return resolvedBehavior == .playNow
             }
         }
 

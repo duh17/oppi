@@ -228,7 +228,7 @@ extension ChatTimelineCollectionHost.Controller {
             isDone: isDone,
             context: context
         )
-        configuration.expandedContent = VoiceTimelinePresentationAdapter.expandedContent(
+        configuration.expandedContent = AudioTimelinePresentationAdapter.expandedContent(
             from: audioLifecycleCoordinator?.presentation.timelinePresentation(for: itemID),
             fallback: configuration.expandedContent
         )
