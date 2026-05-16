@@ -16,9 +16,30 @@ struct PairView: View {
     @State private var error: String?
     @State private var isLoading = false
     @State private var copied = false
+    @State private var pairedClientCount = MacAPIClient.pairedClientCount()
+
+    private var hasPairedClients: Bool {
+        pairedClientCount > 0
+    }
 
     var body: some View {
         Form {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(
+                        hasPairedClients ? "Pair another device" : "Pair your first iPhone",
+                        systemImage: hasPairedClients ? "iphone" : "qrcode"
+                    )
+                    .font(.title3.weight(.semibold))
+
+                    Text(hasPairedClients
+                        ? "Scan this invite from Oppi on your iPhone, or copy the link if the phone is not nearby."
+                        : "No phone is paired with this server yet. Keep this Mac awake, then scan the invite from Oppi on your iPhone.")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
             if isLoading {
                 Section {
                     HStack {
@@ -87,20 +108,24 @@ struct PairView: View {
             }
 
             Section {
-                Button("Generate New Invite") {
+                Button(hasPairedClients ? "Generate New Invite" : "Refresh QR Code") {
                     generatePairing()
                 }
                 .disabled(isLoading)
+            } footer: {
+                Text("Invite links expire quickly and can only be used once.")
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Pair")
+        .navigationTitle(hasPairedClients ? "Pair Device" : "Pair iPhone")
         .task {
+            pairedClientCount = MacAPIClient.pairedClientCount()
             generatePairing()
         }
     }
 
     private func generatePairing() {
+        pairedClientCount = MacAPIClient.pairedClientCount()
         isLoading = true
         error = nil
         inviteURL = nil

@@ -12,7 +12,20 @@ struct MainWindowView: View {
     let permissionState: TCCPermissionState
     let checkForUpdates: @MainActor () -> Void
 
-    @State private var selectedTab: SidebarTab? = .status
+    @State private var selectedTab: SidebarTab?
+
+    init(
+        processManager: ServerProcessManager,
+        healthMonitor: ServerHealthMonitor,
+        permissionState: TCCPermissionState,
+        checkForUpdates: @escaping @MainActor () -> Void
+    ) {
+        self.processManager = processManager
+        self.healthMonitor = healthMonitor
+        self.permissionState = permissionState
+        self.checkForUpdates = checkForUpdates
+        _selectedTab = State(initialValue: MacAPIClient.hasPairedClients() ? .status : .pair)
+    }
 
     var body: some View {
         NavigationSplitView {

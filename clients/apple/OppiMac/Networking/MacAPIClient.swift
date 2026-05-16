@@ -34,6 +34,20 @@ final class MacAPIClient: Sendable {
     ///
     /// Path: `~/.config/oppi/config.json` → `.token`
     static func readOwnerToken(dataDir: String? = nil) -> String? {
+        readLocalConfig(dataDir: dataDir)?.token
+    }
+
+    /// Number of paired client device tokens stored in the local server config.
+    static func pairedClientCount(dataDir: String? = nil) -> Int {
+        readLocalConfig(dataDir: dataDir)?.authDeviceTokens?.count ?? 0
+    }
+
+    /// Whether at least one client device has completed invite pairing.
+    static func hasPairedClients(dataDir: String? = nil) -> Bool {
+        pairedClientCount(dataDir: dataDir) > 0
+    }
+
+    private static func readLocalConfig(dataDir: String? = nil) -> ConfigFile? {
         let dir = dataDir ?? NSString("~/.config/oppi").expandingTildeInPath
         let configPath = (dir as NSString).appendingPathComponent("config.json")
 
@@ -42,13 +56,8 @@ final class MacAPIClient: Sendable {
             return nil
         }
 
-        struct ConfigFile: Decodable {
-            let token: String?
-        }
-
         do {
-            let config = try JSONDecoder().decode(ConfigFile.self, from: data)
-            return config.token
+            return try JSONDecoder().decode(ConfigFile.self, from: data)
         } catch {
             logger.error("Failed to parse config.json: \(error.localizedDescription)")
             return nil
@@ -218,6 +227,13 @@ final class MacAPIClient: Sendable {
             return nil
         }
     }
+}
+
+// MARK: - Config models
+
+private struct ConfigFile: Decodable {
+    let token: String?
+    let authDeviceTokens: [String]?
 }
 
 // MARK: - Runtime update model
