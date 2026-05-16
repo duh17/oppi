@@ -867,10 +867,24 @@ final class ServerConnection {
     }
 
     /// Re-establish command routing before a session view re-enters foreground interaction.
-    /// The session view's connect task owns the bound session stream endpoint.
+    ///
+    /// If we already know the split-stream endpoint for an active session, eagerly
+    /// reopen the transport so toolbar actions like Stop work immediately while the
+    /// chat view's async connect loop is still spinning up its per-session timeline.
     func prepareForSessionReentry(_ sessionId: String) {
         _onPrepareForSessionReentryForTesting?(sessionId)
         focusSession(sessionId)
+
+        guard hasRequiredSplitStreamCapabilities,
+              let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
+              session.status != .stopped,
+              let workspaceId = session.workspaceId,
+              !workspaceId.isEmpty else {
+            return
+        }
+
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+        connectStream()
     }
 
     func disconnectSession(sessionId: String) {

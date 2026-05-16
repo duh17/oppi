@@ -72,8 +72,26 @@ struct ServerConnectionStreamTests {
         #expect(conn.focusedSessionId == "parent",
                 "Re-entry should restore the parent as the focused command target before async connect runs")
         #expect(conn.streamConsumptionTask == nil,
-                "Re-entry should not reopen the stream; the chat connect task owns the bound session stream")
+                "Without split-stream capability metadata, re-entry should stay HTTP-only until the chat connect task binds the stream")
         #expect(conn.wsClient?.status == .disconnected)
+    }
+
+    @Test func prepareForSessionReentryReconnectsStreamWhenCapabilitiesAreReady() {
+        let (conn, _) = makeTestConnection(sessionId: "child")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "parent", workspaceId: "w1", status: .busy))
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        conn.disconnectSession()
+        #expect(conn.focusedSessionId == nil)
+
+        conn.prepareForSessionReentry("parent")
+
+        #expect(conn.focusedSessionId == "parent")
+        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.streamConsumptionTask != nil,
+                "Re-entry should eagerly reopen the bound session transport so session actions work before ChatSessionManager.connect finishes")
     }
 
     // MARK: - streamConsumptionTask self-cleanup
