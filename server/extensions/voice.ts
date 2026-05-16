@@ -99,7 +99,6 @@ type VoiceToolDetails = {
   voice?: VoiceRecord;
   voices?: VoiceRecord[];
   audio?: AudioDetails;
-  played?: boolean;
   message?: string;
   delivery?: VoiceDeliveryMode;
   presentation?: TTSToolVoiceDetails["presentation"];
@@ -186,11 +185,6 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         previewText: Type.Optional(
           Type.String({ description: "Preview text. Default is a short neutral preview." }),
         ),
-        playPreview: Type.Optional(
-          Type.Boolean({
-            description: "Play the preview locally with afplay on macOS. Default: true.",
-          }),
-        ),
         overwrite: Type.Optional(
           Type.Boolean({
             description: "PATCH existing voice if ID already exists. Default: true.",
@@ -241,9 +235,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           if (hasError(voice)) throw new Error(String(voice.error));
 
           let audio: AudioDetails | undefined;
-          let played = false;
-          const shouldPreview = params.playPreview !== false || Boolean(params.previewText);
-          if (shouldPreview) {
+          {
             onUpdate?.({
               content: [{ type: "text", text: `Generating preview for ${voice.id}...` }],
               details: { status: "preview" },
@@ -262,10 +254,6 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
             audio = audioDetails(outPath, previewBytes, params.embedAudio !== false, {
               preview: true,
             });
-            if (params.playPreview !== false) {
-              await afplay(outPath);
-              played = true;
-            }
           }
 
           if (params.setDefault) {
@@ -276,7 +264,6 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
             serverUrl,
             voice,
             audio,
-            played,
             preferences: readVoicePreferences(storage),
           };
           return {
@@ -303,7 +290,6 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           lines.push(theme.fg("success", "Saved as default voice"));
         }
         if (details.audio) lines.push(theme.fg("dim", `Audio: ${details.audio.path}`));
-        if (details.played) lines.push(theme.fg("success", "Played preview locally"));
         return new Text(lines.join("\n"), 0, 0);
       },
     });
@@ -312,7 +298,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
       name: "voice_speak",
       label: "Speak Voice",
       description:
-        "Speak text using a saved local voice ID or raw VoiceDesign prompt. Streams from Yuwp TTS, saves a WAV, optionally plays locally, and returns audio details for Oppi timeline playback.",
+        "Speak text using a saved local voice ID or raw VoiceDesign prompt. Streams from Yuwp TTS, saves a WAV, and returns audio details for Oppi timeline playback without using Mac speaker playback.",
       promptSnippet: "Speak using a saved local Yuwp voice",
       promptGuidelines: [
         "Use voice_speak when the user asks to hear a saved voice or wants the agent to speak with a named voice.",
@@ -342,9 +328,6 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           Type.Number({ description: "Sampling temperature. Default comes from voice or 0.8." }),
         ),
         stream: Type.Optional(Type.Boolean({ description: "Use HTTP streaming. Default: true." })),
-        play: Type.Optional(
-          Type.Boolean({ description: "Play locally with afplay on macOS. Default: true." }),
-        ),
         out: Type.Optional(Type.String({ description: "Optional output WAV path." })),
         embedAudio: Type.Optional(
           Type.Boolean({
@@ -409,13 +392,8 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           const result = stream
             ? await streamSpeechToWav(serverUrl, speechRequest, outPath, audioStream)
             : await fullSpeechToWav(serverUrl, speechRequest, outPath);
-          const streamedDirectSpeakToOppi =
-            params.play !== false && stream && !!audioStream && delivery === "directSpeak";
+          const streamedDirectSpeakToOppi = stream && !!audioStream && delivery === "directSpeak";
           let played = false;
-          if (params.play !== false && !audioStream) {
-            await afplay(outPath);
-            played = true;
-          }
           const bytes = readFileSync(outPath);
           const shouldEmbed = params.embedAudio !== false && !streamedDirectSpeakToOppi;
           const audio = audioDetails(outPath, bytes, shouldEmbed, result.metrics);
@@ -455,7 +433,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           theme.fg("success", `✓ Voice message${duration}`),
           theme.fg("muted", `“${details.message ?? ""}”`),
         ];
-        if (details.played) lines.push(theme.fg("success", "Played"));
+        if (details.played) lines.push(theme.fg("success", "Delivered immediately"));
         return new Text(lines.join("\n"), 0, 0);
       },
     });
@@ -629,8 +607,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
             { model: "yuwp-tts", voice, input: text, response_format: "wav", stream: true },
             outPath,
           );
-          await afplay(outPath);
-          ctx.ui.notify(`Spoke with ${voice}: ${outPath}`, "info");
+          ctx.ui.notify(`Generated speech with ${voice}: ${outPath}`, "info");
           return;
         }
         ctx.ui.notify("Unknown /voice command", "warning");
@@ -771,20 +748,22 @@ async function startServer(serverUrl: string): Promise<void> {
 }
 
 function findYuwpTTSBinary(): string | undefined {
-  const home = os.homedir();
   const candidates = [
-    path.join(home, "workspace/yuwp/.build/arm64-apple-macosx/release/yuwp-tts"),
-    path.join(home, "workspace/yuwp/.build/debug/yuwp-tts"),
-    path.join(
-      home,
-      "workspace/yuwp-autoresearch/tts-correctness-streaming-20260424/.build/arm64-apple-macosx/release/yuwp-tts",
-    ),
-    path.join(
-      home,
-      "workspace/yuwp-autoresearch/tts-correctness-streaming-20260424/.build/debug/yuwp-tts",
-    ),
-  ];
+    findExecutableInPath("yuwp-tts"),
+    "/Applications/Yuwp.app/Contents/MacOS/yuwp-tts",
+    path.join(os.homedir(), "Applications", "Yuwp.app", "Contents", "MacOS", "yuwp-tts"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
   return candidates.find((candidate) => existsSync(candidate));
+}
+
+function findExecutableInPath(name: string): string | undefined {
+  const pathValue = process.env.PATH;
+  if (!pathValue) return undefined;
+  for (const dir of pathValue.split(":").filter(Boolean)) {
+    const candidate = path.join(dir, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 function findModelPath(): string | undefined {
@@ -992,17 +971,6 @@ function audioOutputPath(prefix: string): string {
   const dir = path.join(os.homedir(), "Library/Application Support/Yuwp/Audio/pi-voice");
   mkdirSync(dir, { recursive: true });
   return path.join(dir, `${prefix}-${Date.now()}.wav`);
-}
-
-async function afplay(file: string): Promise<void> {
-  if (process.platform !== "darwin") return;
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("afplay", [file], { stdio: "ignore" });
-    child.on("exit", (code) =>
-      code === 0 ? resolve() : reject(new Error(`afplay exited ${code}`)),
-    );
-    child.on("error", reject);
-  });
 }
 
 function safeSlug(raw: string): string {

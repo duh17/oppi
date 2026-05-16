@@ -97,7 +97,6 @@ describe("createVoiceFactory", () => {
         text: "Hello from streaming direct speak.",
         delivery: "directSpeak",
         stream: true,
-        play: true,
         out: join(tempDir, "direct.wav"),
       },
       undefined,
@@ -157,7 +156,6 @@ describe("createVoiceFactory", () => {
         text: "This stream ends without a newline.",
         delivery: "voiceMessage",
         stream: true,
-        play: false,
         out: join(tempDir, "no-newline.wav"),
       },
       undefined,
@@ -199,7 +197,6 @@ describe("createVoiceFactory", () => {
         text: "Keep this as a replayable voice card.",
         delivery: "voiceMessage",
         stream: true,
-        play: true,
         out: join(tempDir, "card.wav"),
       },
       undefined,
@@ -213,6 +210,52 @@ describe("createVoiceFactory", () => {
     };
 
     expect(details.delivery).toBe("voiceMessage");
+    expect(details.audio?.stream).toBe(true);
+    expect(details.audio?.base64).toEqual(expect.any(String));
+  });
+
+  it("keeps generated audio attachable when no Oppi audio stream is available", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input instanceof URL ? input : new URL(input);
+      if (url.pathname === "/v1/info") {
+        return new Response("{}", { status: 200 });
+      }
+      if (url.pathname === "/v1/audio/speech/stream") {
+        const pcmChunk = Buffer.from([0, 0, 1, 0, 255, 127, 0, 128]).toString("base64");
+        return makeNDJSONResponse([
+          { event: "metadata", sample_rate: 24_000, channels: 1 },
+          { event: "audio", chunk: 0, seconds: 0.1, audio: pcmChunk },
+          { event: "done", audio_duration_seconds: 0.1 },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = createMockAPI();
+    createVoiceFactory()(api as never);
+    const tool = api.tools.get("voice_speak");
+    expect(tool).toBeDefined();
+
+    const result = await tool!.execute(
+      "tc-no-local-playback",
+      {
+        text: "Do not play this on the Mac speaker.",
+        delivery: "voiceMessage",
+        stream: true,
+        out: join(tempDir, "no-local-playback.wav"),
+      },
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    const details = result.details as {
+      audio?: { base64?: string; stream?: boolean };
+      played?: boolean;
+    };
+
+    expect(details.played).toBe(false);
     expect(details.audio?.stream).toBe(true);
     expect(details.audio?.base64).toEqual(expect.any(String));
   });
