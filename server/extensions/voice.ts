@@ -16,7 +16,7 @@ import type { Storage } from "../src/storage.js";
 
 const DEFAULT_TTS_URL = "http://127.0.0.1:7937";
 const DEFAULT_LANGUAGE = "English";
-const DEFAULT_VOICE_ID = process.env.PI_DEFAULT_VOICE_ID ?? "elena";
+const FALLBACK_VOICE_ID = process.env.PI_DEFAULT_VOICE_ID?.trim() || "elena";
 const DEFAULT_TEMPERATURE = 0.8;
 const DEFAULT_STREAMING_INTERVAL = 0.2;
 const MAX_TEXT_CHARS = 5_000;
@@ -298,7 +298,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
       promptSnippet: "Speak using a saved local Yuwp voice",
       promptGuidelines: [
         "Use voice_speak when the user asks to hear a saved voice or wants the agent to speak with a named voice.",
-        `If the user asks you to speak without naming a voice, default to the saved default voice or ${DEFAULT_VOICE_ID} if none is saved.`,
+        "If the user asks you to speak without naming a voice, default to the saved default voice or the extension's fallback voice if none is saved.",
         "When the user asks for a voice reply without specifying playback behavior, default delivery to directSpeak.",
         "If the user explicitly wants a tap-to-play voice card instead, set delivery to voiceMessage.",
         "If the user asks to change how this session handles voice replies going forward, use voice_reply_mode instead of repeating delivery hints manually.",
@@ -316,7 +316,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         text: Type.String({ description: "Text to speak. Keep short for interactive use." }),
         voice: Type.Optional(
           Type.String({
-            description: `Saved voice ID, or raw VoiceDesign/custom voice string. Defaults to ${DEFAULT_VOICE_ID}.`,
+            description: "Saved voice ID, or raw VoiceDesign/custom voice string. Defaults to the saved default voice or the extension's fallback voice.",
           }),
         ),
         language: Type.Optional(Type.String({ description: "Language hint. Default: English." })),
@@ -511,12 +511,14 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           saveVoicePreferences(storage, { defaultVoiceId: voiceId });
         }
         const preferences = readVoicePreferences(storage);
-        const activeDefault = preferences.defaultVoiceId ?? DEFAULT_VOICE_ID;
+        const activeDefault = preferences.defaultVoiceId ?? FALLBACK_VOICE_ID;
         return {
           content: [
             {
               type: "text" as const,
-              text: `Default voice: ${activeDefault}${preferences.defaultVoiceId ? "" : " (fallback)"}`,
+              text: preferences.defaultVoiceId
+                ? `Default voice: ${activeDefault}`
+                : "Default voice: extension fallback voice",
             },
           ],
           details: {
@@ -537,7 +539,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         const response = await requestJSON<{ data: VoiceRecord[] }>(serverUrl, "/v1/voices", "GET");
         const voices = response.data ?? [];
         const preferences = readVoicePreferences(storage);
-        const defaultVoiceId = preferences.defaultVoiceId ?? DEFAULT_VOICE_ID;
+        const defaultVoiceId = preferences.defaultVoiceId ?? FALLBACK_VOICE_ID;
         return {
           content: [
             {
@@ -574,7 +576,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
             "/v1/voices",
             "GET",
           );
-          const defaultVoiceId = readVoicePreferences(storage).defaultVoiceId ?? DEFAULT_VOICE_ID;
+          const defaultVoiceId = readVoicePreferences(storage).defaultVoiceId ?? FALLBACK_VOICE_ID;
           ctx.ui.notify(
             (response.data ?? [])
               .map((v) => `${v.id}: ${v.name}${v.id === defaultVoiceId ? " (default)" : ""}`)
@@ -586,8 +588,13 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         if (cmd === "default") {
           const requestedVoiceId = rest.join(" ").trim();
           if (!requestedVoiceId) {
-            const defaultVoiceId = readVoicePreferences(storage).defaultVoiceId ?? DEFAULT_VOICE_ID;
-            ctx.ui.notify(`Default voice: ${defaultVoiceId}`, "info");
+            const defaultVoiceId = readVoicePreferences(storage).defaultVoiceId;
+            ctx.ui.notify(
+              defaultVoiceId
+                ? `Default voice: ${defaultVoiceId}`
+                : "Default voice: extension fallback voice",
+              "info",
+            );
             return;
           }
           const serverUrl = await ensureYuwpTTSServer();
@@ -683,7 +690,7 @@ export function saveVoicePreferences(
 }
 
 export function resolveConfiguredDefaultVoiceId(storage?: Storage): string {
-  return readVoicePreferences(storage).defaultVoiceId?.trim() || DEFAULT_VOICE_ID;
+  return readVoicePreferences(storage).defaultVoiceId?.trim() || FALLBACK_VOICE_ID;
 }
 
 async function assertSavedVoiceExists(serverUrl: string, voiceId: string): Promise<void> {

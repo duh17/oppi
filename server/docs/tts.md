@@ -1,12 +1,15 @@
 # Voice replies / TTS
 
-Oppi TTS is exposed through the **`voice` workspace extension**. It is not wired into the server globally like ASR.
+Oppi itself only defines a **generic audio reply contract**. It does not require a specific TTS provider, voice catalog, or synthesis workflow.
 
-The voice extension uses local [Yuwp](https://github.com/duh17/yuwp) TTS to generate WAV audio for agent replies. The iOS app renders those replies through Oppi's shared audio presentation contract.
+This document covers both:
 
-In Agent decides mode, Oppi should prefer `playNow` for voice replies unless the user explicitly wants tap-to-play behavior.
+1. the shared Oppi audio contract that any extension can target
+2. the sample `voice` workspace extension shipped in this repo, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
 
 For extension authors, the shared contract lives in `server/src/tts-provider.ts`.
+
+## Shared Oppi audio contract
 
 A custom extension does not need a provider base class. It only needs to:
 
@@ -87,7 +90,11 @@ Notes:
 - manual mode suppresses autoplay even when a reply says `playNow`
 - keep the contract local-file/session-attachment based, not arbitrary remote URL playback
 
-## What the voice extension adds
+## Sample `voice` extension
+
+The repository also ships a sample `voice` workspace extension. It is not the core protocol; it is one example of how to implement voice creation, synthesis, and playback on top of Oppi's generic audio contract.
+
+### What the sample extension adds
 
 Enable `voice` on a workspace to expose these tools:
 
@@ -104,7 +111,7 @@ Slash commands:
 /voice speak <voice-id> hello from Oppi
 ```
 
-## Build Yuwp TTS
+### Build Yuwp TTS
 
 ```bash
 git clone https://github.com/duh17/yuwp.git ~/workspace/yuwp
@@ -115,7 +122,7 @@ bash scripts/build_mlx_metallib.sh release
 
 You also need a local Qwen3-TTS model directory or Hugging Face snapshot.
 
-## Option A: let Oppi start TTS
+### Option A: let Oppi start TTS
 
 On first `voice_*` tool use, Oppi tries to start Yuwp TTS automatically.
 
@@ -143,7 +150,7 @@ oppi config validate
 
 Then restart Oppi server.
 
-## Option B: run TTS yourself
+### Option B: run TTS yourself
 
 ```bash
 cd ~/workspace/yuwp
@@ -169,7 +176,7 @@ oppi config validate
 
 Then restart Oppi server.
 
-## Enable the workspace extension
+### Enable the workspace extension
 
 In the workspace extension list, enable:
 
@@ -189,7 +196,7 @@ or:
 Use voice_speak to reply as a voice message.
 ```
 
-## iOS playback modes
+## Client playback modes
 
 In **Settings → Voice → Voice Replies**:
 
@@ -198,7 +205,7 @@ In **Settings → Voice → Voice Replies**:
 
 The agent can still change the behavior for the current session with `voice_reply_mode`, so a user can say things like “keep this chat manual” or “for this session, let the agent decide.”
 
-## Notes
+## Sample extension notes
 
 - Oppi only allows local TTS URLs by default.
 - To use a remote TTS URL, set `TTS_ALLOW_REMOTE=1` deliberately.
