@@ -247,8 +247,9 @@ describe("SessionAgentEventCoordinator", () => {
       result: {
         content: [{ type: "text", text: "Hello from a custom TTS extension." }],
         details: {
-          presentation: "voice",
-          message: "Hello from a custom TTS extension.",
+          kind: "audio_presentation",
+          text: "Hello from a custom TTS extension.",
+          playbackBehavior: "tapToPlay",
           audio: {
             kind: "audio",
             mimeType: "audio/wav",

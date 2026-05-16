@@ -1,19 +1,17 @@
 /**
- * Provider-agnostic TTS seam for Oppi extensions.
+ * Shared audio presentation contract for Oppi extensions.
  *
- * An extension does not need to implement a shared runtime class or register a
- * provider adapter with Oppi. To plug in cleanly, it only needs to:
+ * Extensions can stream generic audio events with `createAudioStreamEmitter(...)`
+ * and return final attachment-backed audio cards with
+ * `createAudioPresentationDetails(...)`.
  *
- * 1. optionally stream live audio with `createTTSAudioStreamEmitter(...)`
- * 2. return final structured voice details with `createTTSToolVoiceDetails(...)`
- *
- * Provider-specific auth, transport, cloning, voice design, and normalization
- * stay inside the extension itself.
+ * Provider-specific auth, transport, and synthesis details stay inside the
+ * extension itself.
  */
 
-export type TTSVoiceReplyDelivery = "voiceMessage" | "directSpeak";
+export type AudioPlaybackBehavior = "tapToPlay" | "playNow";
 
-export type TTSLiveAudioMimeType = "audio/pcm; codecs=s16le" | "audio/wav";
+export type AudioLiveMimeType = "audio/pcm; codecs=s16le" | "audio/wav";
 
 export interface TTSProviderCapabilities {
   streaming?: boolean;
@@ -49,7 +47,7 @@ export interface TTSTimestampTrack {
   items: TTSTimestampSegment[];
 }
 
-export interface TTSToolAudioDetails {
+export interface AudioAttachment {
   kind: "audio";
   mimeType: string;
   path?: string;
@@ -62,23 +60,18 @@ export interface TTSToolAudioDetails {
   metrics?: Record<string, unknown>;
 }
 
-export interface TTSVoicePresentationDetails {
-  presentation: "voice";
-  message: string;
-  delivery?: TTSVoiceReplyDelivery;
-  provider?: TTSProviderInfo;
-  timestamps?: TTSTimestampTrack;
+export interface AudioPresentation {
+  kind: "audio_presentation";
+  audio: AudioAttachment;
+  text?: string;
+  playbackBehavior?: AudioPlaybackBehavior;
 }
 
-export interface TTSToolVoiceDetails extends TTSVoicePresentationDetails {
-  audio: TTSToolAudioDetails;
-}
-
-export interface TTSAudioStreamEvent {
+export interface AudioStreamEvent {
   kind: "audio-stream";
   id: string;
   event: "metadata" | "chunk" | "done" | "error";
-  mimeType: TTSLiveAudioMimeType;
+  mimeType: AudioLiveMimeType;
   sampleRate?: number;
   channels?: number;
   chunkIndex?: number;
@@ -86,82 +79,54 @@ export interface TTSAudioStreamEvent {
   text?: string;
   durationSeconds?: number;
   metrics?: Record<string, unknown>;
-  delivery?: TTSVoiceReplyDelivery;
+  playbackBehavior?: AudioPlaybackBehavior;
 }
 
-export type TTSAudioStreamUpdate = Omit<TTSAudioStreamEvent, "id" | "delivery">;
+export type AudioStreamUpdate = Omit<AudioStreamEvent, "id">;
+export type AudioStreamEmitter = (event: AudioStreamUpdate) => void;
 
-export type TTSAudioStreamEmitter = (event: TTSAudioStreamUpdate) => void;
-
-function resolveTTSAudioStream(ui: unknown): ((event: TTSAudioStreamEvent) => void) | undefined {
+function resolveAudioStream(ui: unknown): ((event: AudioStreamEvent) => void) | undefined {
   if (!ui || typeof ui !== "object") {
     return undefined;
   }
 
   const audioStream = (ui as { audioStream?: unknown }).audioStream;
   return typeof audioStream === "function"
-    ? (audioStream as (event: TTSAudioStreamEvent) => void)
+    ? (audioStream as (event: AudioStreamEvent) => void)
     : undefined;
 }
 
-export function createTTSAudioStreamEmitter(options: {
+export function createAudioStreamEmitter(options: {
   ui: unknown;
-  toolCallId?: string | null;
-  delivery?: TTSVoiceReplyDelivery;
-}): TTSAudioStreamEmitter | undefined {
-  const audioStream = resolveTTSAudioStream(options.ui);
-  const toolCallId = typeof options.toolCallId === "string" ? options.toolCallId.trim() : "";
-  if (!audioStream || !toolCallId) {
+  streamId?: string | null;
+}): AudioStreamEmitter | undefined {
+  const audioStream = resolveAudioStream(options.ui);
+  const streamId = typeof options.streamId === "string" ? options.streamId.trim() : "";
+  if (!audioStream || !streamId) {
     return undefined;
   }
 
   return (event) => {
     audioStream({
-      id: toolCallId,
-      delivery: options.delivery,
+      id: streamId,
       ...event,
     });
   };
 }
 
-export function createTTSVoicePresentationDetails<
+export function createAudioPresentationDetails<
   TExtra extends Record<string, unknown> = Record<string, never>,
 >(input: {
-  message: string;
-  delivery?: TTSVoiceReplyDelivery;
-  provider?: TTSProviderInfo;
-  timestamps?: TTSTimestampTrack;
+  audio: AudioAttachment;
+  text?: string;
+  playbackBehavior?: AudioPlaybackBehavior;
   extra?: TExtra;
-}): TTSVoicePresentationDetails & TExtra {
+}): AudioPresentation & TExtra {
   return {
-    presentation: "voice",
-    message: input.message,
-    ...(input.delivery ? { delivery: input.delivery } : {}),
-    ...(input.provider ? { provider: input.provider } : {}),
-    ...(input.timestamps ? { timestamps: input.timestamps } : {}),
-    ...(input.extra ?? ({} as TExtra)),
-  };
-}
-
-export function createTTSToolVoiceDetails<
-  TAudio extends TTSToolAudioDetails = TTSToolAudioDetails,
-  TExtra extends Record<string, unknown> = Record<string, never>,
->(input: {
-  message: string;
-  delivery?: TTSVoiceReplyDelivery;
-  provider?: TTSProviderInfo;
-  audio: TAudio;
-  timestamps?: TTSTimestampTrack;
-  extra?: TExtra;
-}): TTSToolVoiceDetails & { audio: TAudio } & TExtra {
-  return {
-    ...createTTSVoicePresentationDetails({
-      message: input.message,
-      delivery: input.delivery,
-      provider: input.provider,
-      timestamps: input.timestamps,
-    }),
+    kind: "audio_presentation",
     audio: input.audio,
+    ...(input.text ? { text: input.text } : {}),
+    ...(input.playbackBehavior ? { playbackBehavior: input.playbackBehavior } : {}),
     ...(input.extra ?? ({} as TExtra)),
   };
 }

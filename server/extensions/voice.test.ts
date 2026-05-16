@@ -105,12 +105,16 @@ describe("createVoiceFactory", () => {
     );
 
     const details = result.details as {
+      kind?: string;
+      text?: string;
+      playbackBehavior?: string;
       audio?: { base64?: string; stream?: boolean };
       played?: boolean;
-      delivery?: string;
     };
 
-    expect(details.delivery).toBe("directSpeak");
+    expect(details.kind).toBe("audio_presentation");
+    expect(details.text).toBe("Hello from streaming direct speak.");
+    expect(details.playbackBehavior).toBe("playNow");
     expect(details.played).toBe(true);
     expect(details.audio?.stream).toBe(true);
     expect(details.audio?.base64).toBeUndefined();
@@ -120,7 +124,7 @@ describe("createVoiceFactory", () => {
       id: "tc-direct",
       kind: "audio-stream",
       event: "metadata",
-      delivery: "directSpeak",
+      playbackBehavior: "playNow",
     });
   });
 
@@ -205,11 +209,15 @@ describe("createVoiceFactory", () => {
     );
 
     const details = result.details as {
+      kind?: string;
+      text?: string;
+      playbackBehavior?: string;
       audio?: { base64?: string; stream?: boolean };
-      delivery?: string;
     };
 
-    expect(details.delivery).toBe("voiceMessage");
+    expect(details.kind).toBe("audio_presentation");
+    expect(details.text).toBe("Keep this as a replayable voice card.");
+    expect(details.playbackBehavior).toBe("tapToPlay");
     expect(details.audio?.stream).toBe(true);
     expect(details.audio?.base64).toEqual(expect.any(String));
   });
@@ -269,7 +277,7 @@ describe("voice reply mode", () => {
     expect(tool).toBeDefined();
 
     const result = await tool!.execute("tc-session-mode", { mode: "autoplay" });
-    expect(result.content[0]?.text).toContain("autoplay voice replies by default");
+    expect(result.content[0]?.text).toContain("let each voice reply decide");
     expect(result.details).toMatchObject({
       kind: "voice_reply_mode",
       scope: "session",

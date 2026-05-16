@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import type { AudioStreamEvent } from "./tts-provider.js";
 import type { AskQuestion } from "./types.js";
 
 export interface PiMessageUsage {
@@ -60,20 +61,8 @@ export interface PromptErrorEvent {
   error: string;
 }
 
-export interface ExtensionAudioStreamEvent {
+export interface ExtensionAudioStreamEvent extends AudioStreamEvent {
   type: "extension_audio_stream";
-  kind: "audio-stream";
-  id: string;
-  event: "metadata" | "chunk" | "done" | "error";
-  mimeType: "audio/wav" | "audio/pcm; codecs=s16le";
-  sampleRate?: number;
-  channels?: number;
-  chunkIndex?: number;
-  audioBase64?: string;
-  text?: string;
-  durationSeconds?: number;
-  metrics?: Record<string, unknown>;
-  delivery?: "voiceMessage" | "directSpeak";
 }
 
 export type SessionBackendEvent =

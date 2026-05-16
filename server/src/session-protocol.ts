@@ -520,16 +520,18 @@ function extractMediaOutputs(
  */
 const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
 
-function voicePresentationDetails(
+function audioPresentationDetails(
   details: unknown,
-): { message?: string; delivery?: string } | null {
+): { text?: string; playbackBehavior?: string } | null {
   const root = asRecord(details);
-  if (root?.presentation !== "voice") {
+  if (root?.kind !== "audio_presentation") {
     return null;
   }
   return {
-    ...(typeof root.message === "string" ? { message: root.message } : {}),
-    ...(typeof root.delivery === "string" ? { delivery: root.delivery } : {}),
+    ...(typeof root.text === "string" ? { text: root.text } : {}),
+    ...(typeof root.playbackBehavior === "string"
+      ? { playbackBehavior: root.playbackBehavior }
+      : {}),
   };
 }
 
@@ -839,7 +841,7 @@ export function translatePiEvent(
 
       const messages: ServerMessage[] = [];
       const shellTool = isShellLikeTool(toolName);
-      const voiceDetails = voicePresentationDetails(updateDetails);
+      const audioDetails = audioPresentationDetails(updateDetails);
       let emittedOutput = false;
 
       for (const block of contents) {
@@ -894,8 +896,8 @@ export function translatePiEvent(
         }
       }
 
-      if (!emittedOutput && voiceDetails) {
-        const transcript = voiceDetails.message ?? "";
+      if (!emittedOutput && audioDetails) {
+        const transcript = audioDetails.text ?? "";
         if (transcript) {
           const lastText = ctx.partialResults.get(key) ?? "";
           ctx.partialResults.set(key, transcript);

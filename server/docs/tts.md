@@ -2,41 +2,37 @@
 
 Oppi TTS is exposed through the **`voice` workspace extension**. It is not wired into the server globally like ASR.
 
-The voice extension uses local [Yuwp](https://github.com/duh17/yuwp) TTS to generate WAV audio for agent replies. The iOS app can render those replies as playable voice-message cards or direct playback when allowed.
+The voice extension uses local [Yuwp](https://github.com/duh17/yuwp) TTS to generate WAV audio for agent replies. The iOS app renders those replies through Oppi's shared audio presentation contract.
 
-By default, Oppi should prefer `directSpeak` for voice replies unless the user explicitly wants tap-to-play behavior.
+In Agent decides mode, Oppi should prefer `playNow` for voice replies unless the user explicitly wants tap-to-play behavior.
 
-For provider-agnostic extension work, see `server/src/tts-provider.ts`. That file defines the generic live audio stream shape and the generic voice tool details shape that Oppi consumes.
+For extension authors, the shared contract lives in `server/src/tts-provider.ts`.
 
-A custom extension does not need to implement a shared provider base class. It only needs to:
+A custom extension does not need a provider base class. It only needs to:
 
-1. emit in-flight voice presentation details with `createTTSVoicePresentationDetails({ ... })`
-2. stream optional live audio with `createTTSAudioStreamEmitter({ ui: ctx?.ui, toolCallId, delivery })`
-3. return final details with `createTTSToolVoiceDetails({ message, provider, audio, ... })`
+1. emit optional in-flight tool details with `kind: "audio_presentation"`
+2. stream optional live audio with `createAudioStreamEmitter({ ui: ctx?.ui, streamId: toolCallId })`
+3. return final details with `createAudioPresentationDetails({ audio, text, playbackBehavior, ... })`
 
 Minimal shape:
 
 ```ts
-import {
-  createTTSAudioStreamEmitter,
-  createTTSToolVoiceDetails,
-  createTTSVoicePresentationDetails,
-} from "../src/tts-provider.js";
+import { createAudioPresentationDetails, createAudioStreamEmitter } from "../src/tts-provider.js";
 
 onUpdate?.({
   content: [{ type: "text", text: spokenText }],
-  details: createTTSVoicePresentationDetails({
-    message: spokenText,
-    delivery: "directSpeak",
+  details: {
+    kind: "audio_presentation",
+    text: spokenText,
+    playbackBehavior: "playNow",
     provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
-    extra: { status: "speaking" },
-  }),
+    status: "speaking",
+  },
 });
 
-const emitAudio = createTTSAudioStreamEmitter({
+const emitAudio = createAudioStreamEmitter({
   ui: ctx?.ui,
-  toolCallId,
-  delivery: "directSpeak",
+  streamId: toolCallId,
 });
 
 emitAudio?.({
@@ -45,6 +41,7 @@ emitAudio?.({
   mimeType: "audio/pcm; codecs=s16le",
   sampleRate: 24000,
   channels: 1,
+  playbackBehavior: "playNow",
 });
 
 emitAudio?.({
@@ -53,14 +50,14 @@ emitAudio?.({
   mimeType: "audio/pcm; codecs=s16le",
   chunkIndex: 0,
   audioBase64: pcmChunkBase64,
+  playbackBehavior: "playNow",
 });
 
 return {
   content: [{ type: "text", text: spokenText }],
-  details: createTTSToolVoiceDetails({
-    message: spokenText,
-    delivery: "directSpeak",
-    provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
+  details: createAudioPresentationDetails({
+    text: spokenText,
+    playbackBehavior: "playNow",
     audio: {
       kind: "audio",
       mimeType: "audio/wav",
@@ -68,11 +65,27 @@ return {
       fileName: "reply.wav",
       sizeBytes: bytes.length,
     },
+    extra: {
+      provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
+    },
   }),
 };
 ```
 
-Use `toolCallId` as the live audio stream id. That correlation is what lets Oppi attach stream playback controls to the right tool row.
+Use `toolCallId` as the live audio stream id. That correlation lets Oppi attach stream playback controls to the right tool row.
+
+## Audio playback behavior
+
+`playbackBehavior` is intentionally small:
+
+- `tapToPlay` — show a playable card
+- `playNow` — request immediate playback when the current session allows reply-controlled playback
+
+Notes:
+
+- default missing behavior to `tapToPlay`
+- manual mode suppresses autoplay even when a reply says `playNow`
+- keep the contract local-file/session-attachment based, not arbitrary remote URL playback
 
 ## What the voice extension adds
 
@@ -122,9 +135,9 @@ Default model lookup checks Qwen3-TTS snapshots under:
 If your paths are different, save them in Oppi config:
 
 ```bash
-oppi config set runtimeEnv.PI_VOICE_TTS_BIN /path/to/yuwp-tts
-oppi config set runtimeEnv.PI_VOICE_MODEL /path/to/qwen3-tts-model
-oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937
+oppi config set runtimeEnv.TTS_LOCAL_BIN /path/to/yuwp-tts
+oppi config set runtimeEnv.TTS_LOCAL_MODEL /path/to/qwen3-tts-model
+oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config validate
 ```
 
@@ -150,7 +163,7 @@ curl -sf http://127.0.0.1:7937/v1/info | jq .
 If you use a non-default URL, save it for Oppi server:
 
 ```bash
-oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937
+oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config validate
 ```
 
@@ -180,14 +193,14 @@ Use voice_speak to reply as a voice message.
 
 In **Settings → Voice → Voice Replies**:
 
-- **Tap to play** — voice replies default to playable cards.
-- **Autoplay** — voice replies default to speaking out loud immediately.
+- **Manual** — keep audio replies tap-to-play.
+- **Agent decides** — follow each reply's playback behavior.
 
-The agent can still change the behavior for the current session with `voice_reply_mode`, so a user can say things like “for this session, speak out loud” or “stop autoplaying in this chat.”
+The agent can still change the behavior for the current session with `voice_reply_mode`, so a user can say things like “keep this chat manual” or “for this session, let the agent decide.”
 
 ## Notes
 
 - Oppi only allows local TTS URLs by default.
-- To use a remote TTS URL, set `PI_VOICE_ALLOW_REMOTE=1` deliberately.
+- To use a remote TTS URL, set `TTS_ALLOW_REMOTE=1` deliberately.
 - Generated audio is saved under `~/Library/Application Support/Yuwp/Audio/pi-voice`.
 - TTS setup is per workspace because it is provided by the `voice` extension.

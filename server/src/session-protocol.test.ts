@@ -2518,7 +2518,7 @@ describe("translatePiEvent", () => {
       expect(ctx.streamingArgPreviews.has("preview-clear-1")).toBe(false);
     });
 
-    it("forwards generic voice presentation details on tool updates and avoids duplicate final transcript", () => {
+    it("forwards generic audio presentation details on tool updates and avoids duplicate final transcript", () => {
       const ctx = makeCtx();
       const text = "Hello from a custom TTS extension.";
 
@@ -2530,9 +2530,9 @@ describe("translatePiEvent", () => {
           partialResult: {
             content: [{ type: "text", text }],
             details: {
-              presentation: "voice",
-              message: text,
-              delivery: "directSpeak",
+              kind: "audio_presentation",
+              text,
+              playbackBehavior: "playNow",
             },
           },
         } as AgentSessionEvent,
@@ -2545,9 +2545,9 @@ describe("translatePiEvent", () => {
         output: text,
         toolCallId: "voice-generic-1",
         details: {
-          presentation: "voice",
-          message: text,
-          delivery: "directSpeak",
+          kind: "audio_presentation",
+          text,
+          playbackBehavior: "playNow",
         },
       });
 
@@ -2559,8 +2559,9 @@ describe("translatePiEvent", () => {
           result: {
             content: [{ type: "text", text }],
             details: {
-              presentation: "voice",
-              message: text,
+              kind: "audio_presentation",
+              text,
+              playbackBehavior: "tapToPlay",
               audio: { kind: "audio", mimeType: "audio/wav", id: "att-1" },
             },
           },
@@ -2573,7 +2574,7 @@ describe("translatePiEvent", () => {
       expect(execEnd[0]!.type).toBe("tool_end");
     });
 
-    it("emits a details-only tool output for generic voice presentation updates without text", () => {
+    it("emits a details-only tool output for generic audio presentation updates without content text", () => {
       const ctx = makeCtx();
       const result = translatePiEvent(
         {
@@ -2582,9 +2583,9 @@ describe("translatePiEvent", () => {
           toolName: "example_tts_speak",
           partialResult: {
             details: {
-              presentation: "voice",
-              message: "Tap stop if you want to interrupt playback.",
-              delivery: "directSpeak",
+              kind: "audio_presentation",
+              text: "Tap stop if you want to interrupt playback.",
+              playbackBehavior: "playNow",
             },
           },
         } as AgentSessionEvent,
@@ -2597,9 +2598,9 @@ describe("translatePiEvent", () => {
           output: "Tap stop if you want to interrupt playback.",
           toolCallId: "voice-generic-2",
           details: {
-            presentation: "voice",
-            message: "Tap stop if you want to interrupt playback.",
-            delivery: "directSpeak",
+            kind: "audio_presentation",
+            text: "Tap stop if you want to interrupt playback.",
+            playbackBehavior: "playNow",
           },
         },
       ]);

@@ -389,7 +389,7 @@ export class SessionAgentEventCoordinator {
       text: event.text,
       durationSeconds: event.durationSeconds,
       metrics: event.metrics,
-      delivery: event.delivery,
+      playbackBehavior: event.playbackBehavior,
     });
   }
 }

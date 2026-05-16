@@ -160,8 +160,8 @@ describe("oppi config", () => {
   });
 
   it("config set supports dynamic runtimeEnv keys", () => {
-    run(["config", "set", "runtimeEnv.PI_VOICE_TTS_URL", "http://127.0.0.1:7937"]);
-    const { stdout } = run(["config", "get", "runtimeEnv.PI_VOICE_TTS_URL"]);
+    run(["config", "set", "runtimeEnv.TTS_BASE_URL", "http://127.0.0.1:7937"]);
+    const { stdout } = run(["config", "get", "runtimeEnv.TTS_BASE_URL"]);
     expect(stdout.trim()).toBe("http://127.0.0.1:7937");
   });
 

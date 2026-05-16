@@ -1513,7 +1513,7 @@ function cmdHelp(): void {
   );
   console.log(`    ${c.dim("oppi config set port 8080")}`);
   console.log(`    ${c.dim("oppi config set asr.sttEndpoint http://127.0.0.1:7936")}`);
-  console.log(`    ${c.dim("oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937")}`);
+  console.log(`    ${c.dim("oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937")}`);
   console.log(`    ${c.dim('oppi config set tls \'{"mode":"self-signed"}\'')}`);
   console.log("");
 }

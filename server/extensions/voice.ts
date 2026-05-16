@@ -6,16 +6,12 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import type {
-  TTSAudioStreamEvent,
-  TTSToolVoiceDetails,
+  AudioPlaybackBehavior,
+  AudioPresentation,
+  AudioStreamUpdate,
   TTSProviderInfo,
-  TTSVoiceReplyDelivery,
 } from "../src/tts-provider.js";
-import {
-  createTTSAudioStreamEmitter,
-  createTTSToolVoiceDetails,
-  createTTSVoicePresentationDetails,
-} from "../src/tts-provider.js";
+import { createAudioStreamEmitter } from "../src/tts-provider.js";
 import type { Storage } from "../src/storage.js";
 
 const DEFAULT_TTS_URL = "http://127.0.0.1:7937";
@@ -52,7 +48,7 @@ const VOICE_DESIGN_REPOS = [
   "models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice",
 ];
 
-type VoiceDeliveryMode = TTSVoiceReplyDelivery;
+type VoiceDeliveryMode = "voiceMessage" | "directSpeak";
 
 const YUWP_PROVIDER = {
   id: "yuwp",
@@ -87,7 +83,7 @@ type VoicePreferencesRecord = {
 
 type SessionVoiceReplyMode = "manual" | "autoplay" | "default";
 
-type AudioDetails = TTSToolVoiceDetails["audio"] & {
+type AudioDetails = AudioPresentation["audio"] & {
   mimeType: "audio/wav";
   path: string;
   fileName: string;
@@ -99,18 +95,18 @@ type VoiceToolDetails = {
   voice?: VoiceRecord;
   voices?: VoiceRecord[];
   audio?: AudioDetails;
-  message?: string;
-  delivery?: VoiceDeliveryMode;
-  presentation?: TTSToolVoiceDetails["presentation"];
-  provider?: TTSToolVoiceDetails["provider"];
+  text?: string;
+  playbackBehavior?: AudioPlaybackBehavior;
+  provider?: TTSProviderInfo;
   preferences?: VoicePreferencesRecord;
 };
 
-type VoiceSpeakToolDetails = TTSToolVoiceDetails & {
+type VoiceSpeakToolDetails = AudioPresentation & {
   serverUrl: string;
   audio: AudioDetails;
   played?: boolean;
   preferences?: VoicePreferencesRecord;
+  provider?: TTSProviderInfo;
 };
 
 type SpeechResult = {
@@ -306,7 +302,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         "When the user asks for a voice reply without specifying playback behavior, default delivery to directSpeak.",
         "If the user explicitly wants a tap-to-play voice card instead, set delivery to voiceMessage.",
         "If the user asks to change how this session handles voice replies going forward, use voice_reply_mode instead of repeating delivery hints manually.",
-        "If the user asks to turn voice replies on for the session without choosing a mode, prefer voice_reply_mode with mode='autoplay'. Ask only when the tradeoff matters and they seem undecided.",
+        "If the user asks to let the agent decide whether future voice replies should play immediately or stay tap-to-play in this session, prefer voice_reply_mode with mode='autoplay'.",
         "Use voice_speak for direct spoken replies, not written mini-essays read aloud.",
         "When already speaking in a voice during the session, keep using that same voice unless the user asks to switch.",
         "For voice_speak, write for the ear: shorter sentences, simpler joins, fewer stacked clauses, and fewer abstractions.",
@@ -357,17 +353,18 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
             );
           onUpdate?.({
             content: [{ type: "text", text: spokenText }],
-            details: createTTSVoicePresentationDetails({
-              message: spokenText,
-              delivery,
+            details: {
+              kind: "audio_presentation",
+              text: spokenText,
+              playbackBehavior: audioPlaybackBehaviorForDelivery(delivery),
               provider: {
                 ...YUWP_PROVIDER,
                 model: "yuwp-tts",
                 voiceId: voice,
                 sourceMimeType: "audio/wav",
               },
-              extra: { status: "speaking" },
-            }),
+              status: "speaking",
+            },
           });
           const serverUrl = await ensureYuwpTTSServer();
           const outPath = params.out
@@ -384,11 +381,19 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
             temperature: params.temperature,
             streaming_interval: DEFAULT_STREAMING_INTERVAL,
           };
-          const audioStream = createTTSAudioStreamEmitter({
+          const playbackBehavior = audioPlaybackBehaviorForDelivery(delivery);
+          const rawAudioStream = createAudioStreamEmitter({
             ui: ctx?.ui,
-            toolCallId: _toolCallId,
-            delivery,
+            streamId: _toolCallId,
           });
+          const audioStream = rawAudioStream
+            ? (event: AudioStreamUpdate) => {
+                rawAudioStream({
+                  ...event,
+                  playbackBehavior: event.playbackBehavior ?? playbackBehavior,
+                });
+              }
+            : undefined;
           const result = stream
             ? await streamSpeechToWav(serverUrl, speechRequest, outPath, audioStream)
             : await fullSpeechToWav(serverUrl, speechRequest, outPath);
@@ -400,22 +405,21 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           if (streamedDirectSpeakToOppi) {
             played = true;
           }
-          const details: VoiceSpeakToolDetails = createTTSToolVoiceDetails({
-            message: spokenText,
-            delivery,
+          const details: VoiceSpeakToolDetails = {
+            kind: "audio_presentation",
+            audio,
+            text: spokenText,
+            playbackBehavior,
+            serverUrl,
+            played,
+            preferences: readVoicePreferences(storage),
             provider: {
               ...YUWP_PROVIDER,
               model: speechRequest.model,
               voiceId: voice,
               sourceMimeType: audio.mimeType,
             },
-            audio,
-            extra: {
-              serverUrl,
-              played,
-              preferences: readVoicePreferences(storage),
-            },
-          });
+          };
           return {
             content: [{ type: "text" as const, text: spokenText }],
             details,
@@ -431,7 +435,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           : "";
         const lines = [
           theme.fg("success", `✓ Voice message${duration}`),
-          theme.fg("muted", `“${details.message ?? ""}”`),
+          theme.fg("muted", `“${details.text ?? ""}”`),
         ];
         if (details.played) lines.push(theme.fg("success", "Delivered immediately"));
         return new Text(lines.join("\n"), 0, 0);
@@ -442,12 +446,12 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
       name: "voice_reply_mode",
       label: "Session Voice Reply Mode",
       description:
-        "Set or clear the current Oppi session's default voice reply behavior so future voice replies autoplay or stay tap-to-play for this session.",
-      promptSnippet: "Set the current session's default voice reply behavior",
+        "Set or clear the current Oppi session's voice reply mode so replies stay manual or follow each reply's playback behavior for this session.",
+      promptSnippet: "Set the current session's voice reply mode",
       promptGuidelines: [
-        "Use voice_reply_mode when the user asks the agent to keep speaking out loud or to stop autoplaying for the rest of this session.",
-        "Use mode='autoplay' to make future voice replies speak out loud by default in this session. This is the preferred default when the user wants voice replies but does not pick a mode.",
-        "Use mode='manual' to make future voice replies stay tap-to-play by default in this session.",
+        "Use voice_reply_mode when the user asks to keep voice replies manual or to let the agent decide playback behavior for the rest of this session.",
+        "Use mode='autoplay' to let future voice replies in this session follow each reply's playback behavior.",
+        "Use mode='manual' to keep future voice replies tap-to-play in this session.",
         "Use mode='default' to clear the session override and fall back to the global app setting.",
       ],
       parameters: Type.Object({
@@ -455,7 +459,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
           [Type.Literal("manual"), Type.Literal("autoplay"), Type.Literal("default")],
           {
             description:
-              "Session-scoped default for Oppi voice replies. manual keeps replies tap-to-play by default, autoplay speaks them out loud by default, default clears the session override.",
+              "Session-scoped voice reply mode. manual keeps replies tap-to-play in this session, autoplay follows each reply's playback behavior in this session, default clears the session override.",
           },
         ),
       }),
@@ -463,9 +467,9 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         const mode = params.mode as SessionVoiceReplyMode;
         const message =
           mode === "autoplay"
-            ? "This session will autoplay voice replies by default."
+            ? "This session will let each voice reply decide whether to play now or stay tap-to-play."
             : mode === "manual"
-              ? "This session will keep voice replies tap-to-play by default."
+              ? "This session will keep voice replies tap-to-play."
               : "This session will follow the global voice reply setting again.";
         return {
           content: [{ type: "text" as const, text: message }],
@@ -623,7 +627,7 @@ async function enqueue<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function ensureYuwpTTSServer(): Promise<string> {
-  const serverUrl = process.env.PI_VOICE_TTS_URL ?? process.env.YUWP_TTS_URL ?? DEFAULT_TTS_URL;
+  const serverUrl = process.env.TTS_BASE_URL ?? DEFAULT_TTS_URL;
   assertLocalURL(serverUrl);
   if (await serverReady(serverUrl)) return serverUrl;
   await startServer(serverUrl);
@@ -642,6 +646,12 @@ function resolveVoiceId(voice: string | undefined, storage?: Storage): string {
 
 export function normalizeVoiceDelivery(value: unknown): VoiceDeliveryMode | undefined {
   return value === "voiceMessage" || value === "directSpeak" ? value : undefined;
+}
+
+function audioPlaybackBehaviorForDelivery(
+  delivery: VoiceDeliveryMode | undefined,
+): AudioPlaybackBehavior {
+  return delivery === "directSpeak" ? "playNow" : "tapToPlay";
 }
 
 export function readVoicePreferences(storage?: Storage): VoicePreferencesRecord {
@@ -685,10 +695,10 @@ async function assertSavedVoiceExists(serverUrl: string, voiceId: string): Promi
 }
 
 function assertLocalURL(raw: string): void {
-  if (process.env.PI_VOICE_ALLOW_REMOTE === "1") return;
+  if (process.env.TTS_ALLOW_REMOTE === "1") return;
   const url = new URL(raw);
   if (!["127.0.0.1", "localhost", "::1"].includes(url.hostname)) {
-    throw new Error(`Refusing non-local Yuwp TTS URL without PI_VOICE_ALLOW_REMOTE=1: ${raw}`);
+    throw new Error(`Refusing non-local Yuwp TTS URL without TTS_ALLOW_REMOTE=1: ${raw}`);
   }
 }
 
@@ -705,12 +715,14 @@ async function serverReady(serverUrl: string): Promise<boolean> {
 
 async function startServer(serverUrl: string): Promise<void> {
   if (serverProcess) return;
-  const binary = process.env.PI_VOICE_TTS_BIN ?? findYuwpTTSBinary();
-  const model = process.env.PI_VOICE_MODEL ?? process.env.PI_SPEECH_MODEL ?? findModelPath();
+  const binary = process.env.TTS_LOCAL_BIN ?? findYuwpTTSBinary();
+  const model = process.env.TTS_LOCAL_MODEL ?? process.env.PI_SPEECH_MODEL ?? findModelPath();
   if (!binary)
-    throw new Error("Could not find yuwp-tts binary. Build Yuwp TTS or set PI_VOICE_TTS_BIN.");
+    throw new Error("Could not find yuwp-tts binary. Build Yuwp TTS or set TTS_LOCAL_BIN.");
   if (!model)
-    throw new Error("Could not find Qwen3-TTS model. Set PI_VOICE_MODEL to a local snapshot path.");
+    throw new Error(
+      "Could not find Qwen3-TTS model. Set TTS_LOCAL_MODEL to a local snapshot path.",
+    );
   const url = new URL(serverUrl);
   const port = url.port || "7937";
   const host = url.hostname === "localhost" ? "127.0.0.1" : url.hostname;
@@ -843,7 +855,7 @@ async function streamSpeechToWav(
   serverUrl: string,
   body: SpeechRequest,
   outPath: string,
-  onAudioStream?: (event: Omit<TTSAudioStreamEvent, "id" | "delivery">) => void,
+  onAudioStream?: (event: AudioStreamUpdate) => void,
 ): Promise<SpeechResult> {
   const response = await fetch(new URL("/v1/audio/speech/stream", serverUrl), {
     method: "POST",

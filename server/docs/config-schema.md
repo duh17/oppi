@@ -305,7 +305,7 @@ Examples:
 ```bash
 oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
-oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937
+oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config set extensions.voice.defaultVoiceId warm-technical-teammate
 oppi config validate
 ```
