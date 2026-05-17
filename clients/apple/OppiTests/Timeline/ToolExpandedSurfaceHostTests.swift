@@ -51,6 +51,17 @@ struct ToolExpandedSurfaceHostTests {
         #expect(fitted.height >= 130)
     }
 
+    @Test func readMediaLandscapePhonePreviewDoesNotGrowToThreeScreensForSquareImages() {
+        let height = ImageViewportSizing.fittedHeight(
+            forWidth: 1_800,
+            heightToWidthRatio: 1,
+            surface: .primaryMedia,
+            screenHeight: 430
+        )
+
+        #expect(height <= 516, "Square read-tool images in landscape should stay near one screen tall; got \(height)")
+    }
+
     @Test func readMediaTallInlineImageUsesNaturalAspectHeight() async throws {
         let preview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 900))

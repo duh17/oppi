@@ -37,7 +37,7 @@ enum ImageViewportSizing {
     static let defaultPlaceholderHeight: CGFloat = 160
     static let maxPrimaryTimelineHeight: CGFloat = 10_000
     private static let maxScreenFraction: CGFloat = 0.66
-    private static let maxPrimaryScreenMultiplier: CGFloat = 3.0
+    private static let maxPrimaryScreenMultiplier: CGFloat = 1.2
     private static let minimumValidHeightToWidthRatio: CGFloat = 1.0 / 50.0
     private static let maximumValidHeightToWidthRatio: CGFloat = 50.0
 
