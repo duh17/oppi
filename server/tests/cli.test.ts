@@ -39,6 +39,24 @@ function run(
   }
 }
 
+function runBin(
+  args: string[],
+  env?: Record<string, string>,
+  timeoutMs = 5000,
+): { stdout: string; exitCode: number } {
+  try {
+    const stdout = execFileSync(CLI, args, {
+      encoding: "utf-8",
+      env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+      timeout: timeoutMs,
+    });
+    return { stdout, exitCode: 0 };
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; status?: number };
+    return { stdout: e.stdout ?? "", exitCode: e.status ?? 1 };
+  }
+}
+
 async function getFreePort(): Promise<number> {
   return await new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -63,10 +81,7 @@ async function getFreePort(): Promise<number> {
 
 beforeAll(() => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-test-"));
-  // Build if not already built
-  try {
-    execSync("npm run build", { cwd: resolve(__dirname, ".."), stdio: "pipe" });
-  } catch {}
+  execSync("npm run build", { cwd: resolve(__dirname, ".."), stdio: "pipe" });
 }, 30_000);
 
 afterAll(() => {
@@ -99,6 +114,12 @@ describe("oppi help", () => {
 
   it("prints usage with no args", () => {
     const { stdout, exitCode } = run([]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("serve");
+  });
+
+  it("executes the built bin target directly", () => {
+    const { stdout, exitCode } = runBin(["--help"]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("serve");
   });
@@ -441,7 +462,13 @@ describe("oppi serve (first-run tls bootstrap)", () => {
       expect(beforeTls.mode).toBe("disabled");
 
       // `serve` is long-running; use a short timeout to trigger startup path.
-      run(["serve"], { OPPI_DATA_DIR: serveDir }, 1_500);
+      const { stdout: serveStdout } = run(["serve"], { OPPI_DATA_DIR: serveDir }, 2_500);
+
+      const strippedServe = serveStdout.replace(/\x1b\[[0-9;]*m/g, "");
+      expect(strippedServe).toContain("Scan this QR code in Oppi:");
+      expect(strippedServe).toContain("oppi://connect?");
+      expect(strippedServe).not.toContain("✓ Paired");
+      expect(strippedServe).not.toContain("Waiting for connections...");
 
       const { stdout: afterTlsJson, exitCode: afterExitCode } = run(["config", "get", "tls"], {
         OPPI_DATA_DIR: serveDir,

@@ -160,8 +160,10 @@ function shortHostLabel(host: string): string {
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   printHeader();
 
+  const wasPaired = storage.isPaired();
+
   // Auto-init: generate owner token + identity keys if this is a fresh install.
-  if (!storage.isPaired()) {
+  if (!wasPaired) {
     const currentTlsMode = storage.getConfig().tls?.mode ?? "disabled";
     if (currentTlsMode === "disabled") {
       storage.updateConfig({ tls: { mode: "self-signed" } });
@@ -247,7 +249,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
 
-  if (storage.isPaired()) {
+  if (wasPaired) {
     console.log(c.green("  ✓ Paired"));
     console.log("");
     console.log(c.green("  Waiting for connections..."));
@@ -303,20 +305,8 @@ function showPairingQR(
   console.log("  Scan this QR code in Oppi:");
   console.log("");
 
-  // Reconstruct v3 JSON for QR encoding (generateInvite returns the URL, we need raw JSON for QR)
-  const invitePayloadJson = JSON.stringify({
-    v: 3,
-    host: invite.host,
-    port: invite.port,
-    scheme: invite.scheme,
-    token: "",
-    pairingToken: invite.pairingToken,
-    name: invite.name,
-    tlsCertFingerprint: invite.tlsCertFingerprint,
-    fingerprint: invite.fingerprint,
-  });
-
-  const qr = renderQR(invitePayloadJson);
+  // Render the same signed deep link that we print below so scan + share paths match.
+  const qr = renderQR(invite.inviteURL);
   console.log(
     qr
       .split("\n")
@@ -1138,54 +1128,62 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
     console.log("");
 
     const result = installService(dataDir);
-    if (result.ok) {
-      console.log(c.green(`  \u2713 ${result.message}`));
-      if (result.runtimePath) {
-        console.log(c.dim(`    Runtime: ${result.runtimePath}`));
-      }
-      if (result.cliPath) {
-        console.log(c.dim(`    CLI:     ${result.cliPath}`));
-      }
-      console.log("");
-      console.log(c.dim("  The server will start automatically on login."));
-      console.log(c.dim("  It will restart if it crashes."));
-      console.log(c.dim("  The Mac app will detect and attach to it."));
-    } else {
+    if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
+      console.log("");
+      process.exit(1);
     }
+
+    console.log(c.green(`  \u2713 ${result.message}`));
+    if (result.runtimePath) {
+      console.log(c.dim(`    Runtime: ${result.runtimePath}`));
+    }
+    if (result.cliPath) {
+      console.log(c.dim(`    CLI:     ${result.cliPath}`));
+    }
+    console.log("");
+    console.log(c.dim("  The server will start automatically on login."));
+    console.log(c.dim("  It will restart if it crashes."));
+    console.log(c.dim("  The Mac app will detect and attach to it."));
     console.log("");
     return;
   }
 
   if (mode === "uninstall") {
     const result = uninstallService();
-    if (result.ok) {
-      console.log(c.green(`  \u2713 ${result.message}`));
-    } else {
+    if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
+      console.log("");
+      process.exit(1);
     }
+
+    console.log(c.green(`  \u2713 ${result.message}`));
     console.log("");
     return;
   }
 
   if (mode === "restart") {
     const result = restartService();
-    if (result.ok) {
-      console.log(c.green(`  \u2713 ${result.message}`));
-    } else {
+    if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
+      console.log("");
+      process.exit(1);
     }
+
+    console.log(c.green(`  \u2713 ${result.message}`));
     console.log("");
     return;
   }
 
   if (mode === "stop") {
     const result = stopService();
-    if (result.ok) {
-      console.log(c.green(`  \u2713 ${result.message}`));
-    } else {
+    if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
+      console.log("");
+      process.exit(1);
     }
+
+    console.log(c.green(`  \u2713 ${result.message}`));
     console.log("");
     return;
   }

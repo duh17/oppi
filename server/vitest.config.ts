@@ -6,11 +6,12 @@ export default defineConfig({
     exclude: ["dist/**", "node_modules/**", "e2e/**"],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.ts"],
+      include: ["src/**/*.ts", "extensions/**/*.ts"],
       exclude: [
         "src/cli.ts", // CLI entry point — not unit-testable
         "src/server-metric-registry.ts", // const registry + types — no logic to test
         "src/routes/types.ts", // type-only exports — no runtime code
+        "extensions/**/*.test.ts",
       ],
       reporter: ["text", "json-summary"],
       reportsDirectory: "coverage",

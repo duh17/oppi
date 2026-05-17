@@ -140,16 +140,31 @@ describe.skipIf(!hasZbar)("QR encoder conformance (zbar)", () => {
     expect(zbarDecode(encode(data))).toBe(data);
   });
 
-  it("decodes realistic invite JSON (unsigned v3)", () => {
-    const invite = JSON.stringify({
-      v: 3,
-      host: "my-server.tail12345.ts.net",
-      port: 7749,
-      token: "",
-      pairingToken: "pt_testtoken1234567890",
-      name: "my-server",
-      fingerprint: "sha256:rHLwUOOWstvDHskxjWWWY2EQxQnouizidfxV7r3EWPw",
-    });
+  it("decodes realistic signed invite deep link", () => {
+    const signedPayload = Buffer.from(
+      JSON.stringify({
+        v: 3,
+        host: "my-server.tail12345.ts.net",
+        port: 7749,
+        scheme: "https",
+        token: "",
+        pairingToken: "pt_testtoken1234567890",
+        name: "my-server",
+        tlsCertFingerprint: "sha256:test-leaf",
+        fingerprint: "sha256:rHLwUOOWstvDHskxjWWWY2EQxQnouizidfxV7r3EWPw",
+      }),
+      "utf-8",
+    ).toString("base64url");
+    const envelope = Buffer.from(
+      JSON.stringify({
+        v: 3,
+        signedPayload,
+        publicKey: "test-public-key",
+        signature: "test-signature",
+      }),
+      "utf-8",
+    ).toString("base64url");
+    const invite = `oppi://connect?v=3&invite=${envelope}`;
     expect(zbarDecode(encode(invite))).toBe(invite);
   });
 
