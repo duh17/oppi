@@ -126,6 +126,121 @@ struct ToolExpandedSurfaceHostTests {
         #expect(abs(fitted.height - expectedHeight) < 2)
     }
 
+    @Test func readMediaImageAttachmentHidesReadToolBoilerplate() async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "att-generated-image",
+            mimeType: "image/png",
+            fileName: "generated.png",
+            sizeBytes: imageData.count,
+            width: 120,
+            height: 80
+        )
+        let view = NativeExpandedReadMediaView()
+        let filePath = "/tmp/generated.png"
+        view.apply(
+            output: "Read image file [image/png]",
+            isError: false,
+            filePath: filePath,
+            startLine: 1,
+            attachments: [attachment],
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: nil,
+            attachmentFetcher: { attachmentId in
+                #expect(attachmentId == "att-generated-image")
+                return imageData
+            }
+        )
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            return readMediaContentImageView(in: view) != nil
+        }
+        #expect(decoded)
+
+        let visibleLabelText = timelineAllLabels(in: view)
+            .filter { !$0.isHidden && $0.alpha > 0 }
+            .map(timelineRenderedText)
+            .filter { !$0.isEmpty }
+
+        #expect(!visibleLabelText.contains(filePath))
+        #expect(!visibleLabelText.contains("Read image file [image/png]"))
+        #expect(!visibleLabelText.contains("Image"))
+    }
+
+    @Test func readMediaImageAttachmentWithoutFetcherKeepsReadToolFallback() throws {
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "att-unavailable-image",
+            mimeType: "image/png",
+            fileName: "generated.png",
+            sizeBytes: 12_345,
+            width: 120,
+            height: 80
+        )
+        let view = NativeExpandedReadMediaView()
+        let filePath = "/tmp/generated.png"
+        view.apply(
+            output: "Read image file [image/png]",
+            isError: false,
+            filePath: filePath,
+            startLine: 1,
+            attachments: [attachment],
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: nil,
+            attachmentFetcher: nil
+        )
+
+        let visibleLabelText = timelineAllLabels(in: view)
+            .filter { !$0.isHidden && $0.alpha > 0 }
+            .map(timelineRenderedText)
+            .filter { !$0.isEmpty }
+
+        #expect(visibleLabelText.contains(filePath))
+        #expect(visibleLabelText.contains("Read image file [image/png]"))
+    }
+
+    @Test func readMediaAttachmentImageKeepsUsefulReadNotes() async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "att-resized-image",
+            mimeType: "image/png",
+            fileName: "generated.png",
+            sizeBytes: imageData.count,
+            width: 120,
+            height: 80
+        )
+        let view = NativeExpandedReadMediaView()
+        view.apply(
+            output: "Read image file [image/png]\n[Image: original 240x160, displayed at 120x80. Multiply coordinates by 2.00 to map to original image.]",
+            isError: false,
+            filePath: "/tmp/generated.png",
+            startLine: 1,
+            attachments: [attachment],
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: nil,
+            attachmentFetcher: { _ in imageData }
+        )
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            return readMediaContentImageView(in: view) != nil
+        }
+        #expect(decoded)
+
+        let visibleLabelText = timelineAllLabels(in: view)
+            .filter { !$0.isHidden && $0.alpha > 0 }
+            .map(timelineRenderedText)
+            .filter { !$0.isEmpty }
+
+        #expect(!visibleLabelText.contains("Read image file [image/png]"))
+        #expect(visibleLabelText.contains { $0.contains("original 240x160") })
+    }
+
     @Test func readMediaAttachmentImageRetriesWhenFetcherBecomesAvailable() async throws {
         let imageData = try #require(makeTallReadToolTestImage().pngData())
         let attachment = ToolPresentationBuilder.ToolMediaAttachment(

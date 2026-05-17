@@ -80,6 +80,14 @@ final class NativeExpandedReadMediaView: UIView {
             displayText = ""
         }
 
+        let imageAttachments = attachments.filter { $0.kind == "image" }
+        let hasRenderableImageAttachment = attachmentFetcher != nil && !imageAttachments.isEmpty
+        let hasRenderedImage = !displayImages.isEmpty || hasRenderableImageAttachment
+        let hasImageReadBoilerplate = NativeExpandedReadMediaParser.containsImageReadBoilerplate(displayText)
+        if hasRenderedImage {
+            displayText = NativeExpandedReadMediaParser.removingRedundantImageReadBoilerplate(from: displayText)
+        }
+
         let isVoiceMessage = filePath == "Voice message"
         if isVoiceMessage, let clip = parsed.audio.first {
             let row = NativeAudioMessageView()
@@ -98,7 +106,7 @@ final class NativeExpandedReadMediaView: UIView {
             return
         }
 
-        if let filePath, !filePath.isEmpty {
+        if let filePath, !filePath.isEmpty, !(hasRenderedImage && hasImageReadBoilerplate) {
             let pathLabel = UILabel()
             pathLabel.font = ToolFont.small
             pathLabel.textColor = UIColor(palette.comment)
@@ -117,7 +125,6 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
         }
 
-        let imageAttachments = attachments.filter { $0.kind == "image" }
         let totalImageCount = displayImages.count + imageAttachments.count
         if totalImageCount > 0 {
             if totalImageCount > 1 || !displayText.isEmpty {
@@ -830,6 +837,19 @@ private struct NativeExpandedReadMediaParsed {
 }
 
 private enum NativeExpandedReadMediaParser {
+    static func containsImageReadBoilerplate(_ text: String) -> Bool {
+        text.components(separatedBy: .newlines).contains { line in
+            isImageReadBoilerplate(line)
+        }
+    }
+
+    static func removingRedundantImageReadBoilerplate(from text: String) -> String {
+        text.components(separatedBy: .newlines)
+            .filter { line in !isImageReadBoilerplate(line) }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func parse(_ output: String) -> NativeExpandedReadMediaParsed {
         let images = ImageExtractor.extract(from: output)
         let audio = AudioExtractor.extract(from: output)
@@ -852,5 +872,14 @@ private enum NativeExpandedReadMediaParser {
             images: images,
             audio: audio
         )
+    }
+
+    private static func isImageReadBoilerplate(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let prefix = "Read image file ["
+        guard trimmed.hasPrefix(prefix), trimmed.hasSuffix("]") else { return false }
+
+        let mimeType = trimmed.dropFirst(prefix.count).dropLast()
+        return mimeType.lowercased().hasPrefix("image/")
     }
 }
