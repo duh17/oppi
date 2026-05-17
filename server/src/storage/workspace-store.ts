@@ -51,6 +51,15 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function normalizeHostMount(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function normalizeSandboxConfig(
   raw: unknown,
 ): { allowedHosts?: string[]; env?: Record<string, string> } | undefined {
@@ -107,7 +116,7 @@ export class WorkspaceStore {
       allowedExecutables: req.allowedExecutables,
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
-      hostMount: normalizeOptionalString(req.hostMount),
+      hostMount: normalizeHostMount(req.hostMount),
       defaultModel: normalizeOptionalString(req.defaultModel),
       tools: normalizeTools(req.tools),
       extensions: normalizeExtensions(req.extensions),
@@ -151,7 +160,7 @@ export class WorkspaceStore {
         : undefined,
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
-      hostMount: normalizeOptionalString(raw.hostMount),
+      hostMount: normalizeHostMount(raw.hostMount),
       defaultModel: normalizeOptionalString(raw.defaultModel),
       tools: normalizeTools(raw.tools as string[] | undefined),
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
@@ -227,7 +236,7 @@ export class WorkspaceStore {
     if (updates.systemPromptMode !== undefined)
       workspace.systemPromptMode = normalizeSystemPromptMode(updates.systemPromptMode);
     if (updates.hostMount !== undefined)
-      workspace.hostMount = normalizeOptionalString(updates.hostMount);
+      workspace.hostMount = normalizeHostMount(updates.hostMount);
     if (updates.defaultModel !== undefined)
       workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.tools !== undefined) workspace.tools = normalizeTools(updates.tools);

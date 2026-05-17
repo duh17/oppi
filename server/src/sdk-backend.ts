@@ -9,7 +9,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname, join } from "node:path";
 
 import {
   createAgentSession,
@@ -42,6 +42,7 @@ import {
 } from "./first-party-extension-runtime.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { SdkUiBridge, type ExtensionUIResponsePayload } from "./sdk-ui-bridge.js";
+import { hostMountValidationError, resolveHostPath } from "./host.js";
 import type { Session, Workspace } from "./types.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
@@ -96,12 +97,7 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
     return homedir();
   }
 
-  const expanded =
-    rawHostMount === "~" || rawHostMount.startsWith("~/")
-      ? rawHostMount.replace(/^~(?=\/|$)/, homedir())
-      : rawHostMount;
-
-  return resolve(expanded);
+  return resolveHostPath(rawHostMount);
 }
 
 export interface SdkBackendConfig {
@@ -183,6 +179,10 @@ export class SdkBackend {
     const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
     const initialCwd = resolveSdkSessionCwd(workspace);
+    const hostMountError = hostMountValidationError(workspace?.hostMount);
+    if (hostMountError) {
+      throw new Error(hostMountError);
+    }
     const agentDir = getAgentDir();
     const initialSessionManager = SdkBackend.createPiSessionManager(session, initialCwd);
 

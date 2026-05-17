@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import SwiftUI
+import UIKit
 @testable import Oppi
 
 /// Tests that WorkspaceHomeView's active/stopped counts
@@ -217,5 +219,135 @@ struct WorkspaceHomeRootCountTests {
 
         // Parent is active (busy), child is filtered out — only root checked
         #expect(hasErrorAttention(from: sessions) == false)
+    }
+}
+
+@Suite("Workspace Home Refresh", .serialized)
+@MainActor
+struct WorkspaceHomeRefreshTests {
+    @Test func returningToWorkspaceTabRefreshesHome() async {
+        let (coordinator, serverStore) = makeCoordinator()
+        let navigation = AppNavigation()
+        let counter = MessageCounter()
+        coordinator._onRefreshAllServersForTesting = {
+            Task { await counter.increment() }
+        }
+
+        let host = makeHost(
+            coordinator: coordinator,
+            serverStore: serverStore,
+            navigation: navigation
+        )
+        defer { host.teardown() }
+
+        let initialRefresh = await waitForTestCondition(timeoutMs: 500) {
+            await counter.count() == 1
+        }
+        #expect(initialRefresh)
+
+        navigation.selectedTab = .server
+        host.pump()
+        await Task.yield()
+
+        navigation.selectedTab = .workspaces
+        host.pump()
+
+        let refreshedOnReturn = await waitForTestCondition(timeoutMs: 500) {
+            await counter.count() == 2
+        }
+        #expect(refreshedOnReturn, "Expected WorkspaceHomeView to refresh when the Workspaces tab becomes active again")
+    }
+
+    @Test func poppingBackToWorkspaceHomeRefreshes() async {
+        let (coordinator, serverStore) = makeCoordinator()
+        let navigation = AppNavigation()
+        let counter = MessageCounter()
+        coordinator._onRefreshAllServersForTesting = {
+            Task { await counter.increment() }
+        }
+
+        let host = makeHost(
+            coordinator: coordinator,
+            serverStore: serverStore,
+            navigation: navigation
+        )
+        defer { host.teardown() }
+
+        let initialRefresh = await waitForTestCondition(timeoutMs: 500) {
+            await counter.count() == 1
+        }
+        #expect(initialRefresh)
+
+        navigation.workspacePath.append(
+            WorkspaceNavTarget(
+                serverId: "sha256:test-server",
+                workspace: makeTestWorkspace(id: "workspace-1")
+            )
+        )
+        host.pump()
+        await Task.yield()
+
+        navigation.workspacePath = NavigationPath()
+        host.pump()
+
+        let refreshedOnPop = await waitForTestCondition(timeoutMs: 500) {
+            await counter.count() == 2
+        }
+        #expect(refreshedOnPop, "Expected WorkspaceHomeView to refresh when navigation returns to the home list")
+    }
+
+    private func makeCoordinator() -> (ConnectionCoordinator, ServerStore) {
+        SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.pairedServerIdsKey)
+        UserDefaults.standard.removeObject(forKey: SharedConstants.pairedServerIdsKey)
+        KeychainService.deleteAllServers()
+
+        let store = ServerStore()
+        let coordinator = ConnectionCoordinator(serverStore: store)
+        return (coordinator, store)
+    }
+
+    private func makeHost(
+        coordinator: ConnectionCoordinator,
+        serverStore: ServerStore,
+        navigation: AppNavigation
+    ) -> WorkspaceHomeHostHarness {
+        let root = AnyView(
+            NavigationStack {
+                WorkspaceHomeView()
+            }
+            .environment(coordinator)
+            .environment(serverStore)
+            .environment(navigation)
+        )
+
+        let controller = UIHostingController(rootView: root)
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+
+        let window = UIWindow(frame: controller.view.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        return WorkspaceHomeHostHarness(controller: controller, window: window)
+    }
+}
+
+@MainActor
+private struct WorkspaceHomeHostHarness {
+    let controller: UIHostingController<AnyView>
+    let window: UIWindow
+
+    func pump() {
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+    }
+
+    func teardown() {
+        controller.rootView = AnyView(EmptyView())
+        pump()
+        window.isHidden = true
+        window.rootViewController = nil
     }
 }

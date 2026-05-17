@@ -40,7 +40,7 @@ struct WorkspaceHomeView: View {
     @State private var collapsedServerIds: Set<String> = []
     /// Guards against re-presenting the guided create after the user dismisses it.
     @State private var guidedCreateConsumed = false
-    /// Prevents re-running the full workspace/session refresh on every back navigation.
+    /// Tracks whether the initial task-driven refresh has already run for this view identity.
     @State private var hasPerformedInitialRefresh = false
 
     private var servers: [PairedServer] {
@@ -96,6 +96,14 @@ struct WorkspaceHomeView: View {
         .task {
             await refresh(force: false)
             triggerGuidedCreateIfNeeded()
+        }
+        .onChange(of: navigation.selectedTab) { _, selectedTab in
+            guard selectedTab == .workspaces else { return }
+            refreshIfWorkspaceHomeIsVisible()
+        }
+        .onChange(of: navigation.workspacePath.count) { oldCount, newCount in
+            guard oldCount > 0, newCount == 0 else { return }
+            refreshIfWorkspaceHomeIsVisible()
         }
         .onAppear {
             if !appLaunchMetricRecorded {
@@ -260,6 +268,15 @@ struct WorkspaceHomeView: View {
 
         // Unified path: coordinator handles single- and multi-server refresh.
         await coordinator.refreshAllServers()
+    }
+
+    private func refreshIfWorkspaceHomeIsVisible() {
+        guard navigation.selectedTab == .workspaces else { return }
+        guard navigation.workspacePath.count == 0 else { return }
+
+        Task { @MainActor in
+            await refresh(force: true)
+        }
     }
 
     // MARK: - Guided Workspace Creation

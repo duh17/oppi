@@ -87,6 +87,14 @@ describe("Storage.createWorkspace", () => {
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
   });
 
+  it("trims hostMount and treats blank values as unset", () => {
+    const ws = storage.createWorkspace(createReq({ hostMount: "  ~/workspace/oppi  " }));
+    expect(ws.hostMount).toBe("~/workspace/oppi");
+
+    const blank = storage.createWorkspace(createReq({ hostMount: "   " }));
+    expect(blank.hostMount).toBeUndefined();
+  });
+
   it("keeps explicit extension names as provided", () => {
     const ws = storage.createWorkspace(
       createReq({

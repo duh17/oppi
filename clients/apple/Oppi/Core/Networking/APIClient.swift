@@ -800,6 +800,46 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).directories
     }
 
+    /// Validate a manually entered host path.
+    func getHostPathStatus(path: String) async throws -> HostPathStatus {
+        let data = try await get(
+            url: makeURL(
+                pathSegments: ["host", "path", "status"],
+                queryItems: [URLQueryItem(name: "path", value: path)]
+            )
+        )
+        struct Response: Decodable { let status: HostPathStatus }
+        return try JSONDecoder().decode(Response.self, from: data).status
+    }
+
+    /// Complete a manually entered host path using host directory names.
+    func completeHostPath(prefix: String, limit: Int = 12) async throws -> [HostPathCompletion] {
+        let data = try await get(
+            url: makeURL(
+                pathSegments: ["host", "path", "completions"],
+                queryItems: [
+                    URLQueryItem(name: "prefix", value: prefix),
+                    URLQueryItem(name: "limit", value: String(limit)),
+                ]
+            )
+        )
+        struct Response: Decodable { let completions: [HostPathCompletion] }
+        return try JSONDecoder().decode(Response.self, from: data).completions
+    }
+
+    /// Create a host directory after explicit user confirmation.
+    func createHostPath(path: String) async throws -> HostPathCreateResult {
+        struct Body: Encodable {
+            let path: String
+            let confirmed: Bool
+        }
+        let data = try await post(
+            "/host/path/create",
+            body: Body(path: path, confirmed: true)
+        )
+        return try JSONDecoder().decode(HostPathCreateResult.self, from: data)
+    }
+
     /// Get full skill detail: metadata, SKILL.md content, and file tree.
     func getSkillDetail(name: String) async throws -> SkillDetail {
         let data = try await get("/skills/\(name)")

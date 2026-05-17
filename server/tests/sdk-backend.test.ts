@@ -1,9 +1,10 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
+import { hostMountValidationError } from "../src/host.js";
 import { resolveSdkSessionCwd, SdkBackend } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import type { AskQuestion, Session, Workspace } from "../src/types.js";
@@ -27,6 +28,39 @@ describe("resolveSdkSessionCwd", () => {
     const mount = resolvePath(homedir(), "workspace", "oppi");
     const workspace = { hostMount: mount } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(mount);
+  });
+});
+
+describe("hostMountValidationError", () => {
+  it("accepts an existing directory", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-hostmount-ok-"));
+    try {
+      expect(hostMountValidationError(cwd)).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing directory with recovery guidance", () => {
+    const missing = join(tmpdir(), `oppi-hostmount-missing-${Date.now()}`);
+    rmSync(missing, { recursive: true, force: true });
+
+    const message = hostMountValidationError(missing);
+
+    expect(message).toContain("Host working directory does not exist");
+    expect(message).toContain(missing);
+    expect(message).toContain("clear Host Working Directory for a blank workspace");
+  });
+
+  it("rejects a file path", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-hostmount-file-"));
+    const file = join(cwd, "not-a-directory");
+    writeFileSync(file, "x");
+    try {
+      expect(hostMountValidationError(file)).toContain("Host working directory is not a directory");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

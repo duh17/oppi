@@ -39,10 +39,17 @@ struct WorkspaceCreateView: View {
     // Form state (populated from project selection or manual entry)
     @State private var name = ""
     @State private var hostMount = ""
+    @State private var isHostMountFromProjectPicker = false
     @State private var description = ""
     @State private var icon = ""
     @State private var selectedSkills: Set<String> = []
     @State private var gitStatusEnabled = true
+    @State private var hostMountStatus: HostPathStatus?
+    @State private var hostMountValidationMessage: String?
+    @State private var isCheckingHostMount = false
+    @State private var isCreatingHostDirectory = false
+    @State private var hostPathPendingCreation: String?
+    @State private var hostMountCompletions: [HostPathCompletion] = []
     @State private var showAdvanced = false
     @State private var sandboxMode = false
     @State private var isCreating = false
@@ -80,11 +87,38 @@ struct WorkspaceCreateView: View {
         workspaceStore.skillsByServer[server.id] ?? []
     }
 
+    private var trimmedHostMount: String {
+        hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Whether the form is valid for submission.
     private var canCreate: Bool {
         if name.isEmpty { return false }
         if isCreating { return false }
+        if !trimmedHostMount.isEmpty {
+            guard let hostMountStatus, hostMountStatus.path == trimmedHostMount else { return false }
+            if !hostMountStatus.isValidWorkspaceDirectory { return false }
+        }
         return true
+    }
+
+    private var hostMountLookupKey: String {
+        "\(server.id)|\(isHostMountFromProjectPicker)|\(trimmedHostMount)"
+    }
+
+    private var skillNames: Set<String> {
+        Set(skills.map(\.name))
+    }
+
+    private var areAllSkillsSelected: Bool {
+        !skills.isEmpty && selectedSkills == skillNames
+    }
+
+    private var skillsSelectionSummary: String {
+        if skills.isEmpty { return "Loading skills…" }
+        if selectedSkills.isEmpty { return "No skills enabled" }
+        if areAllSkillsSelected { return "All skills enabled" }
+        return "\(selectedSkills.count) of \(skills.count) skills enabled"
     }
 
     var body: some View {
@@ -107,6 +141,26 @@ struct WorkspaceCreateView: View {
             }
             .task { await loadDirectories() }
             .task { await loadSkills() }
+            .task(id: hostMountLookupKey) {
+                await validateAndCompleteHostMount()
+            }
+            .confirmationDialog(
+                "Create folder on server?",
+                isPresented: Binding(
+                    get: { hostPathPendingCreation != nil },
+                    set: { if !$0 { hostPathPendingCreation = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Create Folder") {
+                    Task { await createHostDirectoryFromPendingPath() }
+                }
+                Button("Cancel", role: .cancel) {
+                    hostPathPendingCreation = nil
+                }
+            } message: {
+                Text("This creates one directory on \(server.name). For safety, Oppi only allows this under normal project roots like ~/workspace and requires the parent folder to already exist.")
+            }
         }
     }
 
@@ -119,7 +173,7 @@ struct WorkspaceCreateView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Create your first workspace")
                             .font(.headline)
-                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter a path manually, or start blank if you just want to explore the app.")
+                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter an existing path manually, or start blank if you just want to explore the app.")
                             .font(.subheadline)
                             .foregroundStyle(.themeComment)
                     }
@@ -149,7 +203,7 @@ struct WorkspaceCreateView: View {
                     Label(directoriesError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.themeOrange)
                     if isGuidedFirstWorkspace {
-                        Text("You can still enter a path manually or create a blank workspace to keep going.")
+                        Text("You can still enter an existing path manually or create a blank workspace that uses the server home folder.")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
@@ -157,7 +211,7 @@ struct WorkspaceCreateView: View {
                         selectManual()
                     }
                     if !sandboxMode {
-                        Button("Create blank workspace") {
+                        Button("Blank workspace (home folder)") {
                             selectBlank()
                         }
                     }
@@ -170,7 +224,7 @@ struct WorkspaceCreateView: View {
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                     if isGuidedFirstWorkspace {
-                        Text("That’s okay. Enter a path manually or create a blank workspace to see how Oppi works.")
+                        Text("That’s okay. Enter an existing path manually or create a blank workspace that uses the server home folder.")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
@@ -178,7 +232,7 @@ struct WorkspaceCreateView: View {
                         selectManual()
                     }
                     if !sandboxMode {
-                        Button("Create blank workspace") {
+                        Button("Blank workspace (home folder)") {
                             selectBlank()
                         }
                     }
@@ -201,7 +255,7 @@ struct WorkspaceCreateView: View {
                     }
                     if !sandboxMode {
                         Button { selectBlank() } label: {
-                            Label("Blank workspace (no project)", systemImage: "square.dashed")
+                            Label("Blank workspace (home folder)", systemImage: "house")
                         }
                         .foregroundStyle(.themeComment)
                     }
@@ -243,7 +297,7 @@ struct WorkspaceCreateView: View {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
 
-                if !hostMount.isEmpty {
+                if isHostMountFromProjectPicker {
                     HStack {
                         Text(hostMount)
                             .font(.system(.body, design: .monospaced))
@@ -255,10 +309,44 @@ struct WorkspaceCreateView: View {
                         .font(.caption)
                     }
                 } else {
-                    TextField("~/workspace/project (optional)", text: $hostMount)
+                    TextField("~/workspace/project (must exist)", text: $hostMount)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .font(.system(.body, design: .monospaced))
+
+                    Text(
+                        sandboxMode
+                            ? "Leave empty to let Oppi create a sandbox folder. If you enter a path, it must already exist on the server."
+                            : "Leave empty to use the server home folder. If you enter a path, it must already exist on the server; Oppi won’t create it automatically."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                }
+
+                hostMountValidationView
+
+                if !isHostMountFromProjectPicker && !hostMountCompletions.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Suggestions")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                        ForEach(hostMountCompletions) { completion in
+                            Button {
+                                applyHostMountCompletion(completion)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder")
+                                        .foregroundStyle(.themeComment)
+                                    Text(completion.path)
+                                        .font(.system(.caption, design: .monospaced))
+                                    Spacer(minLength: 8)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 2)
                 }
 
                 if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -269,7 +357,22 @@ struct WorkspaceCreateView: View {
             }
 
             // Skills
-            Section("Skills") {
+            Section {
+                HStack {
+                    Text(skillsSelectionSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(.themeComment)
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Button("All") { selectAllSkills() }
+                            .disabled(skills.isEmpty || areAllSkillsSelected)
+                        Button("Off") { clearAllSkills() }
+                            .disabled(skills.isEmpty || selectedSkills.isEmpty)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
                 if skills.isEmpty {
                     Text("Loading skills…")
                         .foregroundStyle(.themeComment)
@@ -284,6 +387,10 @@ struct WorkspaceCreateView: View {
                         )
                     }
                 }
+            } header: {
+                Text("Skills")
+            } footer: {
+                Text("Use All for the full skill catalog, or Off to start minimal and enable only what this workspace needs.")
             }
 
             // Options
@@ -336,28 +443,109 @@ struct WorkspaceCreateView: View {
         }
     }
 
+    @ViewBuilder
+    private var hostMountValidationView: some View {
+        if !trimmedHostMount.isEmpty {
+            if isCheckingHostMount {
+                Label("Checking path…", systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
+                      hostMountStatus.issue == "missing" {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Path doesn’t exist", systemImage: "folder.badge.plus")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+
+                    Button {
+                        hostPathPendingCreation = trimmedHostMount
+                    } label: {
+                        if isCreatingHostDirectory {
+                            ProgressView()
+                        } else {
+                            Label("Create this folder", systemImage: "plus")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isCreatingHostDirectory)
+                }
+            } else if let hostMountValidationMessage {
+                Label(hostMountValidationMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.themeRed)
+            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
+                      hostMountStatus.isValidWorkspaceDirectory {
+                Label("Path exists", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.themeGreen)
+            }
+        }
+    }
+
     // MARK: - Selection Actions
 
     private func selectProject(_ dir: HostDirectory) {
         name = dir.name
         hostMount = dir.path
+        isHostMountFromProjectPicker = true
+        hostMountStatus = HostPathStatus(
+            path: dir.path,
+            resolvedPath: dir.path,
+            exists: true,
+            isDirectory: true,
+            isFile: false,
+            issue: nil,
+            message: nil
+        )
+        hostMountValidationMessage = nil
+        hostPathPendingCreation = nil
+        hostMountCompletions = []
         gitStatusEnabled = dir.isGitRepo
         requestDefaultSkillSelectionIfNeeded()
         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
     private func selectManual() {
-        hostMount = ""
+        resetHostMountInput()
         requestDefaultSkillSelectionIfNeeded()
         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
     private func selectBlank() {
         name = ""
-        hostMount = ""
+        resetHostMountInput()
         gitStatusEnabled = false
         requestDefaultSkillSelectionIfNeeded()
         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
+    }
+
+    private func resetHostMountInput() {
+        hostMount = ""
+        isHostMountFromProjectPicker = false
+        hostMountStatus = nil
+        hostMountValidationMessage = nil
+        hostPathPendingCreation = nil
+        hostMountCompletions = []
+        isCheckingHostMount = false
+        isCreatingHostDirectory = false
+    }
+
+    private func applyHostMountCompletion(_ completion: HostPathCompletion) {
+        hostMount = completion.path
+        isHostMountFromProjectPicker = false
+        hostMountStatus = HostPathStatus(
+            path: completion.path,
+            resolvedPath: completion.path,
+            exists: true,
+            isDirectory: true,
+            isFile: false,
+            issue: nil,
+            message: nil
+        )
+        hostMountValidationMessage = nil
+        hostPathPendingCreation = nil
+        hostMountCompletions = []
     }
 
     private func requestDefaultSkillSelectionIfNeeded() {
@@ -368,7 +556,7 @@ struct WorkspaceCreateView: View {
             return
         }
 
-        selectedSkills = Set(skills.map(\.name))
+        selectedSkills = skillNames
         selectAllSkillsWhenLoaded = false
     }
 
@@ -381,7 +569,94 @@ struct WorkspaceCreateView: View {
         selectAllSkillsWhenLoaded = false
     }
 
+    private func selectAllSkills() {
+        selectedSkills = skillNames
+        selectAllSkillsWhenLoaded = skills.isEmpty
+    }
+
+    private func clearAllSkills() {
+        selectedSkills.removeAll()
+        selectAllSkillsWhenLoaded = false
+    }
+
     // MARK: - Data Loading
+
+    @MainActor
+    private func validateAndCompleteHostMount() async {
+        let current = trimmedHostMount
+        guard !current.isEmpty else {
+            hostMountStatus = nil
+            hostMountValidationMessage = nil
+            hostPathPendingCreation = nil
+            hostMountCompletions = []
+            isCheckingHostMount = false
+            return
+        }
+
+        guard let api = coordinator.apiClient(for: server.id) else {
+            hostMountStatus = nil
+            hostMountValidationMessage = "Cannot check path while the server is offline"
+            hostMountCompletions = []
+            isCheckingHostMount = false
+            return
+        }
+
+        isCheckingHostMount = true
+        hostMountValidationMessage = nil
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard current == trimmedHostMount else { return }
+
+        do {
+            let status = try await api.getHostPathStatus(path: current)
+            let completions = isHostMountFromProjectPicker
+                ? []
+                : try await api.completeHostPath(prefix: current, limit: 8)
+            guard current == trimmedHostMount else { return }
+            hostMountStatus = status
+            hostMountValidationMessage = status.isValidWorkspaceDirectory
+                ? nil
+                : status.userMessage
+            hostMountCompletions = completions.filter { $0.path != current }
+        } catch {
+            guard current == trimmedHostMount else { return }
+            hostMountStatus = nil
+            hostMountValidationMessage = "Could not check path: \(error.localizedDescription)"
+            hostMountCompletions = []
+        }
+
+        if current == trimmedHostMount {
+            isCheckingHostMount = false
+        }
+    }
+
+    @MainActor
+    private func createHostDirectoryFromPendingPath() async {
+        guard let path = hostPathPendingCreation else { return }
+        guard let api = coordinator.apiClient(for: server.id) else {
+            error = "Cannot connect to \(server.name)"
+            hostPathPendingCreation = nil
+            return
+        }
+
+        isCreatingHostDirectory = true
+        error = nil
+        defer {
+            isCreatingHostDirectory = false
+            hostPathPendingCreation = nil
+        }
+
+        do {
+            let result = try await api.createHostPath(path: path)
+            hostMount = result.status.path.isEmpty ? path : result.status.path
+            hostMountStatus = result.status
+            hostMountValidationMessage = result.status.isValidWorkspaceDirectory
+                ? nil
+                : result.status.userMessage
+            hostMountCompletions = []
+        } catch {
+            self.error = "Create folder failed: \(error.localizedDescription)"
+        }
+    }
 
     private func loadDirectories() async {
         guard let api = coordinator.apiClient(for: server.id) else {
@@ -407,7 +682,7 @@ struct WorkspaceCreateView: View {
                 workspaceStore.skillsByServer[server.id] = loadedSkills
 
                 if selectAllSkillsWhenLoaded && selectedSkills.isEmpty {
-                    selectedSkills = Set(loadedSkills.map(\.name))
+                    selectedSkills = skillNames
                     selectAllSkillsWhenLoaded = false
                 }
             } catch {
@@ -426,6 +701,15 @@ struct WorkspaceCreateView: View {
             return
         }
 
+        let trimmedHostMount = hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedHostMount.isEmpty {
+            guard let hostMountStatus, hostMountStatus.path == trimmedHostMount,
+                  hostMountStatus.isValidWorkspaceDirectory else {
+                error = hostMountValidationMessage ?? "Path doesn’t exist"
+                return
+            }
+        }
+
         isCreating = true
         error = nil
 
@@ -434,7 +718,7 @@ struct WorkspaceCreateView: View {
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills).sorted(),
-            hostMount: hostMount.isEmpty ? nil : hostMount,
+            hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,
             gitStatusEnabled: gitStatusEnabled,
             runtime: sandboxMode ? .sandbox : nil,
             sandboxConfig: sandboxMode ? SandboxConfig(allowedHosts: ["*"]) : nil
@@ -442,7 +726,8 @@ struct WorkspaceCreateView: View {
 
         do {
             let workspace = try await api.createWorkspace(request)
-            workspaceStore.upsert(workspace, serverId: server.id)
+            let targetConnection = coordinator.connection(for: server.id)
+            (targetConnection?.workspaceStore ?? workspaceStore).upsert(workspace, serverId: server.id)
             onCreate?(workspace)
             dismiss()
         } catch {

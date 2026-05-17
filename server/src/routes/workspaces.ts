@@ -20,6 +20,7 @@ import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
 import { ReviewCommentStoreError } from "../storage/review-comment-dao.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { hostMountValidationError } from "../host.js";
 import type {
   AttachReviewCommentsToTurnRequest,
   CreateReviewCommentRequest,
@@ -271,6 +272,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
+    const hostMountError = hostMountValidationError(body.hostMount);
+    if (hostMountError) {
+      helpers.error(res, 400, hostMountError);
+      return;
+    }
+
     const workspace = ctx.storage.createWorkspace(body);
     helpers.json(res, { workspace }, 201);
   }
@@ -335,6 +342,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
     if (systemPromptModeError) {
       helpers.error(res, 400, systemPromptModeError);
+      return;
+    }
+
+    const hostMountError = hostMountValidationError(body.hostMount);
+    if (hostMountError) {
+      helpers.error(res, 400, hostMountError);
       return;
     }
 

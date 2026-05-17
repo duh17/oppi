@@ -27,6 +27,11 @@ struct WorkspaceEditView: View {
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var gitStatusEnabled: Bool = true
+    @State private var hostMountStatus: HostPathStatus?
+    @State private var hostMountValidationMessage: String?
+    @State private var isCheckingHostMount = false
+    @State private var isCreatingHostDirectory = false
+    @State private var hostPathPendingCreation: String?
     @State private var extensionNames: String = ""
     @State private var availableExtensions: [ExtensionInfo] = []
     @State private var isLoadingExtensions = false
@@ -84,6 +89,23 @@ struct WorkspaceEditView: View {
 
     private var piExtensions: [ExtensionInfo] {
         availableExtensions.filter { !$0.isOppi }
+    }
+
+    private var trimmedHostMount: String {
+        hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSave: Bool {
+        if name.isEmpty || isSaving { return false }
+        if !trimmedHostMount.isEmpty {
+            guard let hostMountStatus, hostMountStatus.path == trimmedHostMount else { return false }
+            if !hostMountStatus.isValidWorkspaceDirectory { return false }
+        }
+        return true
+    }
+
+    private var hostMountLookupKey: String {
+        "\(workspace.id)|\(trimmedHostMount)"
     }
 
     private var systemPromptEditorSummary: String {
@@ -192,16 +214,16 @@ struct WorkspaceEditView: View {
             }
 
             Section("Host Working Directory") {
-                TextField("~/workspace/project", text: $hostMount)
+                TextField("~/workspace/project (must exist)", text: $hostMount)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
 
-                if !hostMount.isEmpty {
-                    Text("Host process current directory")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
+                Text("Leave empty to use the server home folder. If you enter a path, it must already exist on the server.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                hostMountValidationView
             }
             .selectionDisabled()
 
@@ -259,7 +281,7 @@ struct WorkspaceEditView: View {
                 Button("Save") {
                     Task { await save() }
                 }
-                .disabled(name.isEmpty || isSaving)
+                .disabled(!canSave)
             }
         }
         .navigationDestination(item: $selectedSkillDetail) { dest in
@@ -279,6 +301,66 @@ struct WorkspaceEditView: View {
         .task {
             await loadModels()
             await loadExtensions()
+        }
+        .task(id: hostMountLookupKey) {
+            await validateHostMount()
+        }
+        .confirmationDialog(
+            "Create folder on server?",
+            isPresented: Binding(
+                get: { hostPathPendingCreation != nil },
+                set: { if !$0 { hostPathPendingCreation = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Create Folder") {
+                Task { await createHostDirectoryFromPendingPath() }
+            }
+            Button("Cancel", role: .cancel) {
+                hostPathPendingCreation = nil
+            }
+        } message: {
+            Text("This creates one directory on the server. For safety, Oppi only allows this under normal project roots like ~/workspace and requires the parent folder to already exist.")
+        }
+    }
+
+    @ViewBuilder
+    private var hostMountValidationView: some View {
+        if !trimmedHostMount.isEmpty {
+            if isCheckingHostMount {
+                Label("Checking path…", systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
+                      hostMountStatus.issue == "missing" {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Path doesn’t exist", systemImage: "folder.badge.plus")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+
+                    Button {
+                        hostPathPendingCreation = trimmedHostMount
+                    } label: {
+                        if isCreatingHostDirectory {
+                            ProgressView()
+                        } else {
+                            Label("Create this folder", systemImage: "plus")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isCreatingHostDirectory)
+                }
+            } else if let hostMountValidationMessage {
+                Label(hostMountValidationMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.themeRed)
+            } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
+                      hostMountStatus.isValidWorkspaceDirectory {
+                Label("Path exists", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.themeGreen)
+            }
         }
     }
 
@@ -412,11 +494,85 @@ struct WorkspaceEditView: View {
         icon = source.icon ?? ""
         selectedSkills = Set(source.skills)
         hostMount = source.hostMount ?? ""
+        hostMountStatus = nil
+        hostMountValidationMessage = nil
+        hostPathPendingCreation = nil
+        isCheckingHostMount = false
+        isCreatingHostDirectory = false
         systemPrompt = source.systemPrompt ?? ""
         gitStatusEnabled = source.gitStatusEnabled ?? true
         setSelectedExtensionNames(source.extensions ?? [])
         runtime = source.runtime
         allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? "*"
+    }
+
+    @MainActor
+    private func validateHostMount() async {
+        let current = trimmedHostMount
+        guard !current.isEmpty else {
+            hostMountStatus = nil
+            hostMountValidationMessage = nil
+            hostPathPendingCreation = nil
+            isCheckingHostMount = false
+            return
+        }
+
+        guard let api = apiClient else {
+            hostMountStatus = nil
+            hostMountValidationMessage = "Cannot check path while the server is offline"
+            isCheckingHostMount = false
+            return
+        }
+
+        isCheckingHostMount = true
+        hostMountValidationMessage = nil
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard current == trimmedHostMount else { return }
+
+        do {
+            let status = try await api.getHostPathStatus(path: current)
+            guard current == trimmedHostMount else { return }
+            hostMountStatus = status
+            hostMountValidationMessage = status.isValidWorkspaceDirectory
+                ? nil
+                : status.userMessage
+        } catch {
+            guard current == trimmedHostMount else { return }
+            hostMountStatus = nil
+            hostMountValidationMessage = "Could not check path: \(error.localizedDescription)"
+        }
+
+        if current == trimmedHostMount {
+            isCheckingHostMount = false
+        }
+    }
+
+    @MainActor
+    private func createHostDirectoryFromPendingPath() async {
+        guard let path = hostPathPendingCreation else { return }
+        guard let api = apiClient else {
+            error = "Server is offline"
+            hostPathPendingCreation = nil
+            return
+        }
+
+        isCreatingHostDirectory = true
+        error = nil
+        defer {
+            isCreatingHostDirectory = false
+            hostPathPendingCreation = nil
+        }
+
+        do {
+            let result = try await api.createHostPath(path: path)
+            hostMount = result.status.path.isEmpty ? path : result.status.path
+            hostMountStatus = result.status
+            hostMountValidationMessage = result.status.isValidWorkspaceDirectory
+                ? nil
+                : result.status.userMessage
+        } catch {
+            self.error = "Create folder failed: \(error.localizedDescription)"
+        }
     }
 
     private func loadModels() async {
@@ -457,6 +613,15 @@ struct WorkspaceEditView: View {
     private func save() async {
         guard let api = apiClient else { return }
 
+        let trimmedHostMount = hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedHostMount.isEmpty {
+            guard let hostMountStatus, hostMountStatus.path == trimmedHostMount,
+                  hostMountStatus.isValidWorkspaceDirectory else {
+                error = hostMountValidationMessage ?? "Path doesn’t exist"
+                return
+            }
+        }
+
         isSaving = true
         error = nil
 
@@ -475,7 +640,7 @@ struct WorkspaceEditView: View {
             skills: validSelectedSkillNames(),
             systemPrompt: nullableJSONString(systemPrompt),
             systemPromptMode: .append,
-            hostMount: nullableJSONString(hostMount),
+            hostMount: nullableJSONString(trimmedHostMount),
             gitStatusEnabled: gitStatusEnabled,
             extensions: parseUniqueNames(extensionNames),
             sandboxConfig: sandboxConfigValue

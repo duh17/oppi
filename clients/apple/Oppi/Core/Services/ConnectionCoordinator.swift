@@ -43,6 +43,10 @@ final class ConnectionCoordinator {
     /// refresh races between WorkspaceHomeView `.task` and `reconnectOnLaunch`.
     private var refreshAllTask: Task<Void, Never>?
 
+    #if DEBUG
+    var _onRefreshAllServersForTesting: (() -> Void)?
+    #endif
+
     private let lanDiscovery = LANDiscovery()
 
     /// NWPathMonitor detects network interface changes (WiFi→cellular, LAN→Tailscale)
@@ -431,6 +435,9 @@ final class ConnectionCoordinator {
         }
 
         let task = Task { @MainActor in
+            #if DEBUG
+            _onRefreshAllServersForTesting?()
+            #endif
             await _refreshAllServersImpl()
         }
         refreshAllTask = task

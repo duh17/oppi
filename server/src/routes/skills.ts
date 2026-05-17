@@ -1,6 +1,13 @@
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { discoverProjects, scanDirectories } from "../host.js";
+import {
+  completeHostPath,
+  createHostWorkspaceDirectory,
+  discoverProjects,
+  getHostPathStatus,
+  HostPathCreateError,
+  scanDirectories,
+} from "../host.js";
 import { listConfiguredHostExtensions } from "../extension-loader.js";
 import { FIRST_PARTY_EXTENSION_NAMES } from "../../extensions/first-party.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -157,7 +164,57 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     helpers.json(res, { directories: dirs });
   }
 
-  return async ({ method, path, url, res }) => {
+  function handleGetHostPathStatus(url: URL, res: ServerResponse): void {
+    const path = url.searchParams.get("path")?.trim();
+    if (!path) {
+      helpers.json(res, {
+        status: {
+          path: "",
+          resolvedPath: "",
+          exists: false,
+          isDirectory: false,
+          isFile: false,
+          issue: "missing",
+          message: "Path required",
+        },
+      });
+      return;
+    }
+
+    helpers.json(res, { status: getHostPathStatus(path) });
+  }
+
+  function handleListHostPathCompletions(url: URL, res: ServerResponse): void {
+    const prefix = url.searchParams.get("prefix") ?? "";
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20;
+    helpers.json(res, { completions: completeHostPath(prefix, limit) });
+  }
+
+  async function handleCreateHostPath(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await helpers.parseBody<{ path?: unknown; confirmed?: unknown }>(req);
+    if (body.confirmed !== true) {
+      helpers.error(res, 400, "Directory creation requires explicit confirmation");
+      return;
+    }
+    if (typeof body.path !== "string" || body.path.trim().length === 0) {
+      helpers.error(res, 400, "path required");
+      return;
+    }
+
+    try {
+      const result = createHostWorkspaceDirectory(body.path);
+      helpers.json(res, result, result.created ? 201 : 200);
+    } catch (err: unknown) {
+      if (err instanceof HostPathCreateError) {
+        helpers.error(res, err.status, err.message);
+        return;
+      }
+      const message = err instanceof Error ? err.message : "Failed to create directory";
+      helpers.error(res, 500, message);
+    }
+  }
+
+  return async ({ method, path, url, req, res }) => {
     if (path === "/skills" && method === "GET") {
       handleListSkills(res);
       return true;
@@ -189,6 +246,21 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     // Host discovery
     if (path === "/host/directories" && method === "GET") {
       handleListDirectories(url, res);
+      return true;
+    }
+
+    if (path === "/host/path/status" && method === "GET") {
+      handleGetHostPathStatus(url, res);
+      return true;
+    }
+
+    if (path === "/host/path/completions" && method === "GET") {
+      handleListHostPathCompletions(url, res);
+      return true;
+    }
+
+    if (path === "/host/path/create" && method === "POST") {
+      await handleCreateHostPath(req, res);
       return true;
     }
 

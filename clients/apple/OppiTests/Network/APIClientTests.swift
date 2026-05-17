@@ -778,6 +778,63 @@ struct APIClientTests {
         #expect(extensions.isEmpty)
     }
 
+    @Test func getHostPathStatusUsesQueryString() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/host/path/status")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let path = components?.queryItems?.first(where: { $0.name == "path" })?.value
+            #expect(path == "~/workspace/new project")
+            return self.mockResponse(json: """
+            {"status":{"path":"~/workspace/new project","resolvedPath":"/Users/me/workspace/new project","exists":false,"isDirectory":false,"isFile":false,"issue":"missing","message":"Path does not exist"}}
+            """)
+        }
+
+        let status = try await client.getHostPathStatus(path: "~/workspace/new project")
+        #expect(status.issue == "missing")
+        #expect(status.userMessage == "Path doesn’t exist")
+    }
+
+    @Test func completeHostPathUsesPrefixQuery() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/host/path/completions")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            #expect(components?.queryItems?.first(where: { $0.name == "prefix" })?.value == "~/workspace/op")
+            #expect(components?.queryItems?.first(where: { $0.name == "limit" })?.value == "8")
+            return self.mockResponse(json: """
+            {"completions":[{"path":"~/workspace/oppi","name":"oppi"}]}
+            """)
+        }
+
+        let completions = try await client.completeHostPath(prefix: "~/workspace/op", limit: 8)
+        #expect(completions.map(\.path) == ["~/workspace/oppi"])
+    }
+
+    @Test func createHostPathPostsConfirmedBody() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/host/path/create")
+            let body = try! JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
+            #expect(body?["path"] as? String == "~/workspace/new-project")
+            #expect(body?["confirmed"] as? Bool == true)
+            return self.mockResponse(json: """
+            {"created":true,"status":{"path":"~/workspace/new-project","resolvedPath":"/Users/me/workspace/new-project","exists":true,"isDirectory":true,"isFile":false}}
+            """)
+        }
+
+        let result = try await client.createHostPath(path: "~/workspace/new-project")
+        #expect(result.created)
+        #expect(result.status.isValidWorkspaceDirectory)
+    }
+
     // MARK: - Files + Query Paths
 
     @Test func getSkillFileUsesQueryString() async throws {

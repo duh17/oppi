@@ -1,5 +1,47 @@
 import Foundation
 
+/// Status for a host path entered during workspace setup.
+struct HostPathStatus: Decodable, Sendable, Equatable {
+    let path: String
+    let resolvedPath: String
+    let exists: Bool
+    let isDirectory: Bool
+    let isFile: Bool
+    let issue: String?
+    let message: String?
+
+    var isValidWorkspaceDirectory: Bool {
+        exists && isDirectory && issue == nil
+    }
+
+    var userMessage: String {
+        switch issue {
+        case "missing":
+            return "Path doesn’t exist"
+        case "not_directory":
+            return "Path is not a directory"
+        case "inaccessible":
+            return "Path is not accessible"
+        default:
+            return message ?? "Path is not valid"
+        }
+    }
+}
+
+/// Result from explicit host folder creation.
+struct HostPathCreateResult: Decodable, Sendable, Equatable {
+    let created: Bool
+    let status: HostPathStatus
+}
+
+/// One host path completion candidate.
+struct HostPathCompletion: Decodable, Identifiable, Sendable, Equatable {
+    let path: String
+    let name: String
+
+    var id: String { path }
+}
+
 /// A project directory discovered on the host server.
 ///
 /// Matches the server's `HostDirectory` type from `GET /host/directories`.
