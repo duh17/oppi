@@ -294,16 +294,15 @@ extension ToolPresentationBuilder {
             return nil
         }
 
-        let base64 = image["base64"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = image["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard base64?.isEmpty == false || id?.isEmpty == false else { return nil }
+        guard id?.isEmpty == false else { return nil }
 
         let normalizedMimeType = image["mimeType"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let mimeType = (normalizedMimeType?.isEmpty == false ? normalizedMimeType : nil) ?? "image/png"
         return ToolImageAttachmentDetails(
-            id: id?.isEmpty == false ? id : nil,
+            id: id,
             mimeType: mimeType,
-            base64: base64?.isEmpty == false ? base64 : nil,
+            base64: nil,
             fileName: image["fileName"]?.stringValue,
             path: image["path"]?.stringValue,
             sizeBytes: image["sizeBytes"]?.numberValue.map(Int.init),
@@ -418,15 +417,8 @@ extension ToolPresentationBuilder {
             return (.readMedia(output: message, filePath: title, startLine: 1, attachments: [attachment]), message.isEmpty ? title : message)
         }
 
-        var outputLines: [String] = []
-        if !message.isEmpty {
-            outputLines.append(message)
-        }
-        if let base64 = image.base64, !base64.isEmpty {
-            outputLines.append("data:\(MediaMimeType.safeImageMimeType(image.mimeType));base64,\(base64)")
-        }
-        let output = outputLines.joined(separator: "\n")
-        return (.readMedia(output: output, filePath: title, startLine: 1, attachments: []), message.isEmpty ? title : message)
+        let unavailable = message.isEmpty ? "Image attachment unavailable" : message
+        return (.readMedia(output: unavailable, filePath: title, startLine: 1, attachments: []), unavailable)
     }
 
     static func formatDuration(_ seconds: Double) -> String {

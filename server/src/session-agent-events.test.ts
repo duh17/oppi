@@ -7,6 +7,7 @@ import {
   SessionAgentEventCoordinator,
   type SessionAgentEventState,
 } from "./session-agent-events.js";
+import { sessionAttachmentMediaDetailsForToolCall } from "./session-attachments.js";
 import { buildSessionSummary } from "./session-summary.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { Session } from "./types.js";
@@ -232,6 +233,96 @@ describe("SessionAgentEventCoordinator", () => {
     });
     expect(updateSessionFromEvent).not.toHaveBeenCalled();
     expect(resetIdleTimer).toHaveBeenCalledWith("child-1");
+  });
+
+  it("does not broadcast or materialize image media from partial updates", () => {
+    const active = makeActiveSession();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-agent-events-"));
+    tempDirs.push(dataDir);
+    const { broadcast, coordinator } = makeCoordinator(active, { dataDir });
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_update",
+      toolCallId: "image-tool-1",
+      toolName: "imagen",
+      partialResult: {
+        content: [
+          { type: "image", data: Buffer.from("png").toString("base64"), mimeType: "image/png" },
+        ],
+        details: {
+          status: "preview",
+          image: {
+            kind: "image",
+            mimeType: "image/png",
+            base64: Buffer.from("png").toString("base64"),
+            fileName: "preview.png",
+          },
+        },
+      },
+    } as unknown as SessionBackendEvent);
+
+    const messages = broadcast.mock.calls.map(([, message]) => message);
+    const toolOutputs = messages.filter((message) => message.type === "tool_output") as Array<{
+      details?: { image?: unknown; media?: unknown[] };
+    }>;
+    expect(toolOutputs.some((message) => message.details?.image !== undefined)).toBe(false);
+    expect(
+      toolOutputs.some((message) =>
+        message.details?.media?.some((item) => (item as { kind?: string }).kind === "image"),
+      ),
+    ).toBe(false);
+    expect(
+      sessionAttachmentMediaDetailsForToolCall(dataDir, active.session.id, "image-tool-1"),
+    ).toHaveLength(0);
+  });
+
+  it("materializes final image details and strips base64 before broadcast", () => {
+    const active = makeActiveSession();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-agent-events-"));
+    tempDirs.push(dataDir);
+    const { broadcast, coordinator } = makeCoordinator(active, { dataDir });
+    const base64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "image-tool-2",
+      toolName: "imagen",
+      result: {
+        content: [{ type: "text", text: "Generated image" }],
+        details: {
+          image: {
+            kind: "image",
+            mimeType: "image/png",
+            base64,
+            fileName: "final.png",
+          },
+        },
+      },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+
+    const toolEnd = broadcast.mock.calls
+      .map(([, message]) => message)
+      .find((message) => message.type === "tool_end") as
+      | {
+          details?: {
+            image?: {
+              id?: string;
+              storageKey?: string;
+              base64?: string;
+              path?: string;
+              sha256?: string;
+            };
+          };
+        }
+      | undefined;
+
+    expect(toolEnd?.details?.image?.id).toContain("att_image-tool-2_");
+    expect(toolEnd?.details?.image?.storageKey).toContain(`${active.session.id}/`);
+    expect(toolEnd?.details?.image?.base64).toBeUndefined();
+    expect(toolEnd?.details?.image?.path).toBeUndefined();
+    expect(toolEnd?.details?.image?.sha256).toEqual(expect.any(String));
   });
 
   it("materializes session attachments for any tool that returns audio details", () => {

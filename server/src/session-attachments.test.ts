@@ -260,7 +260,7 @@ describe("session attachments", () => {
     expect(blocks[0]?.height).toBe(180);
   });
 
-  it("preserves image base64 when materializing details for collapsed previews", () => {
+  it("materializes image details and strips base64 from the result", () => {
     const pngBase64 =
       "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
 
@@ -276,14 +276,15 @@ describe("session attachments", () => {
           fileName: "preview.png",
         },
       },
-    }) as { image: { id?: string; base64?: string; path?: string } };
+    }) as { image: { id?: string; base64?: string; path?: string; sha256?: string } };
 
     expect(details.image.id).toContain("att_tool-img-preview_");
-    expect(details.image.base64).toBe(pngBase64);
+    expect(details.image.base64).toBeUndefined();
     expect(details.image.path).toBeUndefined();
+    expect(details.image.sha256).toEqual(expect.any(String));
   });
 
-  it("replays image details with the matching attachment and preserved base64", () => {
+  it("replays image details with the matching attachment and strips base64", () => {
     const firstBase64 =
       "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
     const secondBase64 =
@@ -323,7 +324,7 @@ describe("session attachments", () => {
         base64: secondBase64,
         fileName: "second.png",
       },
-    }) as { image: { id?: string; fileName?: string; base64?: string } };
+    }) as { image: { id?: string; fileName?: string; base64?: string; sha256?: string } };
 
     const expected = materializeToolMediaDetails({
       dataDir: root,
@@ -341,7 +342,8 @@ describe("session attachments", () => {
 
     expect(replayed.image.id).toBe(expected.image.id);
     expect(replayed.image.fileName).toBe("second.png");
-    expect(replayed.image.base64).toBe(secondBase64);
+    expect(replayed.image.base64).toBeUndefined();
+    expect(replayed.image.sha256).toEqual(expect.any(String));
   });
 
   it("does not materialize image attachments from arbitrary server paths", async () => {

@@ -1683,13 +1683,12 @@ struct ToolPresentationBuilderTests {
         #expect(attachments.first?.height == 220)
     }
 
-    @Test("generic image tool uses details image for collapsed preview")
-    func genericImageCollapsedPreviewFromDetails() {
-        let fakeBase64 = "iVBORw0KGgo="
+    @Test("generic image tool does not use raw details image for collapsed preview")
+    func genericImageHasNoCollapsedPreviewFromDetails() {
         let details: JSONValue = .object([
             "image": .object([
                 "kind": .string("image"),
-                "base64": .string(fakeBase64),
+                "id": .string("att-image-1"),
                 "mimeType": .string("image/png"),
                 "fileName": .string("kitten.png")
             ])
@@ -1703,19 +1702,20 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(details: details, fullOutput: "Generated image")
         )
 
-        #expect(config.collapsedImageBase64 == fakeBase64)
-        #expect(config.collapsedImageMimeType == "image/png")
+        #expect(config.collapsedImageBase64 == nil)
+        #expect(config.collapsedImageMimeType == nil)
     }
 
-    @Test("generic image tool uses details image for expanded media content")
-    func genericImageExpandedUsesReadMedia() {
-        let fakeBase64 = "iVBORw0KGgo="
+    @Test("generic image tool uses attachment details for expanded media content")
+    func genericImageExpandedUsesAttachmentReadMedia() {
         let details: JSONValue = .object([
             "image": .object([
                 "kind": .string("image"),
-                "base64": .string(fakeBase64),
+                "id": .string("att-image-1"),
                 "mimeType": .string("image/png"),
-                "fileName": .string("kitten.png")
+                "fileName": .string("kitten.png"),
+                "width": .number(512),
+                "height": .number(384)
             ])
         ])
 
@@ -1727,12 +1727,14 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(details: details, expanded: ["t1"], fullOutput: "Generated image")
         )
 
-        guard case .readMedia(let output, let filePath, _, _) = config.expandedContent else {
+        guard case .readMedia(let output, let filePath, _, let attachments) = config.expandedContent else {
             Issue.record("Expected .readMedia content for generic image tool")
             return
         }
-        #expect(output.contains("data:image/png;base64,\(fakeBase64)"))
+        #expect(output == "Generated image")
         #expect(filePath == "kitten.png")
+        #expect(attachments.first?.id == "att-image-1")
+        #expect(attachments.first?.width == 512)
         #expect(config.copyOutputText == "Generated image")
     }
 

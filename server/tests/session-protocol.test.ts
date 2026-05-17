@@ -285,7 +285,7 @@ describe("session-protocol translatePiEvent", () => {
     ]);
   });
 
-  it("emits media tool_output data URIs", () => {
+  it("emits audio but not image data URIs from partial updates", () => {
     const ctx = makeCtx();
 
     const messages = translatePiEvent(
@@ -305,7 +305,6 @@ describe("session-protocol translatePiEvent", () => {
     );
 
     expect(messages).toEqual([
-      { type: "tool_output", output: "data:image/png;base64,aGVsbG8=", toolCallId: "tc-media" },
       { type: "tool_output", output: "data:audio/wav;base64,d29ybGQ=", toolCallId: "tc-media" },
     ]);
   });

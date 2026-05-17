@@ -1393,7 +1393,7 @@ describe("translatePiEvent", () => {
   });
 
   describe("tool_execution_update: media extraction", () => {
-    it("emits data URI for image blocks", () => {
+    it("does not emit image blocks from partial updates", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "screenshot");
 
@@ -1410,9 +1410,7 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      expect(result).toHaveLength(1);
-      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(msg.output).toBe("data:image/png;base64,abc123");
+      expect(result).toEqual([]);
     });
 
     it("emits data URI for audio blocks", () => {
@@ -1436,7 +1434,7 @@ describe("translatePiEvent", () => {
       expect(msg.output).toBe("data:audio/wav;base64,wavdata");
     });
 
-    it("emits attachment metadata for materialized image blocks", () => {
+    it("does not emit materialized image attachment metadata from partial updates", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "screenshot");
 
@@ -1463,15 +1461,10 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      expect(result).toHaveLength(1);
-      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(msg.output).toBe("");
-      expect(
-        (msg.details as { media?: Array<{ id: string; width: number }> }).media?.[0],
-      ).toMatchObject({ id: "att-1", width: 2 });
+      expect(result).toEqual([]);
     });
 
-    it("strips raw media payload fields from attachment metadata", () => {
+    it("strips image media from partial update details", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "screenshot");
 
@@ -1499,15 +1492,10 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      const media = (msg.details as { media?: Array<Record<string, unknown>> }).media?.[0];
-      expect(media).toMatchObject({ kind: "image", id: "att-1", width: 2, height: 3 });
-      expect(media?.data).toBeUndefined();
-      expect(media?.base64).toBeUndefined();
-      expect(media?.path).toBeUndefined();
+      expect(result).toEqual([]);
     });
 
-    it("uses default mime type for image without explicit mimeType", () => {
+    it("does not emit partial image data when mimeType is omitted", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "tool");
 
@@ -1524,8 +1512,7 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      const msg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(msg.output).toBe("data:image/png;base64,abc");
+      expect(result).toEqual([]);
     });
   });
 
@@ -1756,7 +1743,7 @@ describe("translatePiEvent", () => {
       expect(result[0]!.type).toBe("tool_end");
     });
 
-    it("extracts media outputs from result content", () => {
+    it("does not emit raw image data URI outputs from result content", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "screenshot");
 
@@ -1776,12 +1763,12 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      // delta("captured") + image tool_output + tool_end = 3
-      expect(result).toHaveLength(3);
+      // delta("captured") + tool_end; raw image bytes must be materialized before rendering.
+      expect(result).toHaveLength(2);
       const imageMsg = result.find(
         (m) => m.type === "tool_output" && (m as { output: string }).output.startsWith("data:"),
-      ) as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(imageMsg.output).toBe("data:image/jpeg;base64,imgdata");
+      );
+      expect(imageMsg).toBeUndefined();
     });
 
     it("includes attachment media metadata on tool_end details", () => {

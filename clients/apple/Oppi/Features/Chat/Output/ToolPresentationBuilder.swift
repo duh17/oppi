@@ -88,7 +88,6 @@ enum ToolPresentationBuilder {
         )
 
         let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
-        let previewImage = isDone && !isBuiltInFileTool ? Self.toolImageAttachmentDetails(from: context.details) : nil
         let isVoicePresentationResult = Self.toolAudioPresentationDetails(from: context.details) != nil
 
         // Expanded presentation
@@ -184,8 +183,8 @@ enum ToolPresentationBuilder {
                 : collapsed.toolNameColor,
             editAdded: collapsed.editAdded,
             editRemoved: collapsed.editRemoved,
-            collapsedImageBase64: !isExpanded ? previewImage?.base64 : nil,
-            collapsedImageMimeType: !isExpanded ? previewImage?.mimeType : nil,
+            collapsedImageBase64: nil,
+            collapsedImageMimeType: nil,
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError,

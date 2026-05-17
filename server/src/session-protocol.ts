@@ -418,6 +418,7 @@ function attachmentMediaDetails(
     ...(typeof record.fileName === "string" ? { fileName: record.fileName } : {}),
     ...(typeof record.sizeBytes === "number" ? { sizeBytes: record.sizeBytes } : {}),
     ...(typeof record.storageKey === "string" ? { storageKey: record.storageKey } : {}),
+    ...(typeof record.sha256 === "string" ? { sha256: record.sha256 } : {}),
     ...(typeof record.width === "number" ? { width: record.width } : {}),
     ...(typeof record.height === "number" ? { height: record.height } : {}),
     ...(typeof record.durationSeconds === "number"
@@ -426,7 +427,12 @@ function attachmentMediaDetails(
   };
 }
 
-function extractAttachmentMedia(contents: unknown[]): Record<string, unknown>[] {
+function extractAttachmentMedia(
+  contents: unknown[],
+  options: { includeImages?: boolean; includeAudio?: boolean } = {},
+): Record<string, unknown>[] {
+  const includeImages = options.includeImages ?? true;
+  const includeAudio = options.includeAudio ?? true;
   const attachmentMedia: Record<string, unknown>[] = [];
   for (const block of contents) {
     const record = asRecord(block);
@@ -435,6 +441,12 @@ function extractAttachmentMedia(contents: unknown[]): Record<string, unknown>[] 
     }
 
     const type = record.type;
+    if (type === "image" && !includeImages) {
+      continue;
+    }
+    if (type === "audio" && !includeAudio) {
+      continue;
+    }
     if ((type === "image" || type === "audio") && typeof record.id === "string") {
       attachmentMedia.push(attachmentMediaDetails(record, type));
     }
@@ -474,9 +486,12 @@ function extractMediaOutputs(
   contents: unknown[],
   toolCallId?: string,
   details?: unknown,
+  options: { includeImages?: boolean; includeAudio?: boolean } = {},
 ): ServerMessage[] {
+  const includeImages = options.includeImages ?? true;
+  const includeAudio = options.includeAudio ?? true;
   const out: ServerMessage[] = [];
-  const attachmentMedia = extractAttachmentMedia(contents);
+  const attachmentMedia = extractAttachmentMedia(contents, options);
 
   for (const block of contents) {
     const record = asRecord(block);
@@ -485,6 +500,12 @@ function extractMediaOutputs(
     }
 
     const type = record.type;
+    if (type === "image" && !includeImages) {
+      continue;
+    }
+    if (type === "audio" && !includeAudio) {
+      continue;
+    }
     if ((type === "image" || type === "audio") && typeof record.id === "string") {
       continue;
     }
@@ -538,6 +559,35 @@ function audioPresentationDetails(
 function sanitizedUpdateDetails(details: unknown): unknown | undefined {
   const result = sanitizeToolResultDetails(details);
   return result.details === undefined ? undefined : result.details;
+}
+
+function stripImageMediaFromDetails(details: unknown): unknown | undefined {
+  const root = asRecord(details);
+  if (!root) {
+    return details === undefined ? undefined : details;
+  }
+
+  let changed = false;
+  const next: Record<string, unknown> = { ...root };
+
+  if (asRecord(root.image)?.kind === "image") {
+    delete next.image;
+    changed = true;
+  }
+
+  if (Array.isArray(root.media)) {
+    const media = root.media.filter((item) => asRecord(item)?.kind !== "image");
+    if (media.length !== root.media.length) {
+      changed = true;
+      if (media.length > 0) {
+        next.media = media;
+      } else {
+        delete next.media;
+      }
+    }
+  }
+
+  return changed ? (Object.keys(next).length > 0 ? next : undefined) : details;
 }
 
 function pushToolOutputMessage(
@@ -830,7 +880,9 @@ export function translatePiEvent(
       const contents = Array.isArray(event.partialResult?.content)
         ? event.partialResult.content
         : [];
-      const updateDetails = sanitizedUpdateDetails(event.partialResult?.details);
+      const updateDetails = stripImageMediaFromDetails(
+        sanitizedUpdateDetails(event.partialResult?.details),
+      );
 
       const toolCallId = resolveToolCallId(event);
       const key = toolCallId ?? "";
@@ -920,7 +972,9 @@ export function translatePiEvent(
         });
       }
 
-      messages.push(...extractMediaOutputs(contents, toolCallId, updateDetails));
+      messages.push(
+        ...extractMediaOutputs(contents, toolCallId, updateDetails, { includeImages: false }),
+      );
       return messages;
     }
 
@@ -974,7 +1028,11 @@ export function translatePiEvent(
           }
         }
 
-        messages.push(...extractMediaOutputs(resultContents, toolCallId, event.result?.details));
+        messages.push(
+          ...extractMediaOutputs(resultContents, toolCallId, event.result?.details, {
+            includeImages: false,
+          }),
+        );
       }
 
       ctx.partialResults.delete(key);

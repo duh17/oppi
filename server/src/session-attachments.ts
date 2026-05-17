@@ -30,6 +30,7 @@ export interface SessionAttachmentRecord {
   sizeBytes: number;
   storageKey: string;
   createdAt: number;
+  sha256?: string;
   toolCallId?: string;
   durationSeconds?: number;
   width?: number;
@@ -225,6 +226,10 @@ function bytesFromAudioDetails(
   return bytes;
 }
 
+function attachmentSha256(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 function attachmentIdFor(toolCallId: string | undefined, bytes: Buffer): string {
   const digest = createHash("sha256").update(bytes).digest("base64url").slice(0, 16);
   if (toolCallId) return `att_${toolCallId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 32)}_${digest}`;
@@ -245,16 +250,11 @@ function sanitizeMediaDetails(
   root: Record<string, unknown>,
   key: "audio" | "image",
   media: Record<string, unknown>,
-  options: { preserveBase64?: boolean } = {},
 ): Record<string, unknown> {
   const sanitized = { ...media } as Record<string, unknown>;
-  const preservedBase64 = options.preserveBase64 ? base64FromMediaRecord(media) : undefined;
   delete sanitized.base64;
   delete sanitized.data;
   delete sanitized.path;
-  if (preservedBase64) {
-    sanitized.base64 = preservedBase64;
-  }
   return { ...root, [key]: sanitized };
 }
 
@@ -464,20 +464,15 @@ function attachmentDetails(record: SessionAttachmentRecord): Record<string, unkn
     fileName: record.fileName,
     sizeBytes: record.sizeBytes,
     storageKey: record.storageKey,
+    ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
     ...(record.durationSeconds !== undefined ? { durationSeconds: record.durationSeconds } : {}),
     ...(record.width !== undefined ? { width: record.width } : {}),
     ...(record.height !== undefined ? { height: record.height } : {}),
   };
 }
 
-function imageAttachmentDetails(
-  record: SessionAttachmentRecord,
-  media: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    ...attachmentDetails(record),
-    ...(base64FromMediaRecord(media) ? { base64: base64FromMediaRecord(media) } : {}),
-  };
+function imageAttachmentDetails(record: SessionAttachmentRecord): Record<string, unknown> {
+  return attachmentDetails(record);
 }
 
 function storeAttachment(options: {
@@ -512,6 +507,7 @@ function storeAttachment(options: {
     sizeBytes: bytes.length,
     storageKey,
     createdAt: Date.now(),
+    sha256: attachmentSha256(bytes),
     ...(toolCallId ? { toolCallId } : {}),
     ...(options.durationSeconds !== undefined ? { durationSeconds: options.durationSeconds } : {}),
     ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
@@ -575,11 +571,11 @@ export function materializeToolMediaDetails({
   const image = asRecord(root.image);
   if (image?.kind === "image") {
     if (typeof image.id === "string" && image.id.trim()) {
-      nextRoot = sanitizeMediaDetails(nextRoot, "image", image, { preserveBase64: true });
+      nextRoot = sanitizeMediaDetails(nextRoot, "image", image);
     } else {
       const bytes = bytesFromImageLike(image);
       if (!bytes) {
-        nextRoot = sanitizeMediaDetails(nextRoot, "image", image, { preserveBase64: true });
+        nextRoot = sanitizeMediaDetails(nextRoot, "image", image);
       } else {
         const mimeType = normalizeImageMimeType(image.mimeType);
         const record = storeAttachment({
@@ -592,7 +588,7 @@ export function materializeToolMediaDetails({
           bytes,
           ...(typeof root.message === "string" ? { text: root.message } : {}),
         });
-        nextRoot = { ...nextRoot, image: imageAttachmentDetails(record, image) };
+        nextRoot = { ...nextRoot, image: imageAttachmentDetails(record) };
       }
     }
   }
@@ -692,9 +688,9 @@ function findAttachmentRecordForMedia(
 function mediaDetailsForReplayRecord(
   record: SessionAttachmentRecord,
   key: "audio" | "image",
-  media: Record<string, unknown>,
+  _media: Record<string, unknown>,
 ): Record<string, unknown> {
-  return key === "image" ? imageAttachmentDetails(record, media) : attachmentDetails(record);
+  return key === "image" ? imageAttachmentDetails(record) : attachmentDetails(record);
 }
 
 function referencedAttachmentIdsFromContents(
@@ -776,7 +772,7 @@ export function sessionAttachmentDetailsForToolCall(
     const record = findAttachmentRecordForMedia(manifest, toolCallId, key, media);
     nextRoot = record
       ? { ...nextRoot, [key]: mediaDetailsForReplayRecord(record, key, media) }
-      : sanitizeMediaDetails(nextRoot, key, media, { preserveBase64: key === "image" });
+      : sanitizeMediaDetails(nextRoot, key, media);
   }
 
   return nextRoot;

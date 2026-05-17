@@ -30,6 +30,12 @@ export interface SessionAgentEventState
 
 const log = createLogger({ base: { component: "session_agent_events" } });
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function hasToolMediaDetails(details: unknown): boolean {
   if (!details || typeof details !== "object" || Array.isArray(details)) {
     return false;
@@ -50,6 +56,39 @@ function fallbackFileNameFromArgs(args: unknown): string | undefined {
   if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
   const path = (args as { path?: unknown }).path;
   return typeof path === "string" && path.trim() ? path : undefined;
+}
+
+function stripPartialImageContent(contents: unknown[] | undefined): unknown[] | undefined {
+  if (!contents) return undefined;
+  const filtered = contents.filter((block) => asRecord(block)?.type !== "image");
+  return filtered.length === contents.length ? contents : filtered;
+}
+
+function stripPartialImageDetails(details: unknown): unknown {
+  const root = asRecord(details);
+  if (!root) return details;
+
+  let changed = false;
+  const next: Record<string, unknown> = { ...root };
+
+  if (asRecord(root.image)?.kind === "image") {
+    delete next.image;
+    changed = true;
+  }
+
+  if (Array.isArray(root.media)) {
+    const media = root.media.filter((item) => asRecord(item)?.kind !== "image");
+    if (media.length !== root.media.length) {
+      changed = true;
+      if (media.length > 0) {
+        next.media = media;
+      } else {
+        delete next.media;
+      }
+    }
+  }
+
+  return changed ? (Object.keys(next).length > 0 ? next : undefined) : details;
 }
 
 export interface SessionAgentEventCoordinatorDeps {
@@ -249,34 +288,46 @@ export class SessionAgentEventCoordinator {
     if (!this.deps.dataDir) return event;
 
     if (event.type === "tool_execution_update") {
-      const content = Array.isArray(event.partialResult?.content)
+      const rawContent = Array.isArray(event.partialResult?.content)
         ? event.partialResult.content
         : undefined;
+      const content = stripPartialImageContent(rawContent);
+      const rawDetails = event.partialResult?.details;
+      const strippedDetails = stripPartialImageDetails(rawDetails);
       const details = materializeToolMediaDetails({
         dataDir: this.deps.dataDir,
         sessionId: active.session.id,
         toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
-        details: event.partialResult?.details,
+        details: strippedDetails,
         trustedSourceRoots: this.deps.trustedAttachmentSourceRoots,
       });
-      if (!content && details === event.partialResult?.details) return event;
+      const contentChanged = content !== rawContent;
+      const detailsChanged = strippedDetails !== rawDetails || details !== strippedDetails;
+      if (!contentChanged && !detailsChanged) return event;
+
+      const partialResult = { ...event.partialResult } as Record<string, unknown>;
+      if (contentChanged || content) {
+        partialResult.content = content
+          ? materializeToolMediaContentBlocks({
+              dataDir: this.deps.dataDir,
+              sessionId: active.session.id,
+              toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
+              contents: content,
+              fallbackFileName: fallbackFileNameFromArgs(event.args),
+            })
+          : content;
+      }
+      if (detailsChanged) {
+        if (details !== undefined) {
+          partialResult.details = details;
+        } else {
+          delete partialResult.details;
+        }
+      }
+
       return {
         ...event,
-        partialResult: {
-          ...event.partialResult,
-          ...(content
-            ? {
-                content: materializeToolMediaContentBlocks({
-                  dataDir: this.deps.dataDir,
-                  sessionId: active.session.id,
-                  toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
-                  contents: content,
-                  fallbackFileName: fallbackFileNameFromArgs(event.args),
-                }),
-              }
-            : {}),
-          ...(details !== undefined ? { details } : {}),
-        },
+        partialResult,
       } as AgentSessionEvent;
     }
 
