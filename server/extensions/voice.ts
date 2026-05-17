@@ -316,7 +316,8 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
         text: Type.String({ description: "Text to speak. Keep short for interactive use." }),
         voice: Type.Optional(
           Type.String({
-            description: "Saved voice ID, or raw VoiceDesign/custom voice string. Defaults to the saved default voice or the extension's fallback voice.",
+            description:
+              "Saved voice ID, or raw VoiceDesign/custom voice string. Defaults to the saved default voice or the extension's fallback voice.",
           }),
         ),
         language: Type.Optional(Type.String({ description: "Language hint. Default: English." })),

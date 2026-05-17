@@ -5,44 +5,6 @@
 // ─── Workspaces ───
 
 export type WorkspaceSystemPromptMode = "append" | "replace";
-export type AgentProfileScope = "builtin" | "user";
-
-export interface AgentProfile {
-  id: string;
-  scope: AgentProfileScope;
-  name: string;
-  description?: string;
-  icon?: string;
-  includeProjectContext: boolean;
-  /** Contents of <profile>/SYSTEM.md, when present. */
-  systemPromptText?: string;
-  /** Contents of <profile>/APPEND_SYSTEM.md, when present. */
-  appendSystemPromptText?: string;
-  /** Contents of <profile>/AGENTS.md, when present. */
-  agentsText?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface CreateAgentProfileRequest {
-  name: string;
-  description?: string;
-  icon?: string;
-  includeProjectContext?: boolean;
-  systemPromptText?: string;
-  appendSystemPromptText?: string;
-  agentsText?: string;
-}
-
-export interface UpdateAgentProfileRequest {
-  name?: string;
-  description?: string | null;
-  icon?: string | null;
-  includeProjectContext?: boolean;
-  systemPromptText?: string | null;
-  appendSystemPromptText?: string | null;
-  agentsText?: string | null;
-}
 
 export interface Workspace {
   id: string;
@@ -176,10 +138,6 @@ export interface Session {
 
   // Privacy / persistence
   ephemeral?: boolean; // true for in-memory pi sessions (incognito mode)
-
-  // Agent profile used when starting this pi runtime.
-  agentProfileId?: string;
-  agentProfileName?: string;
 
   // Parent-child tree (spawn_agent)
   parentSessionId?: string; // set when spawned by another session
