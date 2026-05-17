@@ -605,14 +605,17 @@ final class FullScreenCodeViewController: UIViewController {
     private func makePiWebViewHandler(
         router: SelectedTextPiActionRouter?,
         sourceContext: SelectedTextSourceContext?
-    ) -> ((String, PiQuickAction) -> Void)? {
+    ) -> ((String, PiQuickAction, UIViewController?) -> Void)? {
         guard let router, let sourceContext else { return nil }
-        return { text, quickAction in
-            router.dispatch(SelectedTextPiRequest(
-                action: quickAction,
-                selectedText: text,
-                source: sourceContext
-            ))
+        return { text, quickAction, presentingViewController in
+            router.dispatch(
+                SelectedTextPiRequest(
+                    action: quickAction,
+                    selectedText: text,
+                    source: sourceContext
+                ),
+                presentingViewController: presentingViewController
+            )
         }
     }
 

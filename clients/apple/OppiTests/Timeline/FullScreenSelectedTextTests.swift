@@ -194,6 +194,23 @@ struct FullScreenSelectedTextTests {
         #expect(contentController.navigationItem.rightBarButtonItems?.first === copyButton)
     }
 
+    @Test func routerForwardsFullscreenPresenterWhenCommentActionDispatches() throws {
+        let presenter = UIViewController()
+        var forwardedPresenter: UIViewController?
+        let request = SelectedTextPiRequest(
+            action: .reviewCommentAction,
+            selectedText: "selected text",
+            source: SelectedTextSourceContext(sessionId: "session-1", surface: .fullScreenMarkdown)
+        )
+        let router = SelectedTextPiActionRouter(dispatchWithPresentation: { _, presentingViewController in
+            forwardedPresenter = presentingViewController
+        })
+
+        router.dispatch(request, presentingViewController: presenter)
+
+        #expect(forwardedPresenter === presenter)
+    }
+
     @Test func nonChatFullScreenCodeStillAllowsSystemTextSelection() throws {
         let controller = FullScreenCodeViewController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)

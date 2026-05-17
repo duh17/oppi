@@ -16,7 +16,7 @@ import WebKit
 /// (`window.getSelection()`) and dispatched through the configured handler.
 final class PiWKWebView: WKWebView {
     /// Called when the user picks the comment action on selected text.
-    var piActionHandler: ((String, PiQuickAction) -> Void)?
+    var piActionHandler: ((String, PiQuickAction, UIViewController?) -> Void)?
 
     /// Store for user-configured quick comments. Kept for wiring compatibility;
     /// the edit menu itself always shows one Comment action.
@@ -56,8 +56,19 @@ final class PiWKWebView: WKWebView {
                   let raw = result as? String else { return }
             let text = SelectedTextPiPromptFormatter.normalizedSelectedText(raw)
             guard !text.isEmpty else { return }
-            self.piActionHandler?(text, quickAction)
+            self.piActionHandler?(text, quickAction, self.nearestViewController())
         }
+    }
+
+    private func nearestViewController() -> UIViewController? {
+        var current: UIResponder? = self
+        while let node = current {
+            if let controller = node as? UIViewController {
+                return controller
+            }
+            current = node.next
+        }
+        return nil
     }
 }
 
@@ -76,12 +87,15 @@ extension PiWKWebView {
             return
         }
         piActionStore = actionStore
-        piActionHandler = { text, quickAction in
-            router.dispatch(SelectedTextPiRequest(
-                action: quickAction,
-                selectedText: text,
-                source: sourceContext
-            ))
+        piActionHandler = { text, quickAction, presentingViewController in
+            router.dispatch(
+                SelectedTextPiRequest(
+                    action: quickAction,
+                    selectedText: text,
+                    source: sourceContext
+                ),
+                presentingViewController: presentingViewController
+            )
         }
     }
 }

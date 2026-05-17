@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import WebKit
 
 // MARK: - HTMLContentTracker
@@ -78,7 +79,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
     private let webView: PiWKWebView
     private let contentTracker = HTMLContentTracker()
 
-    init(htmlString: String, piActionHandler: ((String, PiQuickAction) -> Void)? = nil, piActionStore: PiQuickActionStore? = nil) {
+    init(htmlString: String, piActionHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = nil, piActionStore: PiQuickActionStore? = nil) {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.mediaTypesRequiringUserActionForPlayback = .all
@@ -140,7 +141,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
     }
 
     /// Update the pi action handler and store (e.g., when SwiftUI re-renders).
-    func updatePiActionHandler(_ handler: ((String, PiQuickAction) -> Void)?, actionStore: PiQuickActionStore? = nil) {
+    func updatePiActionHandler(_ handler: ((String, PiQuickAction, UIViewController?) -> Void)?, actionStore: PiQuickActionStore? = nil) {
         webView.piActionHandler = handler
         webView.piActionStore = actionStore
     }
@@ -211,7 +212,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
 struct HTMLWebView: UIViewRepresentable {
     let htmlString: String
     let baseFileName: String
-    var piActionHandler: ((String, PiQuickAction) -> Void)?
+    var piActionHandler: ((String, PiQuickAction, UIViewController?) -> Void)?
     var piActionStore: PiQuickActionStore?
 
     func makeUIView(context: Context) -> HTMLRenderView {

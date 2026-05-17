@@ -782,9 +782,9 @@ struct ChatView: View {
     }
 
     private var selectedTextPiRouter: SelectedTextPiActionRouter {
-        SelectedTextPiActionRouter { request in
-            handleSelectedTextPiAction(request)
-        }
+        SelectedTextPiActionRouter(dispatchWithPresentation: { request, presentingViewController in
+            handleSelectedTextPiAction(request, presentingViewController: presentingViewController)
+        })
     }
 
     static func routeForSelectedTextPiAction(_ request: SelectedTextPiRequest) -> SelectedTextPiRoute? {
@@ -819,11 +819,18 @@ struct ChatView: View {
     }
 
     @MainActor
-    private func handleSelectedTextPiAction(_ request: SelectedTextPiRequest) {
+    private func handleSelectedTextPiAction(
+        _ request: SelectedTextPiRequest,
+        presentingViewController: UIViewController? = nil
+    ) {
         guard let route = Self.routeForSelectedTextPiAction(request) else { return }
 
         switch route {
         case .reviewComment(let request):
+            if let presentingViewController,
+               presentFullscreenReviewCommentSheet(from: presentingViewController, request: request) {
+                return
+            }
             reviewComments.beginComment(request)
 
         case .quickSessionDraft(let addition):
@@ -847,6 +854,64 @@ struct ChatView: View {
                 composerExternalFocusRequestID &+= 1
             }
         }
+    }
+
+    @MainActor
+    private func presentFullscreenReviewCommentSheet(
+        from presentingViewController: UIViewController,
+        request: SelectedTextPiRequest
+    ) -> Bool {
+        guard Self.isInsideFullScreenViewer(presentingViewController),
+              presentingViewController.viewIfLoaded?.window != nil,
+              presentingViewController.presentedViewController == nil else {
+            return false
+        }
+
+        weak var sheetController: UIViewController?
+        let rootView = ReviewCommentComposerSheet(
+            selectedText: request.selectedText,
+            source: request.source,
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            quickComments: PiQuickAction.quickCommentTemplates(piQuickActionStore.actions),
+            onCancel: {
+                sheetController?.dismiss(animated: true)
+            },
+            onSave: { body in
+                let didSave = await saveReviewComment(body: body, request: request)
+                if didSave {
+                    await MainActor.run {
+                        sheetController?.dismiss(animated: true)
+                    }
+                }
+                return didSave
+            }
+        )
+
+        let controller = UIHostingController(rootView: rootView)
+        controller.modalPresentationStyle = .pageSheet
+        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
+        if let sheet = controller.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        sheetController = controller
+
+        DispatchQueue.main.async {
+            guard presentingViewController.presentedViewController == nil else { return }
+            presentingViewController.present(controller, animated: true)
+        }
+        return true
+    }
+
+    private static func isInsideFullScreenViewer(_ controller: UIViewController) -> Bool {
+        var current: UIViewController? = controller
+        while let node = current {
+            if node is FullScreenCodeViewController {
+                return true
+            }
+            current = node.parent
+        }
+        return false
     }
 
     private func presentComposer() {

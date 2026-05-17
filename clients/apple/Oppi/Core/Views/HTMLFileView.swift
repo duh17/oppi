@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Rendered HTML with source toggle and full-screen support.
 ///
@@ -27,13 +28,16 @@ struct HTMLFileView: View {
                     surface: .fullScreenSource,
                     filePath: filePath
                 )
-                let piHandler: ((String, PiQuickAction) -> Void)? = piRouter.map { router in
-                    { text, action in
-                        router.dispatch(SelectedTextPiRequest(
-                            action: action,
-                            selectedText: text,
-                            source: sourceContext
-                        ))
+                let piHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = piRouter.map { router in
+                    { text, action, presentingViewController in
+                        router.dispatch(
+                            SelectedTextPiRequest(
+                                action: action,
+                                selectedText: text,
+                                source: sourceContext
+                            ),
+                            presentingViewController: presentingViewController
+                        )
                     }
                 }
                 return HTMLRenderView(

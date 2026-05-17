@@ -25,38 +25,17 @@ struct ReviewCommentComposerSheet: View {
                         .foregroundStyle(.themeFg)
 
                     referenceCard
-
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Comment")
-                            .font(.headline)
-                            .foregroundStyle(.themeFg)
-
-                        Spacer()
-
-                        if !quickComments.isEmpty {
-                            Text("Quick comments")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.themeComment)
-                        }
-                    }
-
-                    if !quickComments.isEmpty {
-                        quickCommentStrip
-                    }
-
-                    ReviewCommentTextInput(
-                        text: $bodyText,
-                        textBeforeRecording: $textBeforeRecording,
-                        placeholder: "Comment…",
-                        isDisabled: isSaving,
-                        voiceInputManager: voiceInputManager
-                    )
                 }
                 .padding(.horizontal, 18)
-                .padding(.vertical, 22)
+                .padding(.top, 22)
+                .padding(.bottom, 24)
             }
+            .scrollDismissesKeyboard(.interactively)
             .scrollContentBackground(.hidden)
             .background(Color.themeBgDark.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                commentComposerDock
+            }
             .navigationTitle("Review Comment")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -73,6 +52,43 @@ struct ReviewCommentComposerSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var commentComposerDock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Comment")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+
+                Spacer()
+
+                if !quickComments.isEmpty {
+                    Text("Quick comments")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                }
+            }
+
+            if !quickComments.isEmpty {
+                quickCommentStrip
+            }
+
+            ReviewCommentTextInput(
+                text: $bodyText,
+                textBeforeRecording: $textBeforeRecording,
+                placeholder: "Comment…",
+                isDisabled: isSaving,
+                voiceInputManager: voiceInputManager
+            )
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(Color.themeBgDark.opacity(0.98))
+        .overlay(alignment: .top) {
+            Divider().overlay(Color.themeComment.opacity(0.14))
+        }
     }
 
     private var referenceCard: some View {

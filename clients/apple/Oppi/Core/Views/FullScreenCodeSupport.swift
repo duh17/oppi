@@ -52,8 +52,20 @@ func buildFullScreenSelectedTextMenu(
         range: range,
         suggestedActions: suggestedActions,
         router: router,
-        sourceContext: sourceContext
+        sourceContext: sourceContext,
+        presentingViewController: nearestViewController(from: textView)
     )
+}
+
+private func nearestViewController(from responder: UIResponder) -> UIViewController? {
+    var current: UIResponder? = responder
+    while let node = current {
+        if let controller = node as? UIViewController {
+            return controller
+        }
+        current = node.next
+    }
+    return nil
 }
 
 @MainActor

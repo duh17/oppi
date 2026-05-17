@@ -3,14 +3,22 @@ import UIKit
 
 @MainActor
 final class SelectedTextPiActionRouter {
-    private let dispatchClosure: (SelectedTextPiRequest) -> Void
+    private let dispatchClosure: (SelectedTextPiRequest, UIViewController?) -> Void
 
     init(dispatch: @escaping (SelectedTextPiRequest) -> Void) {
-        dispatchClosure = dispatch
+        dispatchClosure = { request, _ in dispatch(request) }
+    }
+
+    init(dispatchWithPresentation: @escaping (SelectedTextPiRequest, UIViewController?) -> Void) {
+        dispatchClosure = dispatchWithPresentation
     }
 
     func dispatch(_ request: SelectedTextPiRequest) {
-        dispatchClosure(request)
+        dispatchClosure(request, nil)
+    }
+
+    func dispatch(_ request: SelectedTextPiRequest, presentingViewController: UIViewController?) {
+        dispatchClosure(request, presentingViewController)
     }
 }
 
@@ -227,12 +235,14 @@ enum SelectedTextPiMenuBuilder {
         selectedText: String,
         sourceContext: SelectedTextSourceContext,
         router: SelectedTextPiActionRouter,
-        actionStore: PiQuickActionStore? = nil
+        actionStore: PiQuickActionStore? = nil,
+        presentingViewController: UIViewController? = nil
     ) -> UIMenu? {
         guard let commentAction = commentAction(
             selectedText: selectedText,
             sourceContext: sourceContext,
-            router: router
+            router: router,
+            presentingViewController: presentingViewController
         ) else {
             return nil
         }
@@ -246,7 +256,8 @@ enum SelectedTextPiMenuBuilder {
     static func commentAction(
         selectedText: String,
         sourceContext: SelectedTextSourceContext,
-        router: SelectedTextPiActionRouter
+        router: SelectedTextPiActionRouter,
+        presentingViewController: UIViewController? = nil
     ) -> UIAction? {
         let normalized = SelectedTextPiPromptFormatter.normalizedSelectedText(selectedText)
         guard !normalized.isEmpty else { return nil }
@@ -256,11 +267,14 @@ enum SelectedTextPiMenuBuilder {
             title: quickAction.title,
             image: UIImage(systemName: quickAction.systemImage)
         ) { _ in
-            router.dispatch(.init(
-                action: quickAction,
-                selectedText: normalized,
-                source: sourceContext
-            ))
+            router.dispatch(
+                .init(
+                    action: quickAction,
+                    selectedText: normalized,
+                    source: sourceContext
+                ),
+                presentingViewController: presentingViewController
+            )
         }
     }
 }
@@ -273,7 +287,8 @@ enum SelectedTextPiEditMenuSupport {
         suggestedActions: [UIMenuElement],
         router: SelectedTextPiActionRouter?,
         sourceContext: SelectedTextSourceContext?,
-        actionStore: PiQuickActionStore? = nil
+        actionStore: PiQuickActionStore? = nil,
+        presentingViewController: UIViewController? = nil
     ) -> UIMenu? {
         guard let router,
               let sourceContext,
@@ -286,7 +301,8 @@ enum SelectedTextPiEditMenuSupport {
             selectedText: selectedText,
             sourceContext: enrichedSourceContext(sourceContext, textView: textView, range: range),
             router: router,
-            actionStore: actionStore
+            actionStore: actionStore,
+            presentingViewController: presentingViewController
         )
     }
 
