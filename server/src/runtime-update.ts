@@ -9,8 +9,8 @@
  *   Mac app: Settings → Update Server Dependencies
  *   API:     POST /server/runtime/update
  *
- * Updates run `bun install` (or `npm install`) in the runtime dir using
- * the existing package.json. When a newer pi runtime package is available,
+ * Updates run `npm install` in the runtime dir using the existing
+ * package.json. When a newer pi runtime package is available,
  * Oppi pins the runtime manifest to that version before installing.
  * The server must be restarted after updates to pick up new code.
  */
@@ -105,33 +105,26 @@ function resolveRuntimeDir(): string | undefined {
 }
 
 /**
- * Resolves a package manager binary for running install.
+ * Resolves the npm binary used for runtime dependency installs.
  *
- * Priority: OPPI_RUNTIME_BIN env (set by Mac app) → bun → npm.
+ * Priority: sibling npm next to OPPI_RUNTIME_BIN (set by Mac app) → system npm.
  */
 function resolvePackageManager(): PackageManagerCommand | undefined {
   const ignoreScripts = "--ignore-scripts";
+  const installArgs = ["install", "--omit=dev", ignoreScripts];
 
   const runtimeBin = process.env.OPPI_RUNTIME_BIN;
-  if (runtimeBin && existsSync(runtimeBin) && runtimeBin.includes("bun")) {
-    return { bin: runtimeBin, installArgs: ["install", "--no-save", ignoreScripts], name: "bun" };
-  }
-
-  const bunCandidates = [
-    "/opt/homebrew/bin/bun",
-    "/usr/local/bin/bun",
-    join(process.env.HOME || "", ".bun", "bin", "bun"),
-  ];
-  for (const p of bunCandidates) {
-    if (existsSync(p)) {
-      return { bin: p, installArgs: ["install", "--no-save", ignoreScripts], name: "bun" };
+  if (runtimeBin && existsSync(runtimeBin)) {
+    const siblingNpm = join(dirname(runtimeBin), "npm");
+    if (existsSync(siblingNpm)) {
+      return { bin: siblingNpm, installArgs, name: "npm" };
     }
   }
 
   const npmCandidates = ["/opt/homebrew/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm"];
   for (const p of npmCandidates) {
     if (existsSync(p)) {
-      return { bin: p, installArgs: ["install", "--omit=dev", ignoreScripts], name: "npm" };
+      return { bin: p, installArgs, name: "npm" };
     }
   }
 
@@ -368,7 +361,7 @@ export class RuntimeUpdateManager {
     if (!pm) {
       return {
         ok: false,
-        message: "No package manager found (bun or npm required)",
+        message: "No npm executable found. Install Node.js and try again.",
         restartRequired: false,
         error: "no_package_manager",
       };

@@ -11,8 +11,7 @@
 #   - Xcode with Developer ID signing (team AZAQMY4SPZ)
 #   - XcodeGen installed (brew install xcodegen)
 #   - gh CLI authenticated (gh auth login)
-#   - Node.js installed (for server build — tsc compilation)
-#   - Internet access (downloads pinned Bun binary from GitHub)
+#   - Node.js installed (for server build and bundled server runtime dependencies)
 #
 set -euo pipefail
 
@@ -21,9 +20,6 @@ APPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$APPLE_DIR/../.." && pwd)"
 SERVER_DIR="$REPO_ROOT/server"
 PROJECT_YML="$APPLE_DIR/project.yml"
-
-# Pinned Bun version — update deliberately, not accidentally
-BUN_VERSION_PIN="1.3.11"
 
 # Read version from project.yml (OppiMac target)
 VERSION=$(grep -A40 'OppiMac:' "$PROJECT_YML" | grep 'MARKETING_VERSION:' | head -1 | awk -F'"' '{print $2}')
@@ -171,69 +167,7 @@ if [[ ! -d "$APP_PATH" ]]; then
 fi
 echo "Exported to $APP_PATH"
 
-# ── Step 5: Bundle Bun runtime (pinned version) ──
-
-echo "--- Step 5: Bundling Bun v$BUN_VERSION_PIN ---"
-RESOURCES="$APP_PATH/Contents/Resources"
-
-BUN_CACHE_DIR="$BUILD_DIR/bun-cache"
-BUN_ZIP="$BUN_CACHE_DIR/bun-darwin-aarch64-v${BUN_VERSION_PIN}.zip"
-BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION_PIN}/bun-darwin-aarch64.zip"
-
-# Download if not cached from a previous build
-if [[ ! -f "$BUN_ZIP" ]]; then
-    mkdir -p "$BUN_CACHE_DIR"
-    echo "Downloading Bun v$BUN_VERSION_PIN from GitHub..."
-    curl -fsSL "$BUN_URL" -o "$BUN_ZIP"
-
-    # Verify SHA-256 checksum against Bun's published checksums
-    echo "Verifying SHA-256 checksum..."
-    SHASUMS_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION_PIN}/SHASUMS256.txt"
-    curl -fsSL "$SHASUMS_URL" -o "$BUN_CACHE_DIR/SHASUMS256.txt"
-    # SHASUMS file references "bun-darwin-aarch64.zip" but our cached file has versioned name
-    EXPECTED_SHA=$(grep "bun-darwin-aarch64.zip" "$BUN_CACHE_DIR/SHASUMS256.txt" | awk '{print $1}')
-    ACTUAL_SHA=$(shasum -a 256 "$BUN_ZIP" | awk '{print $1}')
-    [[ "$EXPECTED_SHA" == "$ACTUAL_SHA" ]] || {
-        echo "ERROR: SHA-256 checksum verification failed!"
-        rm -f "$BUN_ZIP"
-        exit 1
-    }
-else
-    echo "Using cached Bun download."
-fi
-
-# Extract — zip contains bun-darwin-aarch64/bun
-BUN_EXTRACT="$BUN_CACHE_DIR/extract"
-rm -rf "$BUN_EXTRACT"
-unzip -qo "$BUN_ZIP" -d "$BUN_EXTRACT"
-BUN_BIN="$BUN_EXTRACT/bun-darwin-aarch64/bun"
-
-if [[ ! -x "$BUN_BIN" ]]; then
-    echo "Error: Bun binary not found in downloaded archive"
-    exit 1
-fi
-
-# Verify version matches pin
-ACTUAL_VERSION=$("$BUN_BIN" --version 2>/dev/null || echo "unknown")
-if [[ "$ACTUAL_VERSION" != "$BUN_VERSION_PIN" ]]; then
-    echo "Error: Downloaded Bun is v$ACTUAL_VERSION, expected v$BUN_VERSION_PIN"
-    exit 1
-fi
-
-# Verify architecture
-BUN_ARCH=$(file "$BUN_BIN" | grep -o 'arm64\|x86_64')
-if [[ "$BUN_ARCH" != "arm64" ]]; then
-    echo "Error: Bun binary is $BUN_ARCH, expected arm64"
-    exit 1
-fi
-
-BUN_SIZE=$(du -sh "$BUN_BIN" | awk '{print $1}')
-echo "Bun v$BUN_VERSION_PIN (arm64, $BUN_SIZE)"
-
-cp "$BUN_BIN" "$RESOURCES/bun"
-chmod +x "$RESOURCES/bun"
-
-# ── Step 6: Bundle server seed ──
+# ── Step 5: Bundle server seed ──
 #
 # The server runtime is DECOUPLED from the app binary:
 #   - Resources/server-seed/ = immutable seed (dist + deps, for first launch)
@@ -242,35 +176,33 @@ chmod +x "$RESOURCES/bun"
 # On first launch (or app version bump), the app copies the seed to the runtime
 # dir. Dependencies can then be updated without rebuilding the DMG.
 
-echo "--- Step 6: Bundling server seed ---"
+echo "--- Step 5: Bundling server seed ---"
+RESOURCES="$APP_PATH/Contents/Resources"
 SERVER_SEED="$RESOURCES/server-seed"
+rm -rf "$SERVER_SEED"
 mkdir -p "$SERVER_SEED"
 
-# Copy compiled server code
+# Copy compiled server code and manifests
 cp -R "$SERVER_DIR/dist" "$SERVER_SEED/dist"
-
-# Copy dependency manifest (needed for bun install in runtime dir)
 cp "$SERVER_DIR/package.json" "$SERVER_SEED/"
-
-# Install production deps into seed
 cp "$SERVER_DIR/package-lock.json" "$SERVER_SEED/"
-[[ -f "$SERVER_DIR/bun.lock" ]] && cp "$SERVER_DIR/bun.lock" "$SERVER_SEED/"
+
+# Install production deps into the seed using npm so the bundled runtime stays Node-only.
 cd "$SERVER_SEED"
-"$RESOURCES/bun" install --production --ignore-scripts 2>&1 | tail -3
-rm -f "$SERVER_SEED/package-lock.json" "$SERVER_SEED/bun.lock"
+clean_npm_env npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 | tail -3
 
 # Write seed version (app version + build number for change detection)
 echo "${VERSION}.${BUILD_NUMBER}" > "$SERVER_SEED/.seed-version"
 
-# ── Step 6b: Strip bloat from seed node_modules ──
+# ── Step 5b: Strip bloat from seed node_modules ──
 
-echo "--- Step 6b: Stripping bloat ---"
+echo "--- Step 5b: Stripping bloat ---"
 NM="$SERVER_SEED/node_modules"
 BEFORE_SIZE=$(du -sh "$SERVER_SEED" | awk '{print $1}')
 
 # Remove entire packages that are dead code on macOS
 rm -rf "$NM/koffi"                                     # Windows-only FFI (86MB)
-rm -rf "$NM/better-sqlite3"                            # Not needed under Bun (bun:sqlite)
+rm -rf "$NM/better-sqlite3"                            # Not needed with built-in SQLite runtimes
 rm -rf "$NM/nan" "$NM/buildcheck" "$NM/node-gyp"      # Native build tooling
 rm -rf "$NM/@types"                                    # TypeScript declarations
 rm -rf "$NM/@mariozechner/clipboard-darwin-universal"   # Redundant with arm64
@@ -290,16 +222,16 @@ AFTER_SIZE=$(du -sh "$SERVER_SEED" | awk '{print $1}')
 echo "Server seed: $BEFORE_SIZE -> $AFTER_SIZE (after stripping)"
 
 TOTAL_SIZE=$(du -sh "$RESOURCES" | awk '{print $1}')
-echo "Total Resources: $TOTAL_SIZE (Bun $BUN_SIZE + seed $AFTER_SIZE)"
+echo "Total Resources: $TOTAL_SIZE (server seed $AFTER_SIZE)"
 
-# ── Step 6c: Verify server-seed integrity ──
+# ── Step 5c: Verify server-seed integrity ──
 #
 # Static check: verify the bundled server-seed contains everything
 # ServerProcessManager.resolveServerCLIPath() expects at runtime.
 # This catches path mismatches between the server build output (tsconfig rootDir)
 # and the hardcoded paths in the Mac app Swift code.
 
-echo "--- Step 6c: Verifying server-seed integrity ---"
+echo "--- Step 5c: Verifying server-seed integrity ---"
 SEED_CLI="$SERVER_SEED/dist/src/cli.js"
 if [[ ! -f "$SEED_CLI" ]]; then
     echo "ERROR: Server CLI entrypoint missing!"
@@ -314,12 +246,17 @@ if [[ ! -f "$SEED_CLI" ]]; then
 fi
 echo "  CLI entrypoint: OK ($SEED_CLI)"
 
-# Verify package.json exists (needed for bun install in runtime dir)
+# Verify package manifests exist (needed for deterministic runtime reseeding)
 if [[ ! -f "$SERVER_SEED/package.json" ]]; then
     echo "ERROR: server-seed/package.json missing!"
     exit 1
 fi
 echo "  package.json:   OK"
+if [[ ! -f "$SERVER_SEED/package-lock.json" ]]; then
+    echo "ERROR: server-seed/package-lock.json missing!"
+    exit 1
+fi
+echo "  package-lock:   OK"
 
 # Verify node_modules has key dependencies
 for dep in "@anthropic-ai/sdk"; do
@@ -349,26 +286,15 @@ if [[ ! -f "$SERVER_SEED/.seed-version" ]]; then
 fi
 echo "  Seed version:   $(cat "$SERVER_SEED/.seed-version")"
 
-# ── Step 7: Codesign (inside-out) ──
+# ── Step 6: Codesign (inside-out) ──
 #
-# macOS codesigning requires inside-out: sign leaf Mach-O binaries first with
-# their specific entitlements, then sign the outer .app which seals everything
-# by hash. Using --deep on the outer app would clobber inner entitlements.
+# macOS codesigning requires inside-out: sign leaf Mach-O binaries first, then
+# sign the outer .app which seals everything by hash. Using --deep on the outer
+# app would clobber inner signatures.
 
-echo "--- Step 7: Signing (inside-out) ---"
-BUN_ENTITLEMENTS="$APPLE_DIR/BunRuntime.entitlements"
+echo "--- Step 6: Signing (inside-out) ---"
 
-# 1. Sign the bundled Bun binary with JIT entitlements.
-#    Bun's JavaScriptCore JIT requires: allow-jit, allow-unsigned-executable-memory,
-#    disable-executable-page-protection, disable-library-validation.
-codesign --force --options runtime --timestamp \
-    --sign "$SIGNING_IDENTITY" \
-    --entitlements "$BUN_ENTITLEMENTS" \
-    "$RESOURCES/bun" \
-    2>&1
-echo "  Signed: bun (JIT entitlements)"
-
-# 2. Sign native .node addons (clipboard, ssh2 crypto, cpu-features)
+# 1. Sign native .node addons (clipboard, ssh2 crypto, cpu-features)
 find "$RESOURCES/server-seed/node_modules" -name "*.node" -type f 2>/dev/null | while read -r addon; do
     codesign --force --options runtime --timestamp \
         --sign "$SIGNING_IDENTITY" \
@@ -376,7 +302,7 @@ find "$RESOURCES/server-seed/node_modules" -name "*.node" -type f 2>/dev/null | 
     echo "  Signed: $(basename "$addon")"
 done
 
-# 3. Sign any other Mach-O binaries in Frameworks/ or Helpers/
+# 2. Sign any other Mach-O binaries in Frameworks/ or Helpers/
 SIGN_DIRS=()
 [[ -d "$APP_PATH/Contents/Frameworks" ]] && SIGN_DIRS+=("$APP_PATH/Contents/Frameworks")
 [[ -d "$APP_PATH/Contents/Helpers" ]] && SIGN_DIRS+=("$APP_PATH/Contents/Helpers")
@@ -389,7 +315,7 @@ find "${SIGN_DIRS[@]}" -type f -perm +111 2>/dev/null | while read -r binary; do
     echo "  Signed: $(basename "$binary")"
 done
 
-# 4. Sign the outer .app (NO --deep — inner binaries already signed)
+# 3. Sign the outer .app (NO --deep — inner binaries already signed)
 codesign --force --options runtime --timestamp \
     --sign "$SIGNING_IDENTITY" \
     "$APP_PATH" \
@@ -400,16 +326,9 @@ echo "  Signed: Oppi.app"
 codesign --verify --deep --strict "$APP_PATH" 2>&1
 echo "Signature verified."
 
-# Verify Bun's JIT entitlements survived
-if ! codesign -d --entitlements :- "$RESOURCES/bun" 2>&1 | grep -q "allow-jit"; then
-    echo "ERROR: Bun lost JIT entitlements! Build is broken."
-    exit 1
-fi
-echo "Bun JIT entitlements confirmed."
+# ── Step 7: Create DMG ──
 
-# ── Step 8: Create DMG ──
-
-echo "--- Step 8: Creating DMG ---"
+echo "--- Step 7: Creating DMG ---"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 
 # Remove existing DMG if present
@@ -429,7 +348,7 @@ rm -rf "$DMG_STAGING"
 DMG_SIZE=$(du -sh "$DMG_PATH" | awk '{print $1}')
 echo "DMG created: $DMG_PATH ($DMG_SIZE)"
 
-# ── Step 9: Publish GitHub release (optional) ──
+# ── Step 8: Publish GitHub release (optional) ──
 
 if $PUBLISH; then
     echo "--- Step 8: Publishing GitHub release ---"
@@ -448,16 +367,18 @@ Self-hosted coding agent with mobile supervision.
 
 ### What's included
 - Oppi Mac app (menu bar) — manages the local server, session monitoring
-- Bundled Bun runtime + server + pi coding agent (no external dependencies)
+- Bundled server seed + pi coding agent runtime assets
 
 ### Prerequisites
 - macOS 15.0+
+- Node.js 23.6.0 or newer installed on the Mac
 
 ### Install
 1. Download \`$DMG_NAME\` below
 2. Drag Oppi to Applications
 3. Launch Oppi — it will check prerequisites and guide you through setup
-4. Pair with the iOS app by scanning the QR code
+4. If prompted, install Node.js 23.6.0+ and reopen Oppi
+5. Pair with the iOS app by scanning the QR code
 
 ### Notes
 - The app is Developer ID signed but not notarized. On first launch, right-click the app and choose "Open", or run:

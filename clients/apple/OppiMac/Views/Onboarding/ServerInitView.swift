@@ -141,8 +141,14 @@ struct ServerInitView: View {
     }
 
     private nonisolated func runServerInit() async throws {
-        guard let runtimePath = await MainActor.run(body: { ServerProcessManager.resolveRuntimePath() }) else {
-            throw InitError.nodeNotFound
+        let runtime = await MainActor.run {
+            (
+                path: ServerProcessManager.resolveRuntimePath(),
+                failure: ServerProcessManager.runtimeFailureReason()
+            )
+        }
+        guard let runtimePath = runtime.path else {
+            throw InitError.runtimeUnavailable(runtime.failure)
         }
         let nodePath = runtimePath
         guard let cliPath = await MainActor.run(body: { ServerProcessManager.resolveServerCLIPath() }) else {
@@ -190,14 +196,14 @@ private enum InitPhase: Int {
 }
 
 private enum InitError: LocalizedError {
-    case nodeNotFound
+    case runtimeUnavailable(String)
     case cliNotFound
     case initFailed(String)
     case noToken
 
     var errorDescription: String? {
         switch self {
-        case .nodeNotFound: "Node.js not found"
+        case .runtimeUnavailable(let message): message
         case .cliNotFound: "Server CLI not found"
         case .initFailed(let msg): "Server init failed: \(msg)"
         case .noToken: "Could not read owner token from config"

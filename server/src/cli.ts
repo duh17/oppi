@@ -1387,7 +1387,7 @@ async function cmdUpdate(flags: Record<string, string>): Promise<void> {
   }
 
   if (!status.canUpdate) {
-    console.log(c.red("  No package manager found (bun or npm required)."));
+    console.log(c.red("  No npm executable found. Install Node.js and try again."));
     console.log("");
     process.exit(1);
   }

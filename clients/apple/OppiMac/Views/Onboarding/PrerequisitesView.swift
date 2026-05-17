@@ -31,7 +31,7 @@ struct PrerequisitesView: View {
             Spacer()
 
             VStack(alignment: .leading, spacing: 12) {
-                PrereqRow(label: "JS Runtime", status: nodeStatus)
+                PrereqRow(label: "Node.js", status: nodeStatus)
                 PrereqRow(label: "pi CLI", status: piStatus)
                 PrereqRow(label: "Port 7749", status: portStatus)
             }
@@ -84,20 +84,12 @@ struct PrerequisitesView: View {
     // MARK: - Checks
 
     private static func checkNode() async -> PrereqStatus {
-        // Check bundled Bun first (release builds embed it in Resources/)
         if let runtimePath = await MainActor.run(body: { ServerProcessManager.resolveRuntimePath() }) {
-            if runtimePath.contains("Resources/bun") || runtimePath.contains(".app/") {
-                return .passed("Bundled")
-            }
-            if runtimePath.hasSuffix("/bun") {
-                let version = await ProcessRunner.version(runtimePath)
-                return .passed("Bun \(version ?? "")")
-            }
-            // Node.js fallback
             let version = await ProcessRunner.version(runtimePath)
             return .passed("Node \(version ?? "")")
         }
-        return .failed("Not found — install Bun (brew install oven-sh/bun/bun)")
+        let reason = await MainActor.run(body: { ServerProcessManager.runtimeFailureReason() })
+        return .failed(reason)
     }
 
     private static func checkPi() async -> PrereqStatus {

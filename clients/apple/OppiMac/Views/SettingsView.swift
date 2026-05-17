@@ -53,9 +53,9 @@ struct SettingsView: View {
                     }
                 }
 
-                if let nodePath = ServerProcessManager.resolveNodePath() {
+                if let runtimePath = ServerProcessManager.resolveRuntimePath() {
                     LabeledContent("Node.js") {
-                        Text(nodePath)
+                        Text(runtimePath)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                     }

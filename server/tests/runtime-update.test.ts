@@ -581,20 +581,21 @@ describe("RuntimeUpdateManager", () => {
   });
 
   describe("resolvePackageManager (via updateRuntime)", () => {
-    it("uses OPPI_RUNTIME_BIN when set to a bun path", async () => {
+    it("uses sibling npm next to OPPI_RUNTIME_BIN when available", async () => {
       const { dir, cleanup } = makeFakeRuntimeDir({
         deps: { "some-pkg": "^1.0.0" },
         installedVersions: { "some-pkg": "1.0.0" },
       });
 
+      const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-fakebin-"));
       try {
         pointResolverAt(dir);
 
-        // Create a fake bun binary
-        const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-fakebin-"));
-        const fakeBun = join(fakeBinDir, "bun");
-        writeFileSync(fakeBun, "#!/bin/sh\nexit 0", { mode: 0o755 });
-        process.env.OPPI_RUNTIME_BIN = fakeBun;
+        const fakeNode = join(fakeBinDir, "node");
+        const fakeNpm = join(fakeBinDir, "npm");
+        writeFileSync(fakeNode, "#!/bin/sh\nexit 0", { mode: 0o755 });
+        writeFileSync(fakeNpm, "#!/bin/sh\nexit 0", { mode: 0o755 });
+        process.env.OPPI_RUNTIME_BIN = fakeNode;
 
         let capturedBin = "";
         let capturedArgs: string[] = [];
@@ -610,13 +611,12 @@ describe("RuntimeUpdateManager", () => {
         const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
         await manager.updateRuntime();
 
-        expect(capturedBin).toBe(fakeBun);
+        expect(capturedBin).toBe(fakeNpm);
         expect(capturedArgs).toContain("install");
-        expect(capturedArgs).toContain("--no-save");
+        expect(capturedArgs).toContain("--omit=dev");
         expect(capturedArgs).toContain("--ignore-scripts");
-
-        rmSync(fakeBinDir, { recursive: true, force: true });
       } finally {
+        rmSync(fakeBinDir, { recursive: true, force: true });
         cleanup();
       }
     });

@@ -88,9 +88,15 @@ struct DoctorView: View {
         rawOutput = nil
 
         Task.detached {
-            guard let runtimePath = await MainActor.run(body: { ServerProcessManager.resolveRuntimePath() }) else {
+            let runtime = await MainActor.run {
+                (
+                    path: ServerProcessManager.resolveRuntimePath(),
+                    failure: ServerProcessManager.runtimeFailureReason()
+                )
+            }
+            guard let runtimePath = runtime.path else {
                 await MainActor.run {
-                    error = "JS runtime not found (Bun or Node.js)"
+                    error = runtime.failure
                     isRunning = false
                 }
                 return

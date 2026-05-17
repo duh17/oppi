@@ -79,36 +79,114 @@ export interface LaunchdStatus {
   label: string;
 }
 
+type SemanticVersion = {
+  major: number;
+  minor: number;
+  patch: number;
+};
+
+function parseSemanticVersion(raw: string): SemanticVersion | null {
+  const normalized = raw.trim().replace(/^[vV]/, "");
+  const match = normalized.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!match) {
+    return null;
+  }
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2] || 0),
+    patch: Number(match[3] || 0),
+  };
+}
+
+function compareSemanticVersion(left: SemanticVersion, right: SemanticVersion): number {
+  if (left.major !== right.major) return left.major - right.major;
+  if (left.minor !== right.minor) return left.minor - right.minor;
+  return left.patch - right.patch;
+}
+
+function formatSemanticVersion(version: SemanticVersion): string {
+  return `${version.major}.${version.minor}.${version.patch}`;
+}
+
+function packageJsonPathForCli(cliPath: string): string {
+  return resolve(cliPath, "..", "..", "..", "package.json");
+}
+
+function minimumRequiredNodeVersion(cliPath?: string | null): SemanticVersion | null {
+  if (!cliPath) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(packageJsonPathForCli(cliPath), "utf-8");
+    const parsed = JSON.parse(content) as { engines?: { node?: string } };
+    const range = parsed.engines?.node?.trim();
+    if (!range) {
+      return null;
+    }
+    const match = range.match(/>=\s*([0-9]+(?:\.[0-9]+){0,2})/);
+    return match ? parseSemanticVersion(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function installedNodeVersion(nodePath: string): SemanticVersion | null {
+  try {
+    const output = execSync(`"${nodePath}" --version`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    return parseSemanticVersion(output);
+  } catch {
+    return null;
+  }
+}
+
+function runtimeCompatibilityIssue(nodePath: string, cliPath?: string | null): string | null {
+  const minimum = minimumRequiredNodeVersion(cliPath);
+  if (!minimum) {
+    return null;
+  }
+  const installed = installedNodeVersion(nodePath);
+  if (!installed) {
+    return `Could not read Node.js version at ${nodePath}`;
+  }
+  if (compareSemanticVersion(installed, minimum) < 0) {
+    return `Node.js ${formatSemanticVersion(installed)} found, but Oppi requires Node.js ${formatSemanticVersion(minimum)} or newer`;
+  }
+  return null;
+}
+
 /**
- * Resolve the absolute path to the JS runtime (Bun preferred, Node fallback).
+ * Resolve the absolute path to the Node.js runtime.
  *
  * Search order:
- * 1. Bundled Bun in the Mac app (if installed from DMG)
- * 2. System Bun (Homebrew, ~/.bun)
- * 3. System Node.js (Homebrew, /usr/local)
+ * 1. Homebrew Node.js
+ * 2. /usr/local Node.js
+ * 3. System Node.js
  */
-function resolveRuntimeAbsolute(): string | null {
-  // Bundled Bun from DMG install
-  const bundledBun = "/Applications/Oppi.app/Contents/Resources/bun";
-  if (existsSync(bundledBun)) return bundledBun;
-
-  // System Bun
-  const bunCandidates = [
-    "/opt/homebrew/bin/bun",
-    "/usr/local/bin/bun",
-    join(homedir(), ".bun", "bin", "bun"),
-  ];
-  for (const p of bunCandidates) {
-    if (existsSync(p)) return p;
-  }
-
-  // Node.js fallback
+function resolveRuntimeAbsolute(cliPath?: string | null): string | null {
   const nodeCandidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"];
   for (const p of nodeCandidates) {
-    if (existsSync(p)) return p;
+    if (existsSync(p) && !runtimeCompatibilityIssue(p, cliPath)) return p;
+  }
+  return null;
+}
+
+function runtimeResolutionFailureMessage(cliPath?: string | null): string {
+  const minimum = minimumRequiredNodeVersion(cliPath);
+  const nodeCandidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"];
+
+  for (const path of nodeCandidates) {
+    if (!existsSync(path)) continue;
+    return runtimeCompatibilityIssue(path, cliPath) || "Node.js runtime unavailable";
   }
 
-  return null;
+  if (minimum) {
+    return `Node.js ${formatSemanticVersion(minimum)} or newer not found. Install Node.js and try again.`;
+  }
+  return "Node.js not found. Install Node.js and try again.";
 }
 
 /**
@@ -167,7 +245,7 @@ function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): s
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${homedir()}/.bun/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>OPPI_DATA_DIR</key>
         <string>${dataDir}</string>
         <key>OPPI_RUNTIME_BIN</key>
@@ -204,15 +282,15 @@ export function installService(dataDir?: string): {
   cliPath?: string;
   legacyRemoved?: string[];
 } {
-  const runtimePath = resolveRuntimeAbsolute();
+  const cliPath = resolveCLIAbsolute();
+  const runtimePath = resolveRuntimeAbsolute(cliPath);
   if (!runtimePath) {
     return {
       ok: false,
-      message: "No JS runtime found (Bun or Node.js). Install Bun: brew install oven-sh/bun/bun",
+      message: runtimeResolutionFailureMessage(cliPath),
     };
   }
 
-  const cliPath = resolveCLIAbsolute();
   if (!cliPath) {
     return {
       ok: false,

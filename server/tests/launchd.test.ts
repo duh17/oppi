@@ -38,6 +38,18 @@ const originalGetuid = process.getuid;
 beforeEach(() => {
   process.getuid = () => 501;
   mockUnlinkSync.mockImplementation(() => undefined);
+  mockReadFileSync.mockImplementation((path: string) => {
+    if (path.endsWith("package.json")) {
+      return JSON.stringify({ engines: { node: ">=23.6.0" } });
+    }
+    return "";
+  });
+  mockExecSync.mockImplementation((cmd: string) => {
+    if (cmd.includes("--version")) {
+      return "v25.0.0";
+    }
+    return "";
+  });
 });
 
 afterEach(() => {
@@ -73,16 +85,12 @@ describe("plist path resolution", () => {
 
 describe("plist XML generation", () => {
   function captureWrittenPlist(dataDir?: string): string {
-    // Runtime: bundled bun exists
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
-      // CLI: runtime dir exists
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
-      // Existing plist (not installed yet)
       if (p.endsWith(".plist")) return false;
       return false;
     });
-    mockExecSync.mockReturnValue("");
 
     installService(dataDir);
 
@@ -104,7 +112,7 @@ describe("plist XML generation", () => {
     const xml = captureWrittenPlist("/tmp/test-oppi");
 
     expect(xml).toContain("<key>ProgramArguments</key>");
-    expect(xml).toContain("<string>/Applications/Oppi.app/Contents/Resources/bun</string>");
+    expect(xml).toContain("<string>/opt/homebrew/bin/node</string>");
     expect(xml).toContain(
       "<string>/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js</string>",
     );
@@ -133,11 +141,10 @@ describe("plist XML generation", () => {
     expect(xml).toContain("<key>EnvironmentVariables</key>");
     expect(xml).toContain("<key>PATH</key>");
     expect(xml).toContain("/opt/homebrew/bin");
-    expect(xml).toContain("/Users/testuser/.bun/bin");
     expect(xml).toContain("<key>OPPI_DATA_DIR</key>");
     expect(xml).toContain("<string>/tmp/test-oppi</string>");
     expect(xml).toContain("<key>OPPI_RUNTIME_BIN</key>");
-    expect(xml).toContain("<string>/Applications/Oppi.app/Contents/Resources/bun</string>");
+    expect(xml).toContain("<string>/opt/homebrew/bin/node</string>");
   });
 
   it("sets log paths to dataDir/server.log", () => {
@@ -174,55 +181,61 @@ describe("plist XML generation", () => {
 // ── Runtime resolution ─────────────────────────────────────────────────────
 
 describe("runtime resolution", () => {
-  it("prefers bundled Bun over system candidates", () => {
+  it("prefers Homebrew node", () => {
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
-      if (p === "/opt/homebrew/bin/bun") return true;
-      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
-      if (p.endsWith(".plist")) return false;
-      return false;
-    });
-    mockExecSync.mockReturnValue("");
-
-    const result = installService("/tmp/data");
-    expect(result.runtimePath).toBe("/Applications/Oppi.app/Contents/Resources/bun");
-  });
-
-  it("falls back to Homebrew bun when bundled not available", () => {
-    mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return false;
-      if (p === "/opt/homebrew/bin/bun") return true;
-      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
-      if (p.endsWith(".plist")) return false;
-      return false;
-    });
-    mockExecSync.mockReturnValue("");
-
-    const result = installService("/tmp/data");
-    expect(result.runtimePath).toBe("/opt/homebrew/bin/bun");
-  });
-
-  it("falls back to node when no bun is available", () => {
-    mockExistsSync.mockImplementation((p: string) => {
-      // No bun anywhere
-      if (p.includes("bun")) return false;
       if (p === "/opt/homebrew/bin/node") return true;
+      if (p === "/usr/local/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       if (p.endsWith(".plist")) return false;
       return false;
     });
-    mockExecSync.mockReturnValue("");
 
     const result = installService("/tmp/data");
     expect(result.runtimePath).toBe("/opt/homebrew/bin/node");
   });
 
+  it("falls back to /usr/local/bin/node when Homebrew node is unavailable", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/opt/homebrew/bin/node") return false;
+      if (p === "/usr/local/bin/node") return true;
+      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
+      if (p.endsWith(".plist")) return false;
+      return false;
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.runtimePath).toBe("/usr/local/bin/node");
+  });
+
+  it("rejects nodes older than the server minimum", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/opt/homebrew/bin/node") return true;
+      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
+      if (p.endsWith(".plist")) return false;
+      return false;
+    });
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("--version")) {
+        return "v20.11.1";
+      }
+      return "";
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Node.js 20.11.1 found");
+    expect(result.message).toContain("23.6.0 or newer");
+  });
+
   it("returns error when no runtime found", () => {
-    mockExistsSync.mockReturnValue(false);
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
+      return false;
+    });
     const result = installService("/tmp/data");
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain("No JS runtime found");
+    expect(result.message).toContain("Node.js 23.6.0 or newer not found");
   });
 });
 
@@ -232,7 +245,7 @@ describe("CLI resolution", () => {
   it("returns error when CLI not found", () => {
     // Runtime exists, but no CLI
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       return false;
     });
 
@@ -243,14 +256,13 @@ describe("CLI resolution", () => {
 
   it("resolves runtime dir CLI first", () => {
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       if (p === "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js")
         return true;
       if (p.endsWith(".plist")) return false;
       return false;
     });
-    mockExecSync.mockReturnValue("");
 
     const result = installService("/tmp/data");
     expect(result.ok).toBe(true);
@@ -263,12 +275,11 @@ describe("CLI resolution", () => {
 describe("installService", () => {
   function setupValidInstall() {
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       if (p.endsWith(".plist")) return false;
       return false;
     });
-    mockExecSync.mockReturnValue("");
   }
 
   it("creates LaunchAgents directory", () => {
@@ -306,12 +317,11 @@ describe("installService", () => {
 
   it("bootouts existing plist before installing", () => {
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       if (p === "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist") return true;
       return false;
     });
-    mockExecSync.mockReturnValue("");
 
     installService("/tmp/data");
 
@@ -323,13 +333,12 @@ describe("installService", () => {
 
   it("disables legacy dev.chenda LaunchAgent before installing", () => {
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       if (p === "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist") return true;
       if (p === "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist") return false;
       return false;
     });
-    mockExecSync.mockReturnValue("");
 
     const result = installService("/tmp/data");
 
@@ -352,12 +361,11 @@ describe("installService", () => {
 
   it("fails install when legacy LaunchAgent plist cannot be removed", () => {
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       if (p === "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist") return true;
       return false;
     });
-    mockExecSync.mockReturnValue("");
     mockUnlinkSync.mockImplementation(() => {
       throw new Error("EACCES: permission denied");
     });
@@ -372,6 +380,9 @@ describe("installService", () => {
   it("handles error 37 (already loaded) by kickstarting", () => {
     setupValidInstall();
     mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("--version")) {
+        return "v25.0.0";
+      }
       if (cmd.includes("bootstrap")) {
         throw new Error("37: Service is already loaded");
       }
@@ -391,6 +402,9 @@ describe("installService", () => {
   it("returns error on non-37 bootstrap failure", () => {
     setupValidInstall();
     mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("--version")) {
+        return "v25.0.0";
+      }
       if (cmd.includes("bootstrap")) {
         throw new Error("5: Some other error");
       }
@@ -409,7 +423,7 @@ describe("installService", () => {
 
     expect(result.ok).toBe(true);
     expect(result.message).toContain("installed and started");
-    expect(result.runtimePath).toBe("/Applications/Oppi.app/Contents/Resources/bun");
+    expect(result.runtimePath).toBe("/opt/homebrew/bin/node");
     expect(result.cliPath).toBe("/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js");
   });
 });
@@ -724,7 +738,7 @@ describe("uid unavailable", () => {
     process.getuid = undefined as unknown as () => number;
 
     mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
       // No existing plist, so bootout path is skipped — uid() is hit at bootstrap
       if (p.endsWith(".plist")) return false;

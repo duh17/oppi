@@ -78,6 +78,11 @@ final class ServerProcessManager {
         NSString("~/.config/oppi/server-runtime").expandingTildeInPath
     }()
 
+    /// Shared server data directory used by the Mac app and the CLI runtime.
+    static let serverDataDir: String = {
+        NSString("~/.config/oppi").expandingTildeInPath
+    }()
+
     /// Resolves the server CLI path.
     ///
     /// Search order:
@@ -107,44 +112,34 @@ final class ServerProcessManager {
 
         // Homebrew npm global
         let candidates = [
-            "/opt/homebrew/lib/node_modules/@anthropic-ai/oppi/dist/src/cli.js",
-            "/usr/local/lib/node_modules/@anthropic-ai/oppi/dist/src/cli.js",
+            "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js",
+            "/usr/local/lib/node_modules/oppi-server/dist/src/cli.js",
+            NSString("~/.npm/lib/node_modules/oppi-server/dist/src/cli.js").expandingTildeInPath,
         ]
 
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 
-    /// Resolves the Bun runtime binary path.
+    /// Resolves the Node.js runtime binary path.
     ///
     /// Search order:
-    /// 1. App bundle (release builds embed Bun in Resources/)
-    /// 2. Homebrew / common install locations
-    /// 3. Fallback to Node.js
+    /// 1. Homebrew Node.js
+    /// 2. /usr/local Node.js
+    /// 3. System Node.js
+    ///
+    /// Returns nil when Node.js is missing or does not satisfy the server's
+    /// declared minimum version in package.json.
     static func resolveRuntimePath() -> String? {
-        // Node.js first — required for Gondolin sandbox TLS (Bun's
-        // tls.TLSSocket + custom Duplex is broken, causing HTTPS to hang).
-        if let node = resolveNodePath() {
-            return node
+        guard let nodePath = resolveNodePath() else {
+            return nil
         }
-
-        // App bundle — release builds may embed Bun in Resources/
-        if let resourcePath = Bundle.main.resourcePath {
-            let bundledBun = (resourcePath as NSString).appendingPathComponent("bun")
-            if FileManager.default.isExecutableFile(atPath: bundledBun) {
-                return bundledBun
-            }
+        guard runtimeCompatibilityIssue(nodePath: nodePath) == nil else {
+            return nil
         }
-
-        // System-installed Bun as last resort
-        let bunCandidates = [
-            "/opt/homebrew/bin/bun",
-            "/usr/local/bin/bun",
-            NSString("~/.bun/bin/bun").expandingTildeInPath,
-        ]
-        return bunCandidates.first(where: { FileManager.default.fileExists(atPath: $0) })
+        return nodePath
     }
 
-    /// Resolves the Node.js binary path (fallback only).
+    /// Resolves the Node.js binary path.
     static func resolveNodePath() -> String? {
         let candidates = [
             "/opt/homebrew/bin/node",
@@ -154,11 +149,103 @@ final class ServerProcessManager {
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 
-    /// True if the resolved runtime is the app-bundled Bun.
-    static var runtimeIsBundled: Bool {
-        guard let path = resolveRuntimePath(),
-              let resourcePath = Bundle.main.resourcePath else { return false }
-        return path.hasPrefix(resourcePath)
+    /// Human-readable runtime failure reason for onboarding and launch errors.
+    static func runtimeFailureReason() -> String {
+        guard let nodePath = resolveNodePath() else {
+            if let required = minimumRequiredNodeVersion() {
+                return "Node.js \(required) or newer not found"
+            }
+            return "Node.js not found"
+        }
+        return runtimeCompatibilityIssue(nodePath: nodePath) ?? "Node.js runtime unavailable"
+    }
+
+    private static func runtimeCompatibilityIssue(nodePath: String) -> String? {
+        guard let required = minimumRequiredNodeVersion() else {
+            return nil
+        }
+        guard let installed = nodeVersion(at: nodePath) else {
+            return "Could not read Node.js version at \(nodePath)"
+        }
+        guard installed >= required else {
+            return "Node.js \(installed) found, but Oppi requires Node.js \(required) or newer"
+        }
+        return nil
+    }
+
+    private static func minimumRequiredNodeVersion() -> SemanticVersion? {
+        guard let cliPath = resolveServerCLIPath() else { return nil }
+        let packageURL = URL(fileURLWithPath: cliPath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("package.json")
+        guard let data = try? Data(contentsOf: packageURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let engines = object["engines"] as? [String: Any],
+              let nodeRange = engines["node"] as? String else {
+            return nil
+        }
+        return SemanticVersion.minimumVersion(in: nodeRange)
+    }
+
+    private static func nodeVersion(at path: String) -> SemanticVersion? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: path)
+        proc.arguments = ["--version"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard proc.terminationStatus == 0 else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return nil }
+        return SemanticVersion(output)
+    }
+
+    private struct SemanticVersion: Comparable, CustomStringConvertible {
+        let major: Int
+        let minor: Int
+        let patch: Int
+
+        init?(_ raw: String) {
+            let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+            let parts = normalized.split(separator: ".", omittingEmptySubsequences: false)
+            let majorToken = parts.indices.contains(0) ? String(parts[0]) : "0"
+            let minorToken = parts.indices.contains(1) ? String(parts[1]) : "0"
+            let patchToken = parts.indices.contains(2) ? String(parts[2]) : "0"
+            guard let major = Int(majorToken),
+                  let minor = Int(minorToken),
+                  let patch = Int(patchToken) else {
+                return nil
+            }
+            self.major = major
+            self.minor = minor
+            self.patch = patch
+        }
+
+        static func < (lhs: SemanticVersion, rhs: SemanticVersion) -> Bool {
+            if lhs.major != rhs.major { return lhs.major < rhs.major }
+            if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+            return lhs.patch < rhs.patch
+        }
+
+        var description: String { "\(major).\(minor).\(patch)" }
+
+        static func minimumVersion(in range: String) -> SemanticVersion? {
+            let trimmed = range.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let match = trimmed.range(of: #">=\s*([0-9]+(?:\.[0-9]+){0,2})"#, options: .regularExpression) else {
+                return nil
+            }
+            let token = String(trimmed[match]).replacingOccurrences(of: ">=", with: "")
+            return SemanticVersion(token)
+        }
     }
 
     /// True if the app bundle contains a server seed.
@@ -217,18 +304,40 @@ final class ServerProcessManager {
 
             let seedPkg = (seedDir as NSString).appendingPathComponent("package.json")
             let runtimePkg = (runtimeDir as NSString).appendingPathComponent("package.json")
+            let dependenciesChanged = Self.serverSeedDependenciesChanged(
+                seedPackagePath: seedPkg,
+                runtimePackagePath: runtimePkg
+            )
+
             if fm.fileExists(atPath: runtimePkg) {
                 try fm.removeItem(atPath: runtimePkg)
             }
             try fm.copyItem(atPath: seedPkg, toPath: runtimePkg)
 
-            // Seed node_modules only if it doesn't exist yet (first launch).
-            // If it exists, the user may have updated deps — don't clobber.
+            let seedLock = (seedDir as NSString).appendingPathComponent("package-lock.json")
+            let runtimeLock = (runtimeDir as NSString).appendingPathComponent("package-lock.json")
+            if fm.fileExists(atPath: seedLock) {
+                if fm.fileExists(atPath: runtimeLock) {
+                    try fm.removeItem(atPath: runtimeLock)
+                }
+                try fm.copyItem(atPath: seedLock, toPath: runtimeLock)
+            } else if dependenciesChanged, fm.fileExists(atPath: runtimeLock) {
+                try fm.removeItem(atPath: runtimeLock)
+            }
+
+            // Keep user-updated dependencies across dist-only app updates, but
+            // replace node_modules when the seed manifest changes. A newer
+            // server build can depend on packages the previous runtime never had.
             let runtimeNM = (runtimeDir as NSString).appendingPathComponent("node_modules")
             let seedNM = (seedDir as NSString).appendingPathComponent("node_modules")
-            if !fm.fileExists(atPath: runtimeNM), fm.fileExists(atPath: seedNM) {
-                logger.warning("Copying seed node_modules (first launch)")
+            if (!fm.fileExists(atPath: runtimeNM) || dependenciesChanged), fm.fileExists(atPath: seedNM) {
+                if fm.fileExists(atPath: runtimeNM) {
+                    try fm.removeItem(atPath: runtimeNM)
+                }
+                logger.warning("Copying seed node_modules")
                 try fm.copyItem(atPath: seedNM, toPath: runtimeNM)
+            } else if dependenciesChanged {
+                logger.error("Server seed dependencies changed, but seed node_modules is missing")
             }
 
             // Write version marker
@@ -247,8 +356,8 @@ final class ServerProcessManager {
     /// processes from a prior app instance. This cleans them up so we can spawn
     /// a fresh server with full lifecycle control (termination handler, pipes, logs).
     static func killExistingServer() {
-        // Find server processes matching our CLI pattern (Bun or Node.js).
-        let serverPids = pidsMatching(pattern: "(bun|node).*cli\\.js.*serve")
+        // Find server processes matching our CLI pattern.
+        let serverPids = pidsMatching(pattern: "node.*cli\\.js.*serve")
         for pid in serverPids {
             logger.warning("Killing existing server process (pid \(pid))")
             kill(pid, SIGTERM)
@@ -307,8 +416,9 @@ final class ServerProcessManager {
         Self.seedServerRuntimeIfNeeded()
 
         guard let runtimePath = Self.resolveRuntimePath() else {
-            state = .failed("Bun (or Node.js) not found")
-            logger.error("No JS runtime found — install Bun (brew install oven-sh/bun/bun) or Node.js")
+            let reason = Self.runtimeFailureReason()
+            state = .failed(reason)
+            logger.error("\(reason, privacy: .public)")
             return
         }
         guard let cliPath = Self.resolveServerCLIPath() else {
@@ -316,7 +426,7 @@ final class ServerProcessManager {
             logger.error("Server CLI not found — set OPPI_SERVER_PATH or install the server")
             return
         }
-        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
+        let dataDir = Self.serverDataDir
 
         start(nodePath: runtimePath, cliPath: cliPath, dataDir: dataDir)
     }
@@ -324,7 +434,7 @@ final class ServerProcessManager {
     /// Spawn the server process.
     ///
     /// - Parameters:
-    ///   - nodePath: Absolute path to the `node` (or `tsx`) binary.
+    ///   - nodePath: Absolute path to the Node.js binary.
     ///   - cliPath: Absolute path to the server CLI entry point.
     ///   - dataDir: Absolute path to the Oppi data directory.
     ///   - extraArgs: Additional arguments inserted before the CLI path
@@ -346,9 +456,9 @@ final class ServerProcessManager {
         // Ensure homebrew paths are available for git, pi, etc.
         var env = ProcessRunner.augmentedEnvironment
         env["OPPI_DATA_DIR"] = dataDir
-        // Tell the server which bun binary to use for pi runtime update checks/installs.
-        // Without this the server falls back to process.argv[0], which is the exact Cellar
-        // path bun resolved to at launch time — that path disappears after any Homebrew update.
+        // Tell the server which runtime binary to use for dependency update checks/installs.
+        // Without this the server falls back to process.argv[0], which can be a volatile
+        // Homebrew Cellar path that changes across upgrades.
         env["OPPI_RUNTIME_BIN"] = nodePath
         proc.environment = env
 
@@ -581,5 +691,38 @@ final class ServerProcessManager {
         stderrPipe = nil
         closeLogFile()
         process = nil
+    }
+
+    static func serverSeedDependenciesChanged(
+        seedPackagePath: String,
+        runtimePackagePath: String
+    ) -> Bool {
+        guard let seedFingerprint = packageDependencyFingerprint(packagePath: seedPackagePath),
+              let runtimeFingerprint = packageDependencyFingerprint(packagePath: runtimePackagePath) else {
+            return true
+        }
+        return seedFingerprint != runtimeFingerprint
+    }
+
+    private static func packageDependencyFingerprint(packagePath: String) -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: packagePath)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        var dependencies: [String: Any] = [:]
+        for key in ["dependencies", "optionalDependencies"] {
+            if let value = object[key] as? [String: Any] {
+                dependencies[key] = value
+            }
+        }
+
+        guard let fingerprintData = try? JSONSerialization.data(
+            withJSONObject: dependencies,
+            options: [.sortedKeys]
+        ) else {
+            return nil
+        }
+        return String(data: fingerprintData, encoding: .utf8)
     }
 }
