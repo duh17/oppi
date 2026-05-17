@@ -717,15 +717,24 @@ const EMPTY_MESSAGES: ServerMessage[] = [];
  * the full text delivered so far.  Hoisted out of translatePiEvent to avoid
  * closure allocation on every call.
  */
-function computeToolDelta(lastText: string, fullText: string): string {
-  if (fullText.length === 0) return "";
-  if (lastText.length === 0) return fullText;
-  if (fullText === lastText) return "";
+function computeToolOutputUpdate(
+  lastText: string,
+  fullText: string,
+): { output: string; mode?: "append" | "replace" } | null {
+  if (fullText.length === 0) return null;
+  if (lastText.length === 0) return { output: fullText };
+  if (fullText === lastText) return null;
   if (fullText.startsWith(lastText)) {
-    return fullText.slice(lastText.length);
+    return { output: fullText.slice(lastText.length) };
   }
-  // Unexpected divergence: prefer emitting full text over dropping output.
-  return fullText;
+
+  // Pi partial tool results generally have replace semantics: each update is
+  // the full current view, not necessarily an append-only stream. When a tool
+  // changes status text (for example "Generating…" -> "Downloading…" ->
+  // "Generated…"), appending the divergent full text duplicates prompt/knobs
+  // in the client. Send an explicit replacement so durable clients converge
+  // on the latest tool view instead of accumulating status snapshots.
+  return { output: fullText, mode: "replace" };
 }
 
 /**
@@ -934,12 +943,14 @@ export function translatePiEvent(
             });
             emittedOutput = true;
           } else {
-            // Normal append delta behavior.
-            const delta = computeToolDelta(lastText, fullText);
-            if (delta) {
+            // Normal append delta behavior, with replace fallback for tools
+            // that publish full non-prefix status snapshots.
+            const update = computeToolOutputUpdate(lastText, fullText);
+            if (update) {
               pushToolOutputMessage(messages, {
-                output: delta,
+                output: update.output,
                 toolCallId,
+                ...(update.mode ? { mode: update.mode } : {}),
                 details: updateDetails,
               });
               emittedOutput = true;
@@ -953,11 +964,11 @@ export function translatePiEvent(
         if (transcript) {
           const lastText = ctx.partialResults.get(key) ?? "";
           ctx.partialResults.set(key, transcript);
-          const delta = computeToolDelta(lastText, transcript);
+          const update = computeToolOutputUpdate(lastText, transcript);
           pushToolOutputMessage(messages, {
-            output: delta || transcript,
+            output: update?.output ?? transcript,
             toolCallId,
-            ...(delta ? {} : { mode: "replace" as const }),
+            ...(update?.mode ? { mode: update.mode } : update ? {} : { mode: "replace" as const }),
             details: updateDetails,
           });
           emittedOutput = true;
@@ -1022,9 +1033,13 @@ export function translatePiEvent(
             totalBytes: finalTextBytes,
           });
         } else {
-          const delta = computeToolDelta(lastText, finalText);
-          if (delta.length > 0) {
-            pushToolOutputMessage(messages, { output: delta, toolCallId });
+          const update = computeToolOutputUpdate(lastText, finalText);
+          if (update) {
+            pushToolOutputMessage(messages, {
+              output: update.output,
+              toolCallId,
+              ...(update.mode ? { mode: update.mode } : {}),
+            });
           }
         }
 

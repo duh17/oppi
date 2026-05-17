@@ -207,6 +207,74 @@ describe("session-protocol translatePiEvent", () => {
     ]);
   });
 
+  it("replaces divergent tool status snapshots instead of appending duplicates", () => {
+    const ctx = makeCtx();
+
+    const first = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-status",
+        toolName: "imagen",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: "Generating image…\nprompt: brass robot\nknobs: 256" }],
+        },
+      },
+      ctx,
+    );
+
+    const second = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-status",
+        toolName: "imagen",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: "Downloading img_123…\nprompt: brass robot\nknobs: 256" }],
+        },
+      },
+      ctx,
+    );
+
+    const final = translatePiEvent(
+      {
+        type: "tool_execution_end",
+        toolName: "imagen",
+        toolCallId: "tc-status",
+        result: {
+          content: [{ type: "text", text: "Generated img_123\nprompt: brass robot\nknobs: 256\nsaved: out.png" }],
+        },
+        isError: false,
+      },
+      ctx,
+    );
+
+    expect(first).toEqual([
+      {
+        type: "tool_output",
+        output: "Generating image…\nprompt: brass robot\nknobs: 256",
+        toolCallId: "tc-status",
+      },
+    ]);
+    expect(second).toEqual([
+      {
+        type: "tool_output",
+        output: "Downloading img_123…\nprompt: brass robot\nknobs: 256",
+        toolCallId: "tc-status",
+        mode: "replace",
+      },
+    ]);
+    expect(final).toEqual([
+      {
+        type: "tool_output",
+        output: "Generated img_123\nprompt: brass robot\nknobs: 256\nsaved: out.png",
+        toolCallId: "tc-status",
+        mode: "replace",
+      },
+      { type: "tool_end", tool: "imagen", toolCallId: "tc-status" },
+    ]);
+  });
+
   it("sanitizes tool_end details.ui payloads", () => {
     const ctx = makeCtx();
 

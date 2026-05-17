@@ -133,7 +133,16 @@ export async function listConfiguredHostExtensions(
 
     // Do not auto-install missing packages from the server route.
     const resolved = await packageManager.resolve(async () => "skip");
-    return listFromResolvedResources(resolved.extensions);
+
+    // Keep the package/settings resolver as the source of truth when it sees an
+    // extension, but also merge a direct directory scan. The resolver can miss
+    // auto-discovered directory extensions (`extensions/name/index.ts`) in some
+    // server contexts, while native pi still loads them. Workspace editing needs
+    // to show those immediately so they can be enabled for the next session.
+    return mergeHostExtensions(
+      listFromResolvedResources(resolved.extensions),
+      listHostExtensions({ cwd: options.cwd, globalDir: join(agentDir, "extensions") }),
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn("extensions.configured_resolution.failed", { error: message });
@@ -203,6 +212,21 @@ export function extensionInstallName(extension: ResolvedExtension): string {
   }
 
   return extension.name;
+}
+
+function mergeHostExtensions(
+  primary: HostExtensionInfo[],
+  secondary: HostExtensionInfo[],
+): HostExtensionInfo[] {
+  const byName = new Map<string, HostExtensionInfo>();
+
+  for (const extension of [...primary, ...secondary]) {
+    if (!byName.has(extension.name)) {
+      byName.set(extension.name, extension);
+    }
+  }
+
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function listFromResolvedResources(resources: ResolvedResource[]): HostExtensionInfo[] {
