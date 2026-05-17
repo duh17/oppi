@@ -7,10 +7,16 @@
  * Does NOT spawn pi or containers — just the HTTP/WS layer.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server } from "../src/server.js";
+import { materializeToolMediaContentBlocks } from "../src/session-attachments.js";
+import {
+  discoverLocalSessions,
+  getPiSessionsRoot,
+  listCatalogedLocalSessions,
+} from "../src/local-sessions.js";
 import { Storage } from "../src/storage.js";
 import { WebSocket } from "ws";
 
@@ -655,6 +661,120 @@ describe("sessions API", () => {
     });
     // Session creation may fail (no pi executable in test) but should not 404
     expect(res.status).not.toBe(404);
+  });
+
+  it("DELETE /workspaces/:id/sessions/:sessionId deletes metadata, traces, and attachments", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-delete-session-ws-"));
+    const piSessionsRoot = getPiSessionsRoot();
+    mkdirSync(piSessionsRoot, { recursive: true });
+    const piSessionDir = mkdtempSync(join(piSessionsRoot, "oppi-delete-session-e2e-"));
+    const sessionId = `delete-e2e-${Date.now()}`;
+    const jsonlPath = join(piSessionDir, "session.jsonl");
+    const legacyJsonPath = join(dataDir, "sessions", `${sessionId}.json`);
+    const workspaceAttachmentDir = join(workspaceRoot, ".pi", "attachments", sessionId, "turn-1");
+    const generatedAttachmentDir = join(dataDir, "session-attachments", sessionId);
+
+    try {
+      const wsRes = await post("/workspaces", {
+        name: "delete-session-ws",
+        skills: [],
+        hostMount: workspaceRoot,
+      });
+      expect(wsRes.status).toBe(201);
+      const { workspace } = await wsRes.json();
+
+      writeFileSync(
+        jsonlPath,
+        `${JSON.stringify({ type: "session", id: sessionId, cwd: workspaceRoot, timestamp: "2026-05-03T00:00:00.000Z" })}\n`,
+      );
+      await discoverLocalSessions(undefined, { dataDir });
+      expect(
+        listCatalogedLocalSessions(undefined, { dataDir }).sessions.some(
+          (session) => session.path === jsonlPath,
+        ),
+      ).toBe(true);
+
+      mkdirSync(join(dataDir, "sessions"), { recursive: true });
+      writeFileSync(legacyJsonPath, JSON.stringify({ session: { id: sessionId } }));
+      mkdirSync(workspaceAttachmentDir, { recursive: true });
+      writeFileSync(join(workspaceAttachmentDir, "image-1.jpg"), Buffer.from("attached image"));
+
+      const pngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
+      const generatedBlocks = materializeToolMediaContentBlocks({
+        dataDir,
+        sessionId,
+        toolCallId: "tool-image",
+        contents: [
+          { type: "image", data: pngBase64, mimeType: "image/png", fileName: "chart.png" },
+        ],
+      });
+      const generatedBlock = generatedBlocks[0];
+      if (
+        !generatedBlock ||
+        typeof generatedBlock !== "object" ||
+        !("id" in generatedBlock) ||
+        typeof (generatedBlock as { id?: unknown }).id !== "string"
+      ) {
+        throw new Error("Expected generated image attachment block with id");
+      }
+      const generatedAttachmentId = (generatedBlock as { id: string }).id;
+      expect(existsSync(generatedAttachmentDir)).toBe(true);
+
+      storage.saveSession({
+        id: sessionId,
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        status: "stopped",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 1,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionFile: jsonlPath,
+        piSessionFiles: [jsonlPath],
+      });
+
+      const attachmentBeforeDelete = await get(
+        `/workspaces/${workspace.id}/sessions/${sessionId}/attachments/${generatedAttachmentId}`,
+      );
+      expect(attachmentBeforeDelete.status).toBe(200);
+
+      const deleteRes = await del(`/workspaces/${workspace.id}/sessions/${sessionId}`);
+      expect(deleteRes.status).toBe(200);
+      const body = await deleteRes.json();
+      expect(body.deleted).toEqual({
+        sqliteMetadata: true,
+        localPiJsonlFiles: 1,
+        workspaceAttachmentCopies: true,
+        generatedMediaAttachments: true,
+      });
+
+      expect(storage.getSession(sessionId)).toBeUndefined();
+      expect(existsSync(jsonlPath)).toBe(false);
+      expect(existsSync(legacyJsonPath)).toBe(false);
+      expect(existsSync(join(workspaceRoot, ".pi", "attachments", sessionId))).toBe(false);
+      expect(existsSync(generatedAttachmentDir)).toBe(false);
+      expect(
+        listCatalogedLocalSessions(undefined, { dataDir }).sessions.some(
+          (session) => session.path === jsonlPath,
+        ),
+      ).toBe(false);
+
+      const sessionListRes = await get(
+        `/workspaces/${workspace.id}/session-list?sinceMs=0&untilMs=${Date.now() + 1_000}`,
+      );
+      expect(sessionListRes.status).toBe(200);
+      const sessionList = await sessionListRes.json();
+      expect(
+        sessionList.importableSessions.some(
+          (session: { path?: string }) => session.path === jsonlPath,
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(piSessionDir, { recursive: true, force: true });
+    }
   });
 });
 

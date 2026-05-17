@@ -12,6 +12,7 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   openSync,
   readSync,
@@ -265,6 +266,7 @@ class TuiSessionCatalog {
   private readonly db: SqliteDatabase;
 
   constructor(dataDir: string) {
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const dbPath = join(dataDir, "session-state.db");
     this.db = openDatabase(dbPath);
     chmodSync(dbPath, 0o600);
@@ -495,6 +497,20 @@ function isSubagentLocalSession(session: LocalSession): boolean {
 /** Invalidate the cache (call after importing a session). */
 export function invalidateLocalSessionsCache(): void {
   metadataCache.clear();
+}
+
+export function deleteCatalogedLocalSessionPaths(
+  paths: Iterable<string>,
+  options: { dataDir: string },
+): void {
+  const catalog = new TuiSessionCatalog(options.dataDir);
+  try {
+    for (const path of paths) {
+      catalog.deletePath(path);
+    }
+  } finally {
+    catalog.close();
+  }
 }
 
 export function listCatalogedLocalSessions(

@@ -843,6 +843,9 @@ export function streamSessionAttachment(
   createReadStream(attachment.path).pipe(res as NodeJS.WritableStream);
 }
 
-export function deleteSessionAttachments(dataDir: string, sessionId: string): void {
-  rmSync(sessionDir(dataDir, sessionId), { recursive: true, force: true });
+export function deleteSessionAttachments(dataDir: string, sessionId: string): boolean {
+  const dir = sessionDir(dataDir, sessionId);
+  const existed = existsSync(dir);
+  rmSync(dir, { recursive: true, force: true });
+  return existed;
 }

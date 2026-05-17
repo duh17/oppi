@@ -113,7 +113,7 @@ describe("session sqlite store", () => {
     }
   });
 
-  it("keeps legacy JSON sidecars read-only and prevents deleted sessions from re-importing", () => {
+  it("deletes legacy JSON sidecars and prevents deleted sessions from re-importing", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-delete-legacy-"));
 
     try {
@@ -145,7 +145,7 @@ describe("session sqlite store", () => {
       expect(storage.getSession("keep-me")?.name).toBe("legacy");
 
       expect(storage.deleteSession("keep-me")).toBe(true);
-      expect(existsSync(join(dataDir, "sessions", "keep-me.json"))).toBe(true);
+      expect(existsSync(join(dataDir, "sessions", "keep-me.json"))).toBe(false);
 
       const reloaded = new Storage(dataDir);
       expect(reloaded.getSession("keep-me")).toBeUndefined();

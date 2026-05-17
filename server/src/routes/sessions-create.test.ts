@@ -712,7 +712,20 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       ).toBeLessThan(vi.mocked(mock.storage.deleteSession).mock.invocationCallOrder[0]!);
       expect(existsSync(jsonlA)).toBe(false);
       expect(existsSync(jsonlB)).toBe(false);
-      expect(mock.responses).toEqual([{ data: { ok: true }, status: 200 }]);
+      expect(mock.responses).toEqual([
+        {
+          data: {
+            ok: true,
+            deleted: {
+              sqliteMetadata: true,
+              localPiJsonlFiles: 2,
+              workspaceAttachmentCopies: false,
+              generatedMediaAttachments: false,
+            },
+          },
+          status: 200,
+        },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -748,7 +761,20 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
 
       expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
       expect(existsSync(jsonl)).toBe(true);
-      expect(mock.responses).toEqual([{ data: { ok: true }, status: 200 }]);
+      expect(mock.responses).toEqual([
+        {
+          data: {
+            ok: true,
+            deleted: {
+              sqliteMetadata: true,
+              localPiJsonlFiles: 0,
+              workspaceAttachmentCopies: false,
+              generatedMediaAttachments: false,
+            },
+          },
+          status: 200,
+        },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

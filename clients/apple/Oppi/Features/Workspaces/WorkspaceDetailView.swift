@@ -63,6 +63,46 @@ struct WorkspaceRefreshPollingPolicy: Equatable {
 ///
 /// Sessions are grouped into active (running/busy/ready) and stopped.
 /// Supports creating new sessions, resuming stopped ones, and stopping active ones.
+private struct SessionDeleteConfirmationModifier: ViewModifier {
+    @Binding var pendingSession: Session?
+    let onDelete: (Session) -> Void
+
+    private var isPresented: Binding<Bool> {
+        Binding(
+            get: { pendingSession != nil },
+            set: { newValue in
+                if !newValue { pendingSession = nil }
+            }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Delete Session?",
+            isPresented: isPresented,
+            titleVisibility: .visible
+        ) {
+            if let session = pendingSession {
+                Button("Delete Session", role: .destructive) {
+                    onDelete(session)
+                    pendingSession = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingSession = nil
+            }
+        } message: {
+            if let session = pendingSession {
+                Text(deleteMessage(for: session))
+            }
+        }
+    }
+
+    private func deleteMessage(for session: Session) -> String {
+        "This permanently deletes SQLite session metadata, local pi JSONL trace files and legacy session JSON sidecars for this session, chat attachment copies under .pi/attachments/\(session.id), and generated media attachments served by Oppi."
+    }
+}
+
 struct WorkspaceDetailView: View {
     let workspace: Workspace
 
@@ -88,6 +128,7 @@ struct WorkspaceDetailView: View {
     @State private var localSessions: [LocalSession] = []
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
+    @State private var pendingDeleteSession: Session?
     @State private var policyFallback: PolicyFallbackDecision = .allow
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
@@ -461,7 +502,7 @@ struct WorkspaceDetailView: View {
                     Task { await resumeSession(session) }
                 },
                 onDeleteSession: { session in
-                    Task { await deleteSession(session) }
+                    pendingDeleteSession = session
                 },
                 onImportLocal: { local in
                     Task { await importAndResumeLocal(local) }
@@ -633,6 +674,9 @@ struct WorkspaceDetailView: View {
         } message: {
             Text(error ?? "")
         }
+        .modifier(SessionDeleteConfirmationModifier(pendingSession: $pendingDeleteSession) { session in
+            Task { await deleteSession(session) }
+        })
         .navigationDestination(isPresented: $showEditWorkspace) {
             WorkspaceEditView(workspace: currentWorkspace)
         }

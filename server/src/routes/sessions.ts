@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { access, readFile, realpath, stat, unlink } from "node:fs/promises";
+import { access, readFile, realpath, rm, stat, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -20,6 +20,7 @@ import {
 } from "../diff-core.js";
 import { buildDiffHunks } from "../workspace-review-diff.js";
 import {
+  deleteCatalogedLocalSessionPaths,
   discoverLocalSessions,
   invalidateLocalSessionsCache,
   listCatalogedLocalSessions,
@@ -1058,7 +1059,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return existing.filter((entry) => entry.exists).map((entry) => entry.candidate);
   }
 
-  async function deleteReferencedLocalPiSessionJsonlFiles(session: Session): Promise<number> {
+  async function deleteReferencedLocalPiSessionJsonlFiles(session: Session): Promise<string[]> {
     const existingPaths = await collectExistingSessionJsonlPaths(session);
     const deleteTargets = new Set<string>();
 
@@ -1077,15 +1078,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       deleteTargets.add(validation.path);
     }
 
-    for (const target of deleteTargets) {
+    const deletedPaths = Array.from(deleteTargets);
+    if (deletedPaths.length > 0) {
+      deleteCatalogedLocalSessionPaths(deletedPaths, { dataDir: ctx.storage.getDataDir() });
+    }
+
+    for (const target of deletedPaths) {
       await unlink(target);
     }
 
-    if (deleteTargets.size > 0) {
+    if (deletedPaths.length > 0) {
       invalidateLocalSessionsCache();
     }
 
-    return deleteTargets.size;
+    return deletedPaths;
   }
 
   async function handleGetSessionOverallDiff(
@@ -1205,6 +1211,27 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return homedir();
   }
 
+  async function deleteWorkspaceSessionAttachmentCopies(session: Session): Promise<boolean> {
+    const workspace = session.workspaceId
+      ? ctx.storage.getWorkspace(session.workspaceId)
+      : undefined;
+    if (!workspace?.hostMount) return false;
+
+    const workRoot = resolveSdkSessionCwd(workspace);
+    if (!(await pathExists(workRoot))) return false;
+
+    const workRootReal = await realpath(workRoot);
+    const attachmentsRoot = resolve(workRootReal, ".pi", "attachments");
+    const sessionAttachmentsDir = resolve(attachmentsRoot, session.id);
+    if (!isPathWithinRoot(sessionAttachmentsDir, attachmentsRoot)) {
+      throw new Error("Refusing to delete session attachments outside workspace attachment root");
+    }
+
+    const existed = await pathExists(sessionAttachmentsDir);
+    await rm(sessionAttachmentsDir, { recursive: true, force: true });
+    return existed;
+  }
+
   function handleGetSessionEvents(
     workspaceId: string,
     sessionId: string,
@@ -1299,20 +1326,23 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     await ctx.sessions.stopSession(sessionId);
 
+    let deletedTracePaths: string[] = [];
+    let deletedWorkspaceAttachmentCopies = false;
     try {
-      const deletedTraceCount = await deleteReferencedLocalPiSessionJsonlFiles(session);
-      if (deletedTraceCount > 0) {
+      deletedTracePaths = await deleteReferencedLocalPiSessionJsonlFiles(session);
+      if (deletedTracePaths.length > 0) {
         log.info("sessions.delete.local_pi_traces_deleted", {
           sessionId,
-          deletedTraceCount,
+          deletedTraceCount: deletedTracePaths.length,
         });
       }
+      deletedWorkspaceAttachmentCopies = await deleteWorkspaceSessionAttachmentCopies(session);
     } catch (err: unknown) {
-      log.error("sessions.delete.local_pi_trace_delete_failed", {
+      log.error("sessions.delete.files_delete_failed", {
         sessionId,
         error: safeErrorMessage(err),
       });
-      helpers.error(res, 500, "Failed to delete local pi session trace");
+      helpers.error(res, 500, "Failed to delete session files");
       return;
     }
 
@@ -1325,9 +1355,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     ctx.storage.deleteSession(sessionId);
     ctx.searchIndex?.deleteSession(sessionId);
-    deleteSessionAttachments(ctx.storage.getDataDir(), sessionId);
+    const deletedGeneratedMediaAttachments = deleteSessionAttachments(
+      ctx.storage.getDataDir(),
+      sessionId,
+    );
 
-    helpers.json(res, { ok: true });
+    helpers.json(res, {
+      ok: true,
+      deleted: {
+        sqliteMetadata: true,
+        localPiJsonlFiles: deletedTracePaths.length,
+        workspaceAttachmentCopies: deletedWorkspaceAttachmentCopies,
+        generatedMediaAttachments: deletedGeneratedMediaAttachments,
+      },
+    });
   }
 
   return async ({ method, path, url, req, res }) => {

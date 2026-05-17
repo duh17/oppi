@@ -6,6 +6,7 @@ import {
   mkdirSync,
   openSync,
   readSync,
+  rmSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -157,6 +158,7 @@ const SESSION_COLUMN_DEFINITIONS = [
 ] as const;
 
 export class SessionSqliteStore {
+  private readonly dataDir: string;
   private readonly dbPath: string;
   private readonly db: SqliteDatabase;
   private cache: Map<string, Session> | null = null;
@@ -176,6 +178,7 @@ export class SessionSqliteStore {
     const options: SessionSqliteStoreOptions =
       typeof dbPathOrOptions === "string" ? { dbPath: dbPathOrOptions } : (dbPathOrOptions ?? {});
 
+    this.dataDir = resolve(dataDir);
     this.dbPath = resolve(options.dbPath ?? join(dataDir, "session-state.db"));
     this.db = openDatabase(this.dbPath);
     chmodSync(this.dbPath, 0o600);
@@ -420,12 +423,21 @@ export class SessionSqliteStore {
     this.stmtDelete.run(sessionId);
     this.cache?.delete(sessionId);
 
-    // Legacy JSON sidecars are import-only now. Keep the file on disk and
-    // record a SQLite tombstone so incomplete legacy imports do not resurrect a
-    // deleted session on the next boot.
+    // Legacy JSON sidecars are import-only now. Delete the sidecar too so a
+    // session delete removes all session persistence, while the tombstone still
+    // prevents an incomplete legacy import from resurrecting the session.
+    this.deleteLegacyJsonSidecar(sessionId);
     this.markMigration(legacySessionDeleteMigrationKey(sessionId));
 
     return existed;
+  }
+
+  private deleteLegacyJsonSidecar(sessionId: string): void {
+    const sessionsDir = resolve(this.dataDir, "sessions");
+    const target = resolve(sessionsDir, `${sessionId}.json`);
+    if (target !== sessionsDir && target.startsWith(`${sessionsDir}/`)) {
+      rmSync(target, { force: true });
+    }
   }
 
   syncFromSource(
