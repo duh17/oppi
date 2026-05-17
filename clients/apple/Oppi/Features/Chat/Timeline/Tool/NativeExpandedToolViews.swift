@@ -82,13 +82,13 @@ final class NativeExpandedReadMediaView: UIView {
 
         let isVoiceMessage = filePath == "Voice message"
         if isVoiceMessage, let clip = parsed.audio.first {
-            let row = NativeVoiceMessageView()
+            let row = NativeAudioMessageView()
             row.apply(
                 id: "expanded-voice-\(clip.base64.prefix(24))",
                 message: displayText,
                 base64: clip.base64,
                 mimeType: clip.mimeType,
-                delivery: nil,
+                playbackBehavior: nil,
                 sessionId: nil,
                 audioPlayer: audioPlayer,
                 palette: palette,

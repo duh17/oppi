@@ -92,7 +92,7 @@ final class ToolRowAudioController: NSObject {
     }
 
     private func collapsedVoiceAudioAttachment(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard case .voiceMessage(_, let attachmentId, let mimeType, _, _) = configuration.expandedContent,
+        guard case .audioMessage(_, let attachmentId, let mimeType, _, _) = configuration.expandedContent,
               !attachmentId.isEmpty,
               MediaMimeType.normalized(mimeType) == "audio/wav" else {
             return nil

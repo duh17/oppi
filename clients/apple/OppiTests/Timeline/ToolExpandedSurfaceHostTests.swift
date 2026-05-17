@@ -28,13 +28,13 @@ struct ToolExpandedSurfaceHostTests {
 
     @Test func surfaceHostSizesToActiveVoiceViewWithoutPriorLayout() {
         let host = ToolExpandedSurfaceHostView()
-        let voiceView = NativeVoiceMessageView()
+        let voiceView = NativeAudioMessageView()
         voiceView.apply(
             id: "voice-host-size",
             message: "This final voice transcript should determine the host height immediately when the audio card replaces streaming text, without clipping the lower lines or waiting for a later collection view sizing pass to recover.",
             attachmentId: "att-1",
             mimeType: "audio/wav",
-            delivery: .directSpeak,
+            playbackBehavior: .playNow,
             sessionId: nil,
             audioPlayer: nil,
             attachmentFetcher: nil,

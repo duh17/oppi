@@ -39,6 +39,6 @@ struct ExpandedRenderOutput {
     enum InstallAction {
         case none
         case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int, attachments: [ToolPresentationBuilder.ToolMediaAttachment])
-        case voiceMessage(text: String, attachmentId: String, mimeType: String, delivery: VoiceReplyDelivery?)
+        case audioMessage(text: String, attachmentId: String, mimeType: String, playbackBehavior: AudioPlaybackBehavior?)
     }
 }

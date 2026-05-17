@@ -45,7 +45,7 @@ enum ToolTimelineRowFullScreenSupport {
 
                 return .plainText(content: snapshot.text, filePath: snapshot.filePath)
 
-            case .readMedia, .voiceMessage, .status:
+            case .readMedia, .audioMessage, .status:
                 return nil
             }
         }
@@ -127,7 +127,7 @@ enum ToolTimelineRowFullScreenSupport {
                 stream: terminalStream
             )
 
-        case .readMedia, .voiceMessage, .status:
+        case .readMedia, .audioMessage, .status:
             return nil
         }
     }
@@ -180,7 +180,7 @@ enum ToolTimelineRowFullScreenSupport {
                 finalContent: nil
             )
 
-        case .bash, .readMedia, .voiceMessage, .status:
+        case .bash, .readMedia, .audioMessage, .status:
             return nil
         }
     }

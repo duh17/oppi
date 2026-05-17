@@ -172,7 +172,7 @@ enum ToolTimelineRowSelectedTextSupport {
                 timelineItemId: timelineItemId
             )
 
-        case .bash, .markdown, .readMedia, .voiceMessage, .status:
+        case .bash, .markdown, .readMedia, .audioMessage, .status:
             return nil
         }
     }

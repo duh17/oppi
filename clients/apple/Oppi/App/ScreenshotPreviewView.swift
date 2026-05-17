@@ -354,12 +354,12 @@ private struct VoiceMessageExpandedPreview: View {
         itemID: "voice-preview-1",
         title: "Voice message",
         preview: nil,
-        expandedContent: .voiceMessage(
+        expandedContent: .audioMessage(
             text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
             attachmentId: "att-voice-preview-1",
             mimeType: "audio/wav",
             durationSeconds: 4.2,
-            delivery: nil
+            playbackBehavior: nil
         ),
         copyCommandText: nil,
         copyOutputText: nil,
