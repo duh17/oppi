@@ -92,21 +92,20 @@ extension UnifiedDiffView {
 /// Layout manager that draws full-width backgrounds for added/removed lines.
 /// `NSAttributedString.backgroundColor` only paints behind characters; this
 /// extends the tint to cover the entire line fragment rect edge-to-edge.
-@MainActor
 private final class UnifiedDiffLayoutManager: NSLayoutManager {
-    /// Scroll view reference used to ensure backgrounds extend at least to the
-    /// visible width when content is narrower than the viewport.
-    weak var hostScrollView: UIScrollView?
+    /// Visible scroll width set from `UnifiedDiffScrollView.layoutSubviews()`.
+    /// `drawBackground` is a nonisolated UIKit override in Swift 6, so it must
+    /// not reach back into a main-actor-isolated `UIScrollView` directly.
+    nonisolated(unsafe) var viewportWidth: CGFloat = 0
 
     /// Measured content width set after text layout.
     nonisolated(unsafe) var measuredContentWidth: CGFloat = 0
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let textStorage, let textContainer = textContainers.first else { return }
+        guard let storage = textStorage, let textContainer = textContainers.first else { return }
 
-        let viewWidth = hostScrollView?.bounds.width ?? 0
-        let fillWidth = max(measuredContentWidth, viewWidth)
+        let fillWidth = max(measuredContentWidth, viewportWidth)
 
         let addedBg = UIColor(Color.themeDiffAdded.opacity(0.10))
         let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.08))
@@ -115,7 +114,7 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
         let removedBar = UIColor(Color.themeDiffRemoved)
         let barWidth: CGFloat = 2.5
 
-        textStorage.enumerateAttribute(diffLineKindAttributeKey, in: NSRange(location: 0, length: textStorage.length), options: []) { value, attrRange, _ in
+        storage.enumerateAttribute(diffLineKindAttributeKey, in: NSRange(location: 0, length: storage.length), options: []) { value, attrRange, _ in
             guard let kind = value as? String else { return }
             let bg: UIColor
             let bar: UIColor?
@@ -145,6 +144,15 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
                 }
             }
         }
+    }
+}
+
+private final class UnifiedDiffScrollView: UIScrollView {
+    weak var diffLayoutManager: UnifiedDiffLayoutManager?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        diffLayoutManager?.viewportWidth = bounds.width
     }
 }
 
@@ -189,7 +197,7 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 20, right: 0)
         textView.delegate = context.coordinator
 
-        let scrollView = UIScrollView()
+        let scrollView = UnifiedDiffScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
         scrollView.showsVerticalScrollIndicator = true
@@ -197,7 +205,8 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         scrollView.backgroundColor = UIColor(Color.themeBgDark)
 
         textStorage.setAttributedString(built.attributedText)
-        layoutManager.hostScrollView = scrollView
+        scrollView.diffLayoutManager = layoutManager
+        layoutManager.viewportWidth = scrollView.bounds.width
         layoutManager.measuredContentWidth = built.contentWidth
 
         scrollView.addSubview(textView)
