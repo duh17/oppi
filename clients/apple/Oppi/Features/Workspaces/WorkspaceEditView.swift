@@ -172,10 +172,13 @@ struct WorkspaceEditView: View {
             Section("Identity") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
+                    .accessibilityIdentifier("workspace.edit.name")
                 TextField("Description", text: $description)
+                    .accessibilityIdentifier("workspace.edit.description")
                 TextField("Icon (SF Symbol or emoji)", text: $icon)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("workspace.edit.icon")
             }
             .selectionDisabled()
 
@@ -218,8 +221,9 @@ struct WorkspaceEditView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
+                    .accessibilityIdentifier("workspace.edit.hostMount")
 
-                Text("Leave empty to use the server home folder. If you enter a path, it must already exist on the server.")
+                Text("Leave empty to use the server home folder. If the path doesn’t exist, use Create this folder below; Oppi asks before creating one directory.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
 
@@ -282,6 +286,7 @@ struct WorkspaceEditView: View {
                     Task { await save() }
                 }
                 .disabled(!canSave)
+                .accessibilityIdentifier("workspace.edit.save")
             }
         }
         .navigationDestination(item: $selectedSkillDetail) { dest in
@@ -305,23 +310,6 @@ struct WorkspaceEditView: View {
         .task(id: hostMountLookupKey) {
             await validateHostMount()
         }
-        .confirmationDialog(
-            "Create folder on server?",
-            isPresented: Binding(
-                get: { hostPathPendingCreation != nil },
-                set: { if !$0 { hostPathPendingCreation = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Create Folder") {
-                Task { await createHostDirectoryFromPendingPath() }
-            }
-            Button("Cancel", role: .cancel) {
-                hostPathPendingCreation = nil
-            }
-        } message: {
-            Text("This creates one directory on the server. For safety, Oppi only allows this under normal project roots like ~/workspace and requires the parent folder to already exist.")
-        }
     }
 
     @ViewBuilder
@@ -338,18 +326,47 @@ struct WorkspaceEditView: View {
                         .font(.caption)
                         .foregroundStyle(.themeComment)
 
-                    Button {
-                        hostPathPendingCreation = trimmedHostMount
-                    } label: {
+                    if hostPathPendingCreation == trimmedHostMount {
+                        Text("Create this one folder on the server? The parent folder must already exist.")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+
                         if isCreatingHostDirectory {
-                            ProgressView()
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Creating folder…")
+                                    .font(.caption)
+                                    .foregroundStyle(.themeComment)
+                            }
                         } else {
+                            HStack(spacing: 8) {
+                                Button {
+                                    Task { await createHostDirectoryFromPendingPath() }
+                                } label: {
+                                    Label("Create Folder", systemImage: "plus")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("workspace.edit.confirmCreateFolder")
+
+                                Button("Cancel") {
+                                    hostPathPendingCreation = nil
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("workspace.edit.cancelCreateFolder")
+                            }
+                            .controlSize(.small)
+                        }
+                    } else {
+                        Button {
+                            hostPathPendingCreation = trimmedHostMount
+                        } label: {
                             Label("Create this folder", systemImage: "plus")
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("workspace.edit.createMissingFolder")
+                        .disabled(isCreatingHostDirectory)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isCreatingHostDirectory)
                 }
             } else if let hostMountValidationMessage {
                 Label(hostMountValidationMessage, systemImage: "exclamationmark.triangle.fill")
@@ -509,6 +526,9 @@ struct WorkspaceEditView: View {
     @MainActor
     private func validateHostMount() async {
         let current = trimmedHostMount
+        if let pending = hostPathPendingCreation, pending != current {
+            hostPathPendingCreation = nil
+        }
         guard !current.isEmpty else {
             hostMountStatus = nil
             hostMountValidationMessage = nil
@@ -550,6 +570,10 @@ struct WorkspaceEditView: View {
     @MainActor
     private func createHostDirectoryFromPendingPath() async {
         guard let path = hostPathPendingCreation else { return }
+        guard path == trimmedHostMount else {
+            hostPathPendingCreation = nil
+            return
+        }
         guard let api = apiClient else {
             error = "Server is offline"
             hostPathPendingCreation = nil
@@ -570,6 +594,7 @@ struct WorkspaceEditView: View {
             hostMountValidationMessage = result.status.isValidWorkspaceDirectory
                 ? nil
                 : result.status.userMessage
+            isCheckingHostMount = false
         } catch {
             self.error = "Create folder failed: \(error.localizedDescription)"
         }

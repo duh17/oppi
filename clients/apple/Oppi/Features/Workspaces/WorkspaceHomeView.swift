@@ -188,6 +188,7 @@ struct WorkspaceHomeView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Server settings for \(server.name)")
+                .accessibilityIdentifier("server.settings.\(serverId)")
 
                 Button {
                     presentCreateWorkspace(on: server)
@@ -200,6 +201,7 @@ struct WorkspaceHomeView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Create workspace on \(server.name)")
+                .accessibilityIdentifier("workspace.create.\(serverId)")
                 .disabled(isUnreachable)
                 .opacity(isUnreachable ? 0.5 : 1)
             }

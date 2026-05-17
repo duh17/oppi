@@ -30,12 +30,14 @@ struct WorkspaceListView: View {
                         badgeColor: server.resolvedBadgeColor
                     )
                 }
+                .accessibilityIdentifier("server.workspace.\(workspace.id)")
             }
             .onDelete { offsets in
                 Task { await deleteWorkspaces(at: offsets) }
             }
         }
         .themedListSurface()
+        .accessibilityIdentifier("server.workspaceList")
         .navigationTitle("Workspaces")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -44,6 +46,7 @@ struct WorkspaceListView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityIdentifier("server.workspace.create")
             }
         }
         .sheet(isPresented: $showCreate) {

@@ -33,6 +33,9 @@ services:
       - ${E2E_MODELS_JSON:-/dev/null}:/data/pi-agent/models.json:ro
     tmpfs:
       - /data/oppi
+      # Host-path creation UI tests create ~/workspace/<name>.
+      # Keep it ephemeral while ensuring the parent folder exists in Docker mode.
+      - /root/workspace
     healthcheck:
       test: ["CMD-SHELL", "curl -fsSk https://localhost:${E2E_PORT:-17760}/health || curl -fsS http://localhost:${E2E_PORT:-17760}/health"]
       interval: 2s

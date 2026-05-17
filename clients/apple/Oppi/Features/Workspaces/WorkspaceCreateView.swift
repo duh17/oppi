@@ -138,28 +138,26 @@ struct WorkspaceCreateView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(cancelButtonTitle) { dismiss() }
                 }
+                if step == .configure {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            Task { await create() }
+                        } label: {
+                            if isCreating {
+                                ProgressView()
+                            } else {
+                                Text("Create")
+                            }
+                        }
+                        .disabled(!canCreate)
+                        .accessibilityIdentifier("workspace.create.submit")
+                    }
+                }
             }
             .task { await loadDirectories() }
             .task { await loadSkills() }
             .task(id: hostMountLookupKey) {
                 await validateAndCompleteHostMount()
-            }
-            .confirmationDialog(
-                "Create folder on server?",
-                isPresented: Binding(
-                    get: { hostPathPendingCreation != nil },
-                    set: { if !$0 { hostPathPendingCreation = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Create Folder") {
-                    Task { await createHostDirectoryFromPendingPath() }
-                }
-                Button("Cancel", role: .cancel) {
-                    hostPathPendingCreation = nil
-                }
-            } message: {
-                Text("This creates one directory on \(server.name). For safety, Oppi only allows this under normal project roots like ~/workspace and requires the parent folder to already exist.")
             }
         }
     }
@@ -190,6 +188,20 @@ struct WorkspaceCreateView: View {
                 }
             }
 
+            Section {
+                Button { selectManual() } label: {
+                    Label("Enter path manually", systemImage: "keyboard")
+                }
+                .accessibilityIdentifier("workspace.create.manual")
+
+                if !sandboxMode {
+                    Button { selectBlank() } label: {
+                        Label("Blank workspace (home folder)", systemImage: "house")
+                    }
+                    .foregroundStyle(.themeComment)
+                }
+            }
+
             if isLoadingDirectories {
                 Section {
                     HStack {
@@ -207,14 +219,6 @@ struct WorkspaceCreateView: View {
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
-                    Button("Enter path manually") {
-                        selectManual()
-                    }
-                    if !sandboxMode {
-                        Button("Blank workspace (home folder)") {
-                            selectBlank()
-                        }
-                    }
                 }
             } else if directories.isEmpty {
                 Section {
@@ -228,14 +232,6 @@ struct WorkspaceCreateView: View {
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
-                    Button("Enter path manually") {
-                        selectManual()
-                    }
-                    if !sandboxMode {
-                        Button("Blank workspace (home folder)") {
-                            selectBlank()
-                        }
-                    }
                 }
             } else {
                 Section {
@@ -247,18 +243,6 @@ struct WorkspaceCreateView: View {
                     }
                 } header: {
                     Text("Projects on \(server.name)")
-                }
-
-                Section {
-                    Button { selectManual() } label: {
-                        Label("Enter path manually", systemImage: "keyboard")
-                    }
-                    if !sandboxMode {
-                        Button { selectBlank() } label: {
-                            Label("Blank workspace (home folder)", systemImage: "house")
-                        }
-                        .foregroundStyle(.themeComment)
-                    }
                 }
             }
         }
@@ -296,6 +280,7 @@ struct WorkspaceCreateView: View {
             Section("Project") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
+                    .accessibilityIdentifier("workspace.create.name")
 
                 if isHostMountFromProjectPicker {
                     HStack {
@@ -313,11 +298,12 @@ struct WorkspaceCreateView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .font(.system(.body, design: .monospaced))
+                        .accessibilityIdentifier("workspace.create.hostMount")
 
                     Text(
                         sandboxMode
-                            ? "Leave empty to let Oppi create a sandbox folder. If you enter a path, it must already exist on the server."
-                            : "Leave empty to use the server home folder. If you enter a path, it must already exist on the server; Oppi won’t create it automatically."
+                            ? "Leave empty to let Oppi create a sandbox folder. For a custom path, use Create this folder when the path is missing."
+                            : "Leave empty to use the server home folder. If the path doesn’t exist, use Create this folder below; Oppi asks before creating one directory."
                     )
                     .font(.caption)
                     .foregroundStyle(.themeComment)
@@ -439,6 +425,7 @@ struct WorkspaceCreateView: View {
                     }
                 }
                 .disabled(!canCreate)
+                .accessibilityIdentifier("workspace.create.submit.form")
             }
         }
     }
@@ -457,18 +444,47 @@ struct WorkspaceCreateView: View {
                         .font(.caption)
                         .foregroundStyle(.themeComment)
 
-                    Button {
-                        hostPathPendingCreation = trimmedHostMount
-                    } label: {
+                    if hostPathPendingCreation == trimmedHostMount {
+                        Text("Create this one folder on \(server.name)? The parent folder must already exist.")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+
                         if isCreatingHostDirectory {
-                            ProgressView()
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Creating folder…")
+                                    .font(.caption)
+                                    .foregroundStyle(.themeComment)
+                            }
                         } else {
+                            HStack(spacing: 8) {
+                                Button {
+                                    Task { await createHostDirectoryFromPendingPath() }
+                                } label: {
+                                    Label("Create Folder", systemImage: "plus")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("workspace.create.confirmCreateFolder")
+
+                                Button("Cancel") {
+                                    hostPathPendingCreation = nil
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("workspace.create.cancelCreateFolder")
+                            }
+                            .controlSize(.small)
+                        }
+                    } else {
+                        Button {
+                            hostPathPendingCreation = trimmedHostMount
+                        } label: {
                             Label("Create this folder", systemImage: "plus")
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("workspace.create.createMissingFolder")
+                        .disabled(isCreatingHostDirectory)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isCreatingHostDirectory)
                 }
             } else if let hostMountValidationMessage {
                 Label(hostMountValidationMessage, systemImage: "exclamationmark.triangle.fill")
@@ -584,6 +600,9 @@ struct WorkspaceCreateView: View {
     @MainActor
     private func validateAndCompleteHostMount() async {
         let current = trimmedHostMount
+        if let pending = hostPathPendingCreation, pending != current {
+            hostPathPendingCreation = nil
+        }
         guard !current.isEmpty else {
             hostMountStatus = nil
             hostMountValidationMessage = nil
@@ -632,6 +651,10 @@ struct WorkspaceCreateView: View {
     @MainActor
     private func createHostDirectoryFromPendingPath() async {
         guard let path = hostPathPendingCreation else { return }
+        guard path == trimmedHostMount else {
+            hostPathPendingCreation = nil
+            return
+        }
         guard let api = coordinator.apiClient(for: server.id) else {
             error = "Cannot connect to \(server.name)"
             hostPathPendingCreation = nil
@@ -652,6 +675,7 @@ struct WorkspaceCreateView: View {
             hostMountValidationMessage = result.status.isValidWorkspaceDirectory
                 ? nil
                 : result.status.userMessage
+            isCheckingHostMount = false
             hostMountCompletions = []
         } catch {
             self.error = "Create folder failed: \(error.localizedDescription)"

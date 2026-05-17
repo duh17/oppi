@@ -584,6 +584,8 @@ struct WorkspaceDetailView: View {
                     }
                     .foregroundStyle(.themeComment)
                 }
+                .accessibilityLabel("Edit Workspace")
+                .accessibilityIdentifier("workspace.edit.open")
                 Spacer()
                 Button { showWorkspacePolicy = true } label: {
                     Image(systemName: policyFallbackIconName)

@@ -73,6 +73,8 @@ struct ServerDetailView: View {
                     LabeledContent("Skills", value: String(info.stats.skillCount))
                 }
 
+                workspaceManagementSection
+
                 Section("Runtime") {
                     LabeledContent("Agent", value: info.runtimeUpdate?.currentVersion ?? "n/a")
                     LabeledContent("Server", value: info.version)
@@ -164,14 +166,6 @@ struct ServerDetailView: View {
                 Text("Badge")
             }
 
-            Section("Workspaces") {
-                NavigationLink {
-                    WorkspaceListView(server: pairedServer)
-                } label: {
-                    Label("Manage Workspaces", systemImage: "square.grid.2x2")
-                }
-            }
-
             Section("Connection") {
                 LabeledContent("Paired", value: pairedServer.addedAt.formatted(date: .abbreviated, time: .shortened))
             }
@@ -221,6 +215,17 @@ struct ServerDetailView: View {
         }
         .sheet(item: $apiKeyEditorProvider) { provider in
             apiKeyEditorSheet(provider: provider)
+        }
+    }
+
+    private var workspaceManagementSection: some View {
+        Section("Workspaces") {
+            NavigationLink {
+                WorkspaceListView(server: pairedServer)
+            } label: {
+                Label("Manage Workspaces", systemImage: "square.grid.2x2")
+            }
+            .accessibilityIdentifier("server.manageWorkspaces")
         }
     }
 
