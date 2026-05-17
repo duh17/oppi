@@ -211,7 +211,7 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.leadingAnchor.constraint(equalTo: leadingAnchor),
             rootStack.trailingAnchor.constraint(equalTo: trailingAnchor),
             rootStack.topAnchor.constraint(equalTo: topAnchor),
-            rootStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            rootStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
     }
 

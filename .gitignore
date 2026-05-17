@@ -35,6 +35,7 @@ clients/apple/scripts/*
 # Agent
 .internal/
 .pi/
+.imagen/
 .claude/
 
 # Secrets & credentials (never commit)
