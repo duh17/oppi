@@ -1,8 +1,5 @@
 import SwiftUI
 import CoreImage.CIFilterBuiltins
-import OSLog
-
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "PairView")
 
 /// Sidebar view for generating new pairing invites.
 ///
@@ -133,46 +130,8 @@ struct PairView: View {
         qrImage = nil
 
         Task.detached {
-            guard let nodePath = await MainActor.run(body: { ServerProcessManager.resolveNodePath() }) else {
-                await MainActor.run {
-                    error = "Node.js not found"
-                    isLoading = false
-                }
-                return
-            }
-            guard let cliPath = await MainActor.run(body: { ServerProcessManager.resolveServerCLIPath() }) else {
-                await MainActor.run {
-                    error = "Server CLI not found"
-                    isLoading = false
-                }
-                return
-            }
-
             do {
-                let result = try await ProcessRunner.runCapturingStderr(
-                    executable: nodePath,
-                    arguments: [cliPath, "pair", "--json"]
-                )
-
-                guard result.exitCode == 0 else {
-                    let errText = result.stderr.isEmpty ? "Unknown error" : result.stderr
-                    await MainActor.run {
-                        error = "Pair command failed: \(errText)"
-                        isLoading = false
-                    }
-                    return
-                }
-
-                guard let data = result.stdout.data(using: .utf8), !data.isEmpty else {
-                    await MainActor.run {
-                        error = "No output from pair command"
-                        isLoading = false
-                    }
-                    return
-                }
-
-                let info = try JSONDecoder().decode(PairInfo.self, from: data)
-                logger.info("Pairing info generated: host=\(info.host ?? "unknown")")
+                let info = try await PairingInviteService.generate()
 
                 let image: NSImage? = if let url = info.inviteURL {
                     PairView.generateQRCode(from: url)
@@ -182,7 +141,7 @@ struct PairView: View {
 
                 await MainActor.run {
                     inviteURL = info.inviteURL
-                    serverURL = info.serverDisplayURL
+                    serverURL = info.serverURL
                     qrImage = image
                     isLoading = false
                     if image == nil && info.inviteURL != nil {
@@ -216,23 +175,5 @@ struct PairView: View {
         let nsImage = NSImage(size: rep.size)
         nsImage.addRepresentation(rep)
         return nsImage
-    }
-}
-
-// MARK: - Types
-
-private struct PairInfo: Decodable {
-    let host: String?
-    let port: Int?
-    let scheme: String?
-    let inviteURL: String?
-
-    var serverDisplayURL: String? {
-        guard let scheme, let host, let port else { return nil }
-        return "\(scheme)://\(host):\(port)"
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case host, port, scheme, inviteURL
     }
 }

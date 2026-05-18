@@ -1,15 +1,12 @@
 import SwiftUI
 import CoreImage.CIFilterBuiltins
-import OSLog
-
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "PairingView")
 
 /// Step 4: Generate a QR code for iPhone pairing via `oppi pair --json`.
 struct PairingView: View {
 
     let onDone: () -> Void
 
-    @State private var pairingInfo: PairingInfo?
+    @State private var pairingInfo: PairingInvite?
     @State private var qrImage: NSImage?
     @State private var error: String?
     @State private var isLoading = true
@@ -108,7 +105,7 @@ struct PairingView: View {
 
         Task.detached {
             do {
-                let info = try await PairingView.runPairCommand()
+                let info = try await PairingInviteService.generate()
 
                 let image: NSImage? = if let inviteURL = info.inviteURL {
                     PairingView.generateQRCode(from: inviteURL)
@@ -133,35 +130,6 @@ struct PairingView: View {
         }
     }
 
-    // MARK: - Run oppi pair --json
-
-    private static func runPairCommand() async throws -> PairingInfo {
-        guard let nodePath = await MainActor.run(body: { ServerProcessManager.resolveNodePath() }) else {
-            throw PairingError.nodeNotFound
-        }
-        guard let cliPath = await MainActor.run(body: { ServerProcessManager.resolveServerCLIPath() }) else {
-            throw PairingError.cliNotFound
-        }
-
-        let result = try await ProcessRunner.runCapturingStderr(
-            executable: nodePath,
-            arguments: [cliPath, "pair", "--json"]
-        )
-
-        guard result.exitCode == 0 else {
-            let errText = result.stderr.isEmpty ? "Unknown error" : result.stderr
-            throw PairingError.commandFailed(errText)
-        }
-
-        guard let data = result.stdout.data(using: .utf8), !data.isEmpty else {
-            throw PairingError.emptyOutput
-        }
-
-        let info = try JSONDecoder().decode(PairingInfo.self, from: data)
-        logger.warning("Pairing info generated: host=\(info.host ?? "unknown")")
-        return info
-    }
-
     // MARK: - QR code generation
 
     private nonisolated static func generateQRCode(from string: String) -> NSImage? {
@@ -181,43 +149,5 @@ struct PairingView: View {
         let nsImage = NSImage(size: rep.size)
         nsImage.addRepresentation(rep)
         return nsImage
-    }
-}
-
-// MARK: - Types
-
-private struct PairingInfo: Decodable {
-    let host: String?
-    let port: Int?
-    let scheme: String?
-    let name: String?
-    let pairingToken: String?
-    let fingerprint: String?
-    let tlsCertFingerprint: String?
-    let inviteURL: String?
-
-    var serverURL: String? {
-        guard let scheme, let host, let port else { return nil }
-        return "\(scheme)://\(host):\(port)"
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case host, port, scheme, name, pairingToken, fingerprint, tlsCertFingerprint, inviteURL
-    }
-}
-
-private enum PairingError: LocalizedError {
-    case nodeNotFound
-    case cliNotFound
-    case commandFailed(String)
-    case emptyOutput
-
-    var errorDescription: String? {
-        switch self {
-        case .nodeNotFound: "Node.js not found"
-        case .cliNotFound: "Server CLI not found"
-        case .commandFailed(let msg): "Pair command failed: \(msg)"
-        case .emptyOutput: "No output from pair command"
-        }
     }
 }
