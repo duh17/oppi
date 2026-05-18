@@ -9,7 +9,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { join } from "node:path";
 
 import {
   createAgentSession,
@@ -42,6 +42,7 @@ import {
 } from "./first-party-extension-runtime.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { SdkUiBridge, type ExtensionUIResponsePayload } from "./sdk-ui-bridge.js";
+import { extensionNameFromPath } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import type { Session, Workspace } from "./types.js";
 
@@ -64,10 +65,8 @@ function resolveRegistryModel(
   return modelRegistry.find(parsed.provider, parsed.model);
 }
 
-function getExtensionName(ext: { path: string; resolvedPath: string }): string {
-  const file = basename(ext.resolvedPath || ext.path);
-  const suffix = extname(file);
-  return suffix ? file.slice(0, -suffix.length) : file;
+function getLoadedExtensionName(ext: { path: string; resolvedPath: string }): string {
+  return extensionNameFromPath(ext.resolvedPath || ext.path);
 }
 
 /**
@@ -245,7 +244,7 @@ export class SdkBackend {
           //    permission-gate is replaced by oppi's own policy engine.
           //    ask, voice, and subagents stay file-based so /reload can re-import them.
           let filtered = base.extensions.filter(
-            (ext) => !isManagedExtensionName(getExtensionName(ext)),
+            (ext) => !isManagedExtensionName(getLoadedExtensionName(ext)),
           );
 
           // 2. If the workspace specifies an extensions allowlist, that allowlist is
@@ -256,13 +255,13 @@ export class SdkBackend {
             const allowed = new Set(allowedNames);
             filtered = filtered.filter((ext) => {
               if (ext.path.startsWith("<inline:")) return true;
-              return allowed.has(getExtensionName(ext));
+              return allowed.has(getLoadedExtensionName(ext));
             });
           } else {
             // 3. Without an explicit allowlist, keep normal pi discovery intact but
             //    leave Oppi-owned extension names off unless the workspace opted in.
             filtered = filtered.filter((ext) => {
-              const name = getExtensionName(ext);
+              const name = getLoadedExtensionName(ext);
               if (!isFirstPartyExtensionName(name)) {
                 return true;
               }
@@ -272,10 +271,12 @@ export class SdkBackend {
 
           // Debug: log extension filtering
           const extNames = base.extensions.map(
-            (ext) => `${getExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
+            (ext) =>
+              `${getLoadedExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
           );
           const filteredNames = filtered.map(
-            (ext) => `${getExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
+            (ext) =>
+              `${getLoadedExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
           );
           if (process.env.DEBUG) {
             log.info("sdk.extensions_override_debug", {

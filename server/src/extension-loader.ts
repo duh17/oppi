@@ -6,7 +6,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 import {
   DefaultPackageManager,
@@ -70,6 +70,29 @@ export interface ListConfiguredHostExtensionsOptions {
 /** Validate extension name accepted by workspace API. */
 export function isValidExtensionName(name: string): boolean {
   return EXTENSION_NAME_RE.test(name.trim());
+}
+
+/**
+ * Normalize a loadable extension entry path to the extension name Pi uses.
+ *
+ * Pi treats `extensions/foo/index.ts` as extension `foo`, while a real top-level
+ * `extensions/index.ts` stays `index`.
+ */
+export function extensionNameFromPath(path: string): string {
+  const fileName = basename(path);
+  const suffix = extname(fileName);
+  const baseName = suffix ? fileName.slice(0, -suffix.length) : fileName;
+
+  if (baseName !== "index") {
+    return baseName;
+  }
+
+  const parentDir = dirname(path);
+  if (basename(dirname(parentDir)) === "extensions") {
+    return basename(parentDir);
+  }
+
+  return baseName;
 }
 
 /**
@@ -262,14 +285,12 @@ function toHostExtensionInfo(absPath: string): HostExtensionInfo | null {
 
   const fileName = basename(absPath);
   const suffix = extname(fileName);
-  let name = fileName;
+  const name = extensionNameFromPath(absPath);
 
   if (kind === "file") {
     if (suffix !== ".ts" && suffix !== ".js") {
       return null;
     }
-
-    name = fileName.slice(0, -suffix.length);
 
     // Skip test files — they are not loadable extensions.
     if (name.endsWith(".test") || name.endsWith(".spec")) {
