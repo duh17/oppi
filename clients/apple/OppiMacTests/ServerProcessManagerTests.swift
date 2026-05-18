@@ -184,6 +184,48 @@ struct PathResolutionTests {
             """
         )
     }
+
+    @Test func seedDependencyComparisonIgnoresNonDependencyMetadata() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("oppi-seed-deps-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let seedPackage = root.appendingPathComponent("seed-package.json")
+        let runtimePackage = root.appendingPathComponent("runtime-package.json")
+        try """
+        {"name":"seed","version":"2.0.0","dependencies":{"oppi-server-core":"1.0.0"}}
+        """.write(to: seedPackage, atomically: true, encoding: .utf8)
+        try """
+        {"name":"runtime","version":"1.0.0","dependencies":{"oppi-server-core":"1.0.0"}}
+        """.write(to: runtimePackage, atomically: true, encoding: .utf8)
+
+        #expect(!ServerProcessManager.serverSeedDependenciesChanged(
+            seedPackagePath: seedPackage.path,
+            runtimePackagePath: runtimePackage.path
+        ))
+    }
+
+    @Test func seedDependencyComparisonDetectsDependencyChanges() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("oppi-seed-deps-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let seedPackage = root.appendingPathComponent("seed-package.json")
+        let runtimePackage = root.appendingPathComponent("runtime-package.json")
+        try """
+        {"dependencies":{"@earendil-works/pi-coding-agent":"0.74.0"}}
+        """.write(to: seedPackage, atomically: true, encoding: .utf8)
+        try """
+        {"dependencies":{"@mariozechner/pi-coding-agent":"0.70.2"}}
+        """.write(to: runtimePackage, atomically: true, encoding: .utf8)
+
+        #expect(ServerProcessManager.serverSeedDependenciesChanged(
+            seedPackagePath: seedPackage.path,
+            runtimePackagePath: runtimePackage.path
+        ))
+    }
 }
 
 // MARK: - Process lifecycle (integration — uses /bin/sleep)
