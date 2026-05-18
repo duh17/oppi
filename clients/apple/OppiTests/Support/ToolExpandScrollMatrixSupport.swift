@@ -41,11 +41,11 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     var expectedSupportsFullScreenPreview: Bool {
         switch self {
-        case .readMedia, .voiceStreamingText, .voiceFinalCard:
+        case .readMedia:
             return false
         case .writeCode, .readCode, .bashOutput, .editDiff, .extensionMutation,
                 .extensionStructured, .extensionMarkdown, .extensionLookup,
-                .customText, .readMarkdown:
+                .customText, .voiceStreamingText, .voiceFinalCard, .readMarkdown:
             return true
         }
     }

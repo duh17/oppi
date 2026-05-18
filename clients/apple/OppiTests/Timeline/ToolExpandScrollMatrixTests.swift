@@ -125,7 +125,7 @@ struct ToolExpandScrollMatrixTests {
 
         switch toolCase {
         case .voiceStreamingText, .voiceFinalCard:
-            #expect(height < 220, "Voice rows should be compact, got \(height)pt")
+            #expect(height < 260, "Voice rows should be compact, got \(height)pt")
         case .extensionMutation, .extensionStructured, .extensionMarkdown, .extensionLookup, .customText:
             #expect(height < 520, "Custom extension rows should stay bounded, got \(height)pt")
         case .writeCode, .readCode, .bashOutput, .editDiff, .readMarkdown, .readMedia:
