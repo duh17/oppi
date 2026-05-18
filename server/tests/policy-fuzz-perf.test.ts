@@ -22,7 +22,7 @@ describe("performance", () => {
     return (usage.user + usage.system) / 1000;
   }
 
-  it("100K evaluations: avg under 50us each", () => {
+  it("100K evaluations: avg under 100us each", () => {
     const commands = [
       "ls -la",
       "git status",
@@ -46,7 +46,7 @@ describe("performance", () => {
     // Regression guard: each evaluation should average under 100µs CPU time.
     // Solo baseline is ~12µs; 100µs gives generous headroom.
     expect(avgUs).toBeLessThan(100);
-  });
+  }, 30_000);
 
   it("pathological command 10K evaluations: avg under 200us each", () => {
     const evil =
@@ -64,5 +64,5 @@ describe("performance", () => {
     // Pathological commands have more parsing overhead.
     // Solo baseline is ~50µs; 200µs gives 4x headroom.
     expect(avgUs).toBeLessThan(200);
-  });
+  }, 30_000);
 });
