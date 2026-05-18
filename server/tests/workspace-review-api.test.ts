@@ -237,6 +237,66 @@ describe("POST /workspaces/:wid/review/session", () => {
     }
   });
 
+  it("substitutes selected paths into prompt-template arguments", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-template-"));
+
+    try {
+      gitIn(repoDir, "init -b main");
+      gitIn(repoDir, 'config user.email "test@test.com"');
+      gitIn(repoDir, 'config user.name "Test"');
+
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Start an interactive grilling session for this topic:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
+      writeFileSync(join(repoDir, "first.swift"), "let value = oldName\n", "utf8");
+      writeFileSync(join(repoDir, "second.swift"), "let other = oldName\n", "utf8");
+      gitIn(repoDir, "add first.swift second.swift .pi/prompts/grill-me.md");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      writeFileSync(join(repoDir, "first.swift"), "let value = newName\n", "utf8");
+      writeFileSync(join(repoDir, "second.swift"), "let other = newName\n", "utf8");
+
+      const ctx = {
+        storage: {
+          getWorkspace: (workspaceId: string) =>
+            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+          getSession: () => undefined,
+          createSession: vi.fn(),
+        },
+        sessions: { startSession: vi.fn() },
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext;
+
+      const routes = new RouteHandler(ctx);
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/review/selection",
+        new URL("http://localhost/workspaces/w1/review/selection"),
+        makeRequest({
+          action: "review",
+          paths: ["first.swift", "second.swift"],
+          promptTemplateName: "grill-me",
+        }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as WorkspaceReviewSelectionResponse;
+
+      expect(body.visiblePrompt).toBe(
+        "Start an interactive grilling session for this topic:\n\nfirst.swift second.swift",
+      );
+      expect(body.filePaths).toEqual(["first.swift", "second.swift"]);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates a seeded review session from selected files", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
 

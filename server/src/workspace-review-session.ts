@@ -235,6 +235,30 @@ function visiblePrompt(
   }
 }
 
+function substitutePromptTemplateArgs(content: string, args: string[]): string {
+  let result = content;
+
+  result = result.replace(/\$(\d+)/g, (_, num: string) => {
+    const index = Number.parseInt(num, 10) - 1;
+    return args[index] ?? "";
+  });
+
+  result = result.replace(
+    /\$\{@:(\d+)(?::(\d+))?\}/g,
+    (_, startStr: string, lengthStr?: string) => {
+      const start = Math.max(0, Number.parseInt(startStr, 10) - 1);
+      if (lengthStr) {
+        const length = Number.parseInt(lengthStr, 10);
+        return args.slice(start, start + length).join(" ");
+      }
+      return args.slice(start).join(" ");
+    },
+  );
+
+  const allArgs = args.join(" ");
+  return result.replace(/\$ARGUMENTS/g, allArgs).replace(/\$@/g, allArgs);
+}
+
 function displayTemplateName(name: string): string {
   return name
     .split(/[-_\s]+/g)
@@ -279,22 +303,22 @@ export async function prepareWorkspaceReviewSession(args: {
     selectedSession,
     workspaceRoot: workspace.hostMount,
   });
-  let templatePrompt: string | null = null;
+  let templateContent: string | null = null;
   if (promptTemplateName) {
     const templates = await loadWorkspacePromptTemplates(workspace);
     const template = templates.find((candidate) => candidate.name === promptTemplateName);
     if (!template) {
       throw new WorkspaceReviewSessionError(400, `Unknown prompt template: ${promptTemplateName}`);
     }
-    templatePrompt = template.content.trim();
+    templateContent = template.content.trim();
   }
 
   const reviewPromptOverride =
-    !templatePrompt && action === "review"
+    !templateContent && action === "review"
       ? await loadProjectReviewPromptOverride(workspace.hostMount)
       : null;
   const projectGuidelines =
-    !templatePrompt && action === "review" && !reviewPromptOverride
+    !templateContent && action === "review" && !reviewPromptOverride
       ? await loadProjectReviewGuidelines(workspace.hostMount)
       : null;
 
@@ -327,6 +351,13 @@ export async function prepareWorkspaceReviewSession(args: {
       `Selected files are no longer available in the current review: ${missingPaths.join(", ")}`,
     );
   }
+
+  const templatePrompt = templateContent
+    ? substitutePromptTemplateArgs(
+        templateContent,
+        requestedFiles.map((file) => file.path),
+      )
+    : null;
 
   const title = promptTemplateName ? displayTemplateName(promptTemplateName) : sessionTitle(action);
   const onlyFile = requestedFiles.length === 1 ? requestedFiles[0] : undefined;
