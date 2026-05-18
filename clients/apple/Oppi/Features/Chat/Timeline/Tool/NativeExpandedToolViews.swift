@@ -6,7 +6,16 @@ final class NativeExpandedReadMediaView: UIView {
     private let rootStack = UIStackView()
     private var renderSignature: Int?
     private let maxInlineImagePixelSize: CGFloat = 1_600
+    private let svgModeControl = UISegmentedControl(items: ["Preview", "Source"])
+    private weak var svgPreviewToggleView: UIView?
+    private weak var svgSourceToggleView: UIView?
+    private var svgDisplayMode: SVGDisplayMode = .preview
     private var audioPlayer: AudioPlayerService?
+
+    private enum SVGDisplayMode {
+        case preview
+        case source
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -38,7 +47,8 @@ final class NativeExpandedReadMediaView: UIView {
         attachments: [ToolPresentationBuilder.ToolMediaAttachment],
         themeID: ThemeID,
         audioPlayer: AudioPlayerService?,
-        attachmentFetcher: ((String) async throws -> Data)?
+        attachmentFetcher: ((String) async throws -> Data)?,
+        sessionFileDataFetcher: ((String) async throws -> Data)?
     ) {
         self.audioPlayer = audioPlayer
         var hasher = Hasher()
@@ -53,6 +63,7 @@ final class NativeExpandedReadMediaView: UIView {
             hasher.combine(attachment.height)
         }
         hasher.combine(attachmentFetcher != nil)
+        hasher.combine(sessionFileDataFetcher != nil)
         hasher.combine(themeID.rawValue)
         if let audioPlayer {
             hasher.combine(ObjectIdentifier(audioPlayer).hashValue)
@@ -61,6 +72,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         guard signature != renderSignature else { return }
         renderSignature = signature
+        svgDisplayMode = .preview
 
         clearRows()
 
@@ -69,20 +81,36 @@ final class NativeExpandedReadMediaView: UIView {
 
         var displayText = parsed.strippedText
         var displayImages = parsed.images
+        let isSVGFile = filePath?.lowercased().hasSuffix(".svg") == true
+        var svgSourceText: String?
+        var shouldRenderFetchedSVG = false
         if displayImages.isEmpty,
            let rawSVG = displayText.data(using: .utf8),
            MediaMimeType.isSVGData(rawSVG) {
-            displayImages = [ImageExtractor.ExtractedImage(
-                base64: rawSVG.base64EncodedString(),
-                mimeType: "image/svg+xml",
-                range: displayText.startIndex..<displayText.endIndex
-            )]
+            svgSourceText = displayText
+            if MediaMimeType.isCompleteSVGData(rawSVG) {
+                displayImages = [ImageExtractor.ExtractedImage(
+                    base64: rawSVG.base64EncodedString(),
+                    mimeType: "image/svg+xml",
+                    range: displayText.startIndex..<displayText.endIndex
+                )]
+                displayText = ""
+            } else if isSVGFile, sessionFileDataFetcher != nil {
+                shouldRenderFetchedSVG = true
+                displayText = ""
+            }
+        } else if displayImages.isEmpty,
+                  isSVGFile,
+                  sessionFileDataFetcher != nil,
+                  parsed.audio.isEmpty {
+            shouldRenderFetchedSVG = true
+            svgSourceText = displayText.isEmpty ? nil : displayText
             displayText = ""
         }
 
         let imageAttachments = attachments.filter { $0.kind == "image" }
         let hasRenderableImageAttachment = attachmentFetcher != nil && !imageAttachments.isEmpty
-        let hasRenderedImage = !displayImages.isEmpty || hasRenderableImageAttachment
+        let hasRenderedImage = !displayImages.isEmpty || hasRenderableImageAttachment || shouldRenderFetchedSVG
         let hasImageReadBoilerplate = NativeExpandedReadMediaParser.containsImageReadBoilerplate(displayText)
         if hasRenderedImage {
             displayText = NativeExpandedReadMediaParser.removingRedundantImageReadBoilerplate(from: displayText)
@@ -106,6 +134,24 @@ final class NativeExpandedReadMediaView: UIView {
             return
         }
 
+        let previewStack = makeVerticalStack()
+        let sourceView = svgSourceText.map { makeSourceCard(source: $0, palette: palette) }
+        let usesSVGToggle = sourceView != nil && hasRenderedImage
+        let contentStack: UIStackView
+        if usesSVGToggle {
+            configureSVGModeControl(palette: palette)
+            rootStack.addArrangedSubview(svgModeControl)
+            rootStack.addArrangedSubview(previewStack)
+            if let sourceView {
+                rootStack.addArrangedSubview(sourceView)
+                svgSourceToggleView = sourceView
+            }
+            svgPreviewToggleView = previewStack
+            contentStack = previewStack
+        } else {
+            contentStack = rootStack
+        }
+
         if let filePath, !filePath.isEmpty, !(hasRenderedImage && hasImageReadBoilerplate) {
             let pathLabel = UILabel()
             pathLabel.font = ToolFont.small
@@ -113,7 +159,7 @@ final class NativeExpandedReadMediaView: UIView {
             pathLabel.numberOfLines = 1
             pathLabel.lineBreakMode = .byTruncatingMiddle
             pathLabel.text = filePath.shortenedPath
-            rootStack.addArrangedSubview(pathLabel)
+            contentStack.addArrangedSubview(pathLabel)
         }
 
         if !displayText.isEmpty {
@@ -122,31 +168,37 @@ final class NativeExpandedReadMediaView: UIView {
             textLabel.textColor = UIColor(isError ? palette.red : palette.fg)
             textLabel.numberOfLines = 0
             textLabel.text = String(displayText.prefix(3_000))
-            rootStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
+            contentStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
         }
 
-        let totalImageCount = displayImages.count + imageAttachments.count
+        let totalImageCount = displayImages.count + imageAttachments.count + (shouldRenderFetchedSVG ? 1 : 0)
         if totalImageCount > 0 {
             if totalImageCount > 1 || !displayText.isEmpty {
                 let countLabel = UILabel()
                 countLabel.font = ToolFont.smallBold
                 countLabel.textColor = UIColor(palette.comment)
                 countLabel.text = totalImageCount == 1 ? "Image" : "Images (\(totalImageCount))"
-                rootStack.addArrangedSubview(countLabel)
+                contentStack.addArrangedSubview(countLabel)
             }
 
             var renderedCount = 0
-            for image in displayImages.prefix(6) {
+            if shouldRenderFetchedSVG, let filePath {
+                let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
+                imageView.apply(filePath: filePath, mimeType: "image/svg+xml", fetcher: sessionFileDataFetcher)
+                contentStack.addArrangedSubview(imageView)
+                renderedCount += 1
+            }
+            for image in displayImages.prefix(6 - renderedCount) {
                 let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
                 imageView.apply(base64: image.base64, mimeType: image.mimeType)
-                rootStack.addArrangedSubview(imageView)
+                contentStack.addArrangedSubview(imageView)
                 renderedCount += 1
             }
             if renderedCount < 6 {
                 for attachment in imageAttachments.prefix(6 - renderedCount) {
                     let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
                     imageView.apply(attachment: attachment, fetcher: attachmentFetcher)
-                    rootStack.addArrangedSubview(imageView)
+                    contentStack.addArrangedSubview(imageView)
                     renderedCount += 1
                 }
             }
@@ -155,7 +207,7 @@ final class NativeExpandedReadMediaView: UIView {
                 more.font = ToolFont.small
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(totalImageCount - renderedCount) more image attachment(s)"
-                rootStack.addArrangedSubview(more)
+                contentStack.addArrangedSubview(more)
             }
         }
 
@@ -164,7 +216,7 @@ final class NativeExpandedReadMediaView: UIView {
             countLabel.font = ToolFont.smallBold
             countLabel.textColor = UIColor(palette.comment)
             countLabel.text = "Audio (\(parsed.audio.count))"
-            rootStack.addArrangedSubview(countLabel)
+            contentStack.addArrangedSubview(countLabel)
 
             for (index, clip) in parsed.audio.prefix(6).enumerated() {
                 let row = NativeExpandedAudioAttachmentView()
@@ -177,25 +229,27 @@ final class NativeExpandedReadMediaView: UIView {
                     palette: palette,
                     compact: false
                 )
-                rootStack.addArrangedSubview(row)
+                contentStack.addArrangedSubview(row)
             }
             if parsed.audio.count > 6 {
                 let more = UILabel()
                 more.font = ToolFont.small
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(parsed.audio.count - 6) more audio attachment(s)"
-                rootStack.addArrangedSubview(more)
+                contentStack.addArrangedSubview(more)
             }
         }
 
-        if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && parsed.audio.isEmpty {
+        if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && parsed.audio.isEmpty && !shouldRenderFetchedSVG {
             let empty = UILabel()
             empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
             empty.numberOfLines = 0
             empty.text = "No readable media output"
-            rootStack.addArrangedSubview(makeCardView(contentView: empty, palette: palette))
+            contentStack.addArrangedSubview(makeCardView(contentView: empty, palette: palette))
         }
+
+        updateSVGToggleVisibility()
     }
 
     private func setupViews() {
@@ -206,6 +260,9 @@ final class NativeExpandedReadMediaView: UIView {
         rootStack.alignment = .fill
         rootStack.spacing = 8
 
+        svgModeControl.selectedSegmentIndex = 0
+        svgModeControl.addTarget(self, action: #selector(svgModeChanged), for: .valueChanged)
+
         addSubview(rootStack)
         NSLayoutConstraint.activate([
             rootStack.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -213,6 +270,58 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.topAnchor.constraint(equalTo: topAnchor),
             rootStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
+    }
+
+    private func makeVerticalStack() -> UIStackView {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 8
+        return stack
+    }
+
+    private func configureSVGModeControl(palette: ThemePalette) {
+        svgModeControl.selectedSegmentIndex = svgDisplayMode == .preview ? 0 : 1
+        svgModeControl.selectedSegmentTintColor = UIColor(palette.bgHighlight)
+        svgModeControl.backgroundColor = UIColor(palette.bgDark)
+        svgModeControl.setTitleTextAttributes([
+            .foregroundColor: UIColor(palette.comment),
+            .font: ToolFont.smallBold,
+        ], for: .normal)
+        svgModeControl.setTitleTextAttributes([
+            .foregroundColor: UIColor(palette.fg),
+            .font: ToolFont.smallBold,
+        ], for: .selected)
+    }
+
+    private func makeSourceCard(source: String, palette: ThemePalette) -> UIView {
+        let label = UILabel()
+        label.font = ToolFont.small
+        label.textColor = UIColor(palette.fg)
+        label.numberOfLines = 0
+        label.lineBreakMode = .byCharWrapping
+        label.text = sourcePreviewText(source)
+        return makeCardView(contentView: label, palette: palette)
+    }
+
+    private func sourcePreviewText(_ source: String) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 20_000 else { return trimmed }
+        return String(trimmed.prefix(20_000)) + "\n\n[Source preview truncated in UI. Use the read tool with offset/limit for a focused slice.]"
+    }
+
+    @objc private func svgModeChanged() {
+        svgDisplayMode = svgModeControl.selectedSegmentIndex == 1 ? .source : .preview
+        updateSVGToggleVisibility()
+        setNeedsLayout()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
+
+    private func updateSVGToggleVisibility() {
+        svgModeControl.selectedSegmentIndex = svgDisplayMode == .preview ? 0 : 1
+        svgPreviewToggleView?.isHidden = svgDisplayMode == .source
+        svgSourceToggleView?.isHidden = svgDisplayMode == .preview
     }
 
     private func makeCardView(contentView: UIView, palette: ThemePalette) -> UIView {
@@ -237,6 +346,8 @@ final class NativeExpandedReadMediaView: UIView {
     }
 
     private func clearRows() {
+        svgPreviewToggleView = nil
+        svgSourceToggleView = nil
         for view in rootStack.arrangedSubviews {
             rootStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -569,6 +680,36 @@ final class NativeExpandedInlineImageView: UIView {
             do {
                 let data = try await fetcher(attachment.id)
                 await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.decodedKey == key else { return }
+                    self.applyDecodedImage(nil)
+                }
+            }
+        }
+    }
+
+    func apply(
+        filePath: String,
+        mimeType: String?,
+        fetcher: ((String) async throws -> Data)?
+    ) {
+        let key = "file:\(filePath):\(mimeType ?? "image/unknown"):fetcher=\(fetcher != nil)"
+        guard key != decodedKey else { return }
+        decodedKey = key
+        naturalHeightToWidthRatio = nil
+        prepareForDecode()
+
+        guard let fetcher else {
+            applyDecodedImage(nil)
+            return
+        }
+
+        let maxPixelSize = self.maxPixelSize
+        decodeTask = Task { [weak self] in
+            do {
+                let data = try await fetcher(filePath)
+                await self?.applyFetchedImageData(data, mimeType: mimeType, key: key, maxPixelSize: maxPixelSize)
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.decodedKey == key else { return }

@@ -216,6 +216,17 @@ extension ChatTimelineCollectionHost.Controller {
         } else {
             nil
         }
+        let sessionFileDataFetcher: ((String) async throws -> Data)? = if let workspaceId, let apiClient = connection?.apiClient {
+            { [sessionId] path in
+                try await apiClient.getSessionFileData(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    path: path
+                )
+            }
+        } else {
+            nil
+        }
         let bashPolicyCommand = ToolCallFormatting.normalized(tool) == "bash"
             ? context.args?["command"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             : ""
@@ -237,6 +248,7 @@ extension ChatTimelineCollectionHost.Controller {
             .withReviewComments(interactionCtx.reviewComments)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
+            .withSessionFileDataFetcher(sessionFileDataFetcher)
             .withBashCommandPolicyRuleAction(
                 makeBashCommandPolicyRuleAction(command: bashPolicyCommand)
             )

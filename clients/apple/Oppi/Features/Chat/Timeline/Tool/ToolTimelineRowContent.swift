@@ -39,6 +39,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let segmentAttributedTrailing: NSAttributedString?
     var audioPlayer: AudioPlayerService? = nil
     var sessionAttachmentFetcher: ((String) async throws -> Data)? = nil
+    var sessionFileDataFetcher: ((String) async throws -> Data)? = nil
     var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
     var selectedTextSessionId: String? = nil
     var reviewComments: [ReviewComment] = []
@@ -74,6 +75,12 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     func withSessionAttachmentFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
         var copy = self
         copy.sessionAttachmentFetcher = fetcher
+        return copy
+    }
+
+    func withSessionFileDataFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
+        var copy = self
+        copy.sessionFileDataFetcher = fetcher
         return copy
     }
 
@@ -600,7 +607,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             attachments: attachments,
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: currentConfiguration.audioPlayer,
-            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher
+            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+            sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher
         )
     }
 
@@ -1249,6 +1257,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasOutputVisible
         )
+
+        let containerVisibilityChanged = wasExpandedVisible != showExpanded
+            || wasCommandVisible != showCommand
+            || wasOutputVisible != showOutput
+        if containerVisibilityChanged {
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
     }
 
     /// Apply interaction policy, selected text integration, viewport heights, and follow-tail.
@@ -1293,10 +1308,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
-
-        if isExpandingTransition, showExpanded || showOutput {
-            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-        }
 
         flushPendingFollowTail()
     }
@@ -1411,6 +1422,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachments: attachments,
                 isError: configuration.isError,
                 hasAttachmentFetcher: configuration.sessionAttachmentFetcher != nil,
+                hasSessionFileDataFetcher: configuration.sessionFileDataFetcher != nil,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil

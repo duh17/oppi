@@ -35,6 +35,8 @@ enum ToolTimelineRowViewStyler {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        titleLabel.setContentHuggingPriority(.required, for: .vertical)
 
         trailingStack.translatesAutoresizingMaskIntoConstraints = false
         trailingStack.axis = .horizontal
@@ -144,6 +146,11 @@ enum ToolTimelineRowViewStyler {
         bodyStack.axis = .vertical
         bodyStack.alignment = .fill
         bodyStack.spacing = 4
-        return bodyStack.heightAnchor.constraint(equalToConstant: 0)
+        let collapsedHeight = bodyStack.heightAnchor.constraint(equalToConstant: 0)
+        // When a reused/self-sizing cell is temporarily taller than its
+        // collapsed content, let the hidden body absorb the slack instead of
+        // stretching the one-line header label into a giant blank area.
+        collapsedHeight.priority = .defaultHigh
+        return collapsedHeight
     }
 }

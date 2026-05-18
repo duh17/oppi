@@ -20,6 +20,28 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func collapsedHeaderDoesNotStretchInsideTemporarilyTallCell() throws {
+        let config = makeTimelineToolConfiguration(
+            title: "imagen height: 432, seed: 5050, steps: 9, model: zit",
+            toolNamePrefix: "imagen",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(x: 0, y: 0, width: 370, height: 620)
+
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let titleLabel = try #require(timelineAllLabels(in: view).first {
+            timelineRenderedText(of: $0).contains("seed: 5050")
+        })
+        let titleRect = titleLabel.convert(titleLabel.bounds, to: view)
+
+        #expect(titleRect.minY < 16)
+        #expect(titleRect.height < 32)
+    }
+
+    @MainActor
     @Test func collapsedTitleStaysSingleLineForConsistency() throws {
         let config = makeTimelineToolConfiguration(
             title: "extensions.backlog Refine compaction row preview behavior for consistency across timeline",
@@ -574,8 +596,80 @@ struct ToolTimelineRowContentViewTests {
         }
         #expect(hasInlineImageView)
 
-        let renderedText = timelineAllLabels(in: view).map(timelineRenderedText(of:)).joined(separator: "\n")
+        let renderedText = timelineAllLabels(in: view)
+            .filter { timelineViewIsVisible($0) }
+            .map(timelineRenderedText(of:))
+            .joined(separator: "\n")
         #expect(!renderedText.contains("<svg"))
+    }
+
+    @MainActor
+    @Test func expandedReadMediaSVGShowsSourceToggleDefaultingToPreview() throws {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: svg, filePath: "fixtures/image.svg", startLine: 1, attachments: []),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let control = try #require(timelineAllViews(in: view).compactMap { $0 as? UISegmentedControl }.first)
+        #expect(control.selectedSegmentIndex == 0)
+        #expect(control.titleForSegment(at: 0) == "Preview")
+        #expect(control.titleForSegment(at: 1) == "Source")
+
+        let visibleText = timelineAllLabels(in: view)
+            .filter { timelineViewIsVisible($0) }
+            .map(timelineRenderedText(of:))
+            .joined(separator: "\n")
+        #expect(!visibleText.contains("<svg"))
+
+        control.selectedSegmentIndex = 1
+        control.sendActions(for: .valueChanged)
+
+        let sourceText = timelineAllLabels(in: view)
+            .filter { timelineViewIsVisible($0) }
+            .map(timelineRenderedText(of:))
+            .joined(separator: "\n")
+        #expect(sourceText.contains("<svg"))
+    }
+
+    @MainActor
+    @Test func expandedReadMediaTruncatedSVGUsesFileFetcherForPreview() async throws {
+        let truncatedSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/>"
+        let fullSVG = truncatedSVG + "</svg>"
+        var config = makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: truncatedSVG, filePath: "fixtures/image.svg", startLine: 1, attachments: []),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        config = config.withSessionFileDataFetcher { path in
+            #expect(path == "fixtures/image.svg")
+            return Data(fullSVG.utf8)
+        }
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let hasInlineImageView = timelineAllViews(in: view).contains {
+            $0 is NativeExpandedInlineImageView
+        }
+        #expect(hasInlineImageView)
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                timelineAllViews(in: view).contains { candidate in
+                    guard candidate is NativeExpandedInlineImageView else { return false }
+                    return timelineAllViews(in: candidate).contains { nested in
+                        guard let imageView = nested as? UIImageView else { return false }
+                        return timelineViewIsVisible(imageView) && imageView.image != nil
+                    }
+                }
+            }
+        }
+        #expect(decoded)
     }
 
     @MainActor

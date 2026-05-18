@@ -27,6 +27,16 @@ func timelineAllViews(in root: UIView) -> [UIView] {
 }
 
 @MainActor
+func timelineViewIsVisible(_ view: UIView) -> Bool {
+    var current: UIView? = view
+    while let candidate = current {
+        if candidate.isHidden { return false }
+        current = candidate.superview
+    }
+    return true
+}
+
+@MainActor
 func timelineAllTextViews(in root: UIView) -> [UITextView] {
     var textViews: [UITextView] = []
     if let textView = root as? UITextView {

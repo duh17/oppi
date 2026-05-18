@@ -161,7 +161,8 @@ struct ToolExpandedSurfaceHostTests {
             attachmentFetcher: { attachmentId in
                 #expect(attachmentId == "att-generated-image")
                 return imageData
-            }
+            },
+            sessionFileDataFetcher: nil
         )
 
         let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
@@ -201,7 +202,8 @@ struct ToolExpandedSurfaceHostTests {
             attachments: [attachment],
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: nil,
-            attachmentFetcher: nil
+            attachmentFetcher: nil,
+            sessionFileDataFetcher: nil
         )
 
         let visibleLabelText = timelineAllLabels(in: view)
@@ -233,7 +235,8 @@ struct ToolExpandedSurfaceHostTests {
             attachments: [attachment],
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: nil,
-            attachmentFetcher: { _ in imageData }
+            attachmentFetcher: { _ in imageData },
+            sessionFileDataFetcher: nil
         )
 
         let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in

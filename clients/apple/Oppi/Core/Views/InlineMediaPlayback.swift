@@ -176,6 +176,14 @@ enum MediaMimeType {
         return false
     }
 
+    /// True only when the data looks like a complete SVG document, not a
+    /// truncated read-tool prefix that would fail in WebKit.
+    static func isCompleteSVGData(_ data: Data) -> Bool {
+        guard isSVGData(data),
+              let content = String(data: data, encoding: .utf8) else { return false }
+        return content.range(of: "</svg>", options: .caseInsensitive) != nil
+    }
+
     /// Extract the SVG aspect ratio from the root `viewBox` when present,
     /// otherwise fall back to root `width` / `height` attributes.
     static func extractSVGViewBoxAspectRatio(_ data: Data) -> CGFloat? {
