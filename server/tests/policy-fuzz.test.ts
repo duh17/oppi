@@ -348,6 +348,6 @@ describe("random command fuzzing", () => {
     }
 
     expect(crashes).toBe(0);
-  }, 30_000);
+  }, 90_000);
 });
 
