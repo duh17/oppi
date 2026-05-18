@@ -31,11 +31,13 @@ import type {
   UpdateWorkspaceRequest,
   Workspace,
   WorkspaceListSummary,
+  WorkspacePromptTemplatesResponse,
   WorkspaceReviewSelectionResponse,
   WorkspaceReviewSessionResponse,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import {
+  loadWorkspacePromptTemplates,
   prepareWorkspaceReviewSession,
   WorkspaceReviewSessionError,
 } from "../workspace-review-session.js";
@@ -672,6 +674,33 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return { workspace, body, selectedSession };
   }
 
+  async function handleGetWorkspacePromptTemplates(
+    wsId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    try {
+      const templates = await loadWorkspacePromptTemplates(workspace);
+      const response: WorkspacePromptTemplatesResponse = {
+        templates: templates.map((template) => ({
+          name: template.name,
+          description: template.description,
+          argumentHint: template.argumentHint,
+          sourceScope: template.sourceInfo.scope,
+        })),
+      };
+      helpers.json(res, response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load prompt templates";
+      helpers.error(res, 500, message);
+    }
+  }
+
   async function handlePrepareWorkspaceReviewSelection(
     wsId: string,
     req: IncomingMessage,
@@ -689,9 +718,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         action: parsed.body.action,
         paths: Array.isArray(parsed.body.paths) ? parsed.body.paths : [],
         selectedSession: parsed.selectedSession,
+        promptTemplateName: parsed.body.promptTemplateName,
       });
       const response: WorkspaceReviewSelectionResponse = {
         action: parsed.body.action,
+        promptTemplateName: selection.promptTemplateName,
         selectedPathCount: selection.files.length,
         visiblePrompt: selection.visiblePrompt,
         filePaths: selection.files.map((f) => f.path),
@@ -744,6 +775,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       action: body.action,
       paths: Array.isArray(body.paths) ? body.paths : [],
       selectedSession,
+      promptTemplateName: body.promptTemplateName,
     });
 
     const session = ctx.storage.createSession(launch.sessionName);
@@ -763,6 +795,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
     const response: WorkspaceReviewSessionResponse = {
       action: body.action,
+      promptTemplateName: launch.promptTemplateName,
       selectedPathCount: launch.files.length,
       session: ctx.ensureSessionContextWindow(launchedSession),
       visiblePrompt: launch.visiblePrompt,
@@ -880,6 +913,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         await handleDeleteReviewComment(wsReviewCommentMatch[1], wsReviewCommentMatch[2], res);
         return true;
       }
+    }
+
+    const wsPromptTemplatesMatch = path.match(/^\/workspaces\/([^/]+)\/prompt-templates$/);
+    if (wsPromptTemplatesMatch && method === "GET") {
+      await handleGetWorkspacePromptTemplates(wsPromptTemplatesMatch[1], res);
+      return true;
     }
 
     const wsReviewDiffMatch = path.match(/^\/workspaces\/([^/]+)\/review\/diff$/);

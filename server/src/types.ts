@@ -549,14 +549,27 @@ export interface WorkspaceReviewDiffResponse {
 
 export type WorkspaceReviewSessionAction = "review" | "reflect" | "prepare_commit";
 
+export interface WorkspacePromptTemplateSummary {
+  name: string;
+  description: string;
+  argumentHint?: string;
+  sourceScope?: "user" | "project" | "temporary";
+}
+
+export interface WorkspacePromptTemplatesResponse {
+  templates: WorkspacePromptTemplateSummary[];
+}
+
 export interface CreateWorkspaceReviewSessionRequest {
   action: WorkspaceReviewSessionAction;
   paths: string[];
   selectedSessionId?: string;
+  promptTemplateName?: string;
 }
 
 export interface WorkspaceReviewSelectionResponse {
   action: WorkspaceReviewSessionAction;
+  promptTemplateName?: string;
   selectedPathCount: number;
   visiblePrompt: string;
   filePaths: string[];

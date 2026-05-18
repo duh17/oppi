@@ -1,8 +1,16 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
+import {
+  DefaultResourceLoader,
+  SettingsManager,
+  getAgentDir,
+  type PromptTemplate,
+} from "@earendil-works/pi-coding-agent";
+
 import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
+import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { buildWorkspaceReviewFilesResponse } from "./workspace-review.js";
 import type {
   Session,
@@ -25,7 +33,31 @@ type ReviewSessionSelection = {
   files: WorkspaceReviewFile[];
   visiblePrompt: string;
   sessionName: string;
+  promptTemplateName?: string;
 };
+
+export async function loadWorkspacePromptTemplates(
+  workspace: Workspace,
+): Promise<PromptTemplate[]> {
+  if (!workspace.hostMount) {
+    return [];
+  }
+
+  const cwd = resolveSdkSessionCwd(workspace);
+  const agentDir = getAgentDir();
+  const settingsManager = SettingsManager.create(cwd, agentDir);
+  const loader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noThemes: true,
+    noContextFiles: true,
+  });
+  await loader.reload();
+  return loader.getPrompts().prompts;
+}
 
 const REVIEW_RUBRIC = `# Review Guidelines
 
@@ -203,6 +235,14 @@ function visiblePrompt(
   }
 }
 
+function displayTemplateName(name: string): string {
+  return name
+    .split(/[-_\s]+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function sessionTitle(action: WorkspaceReviewSessionAction): string {
   switch (action) {
     case "review":
@@ -220,8 +260,9 @@ export async function prepareWorkspaceReviewSession(args: {
   action: WorkspaceReviewSessionAction;
   paths: string[];
   selectedSession?: Session;
+  promptTemplateName?: string;
 }): Promise<ReviewSessionSelection> {
-  const { workspace, action, paths, selectedSession } = args;
+  const { workspace, action, paths, selectedSession, promptTemplateName } = args;
 
   if (!workspace.hostMount) {
     throw new WorkspaceReviewSessionError(404, "Workspace review unavailable");
@@ -238,10 +279,22 @@ export async function prepareWorkspaceReviewSession(args: {
     selectedSession,
     workspaceRoot: workspace.hostMount,
   });
+  let templatePrompt: string | null = null;
+  if (promptTemplateName) {
+    const templates = await loadWorkspacePromptTemplates(workspace);
+    const template = templates.find((candidate) => candidate.name === promptTemplateName);
+    if (!template) {
+      throw new WorkspaceReviewSessionError(400, `Unknown prompt template: ${promptTemplateName}`);
+    }
+    templatePrompt = template.content.trim();
+  }
+
   const reviewPromptOverride =
-    action === "review" ? await loadProjectReviewPromptOverride(workspace.hostMount) : null;
+    !templatePrompt && action === "review"
+      ? await loadProjectReviewPromptOverride(workspace.hostMount)
+      : null;
   const projectGuidelines =
-    action === "review" && !reviewPromptOverride
+    !templatePrompt && action === "review" && !reviewPromptOverride
       ? await loadProjectReviewGuidelines(workspace.hostMount)
       : null;
 
@@ -275,7 +328,7 @@ export async function prepareWorkspaceReviewSession(args: {
     );
   }
 
-  const title = sessionTitle(action);
+  const title = promptTemplateName ? displayTemplateName(promptTemplateName) : sessionTitle(action);
   const onlyFile = requestedFiles.length === 1 ? requestedFiles[0] : undefined;
   const sessionName = (
     onlyFile ? `${title}: ${basename(onlyFile.path)}` : `${title}: ${requestedFiles.length} files`
@@ -283,7 +336,8 @@ export async function prepareWorkspaceReviewSession(args: {
 
   return {
     files: requestedFiles,
-    visiblePrompt: visiblePrompt(action, reviewPromptOverride, projectGuidelines),
+    visiblePrompt: templatePrompt ?? visiblePrompt(action, reviewPromptOverride, projectGuidelines),
     sessionName,
+    promptTemplateName,
   };
 }

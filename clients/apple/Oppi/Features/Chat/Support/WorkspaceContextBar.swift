@@ -91,6 +91,7 @@ struct WorkspaceContextBar: View {
     @State private var launchActionInFlight: WorkspaceReviewSessionAction?
     @State private var launchError: String?
     @State private var navigateToReview: ReviewSessionNavDestination?
+    @State private var promptTemplates: [WorkspacePromptTemplate] = []
     @State private var stoppingAgentIds: Set<String> = []
 
     // Commit pagination state
@@ -196,6 +197,20 @@ struct WorkspaceContextBar: View {
         return .themeDiffRemoved
     }
 
+    private var reviewActionTemplates: [WorkspacePromptTemplate] {
+        let priority = ["review": 0, "commit": 1]
+        return promptTemplates.sorted { left, right in
+            if left.sourceScope != right.sourceScope {
+                if left.sourceScope == "project" { return true }
+                if right.sourceScope == "project" { return false }
+            }
+            let leftPriority = priority[left.name] ?? 10
+            let rightPriority = priority[right.name] ?? 10
+            if leftPriority != rightPriority { return leftPriority < rightPriority }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        }
+    }
+
     private var displayFiles: [GitFileStatus] {
         ContextBarScoping.displayFiles(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
@@ -296,6 +311,9 @@ struct WorkspaceContextBar: View {
                 }
                 .onChange(of: isExpanded) { _, expanded in
                     onExpandedChanged?(expanded)
+                }
+                .task(id: workspaceId) {
+                    await loadPromptTemplates()
                 }
             }
         }
@@ -668,39 +686,24 @@ struct WorkspaceContextBar: View {
 
                     Spacer()
 
-                    Menu {
-                        if onReviewInCurrentSession != nil {
-                            Button("Review in this session") {
-                                Task { await reviewSelectionInCurrentSession() }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            if reviewActionTemplates.isEmpty {
+                                reviewActionButton(title: "Review", templateName: nil)
+                            } else {
+                                ForEach(reviewActionTemplates) { template in
+                                    reviewActionButton(
+                                        title: template.title,
+                                        templateName: template.name,
+                                        tint: promptTemplateTint(template)
+                                    )
+                                }
                             }
                         }
-                        Button("Review in new session") {
-                            Task { await launchSelection(.review) }
-                        }
-                    } label: {
-                        Text("Review")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(.themePurple, in: Capsule())
                     }
+                    .frame(maxWidth: 240, alignment: .trailing)
                     .disabled(!canLaunch)
                     .opacity(canLaunch ? 1 : 0.4)
-
-                    Menu {
-                        Button(WorkspaceReviewSessionAction.reflect.menuTitle) {
-                            Task { await launchSelection(.reflect) }
-                        }
-                        Button(WorkspaceReviewSessionAction.prepareCommit.menuTitle) {
-                            Task { await launchSelection(.prepareCommit) }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.themePurple)
-                    }
-                    .disabled(!canLaunch)
                 }
             }
             .padding(.horizontal, 12)
@@ -743,7 +746,44 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func reviewSelectionInCurrentSession() async {
+    private func promptTemplateTint(_ template: WorkspacePromptTemplate) -> Color {
+        switch template.sourceScope {
+        case "project": return .themeOrange
+        case "temporary": return .themeBlue
+        default: return .themePurple
+        }
+    }
+
+    private func reviewActionButton(title: String, templateName: String?, tint: Color = .themePurple) -> some View {
+        Menu {
+            if onReviewInCurrentSession != nil {
+                Button("Use in this session") {
+                    Task { await reviewSelectionInCurrentSession(promptTemplateName: templateName) }
+                }
+            }
+            Button("Use in new session") {
+                Task { await launchSelection(.review, promptTemplateName: templateName) }
+            }
+        } label: {
+            Text(title)
+                .font(.caption2.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(tint, in: Capsule())
+        }
+    }
+
+    private func loadPromptTemplates() async {
+        guard let workspaceId, let api = apiClient else { return }
+        do {
+            promptTemplates = try await api.getWorkspacePromptTemplates(workspaceId: workspaceId).templates
+        } catch {
+            promptTemplates = []
+        }
+    }
+
+    private func reviewSelectionInCurrentSession(promptTemplateName: String? = nil) async {
         guard let workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
             launchError = "Server is offline."
@@ -763,7 +803,8 @@ struct WorkspaceContextBar: View {
                 workspaceId: workspaceId,
                 action: .review,
                 paths: paths,
-                selectedSessionId: sessionId
+                selectedSessionId: sessionId,
+                promptTemplateName: promptTemplateName
             )
             selectedPaths.removeAll()
             isSelecting = false
@@ -777,7 +818,7 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func launchSelection(_ action: WorkspaceReviewSessionAction) async {
+    private func launchSelection(_ action: WorkspaceReviewSessionAction, promptTemplateName: String? = nil) async {
         guard let workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
             launchError = "Server is offline."
@@ -797,7 +838,8 @@ struct WorkspaceContextBar: View {
                 workspaceId: workspaceId,
                 action: action,
                 paths: paths,
-                selectedSessionId: sessionId
+                selectedSessionId: sessionId,
+                promptTemplateName: promptTemplateName
             )
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()

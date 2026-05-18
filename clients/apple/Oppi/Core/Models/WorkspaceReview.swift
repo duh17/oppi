@@ -106,8 +106,23 @@ enum WorkspaceReviewSessionAction: String, Codable, Sendable, Equatable, CaseIte
     }
 }
 
+struct WorkspacePromptTemplate: Codable, Sendable, Equatable, Identifiable {
+    let name: String
+    let description: String
+    let argumentHint: String?
+    let sourceScope: String?
+
+    var id: String { name }
+    var title: String { name.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").capitalized }
+}
+
+struct WorkspacePromptTemplatesResponse: Codable, Sendable, Equatable {
+    let templates: [WorkspacePromptTemplate]
+}
+
 struct WorkspaceReviewSelectionResponse: Codable, Sendable, Equatable {
     let action: WorkspaceReviewSessionAction
+    let promptTemplateName: String?
     let selectedPathCount: Int
     let visiblePrompt: String
     let filePaths: [String]

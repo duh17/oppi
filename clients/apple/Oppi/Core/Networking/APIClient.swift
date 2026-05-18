@@ -556,21 +556,33 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
+    func getWorkspacePromptTemplates(workspaceId: String) async throws -> WorkspacePromptTemplatesResponse {
+        let data = try await get("/workspaces/\(workspaceId)/prompt-templates")
+        return try JSONDecoder().decode(WorkspacePromptTemplatesResponse.self, from: data)
+    }
+
     func prepareWorkspaceReviewSelection(
         workspaceId: String,
         action: WorkspaceReviewSessionAction,
         paths: [String],
-        selectedSessionId: String? = nil
+        selectedSessionId: String? = nil,
+        promptTemplateName: String? = nil
     ) async throws -> WorkspaceReviewSelectionResponse {
         struct Body: Encodable {
             let action: WorkspaceReviewSessionAction
             let paths: [String]
             let selectedSessionId: String?
+            let promptTemplateName: String?
         }
 
         let data = try await post(
             "/workspaces/\(workspaceId)/review/selection",
-            body: Body(action: action, paths: paths, selectedSessionId: selectedSessionId)
+            body: Body(
+                action: action,
+                paths: paths,
+                selectedSessionId: selectedSessionId,
+                promptTemplateName: promptTemplateName
+            )
         )
         return try JSONDecoder().decode(WorkspaceReviewSelectionResponse.self, from: data)
     }
@@ -580,17 +592,24 @@ actor APIClient {
         workspaceId: String,
         action: WorkspaceReviewSessionAction,
         paths: [String],
-        selectedSessionId: String? = nil
+        selectedSessionId: String? = nil,
+        promptTemplateName: String? = nil
     ) async throws -> WorkspaceReviewSessionResponse {
         struct Body: Encodable {
             let action: WorkspaceReviewSessionAction
             let paths: [String]
             let selectedSessionId: String?
+            let promptTemplateName: String?
         }
 
         let data = try await post(
             "/workspaces/\(workspaceId)/review/session",
-            body: Body(action: action, paths: paths, selectedSessionId: selectedSessionId)
+            body: Body(
+                action: action,
+                paths: paths,
+                selectedSessionId: selectedSessionId,
+                promptTemplateName: promptTemplateName
+            )
         )
         return try JSONDecoder().decode(WorkspaceReviewSessionResponse.self, from: data)
     }
