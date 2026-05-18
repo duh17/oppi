@@ -115,7 +115,7 @@ private struct SessionDeleteConfirmationModifier: ViewModifier {
     }
 
     private func deleteMessage(for session: Session) -> String {
-        "This permanently deletes SQLite session metadata, local pi JSONL trace files and legacy session JSON sidecars for this session, chat attachment copies under .pi/attachments/\(session.id), and generated media attachments served by Oppi."
+        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), and generated media attachments served by Oppi."
     }
 }
 
