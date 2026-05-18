@@ -181,6 +181,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
             app.buttons["Stop"].tap()
         } else if app.buttons["Delete"].waitForExistence(timeout: 1) {
             app.buttons["Delete"].tap()
+            confirmSessionDeleteIfNeeded()
             XCTAssertTrue(
                 waitForElementToDisappear(activeRow, timeout: 15),
                 "Session row \(sessionId) still visible after delete"
@@ -195,11 +196,19 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         let deleteButton = app.buttons["Delete"]
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 5), "Session delete button not exposed")
         deleteButton.tap()
+        confirmSessionDeleteIfNeeded()
 
         XCTAssertTrue(
             waitForElementToDisappear(stoppedRow, timeout: 15),
             "Session row \(sessionId) still visible after delete"
         )
+    }
+
+    private func confirmSessionDeleteIfNeeded() {
+        let confirmDelete = app.buttons["Delete Session"]
+        if confirmDelete.waitForExistence(timeout: 5) {
+            confirmDelete.tap()
+        }
     }
 
     // MARK: - Navigation Helpers
