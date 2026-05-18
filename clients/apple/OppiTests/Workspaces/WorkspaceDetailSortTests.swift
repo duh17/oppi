@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -95,5 +96,29 @@ struct WorkspaceDetailSortTests {
         )
 
         #expect(sorted.map(\.id) == ["older", "newer"])
+    }
+
+    @Test func deleteConfirmationClearsPendingBeforeDeleteCallback() {
+        let session = makeSession(id: "delete-me")
+        var pendingSession: Session? = session
+        var didDelete = false
+        var pendingWasClearedBeforeDelete = false
+
+        SessionDeleteConfirmationPolicy.confirm(
+            session: session,
+            clearPending: { pendingSession = nil },
+            performDelete: { deleted in
+                didDelete = deleted.id == session.id
+                pendingWasClearedBeforeDelete = pendingSession == nil
+            }
+        )
+
+        #expect(didDelete)
+        #expect(pendingSession == nil)
+        #expect(pendingWasClearedBeforeDelete)
+    }
+
+    @Test func deleteSwipeActionOnlyOpensConfirmation() {
+        #expect(SessionDeleteConfirmationPolicy.swipeButtonRole == nil)
     }
 }

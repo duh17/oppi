@@ -63,6 +63,19 @@ struct WorkspaceRefreshPollingPolicy: Equatable {
 ///
 /// Sessions are grouped into active (running/busy/ready) and stopped.
 /// Supports creating new sessions, resuming stopped ones, and stopping active ones.
+enum SessionDeleteConfirmationPolicy {
+    static let swipeButtonRole: ButtonRole? = nil
+
+    static func confirm(
+        session: Session,
+        clearPending: () -> Void,
+        performDelete: (Session) -> Void
+    ) {
+        clearPending()
+        performDelete(session)
+    }
+}
+
 private struct SessionDeleteConfirmationModifier: ViewModifier {
     @Binding var pendingSession: Session?
     let onDelete: (Session) -> Void
@@ -84,8 +97,11 @@ private struct SessionDeleteConfirmationModifier: ViewModifier {
         ) {
             if let session = pendingSession {
                 Button("Delete Session", role: .destructive) {
-                    onDelete(session)
-                    pendingSession = nil
+                    SessionDeleteConfirmationPolicy.confirm(
+                        session: session,
+                        clearPending: { pendingSession = nil },
+                        performDelete: onDelete
+                    )
                 }
             }
             Button("Cancel", role: .cancel) {

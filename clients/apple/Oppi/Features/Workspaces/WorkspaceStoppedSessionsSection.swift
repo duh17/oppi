@@ -161,11 +161,12 @@ struct WorkspaceStoppedSessionsSection: View {
                                 }
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
+                                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
                                     onDeleteSession(session)
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
+                                .tint(.themeRed)
                             }
 
                         case .local(let local):
@@ -235,11 +236,12 @@ struct WorkspaceStoppedSessionsSection: View {
                                     }
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
+                                    Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
                                         onDeleteSession(session)
                                     } label: {
                                         Label("Delete", systemImage: "trash")
                                     }
+                                    .tint(.themeRed)
                                 }
 
                             case .local(let local):
