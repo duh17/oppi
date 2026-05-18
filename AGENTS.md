@@ -163,6 +163,7 @@ Workspace navigation is HTTP-first and time-bounded: workspace home uses summary
 
 - Server-only changes: run `cd server && npm run check`.
 - Server tests: run the relevant `npm test` target or focused test file when behavior changes.
+- Coverage/release gates: follow `docs/testing/README.md` and the `oppi-dev` skill; do not invent ad hoc coverage commands.
 - Apple file structure changes: run `cd clients/apple && xcodegen generate`.
 - Apple code changes: run the relevant `sim-pool.sh` build or targeted test from the Core Commands section.
 - Apple UI or rendering changes: also run `bash clients/apple/scripts/check-duplication.sh`.
