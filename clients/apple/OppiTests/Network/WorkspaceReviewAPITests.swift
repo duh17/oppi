@@ -66,23 +66,25 @@ struct WorkspaceReviewAPITests {
         #expect(response.hunks[0].lines[1].spans?.count == 1)
     }
 
-    @Test func createWorkspaceReviewSessionPostsSelectionAndAction() async throws {
+    @Test func createWorkspaceQuickActionSessionPostsSelectionAndAction() async throws {
         let client = makeClient()
         defer { WorkspaceReviewMockURLProtocol.handler = nil }
 
         WorkspaceReviewMockURLProtocol.handler = { request in
             #expect(request.httpMethod == "POST")
-            #expect(request.url?.path == "/workspaces/w1/review/session")
+            #expect(request.url?.path == "/workspaces/w1/quick-actions/session")
 
             let body = self.requestBodyData(request)
             let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
             #expect(json?["action"] as? String == "prepare_commit")
             #expect(json?["selectedSessionId"] as? String == "s1")
+            #expect(json?["promptTemplateName"] as? String == "commit-template")
             #expect(json?["paths"] as? [String] == ["Sources/App.swift", "README.md"])
 
             return self.mockResponse(json: """
             {
               "action": "prepare_commit",
+              "promptTemplateName": "commit-template",
               "selectedPathCount": 2,
               "session": {
                 "id": "s-new",
@@ -102,13 +104,15 @@ struct WorkspaceReviewAPITests {
             """)
         }
 
-        let response = try await client.createWorkspaceReviewSession(
+        let response = try await client.createWorkspaceQuickActionSession(
             workspaceId: "w1",
             action: .prepareCommit,
             paths: ["Sources/App.swift", "README.md"],
-            selectedSessionId: "s1"
+            selectedSessionId: "s1",
+            promptTemplateName: "commit-template"
         )
         #expect(response.action == .prepareCommit)
+        #expect(response.promptTemplateName == "commit-template")
         #expect(response.selectedPathCount == 2)
         #expect(response.session.id == "s-new")
         #expect(response.session.workspaceId == "w1")

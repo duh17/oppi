@@ -34,9 +34,9 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var diff: WorkspaceReviewDiffResponse?
     @State private var error: String?
     @State private var isLoading = false
-    @State private var launchActionInFlight: WorkspaceReviewSessionAction?
+    @State private var launchActionInFlight: WorkspaceQuickAction?
     @State private var launchError: String?
-    @State private var navigateToReview: ReviewSessionNavDestination?
+    @State private var navigateToQuickAction: QuickActionSessionNavDestination?
 
     private var selectedTextScope: SelectedTextActionScope? {
         selectedTextActionScopeOverride ?? selectedTextActionScope
@@ -87,7 +87,7 @@ struct WorkspaceReviewFileDetailView: View {
         .task(id: workspaceId + "|" + file.path) {
             await loadDiff()
         }
-        .navigationDestination(item: $navigateToReview) { dest in
+        .navigationDestination(item: $navigateToQuickAction) { dest in
             ChatView(
                 sessionId: dest.id,
                 initialInputText: dest.inputText,
@@ -109,21 +109,21 @@ struct WorkspaceReviewFileDetailView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Button(WorkspaceReviewSessionAction.review.fileMenuTitle) {
+                    Button(WorkspaceQuickAction.review.fileMenuTitle) {
                         Task {
-                            await createReviewSession(action: .review)
+                            await createQuickActionSession(action: .review)
                         }
                     }
 
-                    Button(WorkspaceReviewSessionAction.reflect.fileMenuTitle) {
+                    Button(WorkspaceQuickAction.reflect.fileMenuTitle) {
                         Task {
-                            await createReviewSession(action: .reflect)
+                            await createQuickActionSession(action: .reflect)
                         }
                     }
 
-                    Button(WorkspaceReviewSessionAction.prepareCommit.fileMenuTitle) {
+                    Button(WorkspaceQuickAction.prepareCommit.fileMenuTitle) {
                         Task {
-                            await createReviewSession(action: .prepareCommit)
+                            await createQuickActionSession(action: .prepareCommit)
                         }
                     }
                 } label: {
@@ -133,7 +133,7 @@ struct WorkspaceReviewFileDetailView: View {
             }
         }
         .alert(
-            "Unable to start review session",
+            "Unable to start quick action",
             isPresented: Binding(
                 get: { launchError != nil },
                 set: { if !$0 { launchError = nil } }
@@ -302,7 +302,7 @@ struct WorkspaceReviewFileDetailView: View {
 
 
 
-    private func createReviewSession(action: WorkspaceReviewSessionAction) async {
+    private func createQuickActionSession(action: WorkspaceQuickAction) async {
         guard launchActionInFlight == nil else { return }
         guard let api = apiClient else {
             launchError = "Server is offline."
@@ -313,7 +313,7 @@ struct WorkspaceReviewFileDetailView: View {
         defer { launchActionInFlight = nil }
 
         do {
-            let response = try await api.createWorkspaceReviewSession(
+            let response = try await api.createWorkspaceQuickActionSession(
                 workspaceId: workspaceId,
                 action: action,
                 paths: [file.path],
@@ -321,7 +321,7 @@ struct WorkspaceReviewFileDetailView: View {
             )
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToReview = ReviewSessionNavDestination(
+            navigateToQuickAction = QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
                 filePaths: response.filePaths

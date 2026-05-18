@@ -10,8 +10,8 @@ import type {
   Session,
   Workspace,
   WorkspaceReviewDiffResponse,
-  WorkspaceReviewSelectionResponse,
-  WorkspaceReviewSessionResponse,
+  WorkspaceQuickActionSelectionResponse,
+  WorkspaceQuickActionSessionResponse,
 } from "../src/types.js";
 
 interface MockResponse {
@@ -184,7 +184,7 @@ describe("GET /workspaces/:wid/review/diff", () => {
   });
 });
 
-describe("POST /workspaces/:wid/review/session", () => {
+describe("POST /workspaces/:wid/quick-actions/session", () => {
   it("prepares a review selection without creating a session", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-selection-"));
 
@@ -217,14 +217,14 @@ describe("POST /workspaces/:wid/review/session", () => {
 
       await routes.dispatch(
         "POST",
-        "/workspaces/w1/review/selection",
-        new URL("http://localhost/workspaces/w1/review/selection"),
+        "/workspaces/w1/quick-actions/selection",
+        new URL("http://localhost/workspaces/w1/quick-actions/selection"),
         makeRequest({ action: "review", paths: ["review.swift"] }) as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as WorkspaceReviewSelectionResponse;
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSelectionResponse;
 
       expect(body.action).toBe("review");
       expect(body.selectedPathCount).toBe(1);
@@ -275,8 +275,8 @@ describe("POST /workspaces/:wid/review/session", () => {
 
       await routes.dispatch(
         "POST",
-        "/workspaces/w1/review/selection",
-        new URL("http://localhost/workspaces/w1/review/selection"),
+        "/workspaces/w1/quick-actions/selection",
+        new URL("http://localhost/workspaces/w1/quick-actions/selection"),
         makeRequest({
           action: "review",
           paths: ["first.swift", "second.swift"],
@@ -286,19 +286,44 @@ describe("POST /workspaces/:wid/review/session", () => {
       );
 
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as WorkspaceReviewSelectionResponse;
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSelectionResponse;
 
+      expect(body.promptTemplateName).toBe("grill-me");
       expect(body.visiblePrompt).toBe(
         "Start an interactive grilling session for this topic:\n\nfirst.swift second.swift",
       );
       expect(body.filePaths).toEqual(["first.swift", "second.swift"]);
+
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Reloaded prompt for:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
+
+      const reloadedRes = makeResponse();
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/quick-actions/selection",
+        new URL("http://localhost/workspaces/w1/quick-actions/selection"),
+        makeRequest({
+          action: "review",
+          paths: ["second.swift"],
+          promptTemplateName: "grill-me",
+        }) as never,
+        reloadedRes as never,
+      );
+
+      expect(reloadedRes.statusCode).toBe(200);
+      const reloadedBody = JSON.parse(reloadedRes.body) as WorkspaceQuickActionSelectionResponse;
+      expect(reloadedBody.promptTemplateName).toBe("grill-me");
+      expect(reloadedBody.visiblePrompt).toBe("Reloaded prompt for:\n\nsecond.swift");
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
 
-  it("creates a seeded review session from selected files", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
+  it("creates a seeded quick-action session from selected files", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
       gitIn(repoDir, "init -b main");
@@ -341,14 +366,14 @@ describe("POST /workspaces/:wid/review/session", () => {
 
       await routes.dispatch(
         "POST",
-        "/workspaces/w1/review/session",
-        new URL("http://localhost/workspaces/w1/review/session"),
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
         makeRequest({ action: "review", paths: ["review.swift"] }) as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(201);
-      const body = JSON.parse(res.body) as WorkspaceReviewSessionResponse;
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
 
       expect(body.action).toBe("review");
       expect(body.selectedPathCount).toBe(1);
@@ -371,7 +396,7 @@ describe("POST /workspaces/:wid/review/session", () => {
   });
 
   it("uses REVIEW.md in the workspace root as the review prompt override", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
       gitIn(repoDir, "init -b main");
@@ -413,14 +438,14 @@ describe("POST /workspaces/:wid/review/session", () => {
 
       await routes.dispatch(
         "POST",
-        "/workspaces/w1/review/session",
-        new URL("http://localhost/workspaces/w1/review/session"),
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
         makeRequest({ action: "review", paths: ["review.swift"] }) as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(201);
-      const body = JSON.parse(res.body) as WorkspaceReviewSessionResponse;
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
 
       expect(body.visiblePrompt).toBe(
         "Custom review prompt from workspace root. Focus on data loss and auth edges.",
@@ -431,7 +456,7 @@ describe("POST /workspaces/:wid/review/session", () => {
   });
 
   it("uses .pi/REVIEW.md as a fallback review prompt override", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
       gitIn(repoDir, "init -b main");
@@ -474,14 +499,14 @@ describe("POST /workspaces/:wid/review/session", () => {
 
       await routes.dispatch(
         "POST",
-        "/workspaces/w1/review/session",
-        new URL("http://localhost/workspaces/w1/review/session"),
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
         makeRequest({ action: "review", paths: ["review.swift"] }) as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(201);
-      const body = JSON.parse(res.body) as WorkspaceReviewSessionResponse;
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
 
       expect(body.visiblePrompt).toBe(
         "Project-local review prompt from .pi. Focus on rollback safety and alerts.",
@@ -492,7 +517,7 @@ describe("POST /workspaces/:wid/review/session", () => {
   });
 
   it("returns 400 when selected paths are no longer in the current review", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
       gitIn(repoDir, "init -b main");
@@ -517,8 +542,8 @@ describe("POST /workspaces/:wid/review/session", () => {
 
       await routes.dispatch(
         "POST",
-        "/workspaces/w1/review/session",
-        new URL("http://localhost/workspaces/w1/review/session"),
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
         makeRequest({ action: "review", paths: ["missing.swift"] }) as never,
         res as never,
       );

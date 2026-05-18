@@ -53,7 +53,7 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     }
 }
 
-enum WorkspaceReviewSessionAction: String, Codable, Sendable, Equatable, CaseIterable, Identifiable {
+enum WorkspaceQuickAction: String, Codable, Sendable, Equatable, CaseIterable, Identifiable {
     case review
     case reflect
     case prepareCommit = "prepare_commit"
@@ -120,25 +120,26 @@ struct WorkspacePromptTemplatesResponse: Codable, Sendable, Equatable {
     let templates: [WorkspacePromptTemplate]
 }
 
-struct WorkspaceReviewSelectionResponse: Codable, Sendable, Equatable {
-    let action: WorkspaceReviewSessionAction
+struct WorkspaceQuickActionSelectionResponse: Codable, Sendable, Equatable {
+    let action: WorkspaceQuickAction
     let promptTemplateName: String?
     let selectedPathCount: Int
     let visiblePrompt: String
     let filePaths: [String]
 }
 
-struct WorkspaceReviewSessionResponse: Codable, Sendable, Equatable {
-    let action: WorkspaceReviewSessionAction
+struct WorkspaceQuickActionSessionResponse: Codable, Sendable, Equatable {
+    let action: WorkspaceQuickAction
+    let promptTemplateName: String?
     let selectedPathCount: Int
     let session: Session
     let visiblePrompt: String
     let filePaths: [String]
 }
 
-/// Navigation destination for a created review session.
+/// Navigation destination for a created quick-action session.
 /// Carries repo file pointers so the destination ChatView can populate review-file context.
-struct ReviewSessionNavDestination: Identifiable, Hashable {
+struct QuickActionSessionNavDestination: Identifiable, Hashable {
     let id: String
     let inputText: String
     let filePaths: [String]

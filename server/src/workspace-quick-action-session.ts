@@ -12,20 +12,15 @@ import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { buildWorkspaceReviewFilesResponse } from "./workspace-review.js";
-import type {
-  Session,
-  Workspace,
-  WorkspaceReviewFile,
-  WorkspaceReviewSessionAction,
-} from "./types.js";
+import type { Session, Workspace, WorkspaceReviewFile, WorkspaceQuickAction } from "./types.js";
 
-export class WorkspaceReviewSessionError extends Error {
+export class WorkspaceQuickActionSessionError extends Error {
   constructor(
     public readonly status: number,
     message: string,
   ) {
     super(message);
-    this.name = "WorkspaceReviewSessionError";
+    this.name = "WorkspaceQuickActionSessionError";
   }
 }
 
@@ -212,7 +207,7 @@ async function loadProjectReviewGuidelines(workspaceRoot: string): Promise<strin
 }
 
 function visiblePrompt(
-  action: WorkspaceReviewSessionAction,
+  action: WorkspaceQuickAction,
   reviewPromptOverride?: string | null,
   projectGuidelines?: string | null,
 ): string {
@@ -267,7 +262,7 @@ function displayTemplateName(name: string): string {
     .join(" ");
 }
 
-function sessionTitle(action: WorkspaceReviewSessionAction): string {
+function sessionTitle(action: WorkspaceQuickAction): string {
   switch (action) {
     case "review":
       return "Review";
@@ -278,10 +273,10 @@ function sessionTitle(action: WorkspaceReviewSessionAction): string {
   }
 }
 
-export async function prepareWorkspaceReviewSession(args: {
+export async function prepareWorkspaceQuickActionSession(args: {
   workspaceId: string;
   workspace: Workspace;
-  action: WorkspaceReviewSessionAction;
+  action: WorkspaceQuickAction;
   paths: string[];
   selectedSession?: Session;
   promptTemplateName?: string;
@@ -289,12 +284,12 @@ export async function prepareWorkspaceReviewSession(args: {
   const { workspace, action, paths, selectedSession, promptTemplateName } = args;
 
   if (!workspace.hostMount) {
-    throw new WorkspaceReviewSessionError(404, "Workspace review unavailable");
+    throw new WorkspaceQuickActionSessionError(404, "Workspace review unavailable");
   }
 
   const gitStatus = await getGitStatus(workspace.hostMount);
   if (!gitStatus.isGitRepo) {
-    throw new WorkspaceReviewSessionError(409, "Workspace is not a git repository");
+    throw new WorkspaceQuickActionSessionError(409, "Workspace is not a git repository");
   }
 
   const review = buildWorkspaceReviewFilesResponse({
@@ -308,7 +303,10 @@ export async function prepareWorkspaceReviewSession(args: {
     const templates = await loadWorkspacePromptTemplates(workspace);
     const template = templates.find((candidate) => candidate.name === promptTemplateName);
     if (!template) {
-      throw new WorkspaceReviewSessionError(400, `Unknown prompt template: ${promptTemplateName}`);
+      throw new WorkspaceQuickActionSessionError(
+        400,
+        `Unknown prompt template: ${promptTemplateName}`,
+      );
     }
     templateContent = template.content.trim();
   }
@@ -327,7 +325,7 @@ export async function prepareWorkspaceReviewSession(args: {
   );
 
   if (uniquePaths.length === 0) {
-    throw new WorkspaceReviewSessionError(400, "paths array required");
+    throw new WorkspaceQuickActionSessionError(400, "paths array required");
   }
 
   const reviewFilesByPath = new Map(
@@ -346,7 +344,7 @@ export async function prepareWorkspaceReviewSession(args: {
   }
 
   if (missingPaths.length > 0) {
-    throw new WorkspaceReviewSessionError(
+    throw new WorkspaceQuickActionSessionError(
       400,
       `Selected files are no longer available in the current review: ${missingPaths.join(", ")}`,
     );

@@ -25,22 +25,22 @@ import type {
   AttachReviewCommentsToTurnRequest,
   CreateReviewCommentRequest,
   CreateWorkspaceRequest,
-  CreateWorkspaceReviewSessionRequest,
+  CreateWorkspaceQuickActionSessionRequest,
   Session,
   UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
   WorkspaceListSummary,
   WorkspacePromptTemplatesResponse,
-  WorkspaceReviewSelectionResponse,
-  WorkspaceReviewSessionResponse,
+  WorkspaceQuickActionSelectionResponse,
+  WorkspaceQuickActionSessionResponse,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import {
   loadWorkspacePromptTemplates,
-  prepareWorkspaceReviewSession,
-  WorkspaceReviewSessionError,
-} from "../workspace-review-session.js";
+  prepareWorkspaceQuickActionSession,
+  WorkspaceQuickActionSessionError,
+} from "../workspace-quick-action-session.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
@@ -639,13 +639,13 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  async function parseWorkspaceReviewSelection(
+  async function parseWorkspaceQuickActionSelection(
     wsId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<{
     workspace: Workspace;
-    body: CreateWorkspaceReviewSessionRequest;
+    body: CreateWorkspaceQuickActionSessionRequest;
     selectedSession: Session | undefined;
   } | null> {
     const workspace = ctx.storage.getWorkspace(wsId);
@@ -654,7 +654,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return null;
     }
 
-    const body = await helpers.parseBody<CreateWorkspaceReviewSessionRequest>(req);
+    const body = await helpers.parseBody<CreateWorkspaceQuickActionSessionRequest>(req);
     const selectedSessionId = body.selectedSessionId?.trim();
     const selectedSession = selectedSessionId
       ? ctx.storage.getSession(selectedSessionId)
@@ -701,18 +701,18 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  async function handlePrepareWorkspaceReviewSelection(
+  async function handlePrepareWorkspaceQuickActionSelection(
     wsId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const parsed = await parseWorkspaceReviewSelection(wsId, req, res);
+    const parsed = await parseWorkspaceQuickActionSelection(wsId, req, res);
     if (!parsed) {
       return;
     }
 
     try {
-      const selection = await prepareWorkspaceReviewSession({
+      const selection = await prepareWorkspaceQuickActionSession({
         workspaceId: wsId,
         workspace: parsed.workspace,
         action: parsed.body.action,
@@ -720,7 +720,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         selectedSession: parsed.selectedSession,
         promptTemplateName: parsed.body.promptTemplateName,
       });
-      const response: WorkspaceReviewSelectionResponse = {
+      const response: WorkspaceQuickActionSelectionResponse = {
         action: parsed.body.action,
         promptTemplateName: selection.promptTemplateName,
         selectedPathCount: selection.files.length,
@@ -729,47 +729,49 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       };
       helpers.json(res, response);
     } catch (error) {
-      if (error instanceof WorkspaceReviewSessionError) {
+      if (error instanceof WorkspaceQuickActionSessionError) {
         helpers.error(res, error.status, error.message);
         return;
       }
 
-      const message = error instanceof Error ? error.message : "Failed to prepare review selection";
+      const message =
+        error instanceof Error ? error.message : "Failed to prepare quick-action selection";
       helpers.error(res, 500, message);
     }
   }
 
-  async function handleCreateWorkspaceReviewSession(
+  async function handleCreateWorkspaceQuickActionSession(
     wsId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const parsed = await parseWorkspaceReviewSelection(wsId, req, res);
+    const parsed = await parseWorkspaceQuickActionSelection(wsId, req, res);
     if (!parsed) {
       return;
     }
 
     try {
-      await handleReviewAction(wsId, parsed.workspace, parsed.body, parsed.selectedSession, res);
+      await handleQuickAction(wsId, parsed.workspace, parsed.body, parsed.selectedSession, res);
     } catch (error) {
-      if (error instanceof WorkspaceReviewSessionError) {
+      if (error instanceof WorkspaceQuickActionSessionError) {
         helpers.error(res, error.status, error.message);
         return;
       }
 
-      const message = error instanceof Error ? error.message : "Failed to create review session";
+      const message =
+        error instanceof Error ? error.message : "Failed to create quick-action session";
       helpers.error(res, 500, message);
     }
   }
 
-  async function handleReviewAction(
+  async function handleQuickAction(
     wsId: string,
     workspace: Workspace,
-    body: CreateWorkspaceReviewSessionRequest,
+    body: CreateWorkspaceQuickActionSessionRequest,
     selectedSession: Session | undefined,
     res: ServerResponse,
   ): Promise<void> {
-    const launch = await prepareWorkspaceReviewSession({
+    const launch = await prepareWorkspaceQuickActionSession({
       workspaceId: wsId,
       workspace,
       action: body.action,
@@ -793,7 +795,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const launchedSession =
       ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
-    const response: WorkspaceReviewSessionResponse = {
+    const response: WorkspaceQuickActionSessionResponse = {
       action: body.action,
       promptTemplateName: launch.promptTemplateName,
       selectedPathCount: launch.files.length,
@@ -927,15 +929,17 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return true;
     }
 
-    const wsReviewSelectionMatch = path.match(/^\/workspaces\/([^/]+)\/review\/selection$/);
-    if (wsReviewSelectionMatch && method === "POST") {
-      await handlePrepareWorkspaceReviewSelection(wsReviewSelectionMatch[1], req, res);
+    const wsQuickActionSelectionMatch = path.match(
+      /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
+    );
+    if (wsQuickActionSelectionMatch && method === "POST") {
+      await handlePrepareWorkspaceQuickActionSelection(wsQuickActionSelectionMatch[1], req, res);
       return true;
     }
 
-    const wsReviewSessionMatch = path.match(/^\/workspaces\/([^/]+)\/review\/session$/);
-    if (wsReviewSessionMatch && method === "POST") {
-      await handleCreateWorkspaceReviewSession(wsReviewSessionMatch[1], req, res);
+    const wsQuickActionSessionMatch = path.match(/^\/workspaces\/([^/]+)\/quick-actions\/session$/);
+    if (wsQuickActionSessionMatch && method === "POST") {
+      await handleCreateWorkspaceQuickActionSession(wsQuickActionSessionMatch[1], req, res);
       return true;
     }
 

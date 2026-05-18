@@ -547,7 +547,7 @@ export interface WorkspaceReviewDiffResponse {
   cacheKey?: string;
 }
 
-export type WorkspaceReviewSessionAction = "review" | "reflect" | "prepare_commit";
+export type WorkspaceQuickAction = "review" | "reflect" | "prepare_commit";
 
 export interface WorkspacePromptTemplateSummary {
   name: string;
@@ -560,22 +560,22 @@ export interface WorkspacePromptTemplatesResponse {
   templates: WorkspacePromptTemplateSummary[];
 }
 
-export interface CreateWorkspaceReviewSessionRequest {
-  action: WorkspaceReviewSessionAction;
+export interface CreateWorkspaceQuickActionSessionRequest {
+  action: WorkspaceQuickAction;
   paths: string[];
   selectedSessionId?: string;
   promptTemplateName?: string;
 }
 
-export interface WorkspaceReviewSelectionResponse {
-  action: WorkspaceReviewSessionAction;
+export interface WorkspaceQuickActionSelectionResponse {
+  action: WorkspaceQuickAction;
   promptTemplateName?: string;
   selectedPathCount: number;
   visiblePrompt: string;
   filePaths: string[];
 }
 
-export interface WorkspaceReviewSessionResponse extends WorkspaceReviewSelectionResponse {
+export interface WorkspaceQuickActionSessionResponse extends WorkspaceQuickActionSelectionResponse {
   session: Session;
 }
 

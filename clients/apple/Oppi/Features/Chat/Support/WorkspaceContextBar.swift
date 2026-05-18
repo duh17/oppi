@@ -88,10 +88,12 @@ struct WorkspaceContextBar: View {
     @State private var selectedCommit: GitCommitSummary?
     @State private var isSelecting = false
     @State private var selectedPaths: Set<String> = []
-    @State private var launchActionInFlight: WorkspaceReviewSessionAction?
+    @State private var launchActionInFlight: WorkspaceQuickAction?
     @State private var launchError: String?
-    @State private var navigateToReview: ReviewSessionNavDestination?
+    @State private var navigateToQuickAction: QuickActionSessionNavDestination?
     @State private var promptTemplates: [WorkspacePromptTemplate] = []
+    @State private var promptTemplatesWorkspaceId: String?
+    @State private var isLoadingPromptTemplates = false
     @State private var stoppingAgentIds: Set<String> = []
 
     // Commit pagination state
@@ -295,7 +297,7 @@ struct WorkspaceContextBar: View {
                     }
                 }
                 .alert(
-                    "Review Error",
+                    "Quick Action Error",
                     isPresented: Binding(
                         get: { launchError != nil },
                         set: { if !$0 { launchError = nil } }
@@ -312,12 +314,18 @@ struct WorkspaceContextBar: View {
                 .onChange(of: isExpanded) { _, expanded in
                     onExpandedChanged?(expanded)
                 }
-                .task(id: workspaceId) {
-                    await loadPromptTemplates()
+                .onChange(of: isSelecting) { _, selecting in
+                    guard selecting else { return }
+                    Task { await loadPromptTemplatesIfNeeded() }
+                }
+                .onChange(of: workspaceId) { _, _ in
+                    resetPromptTemplateCache()
+                    guard isSelecting else { return }
+                    Task { await loadPromptTemplatesIfNeeded() }
                 }
             }
         }
-        .navigationDestination(item: $navigateToReview) { dest in
+        .navigationDestination(item: $navigateToQuickAction) { dest in
             ChatView(
                 sessionId: dest.id,
                 initialInputText: dest.inputText,
@@ -689,13 +697,14 @@ struct WorkspaceContextBar: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             if reviewActionTemplates.isEmpty {
-                                reviewActionButton(title: "Review", templateName: nil)
+                                reviewActionButton(title: "Review", commandName: "review", templateName: nil)
                             } else {
                                 ForEach(reviewActionTemplates) { template in
                                     reviewActionButton(
                                         title: template.title,
+                                        commandName: template.name,
                                         templateName: template.name,
-                                        tint: promptTemplateTint(template)
+                                        sourceScope: template.sourceScope
                                     )
                                 }
                             }
@@ -746,15 +755,24 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func promptTemplateTint(_ template: WorkspacePromptTemplate) -> Color {
-        switch template.sourceScope {
-        case "project": return .themeOrange
-        case "temporary": return .themeBlue
-        default: return .themePurple
+    private func promptTemplateSourceLabel(_ sourceScope: String?) -> String {
+        switch sourceScope {
+        case "project": return "Project"
+        case "user": return "User"
+        case "temporary": return "Custom"
+        default: return "Prompt"
         }
     }
 
-    private func reviewActionButton(title: String, templateName: String?, tint: Color = .themePurple) -> some View {
+    private func promptTemplateSourceColor(_ sourceScope: String?) -> Color {
+        switch sourceScope {
+        case "project": return .themeOrange
+        case "temporary": return SlashCommand.Source.prompt.iconColor
+        default: return SlashCommand.Source.prompt.iconColor
+        }
+    }
+
+    private func reviewActionButton(title: String, commandName: String, templateName: String?, sourceScope: String? = nil) -> some View {
         Menu {
             if onReviewInCurrentSession != nil {
                 Button("Use in this session") {
@@ -765,20 +783,53 @@ struct WorkspaceContextBar: View {
                 Task { await launchSelection(.review, promptTemplateName: templateName) }
             }
         } label: {
-            Text(title)
-                .font(.caption2.bold())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(tint, in: Capsule())
+            HStack(spacing: 6) {
+                Image(systemName: templateName == nil ? SlashCommand.Source.builtin.iconName : SlashCommand.Source.prompt.iconName)
+                    .font(.caption2)
+                    .foregroundStyle(templateName == nil ? SlashCommand.Source.builtin.iconColor : promptTemplateSourceColor(sourceScope))
+                    .frame(width: 13)
+
+                Text("/\(commandName)")
+                    .font(.caption2.monospaced().weight(.medium))
+                    .foregroundStyle(.themeBlue)
+
+                Text(templateName == nil ? "Built-in" : promptTemplateSourceLabel(sourceScope))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.themeComment)
+            }
+            .accessibilityLabel(title)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(Color.themeBgDark.opacity(0.92), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Color.themeComment.opacity(0.22), lineWidth: 1)
+            )
         }
     }
 
-    private func loadPromptTemplates() async {
+    private func resetPromptTemplateCache() {
+        promptTemplates = []
+        promptTemplatesWorkspaceId = nil
+        isLoadingPromptTemplates = false
+    }
+
+    private func loadPromptTemplatesIfNeeded() async {
+        guard isSelecting else { return }
         guard let workspaceId, let api = apiClient else { return }
+        guard promptTemplatesWorkspaceId != workspaceId else { return }
+        guard !isLoadingPromptTemplates else { return }
+
+        isLoadingPromptTemplates = true
+        defer { isLoadingPromptTemplates = false }
+
         do {
-            promptTemplates = try await api.getWorkspacePromptTemplates(workspaceId: workspaceId).templates
+            let templates = try await api.getWorkspacePromptTemplates(workspaceId: workspaceId).templates
+            guard self.workspaceId == workspaceId else { return }
+            promptTemplates = templates
+            promptTemplatesWorkspaceId = workspaceId
         } catch {
+            guard self.workspaceId == workspaceId else { return }
             promptTemplates = []
         }
     }
@@ -799,7 +850,7 @@ struct WorkspaceContextBar: View {
         defer { launchActionInFlight = nil }
 
         do {
-            let response = try await api.prepareWorkspaceReviewSelection(
+            let response = try await api.prepareWorkspaceQuickActionSelection(
                 workspaceId: workspaceId,
                 action: .review,
                 paths: paths,
@@ -818,7 +869,7 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func launchSelection(_ action: WorkspaceReviewSessionAction, promptTemplateName: String? = nil) async {
+    private func launchSelection(_ action: WorkspaceQuickAction, promptTemplateName: String? = nil) async {
         guard let workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
             launchError = "Server is offline."
@@ -834,7 +885,7 @@ struct WorkspaceContextBar: View {
         defer { launchActionInFlight = nil }
 
         do {
-            let response = try await api.createWorkspaceReviewSession(
+            let response = try await api.createWorkspaceQuickActionSession(
                 workspaceId: workspaceId,
                 action: action,
                 paths: paths,
@@ -844,7 +895,7 @@ struct WorkspaceContextBar: View {
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
-            navigateToReview = ReviewSessionNavDestination(
+            navigateToQuickAction = QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
                 filePaths: response.filePaths

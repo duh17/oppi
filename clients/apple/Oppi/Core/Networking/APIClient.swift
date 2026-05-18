@@ -561,22 +561,22 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspacePromptTemplatesResponse.self, from: data)
     }
 
-    func prepareWorkspaceReviewSelection(
+    func prepareWorkspaceQuickActionSelection(
         workspaceId: String,
-        action: WorkspaceReviewSessionAction,
+        action: WorkspaceQuickAction,
         paths: [String],
         selectedSessionId: String? = nil,
         promptTemplateName: String? = nil
-    ) async throws -> WorkspaceReviewSelectionResponse {
+    ) async throws -> WorkspaceQuickActionSelectionResponse {
         struct Body: Encodable {
-            let action: WorkspaceReviewSessionAction
+            let action: WorkspaceQuickAction
             let paths: [String]
             let selectedSessionId: String?
             let promptTemplateName: String?
         }
 
         let data = try await post(
-            "/workspaces/\(workspaceId)/review/selection",
+            "/workspaces/\(workspaceId)/quick-actions/selection",
             body: Body(
                 action: action,
                 paths: paths,
@@ -584,26 +584,26 @@ actor APIClient {
                 promptTemplateName: promptTemplateName
             )
         )
-        return try JSONDecoder().decode(WorkspaceReviewSelectionResponse.self, from: data)
+        return try JSONDecoder().decode(WorkspaceQuickActionSelectionResponse.self, from: data)
     }
 
-    /// Create and seed a focused follow-up session from the workspace review selection.
-    func createWorkspaceReviewSession(
+    /// Create and seed a focused follow-up session from a selected-files quick action.
+    func createWorkspaceQuickActionSession(
         workspaceId: String,
-        action: WorkspaceReviewSessionAction,
+        action: WorkspaceQuickAction,
         paths: [String],
         selectedSessionId: String? = nil,
         promptTemplateName: String? = nil
-    ) async throws -> WorkspaceReviewSessionResponse {
+    ) async throws -> WorkspaceQuickActionSessionResponse {
         struct Body: Encodable {
-            let action: WorkspaceReviewSessionAction
+            let action: WorkspaceQuickAction
             let paths: [String]
             let selectedSessionId: String?
             let promptTemplateName: String?
         }
 
         let data = try await post(
-            "/workspaces/\(workspaceId)/review/session",
+            "/workspaces/\(workspaceId)/quick-actions/session",
             body: Body(
                 action: action,
                 paths: paths,
@@ -611,7 +611,7 @@ actor APIClient {
                 promptTemplateName: promptTemplateName
             )
         )
-        return try JSONDecoder().decode(WorkspaceReviewSessionResponse.self, from: data)
+        return try JSONDecoder().decode(WorkspaceQuickActionSessionResponse.self, from: data)
     }
 
     func listReviewComments(

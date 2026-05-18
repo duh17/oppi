@@ -74,11 +74,11 @@ struct WorkspaceReviewModelsTests {
         #expect(file.statusLabel == "Untracked")
     }
 
-    @Test func sessionActionLabelsMatchReviewWorkflowCopy() {
-        #expect(WorkspaceReviewSessionAction.review.menuTitle == "Review changes")
-        #expect(WorkspaceReviewSessionAction.review.primaryButtonTitle == "Review")
-        #expect(WorkspaceReviewSessionAction.reflect.menuTitle == "Reflect & next steps")
-        #expect(WorkspaceReviewSessionAction.prepareCommit.fileMenuTitle == "Prepare commit for this file")
+    @Test func quickActionLabelsMatchSelectedFilesWorkflowCopy() {
+        #expect(WorkspaceQuickAction.review.menuTitle == "Review changes")
+        #expect(WorkspaceQuickAction.review.primaryButtonTitle == "Review")
+        #expect(WorkspaceQuickAction.reflect.menuTitle == "Reflect & next steps")
+        #expect(WorkspaceQuickAction.prepareCommit.fileMenuTitle == "Prepare commit for this file")
     }
 
     @Test func treePathCompareUsesDirectoryHierarchy() {
