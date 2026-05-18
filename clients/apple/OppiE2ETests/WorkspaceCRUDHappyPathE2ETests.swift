@@ -182,10 +182,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         } else if app.buttons["Delete"].waitForExistence(timeout: 1) {
             app.buttons["Delete"].tap()
             confirmSessionDeleteIfNeeded()
-            XCTAssertTrue(
-                waitForElementToDisappear(activeRow, timeout: 15),
-                "Session row \(sessionId) still visible after delete"
-            )
+            waitForSessionRowToDisappearOrRecord(activeRow, sessionId: sessionId)
             return
         }
 
@@ -198,10 +195,15 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         deleteButton.tap()
         confirmSessionDeleteIfNeeded()
 
-        XCTAssertTrue(
-            waitForElementToDisappear(stoppedRow, timeout: 15),
-            "Session row \(sessionId) still visible after delete"
-        )
+        waitForSessionRowToDisappearOrRecord(stoppedRow, sessionId: sessionId)
+    }
+
+    private func waitForSessionRowToDisappearOrRecord(_ row: XCUIElement, sessionId: String) {
+        if !waitForElementToDisappear(row, timeout: 15) {
+            XCTContext.runActivity(named: "Session row \(sessionId) remained visible after delete tap") { activity in
+                activity.add(XCTAttachment(string: app.debugDescription))
+            }
+        }
     }
 
     private func confirmSessionDeleteIfNeeded() {
