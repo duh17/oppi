@@ -70,7 +70,9 @@ export function generateInvite(
   });
 
   inviteScheme = tls.enabled ? "https" : "http";
-  if (tls.enabled && tls.certPath) {
+  // Tailscale certs are public-CA certificates and rotate; do not make
+  // already-paired clients depend on a single leaf certificate.
+  if (tls.enabled && tls.certPath && tls.mode !== "tailscale") {
     tlsCertFingerprint = readCertificateFingerprint(tls.certPath);
   }
 

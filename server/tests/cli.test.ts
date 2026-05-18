@@ -311,7 +311,7 @@ describe.skipIf(!hasOpenSSL)("oppi pair (tls self-signed)", () => {
 });
 
 describe.skipIf(!hasOpenSSL)("oppi pair (tls tailscale)", () => {
-  it("embeds https scheme + tailscale hostname with cert pin", () => {
+  it("embeds https scheme + tailscale hostname without a rotating leaf cert pin", () => {
     const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tailscale-"));
     const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-cli-fake-tailscale-"));
     const fakeTailscalePath = join(fakeBinDir, "tailscale");
@@ -417,7 +417,7 @@ exit 1
 
       expect(payload.host).toBe("my-server.tail00000.ts.net");
       expect(payload.scheme).toBe("https");
-      expect(payload.tlsCertFingerprint?.startsWith("sha256:")).toBe(true);
+      expect(payload.tlsCertFingerprint).toBeUndefined();
     } finally {
       rmSync(tlsDataDir, { recursive: true, force: true });
       rmSync(fakeBinDir, { recursive: true, force: true });

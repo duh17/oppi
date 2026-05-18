@@ -140,4 +140,17 @@ struct TLSPinningTests {
         // Empty string should be normalized to nil — same behavior as no pinning
         _ = PinnedServerTrustDelegate(pinnedLeafFingerprint: "")
     }
+
+    @Test("public CA fallback is allowed for Tailscale hostnames")
+    func publicCAFallbackAllowedForTailscaleHosts() {
+        #expect(PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "mac-studio.tail123.ts.net"))
+        #expect(PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "NODE.beta.tailscale.net"))
+    }
+
+    @Test("public CA fallback is not allowed for arbitrary hosts")
+    func publicCAFallbackRejectsNonTailscaleHosts() {
+        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "192.168.68.66"))
+        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "example.com"))
+        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "evil-ts.net.example.com"))
+    }
 }
