@@ -339,8 +339,8 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
   private tableExists(name: string): boolean {
     const row = this.db
       .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(name) as { present?: number } | undefined;
-    return row !== undefined;
+      .get(name) as { present?: number } | null | undefined;
+    return row !== undefined && row !== null;
   }
 
   private countRows(tableName: "review_comments" | "review_comments_next"): number {

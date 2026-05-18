@@ -51,9 +51,20 @@ function openBunDatabase(path: string): SqliteDatabase {
 
   return {
     exec: (sql: string) => db.exec(sql),
-    prepare: (sql: string) => db.prepare(sql) as SqliteStatement,
+    prepare: (sql: string) => normalizeBunStatement(db.prepare(sql) as SqliteStatement),
     transaction: <T>(fn: () => T) => db.transaction(fn) as () => T,
     close: () => db.close(),
+  };
+}
+
+function normalizeBunStatement(statement: SqliteStatement): SqliteStatement {
+  return {
+    run: (...params: unknown[]) => statement.run(...params),
+    get: (...params: unknown[]) => {
+      const row = statement.get(...params);
+      return row === null ? undefined : row;
+    },
+    all: (...params: unknown[]) => statement.all(...params),
   };
 }
 
