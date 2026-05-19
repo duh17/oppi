@@ -254,9 +254,9 @@ enum FlatSegment: Sendable {
     /// native selection can cross paragraph/list/heading boundaries.
     /// Code blocks and tables remain standalone segments.
     ///
-    /// When `workspaceID` and `serverBaseURL` are provided, paragraphs that
-    /// contain a single relative-path image inline are promoted to `.image`
-    /// segments instead of the alt-text fallback.
+    /// When image links resolve to absolute, workspace-relative, or session
+    /// file URLs, paragraph image inlines are promoted to `.image` segments
+    /// instead of the alt-text fallback.
     /// Cached paragraph separator. Created once to avoid repeated allocation.
     private static let paragraphSeparator = AttributedString("\n\n")
 
@@ -415,18 +415,25 @@ enum FlatSegment: Sendable {
                 if let latexSource = resolveStandaloneLatex(inlines: inlines) {
                     flushPendingText()
                     result.append(.latexBlock(code: latexSource))
-                } else if let imageURL = resolveStandaloneImage(
+                } else if let imageSegments = resolveParagraphImageSegments(
                     inlines: inlines,
+                    palette: palette,
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
                     sourceDirectory: sourceDirectory
                 ) {
-                    let alt = (inlines.first.flatMap {
-                        if case .image(let a, _) = $0 { return a } else { return nil }
-                    }) ?? ""
-                    flushPendingText()
-                    result.append(.image(alt: alt, url: imageURL))
+                    for segment in imageSegments {
+                        switch segment {
+                        case .text(let attributed):
+                            appendTextBlock(attributed)
+                        case .image(let alt, let url):
+                            flushPendingText()
+                            result.append(.image(alt: alt, url: url))
+                        case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
+                            break
+                        }
+                    }
                 } else {
                     let attributed = Self.attributedString(for: block, palette: palette)
                     appendTextBlock(attributed)
@@ -595,39 +602,124 @@ enum FlatSegment: Sendable {
 
     // MARK: - Image URL Resolution
 
-    /// Return a resolved URL if `inlines` contains exactly one `.image` node.
+    /// Split paragraph inlines around resolvable markdown images.
     ///
-    /// Handles two cases:
-    /// - **Relative paths** (e.g. `screenshots/img.png`): resolved against
+    /// Image-only paragraphs become a single `.image` segment. Mixed paragraphs
+    /// become text/image/text segments so syntax like
+    /// `Before ![diagram](diagram.jpeg) after` renders the JPEG instead of the
+    /// bracketed alt-text fallback.
+    private static func resolveParagraphImageSegments(
+        inlines: [MarkdownInline],
+        palette: ThemePalette,
+        workspaceID: String?,
+        sessionID: String?,
+        serverBaseURL: URL?,
+        sourceDirectory: String? = nil
+    ) -> [Self]? {
+        #if DEBUG
+        warnIfRelativeImagesNeedWorkspaceContext(inlines: inlines, workspaceID: workspaceID)
+        #endif
+
+        var segments: [Self] = []
+        var pendingInlines: [MarkdownInline] = []
+        var promotedAnyImage = false
+
+        func flushPendingInlines() {
+            guard inlineChunkHasVisibleFallback(pendingInlines) else {
+                pendingInlines.removeAll(keepingCapacity: true)
+                return
+            }
+
+            let attributed = attributedString(for: .paragraph(pendingInlines), palette: palette)
+            if !attributed.characters.isEmpty {
+                segments.append(.text(attributed))
+            }
+            pendingInlines.removeAll(keepingCapacity: true)
+        }
+
+        for inline in inlines {
+            if case .image(let alt, let source) = inline,
+               let imageURL = resolveImageURL(
+                   source: source,
+                   workspaceID: workspaceID,
+                   sessionID: sessionID,
+                   serverBaseURL: serverBaseURL,
+                   sourceDirectory: sourceDirectory
+               ) {
+                flushPendingInlines()
+                segments.append(.image(alt: alt, url: imageURL))
+                promotedAnyImage = true
+            } else {
+                pendingInlines.append(inline)
+            }
+        }
+
+        flushPendingInlines()
+        return promotedAnyImage ? segments : nil
+    }
+
+    #if DEBUG
+    private static func warnIfRelativeImagesNeedWorkspaceContext(
+        inlines: [MarkdownInline],
+        workspaceID: String?
+    ) {
+        guard workspaceID == nil else { return }
+        for inline in inlines {
+            if case .image(_, let source) = inline,
+               let source, !source.isEmpty,
+               !source.hasPrefix("data:"),
+               !source.hasPrefix("http://"),
+               !source.hasPrefix("https://"),
+               !source.hasPrefix("/"),
+               !source.hasPrefix("~") {
+                print("[FlatSegment] WARNING: relative image but workspaceID is nil — workspace context not threaded to this rendering path")
+                return
+            }
+        }
+    }
+    #endif
+
+    private static func inlineChunkHasVisibleFallback(_ inlines: [MarkdownInline]) -> Bool {
+        for inline in inlines {
+            switch inline {
+            case .text(let string), .html(let string), .code(let string):
+                if !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return true
+                }
+            case .image:
+                return true
+            case .emphasis(let children),
+                 .strong(let children),
+                 .strikethrough(let children),
+                 .link(let children, _):
+                if inlineChunkHasVisibleFallback(children) {
+                    return true
+                }
+            case .softBreak, .hardBreak:
+                continue
+            }
+        }
+        return false
+    }
+
+    /// Resolve a markdown image source to a loadable URL.
+    ///
+    /// Handles three cases:
+    /// - **Relative paths** (e.g. `screenshots/img.jpeg`): resolved against
     ///   the workspace file API when `workspaceID` and `serverBaseURL` are set.
+    /// - **Absolute filesystem paths**: resolved through the session-scoped file API.
     /// - **Absolute URLs** (e.g. `https://example.com/photo.jpg`): passed
     ///   through directly for `NativeMarkdownImageView` to fetch via URLSession.
     ///
     /// Skips `data:` URIs (too large to display inline).
-    private static func resolveStandaloneImage(
-        inlines: [MarkdownInline],
+    private static func resolveImageURL(
+        source: String?,
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
         sourceDirectory: String? = nil
     ) -> URL? {
-        #if DEBUG
-        if workspaceID == nil,
-           inlines.count == 1,
-           case .image(_, let source) = inlines[0],
-           let source, !source.isEmpty,
-           !source.hasPrefix("data:"),
-           !source.hasPrefix("http://"),
-           !source.hasPrefix("https://") {
-            print("[FlatSegment] WARNING: relative image but workspaceID is nil — workspace context not threaded to this rendering path")
-        }
-        #endif
-        guard inlines.count == 1,
-              case .image(_, let source) = inlines[0],
-              let source,
-              !source.isEmpty else {
-            return nil
-        }
+        guard let source, !source.isEmpty else { return nil }
 
         // Skip data: URIs — they can be huge and aren't practical inline.
         if source.hasPrefix("data:") {
@@ -640,9 +732,20 @@ enum FlatSegment: Sendable {
             return url
         }
 
+        // Local file URL — fetch through the session-scoped file API. Agents
+        // commonly paste markdown like `![](file:///.../downloaded.jpeg)` after
+        // downloading an image locally.
+        if let url = URL(string: source), url.scheme == "file" {
+            guard let workspaceID, !workspaceID.isEmpty,
+                  let sessionID, !sessionID.isEmpty else {
+                return nil
+            }
+            return SessionFileURL.make(workspaceID: workspaceID, sessionID: sessionID, filePath: url.path)
+        }
+
         // Absolute filesystem path — fetch through the session-scoped file API
         // so assistant messages can display freshly written files like
-        // `/Users/.../pelican-bike.svg`.
+        // `/Users/.../generated-chart.jpeg`.
         if source.hasPrefix("/") || source.hasPrefix("~") {
             guard let workspaceID, !workspaceID.isEmpty,
                   let sessionID, !sessionID.isEmpty else {

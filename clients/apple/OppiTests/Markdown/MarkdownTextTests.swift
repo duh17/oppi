@@ -569,8 +569,7 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func paragraphWithTextAndImageIsNotPromoted() {
-        // Mixed paragraph: not image-only, falls back to text rendering.
+    @Test func paragraphWithTextAndImagePromotesResolvableImage() {
         let blocks: [MarkdownBlock] = [
             .paragraph([
                 .text("See this: "),
@@ -582,11 +581,46 @@ struct FlatSegmentImageResolutionTests {
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
-        #expect(segments.count == 1)
-        if case .text = segments[0] {
-            // Expected — mixed paragraph rendered as text
+        #expect(segments.count == 2)
+        if case .text(let text) = segments[0] {
+            #expect(String(text.characters).contains("See this:"))
         } else {
-            Issue.record("Expected .text segment for mixed paragraph")
+            Issue.record("Expected text before mixed paragraph image")
+        }
+        if case .image(let alt, let url) = segments[1] {
+            #expect(alt == "Chart")
+            #expect(url.absoluteString.contains("/files/chart.png"))
+        } else {
+            Issue.record("Expected resolvable mixed paragraph image to render")
+        }
+    }
+
+    @Test(arguments: ["png", "jpg", "jpeg", "gif", "webp"])
+    func readSupportedImageLinkInMixedParagraphProducesImageSegment(ext: String) {
+        let markdown = "Before ![Red green](fixtures/red-green.\(ext)) after"
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(
+            from: blocks,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+
+        #expect(segments.count == 3)
+        if case .text(let text) = segments[0] {
+            #expect(String(text.characters).contains("Before"))
+        } else {
+            Issue.record("Expected text before inline image")
+        }
+        if case .image(let alt, let url) = segments[1] {
+            #expect(alt == "Red green")
+            #expect(url.absoluteString.contains("/files/fixtures/red-green.\(ext)"))
+        } else {
+            Issue.record("Expected read-supported markdown image to become an image segment")
+        }
+        if case .text(let text) = segments[2] {
+            #expect(String(text.characters).contains("after"))
+        } else {
+            Issue.record("Expected text after inline image")
         }
     }
 
@@ -752,6 +786,26 @@ struct FlatSegmentImageResolutionTests {
             #expect(components?.filePath == "/absolute/image.png")
         } else {
             Issue.record("Expected session-scoped .image segment")
+        }
+    }
+
+    @Test func fileURLWithSessionContextUsesSessionFileURL() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Local", source: "file:///Users/chenda/workspace/oppi/downloads/local.jpeg")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            workspaceID: workspaceID,
+            sessionID: "sess-123",
+            serverBaseURL: baseURL
+        )
+        if case .image(_, let url) = segments[0] {
+            let components = SessionFileURL.parse(url)
+            #expect(components?.workspaceID == workspaceID)
+            #expect(components?.sessionID == "sess-123")
+            #expect(components?.filePath == "/Users/chenda/workspace/oppi/downloads/local.jpeg")
+        } else {
+            Issue.record("Expected file:// markdown image to resolve through session file API")
         }
     }
 
@@ -1012,6 +1066,109 @@ struct OnlineImageNoWorkspaceTests {
             if case .image = $0 { return true } else { return false }
         }
         #expect(imageSegments.count == 2, "Expected 2 image segments in full markdown. All segments: \(segments.map { "\($0)" }.joined(separator: ", "))")
+    }
+}
+
+// MARK: - Assistant markdown inline image rendering
+
+@Suite("Assistant markdown inline image rendering")
+@MainActor
+struct AssistantMarkdownInlineImageRenderingTests {
+
+    @Test(arguments: ["png", "jpg", "jpeg", "gif", "webp"])
+    func mixedParagraphReadSupportedImageRendersNativeImageView(ext: String) async throws {
+        let imageData = try makeReadSupportedTestImageData(ext: ext)
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
+        markdownView.fetchWorkspaceFile = { workspaceID, path in
+            #expect(workspaceID == "workspace-1")
+            #expect(path == "fixtures/red-green.\(ext)")
+            return imageData
+        }
+
+        let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
+        markdownView.apply(configuration: .make(
+            content: "Before ![Red green](fixtures/red-green.\(ext)) after",
+            isStreaming: false,
+            themeID: .dark,
+            plainTextFallbackThreshold: nil,
+            workspaceID: "workspace-1",
+            serverBaseURL: serverBaseURL
+        ))
+        markdownView.layoutIfNeeded()
+
+        let imageHost = try #require(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView))
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            markdownView.layoutIfNeeded()
+            return timelineAllImageViews(in: imageHost).contains { !$0.isHidden && $0.image != nil }
+        }
+
+        #expect(decoded, "Mixed paragraph .\(ext) markdown images should render as native image views")
+
+        let renderedText = timelineAllTextViews(in: markdownView)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: " ")
+        #expect(renderedText.contains("Before"))
+        #expect(renderedText.contains("after"))
+        #expect(!renderedText.contains("[Red green]"))
+    }
+
+    @Test func mixedParagraphFileURLJPEGRendersNativeImageView() async throws {
+        let imageData = try #require(makeRedGreenTestImage().jpegData(compressionQuality: 0.9))
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
+        markdownView.fetchSessionFile = { workspaceID, sessionID, path in
+            #expect(workspaceID == "workspace-1")
+            #expect(sessionID == "session-1")
+            #expect(path == "/Users/chenda/workspace/oppi/downloads/red-green.jpeg")
+            return imageData
+        }
+
+        let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
+        markdownView.apply(configuration: .make(
+            content: "Before ![Red green](file:///Users/chenda/workspace/oppi/downloads/red-green.jpeg) after",
+            isStreaming: false,
+            themeID: .dark,
+            plainTextFallbackThreshold: nil,
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: serverBaseURL
+        ))
+        markdownView.layoutIfNeeded()
+
+        let imageHost = try #require(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView))
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            markdownView.layoutIfNeeded()
+            return timelineAllImageViews(in: imageHost).contains { !$0.isHidden && $0.image != nil }
+        }
+
+        #expect(decoded, "Local file:// JPEG markdown images should render as native image views")
+    }
+
+    private func makeReadSupportedTestImageData(ext: String) throws -> Data {
+        switch ext {
+        case "png":
+            return try #require(makeRedGreenTestImage().pngData())
+        case "jpg", "jpeg":
+            return try #require(makeRedGreenTestImage().jpegData(compressionQuality: 0.9))
+        case "gif":
+            return try #require(Data(base64Encoded: "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="))
+        case "webp":
+            return try #require(Data(base64Encoded: "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA"))
+        default:
+            Issue.record("Unsupported test image extension: \(ext)")
+            return Data()
+        }
+    }
+
+    private func makeRedGreenTestImage() -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 10))
+        return renderer.image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 10, height: 10))
+            UIColor.green.setFill()
+            context.fill(CGRect(x: 10, y: 0, width: 10, height: 10))
+        }
     }
 }
 
