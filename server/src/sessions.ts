@@ -170,6 +170,15 @@ export class SessionManager extends EventEmitter {
     return this.availableModelIdsResolver?.() ?? [];
   }
 
+  private resolveStoredWorkspace(sessionId: string): Workspace | undefined {
+    const session = this.storage.getSession(sessionId);
+    if (!session?.workspaceId) {
+      return undefined;
+    }
+
+    return this.storage.getWorkspace(session.workspaceId) ?? undefined;
+  }
+
   private ensureMobileRenderersLoaded(): void {
     if (this.mobileRenderersLoadStarted) return;
     this.mobileRenderersLoadStarted = true;
@@ -212,7 +221,8 @@ export class SessionManager extends EventEmitter {
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
     this.ensureMobileRenderersLoaded();
-    const session = await this.activationCoordinator.startSession(key, sessionId, workspace);
+    const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
+    const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
 
     // Notify the parent session's subscribers so the iOS context bar updates.
     // When a child is stopped, iOS unsubscribes from its event stream. On

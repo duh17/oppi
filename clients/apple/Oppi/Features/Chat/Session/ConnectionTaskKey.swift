@@ -12,3 +12,13 @@ struct ConnectionTaskKey: Equatable {
     let sessionId: String
     let generation: Int
 }
+
+/// Composite key for ChatView's review-comment load task.
+///
+/// Review comments are filtered by both workspace and session on the server.
+/// When SwiftUI reuses ChatView for another session in the same workspace,
+/// this key must change so the load task refreshes the session-scoped comment list.
+struct ReviewCommentLoadKey: Equatable {
+    let workspaceId: String?
+    let sessionId: String
+}

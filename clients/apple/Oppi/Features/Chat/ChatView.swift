@@ -362,7 +362,7 @@ struct ChatView: View {
                     await voiceInputManager.prewarm(source: "chat_view_task")
                 }
             }
-            .task(id: session?.workspaceId ?? "") {
+            .task(id: ReviewCommentLoadKey(workspaceId: session?.workspaceId, sessionId: sessionId)) {
                 await loadReviewCommentsIfPossible()
             }
             .onChange(of: session?.displayTitle) { _, _ in

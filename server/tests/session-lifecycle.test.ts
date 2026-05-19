@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { EventRing } from "../src/event-ring.js";
+import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
@@ -121,6 +122,55 @@ function feedEvent(manager: SessionManager, key: string, data: unknown): void {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+// ─── Session Startup ───
+
+describe("SessionManager startSession", () => {
+  it("resolves stored workspace when starting without an explicit workspace", async () => {
+    const now = Date.now();
+    const workspace: Workspace = {
+      id: "w1",
+      name: "Workspace",
+      skills: [],
+      systemPromptMode: "append",
+      hostMount: "/tmp/oppi-workspace-context-test",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const session = makeSession({
+      id: "child-1",
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      parentSessionId: "parent-1",
+      status: "stopped",
+    });
+    const storage = {
+      getConfig: () => TEST_CONFIG,
+      getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
+      getSession: vi.fn((id: string) => (id === session.id ? session : null)),
+      getWorkspace: vi.fn((id: string) => (id === workspace.id ? workspace : null)),
+      listSessions: vi.fn(() => [session]),
+      saveSession: vi.fn(),
+    } as unknown as Storage;
+    const gate = {
+      destroySessionGuard: vi.fn(),
+      getGuardState: vi.fn(() => "guarded"),
+    } as unknown as GateServer;
+    const { sdkBackend } = makeSdkBackendStub();
+    const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
+    const manager = new SessionManager(storage, gate);
+    (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
+
+    try {
+      await manager.startSession(session.id);
+
+      expect(storage.getWorkspace).toHaveBeenCalledWith(workspace.id);
+      expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ workspace }));
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
 });
 
 // ─── State Queries ───

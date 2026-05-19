@@ -118,6 +118,26 @@ struct ChatViewSessionReuseTests {
                 "Bumped generation must trigger reconnect")
     }
 
+    // MARK: - Review comment load key
+
+    /// Review comments are fetched with both workspaceId and sessionId.
+    /// If ChatView is reused for another session in the same workspace,
+    /// the load task must restart; otherwise staged comments from session A
+    /// can remain visible in session B.
+    @Test func reviewCommentLoadKeyDiffersAcrossSessionsInSameWorkspace() {
+        let keyA = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-A")
+        let keyB = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-B")
+        #expect(keyA != keyB,
+                "Different sessions in the same workspace must reload session-scoped review comments")
+    }
+
+    @Test func reviewCommentLoadKeySameForIdenticalScope() {
+        let key1 = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-A")
+        let key2 = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-A")
+        #expect(key1 == key2,
+                "Same workspace + session should not reload review comments unnecessarily")
+    }
+
     // MARK: - Shared state isolation
 
     /// Verifies that replacing the manager does NOT affect the old one.
