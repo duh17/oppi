@@ -9,6 +9,7 @@ export const IOS_ARCHITECTURE_GUIDE = "ARCHITECTURE.md#ios-layers";
 const SERVER_COMPOSITION_ROOT = "server/src/server.ts";
 const SERVER_ENTRY_FILE = "server/src/cli.ts";
 const SERVER_TYPES_CONTRACT_FILE = "server/src/types.ts";
+const SERVER_TYPES_CONTRACT_BARREL_PREFIX = "./types/";
 const SERVER_SESSION_FACADE_FILE = "server/src/sessions.ts";
 const SERVER_GATE_FILE = "server/src/gate.ts";
 const SERVER_POLICY_FILE = "server/src/policy.ts";
@@ -235,6 +236,10 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
 
     if (importer === SERVER_TYPES_CONTRACT_FILE) {
       for (const entry of importEntries) {
+        if (entry.specifier.startsWith(SERVER_TYPES_CONTRACT_BARREL_PREFIX)) {
+          continue;
+        }
+
         violations.push(
           makeServerViolation({
             rule: "types-protocol-leaf",
@@ -242,9 +247,9 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
             target: entry.specifier,
             line: entry.line,
             column: entry.column,
-            reason: "types.ts is the protocol boundary and must remain import-free.",
+            reason: "types.ts is the stable protocol barrel and may only re-export type modules.",
             remediation:
-              "Move shared type definitions into server/src/types.ts and import from types.ts instead.",
+              "Move shared type definitions into server/src/types/ and re-export them from server/src/types.ts.",
           }),
         );
       }
