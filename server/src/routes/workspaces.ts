@@ -32,12 +32,14 @@ import type {
   Workspace,
   WorkspaceListSummary,
   WorkspacePromptTemplatesResponse,
+  WorkspaceQuickActionsResponse,
   WorkspaceQuickActionSelectionResponse,
   WorkspaceQuickActionSessionResponse,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import {
   loadWorkspacePromptTemplates,
+  loadWorkspaceQuickActionOptions,
   prepareWorkspaceQuickActionSession,
   WorkspaceQuickActionSessionError,
 } from "../workspace-quick-action-session.js";
@@ -665,13 +667,32 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return null;
     }
 
-    const validActions = ["review", "reflect", "prepare_commit"] as const;
-    if (!validActions.includes(body.action as (typeof validActions)[number])) {
-      helpers.error(res, 400, `action must be one of: ${validActions.join(", ")}`);
+    const promptTemplateName = body.promptTemplateName?.trim();
+    if (!promptTemplateName) {
+      helpers.error(res, 400, "promptTemplateName required");
       return null;
     }
+    body.promptTemplateName = promptTemplateName;
 
     return { workspace, body, selectedSession };
+  }
+
+  async function handleGetWorkspaceQuickActions(wsId: string, res: ServerResponse): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    try {
+      const response: WorkspaceQuickActionsResponse = {
+        actions: await loadWorkspaceQuickActionOptions(workspace),
+      };
+      helpers.json(res, response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load quick actions";
+      helpers.error(res, 500, message);
+    }
   }
 
   async function handleGetWorkspacePromptTemplates(
@@ -715,13 +736,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       const selection = await prepareWorkspaceQuickActionSession({
         workspaceId: wsId,
         workspace: parsed.workspace,
-        action: parsed.body.action,
         paths: Array.isArray(parsed.body.paths) ? parsed.body.paths : [],
         selectedSession: parsed.selectedSession,
         promptTemplateName: parsed.body.promptTemplateName,
       });
       const response: WorkspaceQuickActionSelectionResponse = {
-        action: parsed.body.action,
         promptTemplateName: selection.promptTemplateName,
         selectedPathCount: selection.files.length,
         visiblePrompt: selection.visiblePrompt,
@@ -774,7 +793,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const launch = await prepareWorkspaceQuickActionSession({
       workspaceId: wsId,
       workspace,
-      action: body.action,
       paths: Array.isArray(body.paths) ? body.paths : [],
       selectedSession,
       promptTemplateName: body.promptTemplateName,
@@ -796,7 +814,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const launchedSession =
       ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
     const response: WorkspaceQuickActionSessionResponse = {
-      action: body.action,
       promptTemplateName: launch.promptTemplateName,
       selectedPathCount: launch.files.length,
       session: ctx.ensureSessionContextWindow(launchedSession),
@@ -915,6 +932,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         await handleDeleteReviewComment(wsReviewCommentMatch[1], wsReviewCommentMatch[2], res);
         return true;
       }
+    }
+
+    const wsQuickActionsMatch = path.match(/^\/workspaces\/([^/]+)\/quick-actions$/);
+    if (wsQuickActionsMatch && method === "GET") {
+      await handleGetWorkspaceQuickActions(wsQuickActionsMatch[1], res);
+      return true;
     }
 
     const wsPromptTemplatesMatch = path.match(/^\/workspaces\/([^/]+)\/prompt-templates$/);

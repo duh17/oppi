@@ -74,11 +74,19 @@ struct WorkspaceReviewModelsTests {
         #expect(file.statusLabel == "Untracked")
     }
 
-    @Test func quickActionLabelsMatchSelectedFilesWorkflowCopy() {
-        #expect(WorkspaceQuickAction.review.menuTitle == "Review changes")
-        #expect(WorkspaceQuickAction.review.primaryButtonTitle == "Review")
-        #expect(WorkspaceQuickAction.reflect.menuTitle == "Reflect & next steps")
-        #expect(WorkspaceQuickAction.prepareCommit.fileMenuTitle == "Prepare commit for this file")
+    @Test func promptTemplateQuickActionOptionHasSlashCommandProgressCopy() {
+        let option = WorkspaceQuickActionOption(
+            id: "prompt:grill-me",
+            title: "Grill Me",
+            commandName: "grill-me",
+            description: "Stress-test selected files",
+            argumentHint: "FILES",
+            source: .prompt,
+            sourceScope: "project",
+            promptTemplateName: "grill-me"
+        )
+
+        #expect(option.progressTitle == "Starting /grill-me…")
     }
 
     @Test func treePathCompareUsesDirectoryHierarchy() {

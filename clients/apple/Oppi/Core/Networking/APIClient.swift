@@ -556,29 +556,26 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
-    func getWorkspacePromptTemplates(workspaceId: String) async throws -> WorkspacePromptTemplatesResponse {
-        let data = try await get("/workspaces/\(workspaceId)/prompt-templates")
-        return try JSONDecoder().decode(WorkspacePromptTemplatesResponse.self, from: data)
+    func getWorkspaceQuickActions(workspaceId: String) async throws -> WorkspaceQuickActionsResponse {
+        let data = try await get("/workspaces/\(workspaceId)/quick-actions")
+        return try JSONDecoder().decode(WorkspaceQuickActionsResponse.self, from: data)
     }
 
     func prepareWorkspaceQuickActionSelection(
         workspaceId: String,
-        action: WorkspaceQuickAction,
         paths: [String],
         selectedSessionId: String? = nil,
-        promptTemplateName: String? = nil
+        promptTemplateName: String
     ) async throws -> WorkspaceQuickActionSelectionResponse {
         struct Body: Encodable {
-            let action: WorkspaceQuickAction
             let paths: [String]
             let selectedSessionId: String?
-            let promptTemplateName: String?
+            let promptTemplateName: String
         }
 
         let data = try await post(
             "/workspaces/\(workspaceId)/quick-actions/selection",
             body: Body(
-                action: action,
                 paths: paths,
                 selectedSessionId: selectedSessionId,
                 promptTemplateName: promptTemplateName
@@ -590,22 +587,19 @@ actor APIClient {
     /// Create and seed a focused follow-up session from a selected-files quick action.
     func createWorkspaceQuickActionSession(
         workspaceId: String,
-        action: WorkspaceQuickAction,
         paths: [String],
         selectedSessionId: String? = nil,
-        promptTemplateName: String? = nil
+        promptTemplateName: String
     ) async throws -> WorkspaceQuickActionSessionResponse {
         struct Body: Encodable {
-            let action: WorkspaceQuickAction
             let paths: [String]
             let selectedSessionId: String?
-            let promptTemplateName: String?
+            let promptTemplateName: String
         }
 
         let data = try await post(
             "/workspaces/\(workspaceId)/quick-actions/session",
             body: Body(
-                action: action,
                 paths: paths,
                 selectedSessionId: selectedSessionId,
                 promptTemplateName: promptTemplateName

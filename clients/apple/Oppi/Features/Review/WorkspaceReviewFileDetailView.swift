@@ -34,9 +34,11 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var diff: WorkspaceReviewDiffResponse?
     @State private var error: String?
     @State private var isLoading = false
-    @State private var launchActionInFlight: WorkspaceQuickAction?
+    @State private var launchActionInFlightTitle: String?
     @State private var launchError: String?
     @State private var navigateToQuickAction: QuickActionSessionNavDestination?
+    @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
+    @State private var isLoadingQuickActions = false
 
     private var selectedTextScope: SelectedTextActionScope? {
         selectedTextActionScopeOverride ?? selectedTextActionScope
@@ -48,6 +50,16 @@ struct WorkspaceReviewFileDetailView: View {
             sourceLabel: file.path.lastPathComponentForDisplay,
             filePath: file.path
         )
+    }
+
+    private var sortedQuickActionOptions: [WorkspaceQuickActionOption] {
+        quickActionOptions.sorted { left, right in
+            if left.sourceScope != right.sourceScope {
+                if left.sourceScope == "project" { return true }
+                if right.sourceScope == "project" { return false }
+            }
+            return left.commandName.localizedCaseInsensitiveCompare(right.commandName) == .orderedAscending
+        }
     }
 
     private enum DetailTab: CaseIterable, Identifiable {
@@ -87,6 +99,9 @@ struct WorkspaceReviewFileDetailView: View {
         .task(id: workspaceId + "|" + file.path) {
             await loadDiff()
         }
+        .task(id: workspaceId) {
+            await loadQuickActionsIfNeeded()
+        }
         .navigationDestination(item: $navigateToQuickAction) { dest in
             ChatView(
                 sessionId: dest.id,
@@ -95,8 +110,8 @@ struct WorkspaceReviewFileDetailView: View {
             )
         }
         .overlay {
-            if let launchActionInFlight {
-                ProgressView(launchActionInFlight.progressTitle)
+            if let launchActionInFlightTitle {
+                ProgressView(launchActionInFlightTitle)
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -109,27 +124,27 @@ struct WorkspaceReviewFileDetailView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Button(WorkspaceQuickAction.review.fileMenuTitle) {
-                        Task {
-                            await createQuickActionSession(action: .review)
-                        }
-                    }
-
-                    Button(WorkspaceQuickAction.reflect.fileMenuTitle) {
-                        Task {
-                            await createQuickActionSession(action: .reflect)
-                        }
-                    }
-
-                    Button(WorkspaceQuickAction.prepareCommit.fileMenuTitle) {
-                        Task {
-                            await createQuickActionSession(action: .prepareCommit)
+                    if isLoadingQuickActions && quickActionOptions.isEmpty {
+                        Button("Loading templates…") {}
+                            .disabled(true)
+                    } else if sortedQuickActionOptions.isEmpty {
+                        Button("No prompt templates") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(sortedQuickActionOptions) { option in
+                            Button {
+                                Task {
+                                    await createQuickActionSession(option: option)
+                                }
+                            } label: {
+                                Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
+                            }
                         }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
-                .disabled(launchActionInFlight != nil)
+                .disabled(launchActionInFlightTitle != nil)
             }
         }
         .alert(
@@ -300,24 +315,22 @@ struct WorkspaceReviewFileDetailView: View {
         .padding(.bottom, 8)
     }
 
-
-
-    private func createQuickActionSession(action: WorkspaceQuickAction) async {
-        guard launchActionInFlight == nil else { return }
+    private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
+        guard launchActionInFlightTitle == nil else { return }
         guard let api = apiClient else {
             launchError = "Server is offline."
             return
         }
 
-        launchActionInFlight = action
-        defer { launchActionInFlight = nil }
+        launchActionInFlightTitle = option.progressTitle
+        defer { launchActionInFlightTitle = nil }
 
         do {
             let response = try await api.createWorkspaceQuickActionSession(
                 workspaceId: workspaceId,
-                action: action,
                 paths: [file.path],
-                selectedSessionId: selectedSessionId
+                selectedSessionId: selectedSessionId,
+                promptTemplateName: option.promptTemplateName
             )
             sessionStore.upsert(response.session)
             launchError = nil
@@ -328,6 +341,20 @@ struct WorkspaceReviewFileDetailView: View {
             )
         } catch {
             launchError = error.localizedDescription
+        }
+    }
+
+    private func loadQuickActionsIfNeeded() async {
+        guard !isLoadingQuickActions else { return }
+        guard let api = apiClient else { return }
+
+        isLoadingQuickActions = true
+        defer { isLoadingQuickActions = false }
+
+        do {
+            quickActionOptions = try await api.getWorkspaceQuickActions(workspaceId: workspaceId).actions
+        } catch {
+            quickActionOptions = []
         }
     }
 

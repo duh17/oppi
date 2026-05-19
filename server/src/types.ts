@@ -547,13 +547,29 @@ export interface WorkspaceReviewDiffResponse {
   cacheKey?: string;
 }
 
-export type WorkspaceQuickAction = "review" | "reflect" | "prepare_commit";
+export type WorkspaceQuickActionOptionSource = "prompt";
+export type WorkspaceQuickActionOptionScope = "user" | "project" | "temporary";
+
+export interface WorkspaceQuickActionOption {
+  id: string;
+  title: string;
+  commandName: string;
+  description?: string;
+  argumentHint?: string;
+  source: WorkspaceQuickActionOptionSource;
+  sourceScope?: WorkspaceQuickActionOptionScope;
+  promptTemplateName: string;
+}
+
+export interface WorkspaceQuickActionsResponse {
+  actions: WorkspaceQuickActionOption[];
+}
 
 export interface WorkspacePromptTemplateSummary {
   name: string;
   description: string;
   argumentHint?: string;
-  sourceScope?: "user" | "project" | "temporary";
+  sourceScope?: WorkspaceQuickActionOptionScope;
 }
 
 export interface WorkspacePromptTemplatesResponse {
@@ -561,15 +577,13 @@ export interface WorkspacePromptTemplatesResponse {
 }
 
 export interface CreateWorkspaceQuickActionSessionRequest {
-  action: WorkspaceQuickAction;
   paths: string[];
   selectedSessionId?: string;
-  promptTemplateName?: string;
+  promptTemplateName: string;
 }
 
 export interface WorkspaceQuickActionSelectionResponse {
-  action: WorkspaceQuickAction;
-  promptTemplateName?: string;
+  promptTemplateName: string;
   selectedPathCount: number;
   visiblePrompt: string;
   filePaths: string[];

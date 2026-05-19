@@ -187,6 +187,15 @@ function normalizePathPattern(path: string): string {
     .replace(/^\/workspaces\/[^/]+\/attention$/, "/workspaces/:workspaceId/attention")
     .replace(/^\/workspaces\/[^/]+\/git-status$/, "/workspaces/:workspaceId/git-status")
     .replace(/^\/workspaces\/[^/]+\/review\/comments$/, "/workspaces/:workspaceId/review/comments")
+    .replace(/^\/workspaces\/[^/]+\/quick-actions$/, "/workspaces/:workspaceId/quick-actions")
+    .replace(
+      /^\/workspaces\/[^/]+\/quick-actions\/selection$/,
+      "/workspaces/:workspaceId/quick-actions/selection",
+    )
+    .replace(
+      /^\/workspaces\/[^/]+\/quick-actions\/session$/,
+      "/workspaces/:workspaceId/quick-actions/session",
+    )
     .replace(/^\/workspaces\/[^/]+\/file-index$/, "/workspaces/:workspaceId/file-index")
     .replace(/^\/workspaces\/[^/]+\/stream\/events$/, "/workspaces/:workspaceId/stream/events")
     .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/:id")

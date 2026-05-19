@@ -66,6 +66,8 @@ graph TD
   WorkspaceHTTP --> RecentList[GET /workspaces/:id/session-list?sinceMs&untilMs]
   WorkspaceHTTP --> ArchiveBucket[GET /workspaces/:id/session-list-bucket?sinceMs&untilMs]
   WorkspaceHTTP --> Attention[GET /workspaces/:id/attention]
+  WorkspaceHTTP --> QuickActions[GET /workspaces/:id/quick-actions<br/>POST /workspaces/:id/quick-actions/selection<br/>POST /workspaces/:id/quick-actions/session]
+  WorkspaceHTTP --> ReviewComments[GET/POST /workspaces/:id/review/comments]
 
   SessionWS --> Hot[Hot session lane<br/>timeline deltas, commands, queue sync, session summaries]
   AudioWS --> Dictation[Dictation lane<br/>control frames and PCM audio]
@@ -74,9 +76,10 @@ graph TD
 
 | Lane | Transport | Main server owner | Main Apple owner | Carries |
 |------|-----------|-------------------|------------------|---------|
-| Workspace home summaries | HTTP | `routes/workspaces.ts` + `session-sqlite-store.ts` | `WorkspaceStore` / `WorkspaceHomeView` | Per-workspace active/stopped counts, latest activity, attention summary |
+| Workspace home summaries | HTTP | `routes/workspaces.ts` + `session-sqlite-store.ts` | `WorkspaceStore` / `WorkspaceHomeView` | Per-workspace active/stopped counts, latest activity, attention/error flags |
 | Workspace detail recent lane | HTTP | `routes/sessions.ts` + `session-sqlite-store.ts` + `local-sessions.ts` | `WorkspaceDetailView` + `SessionStore.applyWorkspaceSnapshot(...)` | Recent managed session summaries, attention snapshot, recent importable TUI sessions, archive bucket summaries |
 | Workspace archive bucket | HTTP | `routes/sessions.ts` | `WorkspaceStoppedSessionsSection` | Lazy-loaded stopped/importable rows for one older bucket |
+| Workspace quick actions and review comments | HTTP | `routes/workspaces.ts` + `workspace-quick-action-session.ts` + `review-comment-sqlite-store.ts` | `WorkspaceContextBar`, `WorkspaceReviewFileDetailView`, `ChatView` review comments | Prompt templates exposed as selected-file quick actions, quick-action sessions, and session-scoped review comments |
 | Focused session stream | Bidirectional JSON | `BoundSessionStreamMux` | `WebSocketClient` + `SessionStreamCoordinator` | Timeline events, prompts, commands, queue sync, low-frequency `session_summary` updates |
 | Focused session catch-up | HTTP GET | `SessionManager.getCatchUp()` | `APIClient` + `SessionStreamCoordinator` | Missed durable focused-session events after reconnect |
 | Session audio stream | Bidirectional JSON + binary | `SessionAudioStreamMux` | `DictationStreamClient` | Dictation control messages, transcript events, PCM audio |
@@ -170,6 +173,7 @@ graph TD
     Home[WorkspaceHomeView]
     Detail[WorkspaceDetailView]
     Archive[WorkspaceStoppedSessionsSection]
+    Review[Workspace review<br/>quick actions]
   end
 
   subgraph Timeline[Per-session timeline]
@@ -192,15 +196,17 @@ graph TD
   Detail --> SessionStore
   Detail --> API
   Archive --> API
+  Review --> API
   ChatManager --> Reducer
   Reducer --> UIKit
 ```
 
 Key boundaries:
 
-- `ServerConnection` owns focused-session transport, app-wide refresh coordination, and shared store updates for live session messages.
+- `ServerConnection` owns focused-session transport, app-wide refresh coordination, and shared store updates for live session messages; `ChatView` owns the per-session `ChatSessionManager` pipeline that consumes those stream events.
 - `WorkspaceStore` owns workspace catalog freshness plus SQLite-backed workspace-home summaries.
 - `WorkspaceDetailView` owns view-scoped workspace refresh/polling using `getWorkspaceSessionList(...)` and lazy archive bucket fetches.
+- Workspace prompt templates are exposed to Apple as quick-action options; quick actions and review comments stay on the HTTP lane, and review-comment loading is keyed by workspace plus session so comments do not leak across sessions in the same workspace.
 - `SessionStore` keeps the hot list projection separate from full session state so timeline-frequency updates do not rebuild workspace lists.
 - Timeline row rendering is UIKit-backed for the hot path. SwiftUI owns navigation shells, forms, and high-level composition.
 
@@ -276,6 +282,7 @@ When a message contract changes, update server types, Apple models, and protocol
 - Workspace session-list endpoints return **session summaries**, not full `Session` payloads.
 - Hot workspace endpoints must not reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite-backed read models.
 - Keep hot timeline traffic separate from cold workspace/session projections.
+- Keep workspace quick-action discovery, selected-file prompt-template preparation, and review comments on HTTP routes; only the created/focused session uses the session stream.
 - Apply shared store updates exactly once per inbound live session event on the client.
 - Keep reducers and coalescers UI-framework-free; keep UIKit-specific rendering under the timeline package.
 - Preserve the ability to resume imported TUI sessions without mutating the original JSONL traces.
@@ -287,6 +294,8 @@ When a message contract changes, update server types, Apple models, and protocol
 | Workspace home summaries | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts` | `WorkspaceStore.swift`, `WorkspaceHomeView.swift` |
 | Workspace detail recent lane | `server/src/routes/sessions.ts`, `server/src/local-sessions.ts` | `WorkspaceDetailView.swift`, `SessionStore.swift` |
 | Lazy stopped archive buckets | `server/src/routes/sessions.ts`, `server/src/storage/session-sqlite-store.ts` | `WorkspaceStoppedSessionsSection.swift`, `WorkspaceDetailView.swift` |
+| Workspace quick actions | `server/src/routes/workspaces.ts`, `server/src/workspace-quick-action-session.ts` | `WorkspaceContextBar.swift`, `WorkspaceReviewFileDetailView.swift`, `WorkspaceReview.swift` |
+| Review comments | `server/src/routes/workspaces.ts`, `server/src/storage/review-comment-sqlite-store.ts` | `ChatView.swift`, `ReviewComments/`, `ReviewCommentStore.swift` |
 | Focused session WebSocket | `server/src/stream.ts`, `server/src/ws-message-handler.ts` | `WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `ServerConnection.swift` |
 | Session runtime | `server/src/sessions.ts`, `server/src/session-*.ts` | `ChatSessionManager.swift`, `ChatActionHandler.swift` |
 | Protocol contract | `server/src/types.ts` | `ClientMessage.swift`, `ServerMessage.swift` |

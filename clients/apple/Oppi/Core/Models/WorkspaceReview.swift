@@ -53,84 +53,36 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     }
 }
 
-enum WorkspaceQuickAction: String, Codable, Sendable, Equatable, CaseIterable, Identifiable {
-    case review
-    case reflect
-    case prepareCommit = "prepare_commit"
-
-    var id: String { rawValue }
-
-    var menuTitle: String {
-        switch self {
-        case .review:
-            return "Review changes"
-        case .reflect:
-            return "Reflect & next steps"
-        case .prepareCommit:
-            return "Prepare commit"
-        }
+struct WorkspaceQuickActionOption: Codable, Sendable, Equatable, Identifiable {
+    enum Source: String, Codable, Sendable, Equatable {
+        case prompt
     }
 
-    // periphery:ignore
-    var primaryButtonTitle: String {
-        switch self {
-        case .review:
-            return "Review"
-        case .reflect:
-            return "Reflect"
-        case .prepareCommit:
-            return "Prepare commit"
-        }
-    }
-
-    var fileMenuTitle: String {
-        switch self {
-        case .review:
-            return "Review this file"
-        case .reflect:
-            return "Reflect on this file"
-        case .prepareCommit:
-            return "Prepare commit for this file"
-        }
-    }
-
-    var progressTitle: String {
-        switch self {
-        case .review:
-            return "Starting review…"
-        case .reflect:
-            return "Starting reflection…"
-        case .prepareCommit:
-            return "Preparing commit session…"
-        }
-    }
-}
-
-struct WorkspacePromptTemplate: Codable, Sendable, Equatable, Identifiable {
-    let name: String
-    let description: String
+    let id: String
+    let title: String
+    let commandName: String
+    let description: String?
     let argumentHint: String?
+    let source: Source
     let sourceScope: String?
+    let promptTemplateName: String
 
-    var id: String { name }
-    var title: String { name.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").capitalized }
+    var progressTitle: String { "Starting /\(commandName)…" }
 }
 
-struct WorkspacePromptTemplatesResponse: Codable, Sendable, Equatable {
-    let templates: [WorkspacePromptTemplate]
+struct WorkspaceQuickActionsResponse: Codable, Sendable, Equatable {
+    let actions: [WorkspaceQuickActionOption]
 }
 
 struct WorkspaceQuickActionSelectionResponse: Codable, Sendable, Equatable {
-    let action: WorkspaceQuickAction
-    let promptTemplateName: String?
+    let promptTemplateName: String
     let selectedPathCount: Int
     let visiblePrompt: String
     let filePaths: [String]
 }
 
 struct WorkspaceQuickActionSessionResponse: Codable, Sendable, Equatable {
-    let action: WorkspaceQuickAction
-    let promptTemplateName: String?
+    let promptTemplateName: String
     let selectedPathCount: Int
     let session: Session
     let visiblePrompt: String

@@ -9,9 +9,10 @@ import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 import type {
   Session,
   Workspace,
-  WorkspaceReviewDiffResponse,
+  WorkspaceQuickActionsResponse,
   WorkspaceQuickActionSelectionResponse,
   WorkspaceQuickActionSessionResponse,
+  WorkspaceReviewDiffResponse,
 } from "../src/types.js";
 
 interface MockResponse {
@@ -80,14 +81,35 @@ function makeSession(id: string, workspaceId = "w1", changedFiles: string[] = []
   };
 }
 
+function initRepo(repoDir: string): void {
+  gitIn(repoDir, "init -b main");
+  gitIn(repoDir, 'config user.email "test@test.com"');
+  gitIn(repoDir, 'config user.name "Test"');
+}
+
+function makeQuickActionContext(
+  repoDir: string,
+  overrides: Partial<RouteContext> = {},
+): RouteContext {
+  return {
+    storage: {
+      getWorkspace: (workspaceId: string) =>
+        workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+      getSession: () => undefined,
+      createSession: vi.fn(),
+    },
+    sessions: { startSession: vi.fn() },
+    ensureSessionContextWindow: (session: Session) => session,
+    ...overrides,
+  } as unknown as RouteContext;
+}
+
 describe("GET /workspaces/:wid/review/diff", () => {
   it("returns baseline/current text and word-level spans", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-diff-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
+      initRepo(repoDir);
 
       writeFileSync(
         join(repoDir, "review.swift"),
@@ -154,9 +176,7 @@ describe("GET /workspaces/:wid/review/diff", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-diff-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
+      initRepo(repoDir);
 
       const ctx = {
         storage: {
@@ -184,66 +204,80 @@ describe("GET /workspaces/:wid/review/diff", () => {
   });
 });
 
-describe("POST /workspaces/:wid/quick-actions/session", () => {
-  it("prepares a review selection without creating a session", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-selection-"));
+describe("GET /workspaces/:wid/quick-actions", () => {
+  it("returns prompt templates as the selected-file quick-action options", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-actions-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        [
+          "---",
+          "description: Stress-test the selected files",
+          "argument-hint: FILES",
+          "---",
+          "Review these files: $ARGUMENTS",
+        ].join("\n"),
+        "utf8",
+      );
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "prepare-commit.md"),
+        "Prepare a commit for: $ARGUMENTS\n",
+        "utf8",
+      );
 
-      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
-      gitIn(repoDir, "add review.swift");
-      gitIn(repoDir, 'commit -m "initial commit"');
-
-      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
-
-      const createSession = vi.fn();
-      const startSession = vi.fn();
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: () => undefined,
-          createSession,
-        },
-        sessions: { startSession },
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
       const res = makeResponse();
 
       await routes.dispatch(
-        "POST",
-        "/workspaces/w1/quick-actions/selection",
-        new URL("http://localhost/workspaces/w1/quick-actions/selection"),
-        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
+        "GET",
+        "/workspaces/w1/quick-actions",
+        new URL("http://localhost/workspaces/w1/quick-actions"),
+        {} as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as WorkspaceQuickActionSelectionResponse;
+      const body = JSON.parse(res.body) as WorkspaceQuickActionsResponse;
 
-      expect(body.action).toBe("review");
-      expect(body.selectedPathCount).toBe(1);
-      expect(body.visiblePrompt).toContain("# Review Guidelines");
-      expect(body.filePaths).toEqual(["review.swift"]);
-      expect(createSession).not.toHaveBeenCalled();
-      expect(startSession).not.toHaveBeenCalled();
+      expect(body.actions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "prompt:grill-me",
+            title: "Grill Me",
+            commandName: "grill-me",
+            description: "Stress-test the selected files",
+            argumentHint: "FILES",
+            source: "prompt",
+            sourceScope: "project",
+            promptTemplateName: "grill-me",
+          }),
+          expect.objectContaining({
+            id: "prompt:prepare-commit",
+            title: "Prepare Commit",
+            commandName: "prepare-commit",
+            source: "prompt",
+            sourceScope: "project",
+            promptTemplateName: "prepare-commit",
+          }),
+        ]),
+      );
+      expect(
+        body.actions.map((action) => action.source).every((source) => source === "prompt"),
+      ).toBe(true);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
+});
 
+describe("workspace prompt-template quick actions", () => {
   it("substitutes selected paths into prompt-template arguments", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-template-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
+      initRepo(repoDir);
 
       mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
       writeFileSync(
@@ -259,18 +293,7 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
       writeFileSync(join(repoDir, "first.swift"), "let value = newName\n", "utf8");
       writeFileSync(join(repoDir, "second.swift"), "let other = newName\n", "utf8");
 
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: () => undefined,
-          createSession: vi.fn(),
-        },
-        sessions: { startSession: vi.fn() },
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
       const res = makeResponse();
 
       await routes.dispatch(
@@ -278,7 +301,6 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
         "/workspaces/w1/quick-actions/selection",
         new URL("http://localhost/workspaces/w1/quick-actions/selection"),
         makeRequest({
-          action: "review",
           paths: ["first.swift", "second.swift"],
           promptTemplateName: "grill-me",
         }) as never,
@@ -306,7 +328,6 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
         "/workspaces/w1/quick-actions/selection",
         new URL("http://localhost/workspaces/w1/quick-actions/selection"),
         makeRequest({
-          action: "review",
           paths: ["second.swift"],
           promptTemplateName: "grill-me",
         }) as never,
@@ -322,16 +343,20 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
     }
   });
 
-  it("creates a seeded quick-action session from selected files", async () => {
+  it("creates a seeded quick-action session from a prompt template and selected files", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
+      initRepo(repoDir);
 
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Inspect the selected files:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
       writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
-      gitIn(repoDir, "add review.swift");
+      gitIn(repoDir, "add review.swift .pi/prompts/grill-me.md");
       gitIn(repoDir, 'commit -m "initial commit"');
 
       writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
@@ -341,7 +366,7 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
       const startSession = vi.fn(async () => createdSession);
       const getActiveSession = vi.fn(() => createdSession);
 
-      const ctx = {
+      const ctx = makeQuickActionContext(repoDir, {
         storage: {
           getWorkspace: (workspaceId: string) =>
             workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
@@ -358,8 +383,7 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
           getActiveSession,
           stopSession: vi.fn(async () => undefined),
         },
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext;
+      });
 
       const routes = new RouteHandler(ctx);
       const res = makeResponse();
@@ -368,14 +392,14 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
         "POST",
         "/workspaces/w1/quick-actions/session",
         new URL("http://localhost/workspaces/w1/quick-actions/session"),
-        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
+        makeRequest({ paths: ["review.swift"], promptTemplateName: "grill-me" }) as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
 
-      expect(body.action).toBe("review");
+      expect(body.promptTemplateName).toBe("grill-me");
       expect(body.selectedPathCount).toBe(1);
       expect(body.session.id).toBe("new-session");
       expect(savedSession?.workspaceId).toBe("w1");
@@ -384,133 +408,31 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
         "new-session",
         expect.objectContaining({ id: "w1" }),
       );
-      expect(body.visiblePrompt).toContain("# Review Guidelines");
-      expect(body.visiblePrompt).toContain(
-        "Review the selected files for bugs, regressions, and risky patterns. Cite file and line number for each finding.",
-      );
-      expect(body.visiblePrompt).toContain("## Human Reviewer Callouts (Non-Blocking)");
+      expect(body.visiblePrompt).toBe("Inspect the selected files:\n\nreview.swift");
       expect(body.filePaths).toEqual(["review.swift"]);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
 
-  it("uses REVIEW.md in the workspace root as the review prompt override", async () => {
+  it("returns 400 when promptTemplateName is missing", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
-
-      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
-      writeFileSync(
-        join(repoDir, "REVIEW.md"),
-        "Custom review prompt from workspace root. Focus on data loss and auth edges.\n",
-        "utf8",
-      );
-      gitIn(repoDir, "add review.swift REVIEW.md");
-      gitIn(repoDir, 'commit -m "initial commit"');
-
-      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
-
-      const createdSession = makeSession("new-session", "w1");
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: () => undefined,
-          createSession: () => createdSession,
-          saveSession: vi.fn(),
-          deleteSession: vi.fn(),
-        },
-        sessions: {
-          setPendingExtensionFactories: vi.fn(),
-          startSession: vi.fn(async () => createdSession),
-          getActiveSession: vi.fn(() => createdSession),
-          stopSession: vi.fn(async () => undefined),
-        },
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
+      initRepo(repoDir);
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
       const res = makeResponse();
 
       await routes.dispatch(
         "POST",
         "/workspaces/w1/quick-actions/session",
         new URL("http://localhost/workspaces/w1/quick-actions/session"),
-        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
+        makeRequest({ paths: ["review.swift"] }) as never,
         res as never,
       );
 
-      expect(res.statusCode).toBe(201);
-      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
-
-      expect(body.visiblePrompt).toBe(
-        "Custom review prompt from workspace root. Focus on data loss and auth edges.",
-      );
-    } finally {
-      rmSync(repoDir, { recursive: true, force: true });
-    }
-  });
-
-  it("uses .pi/REVIEW.md as a fallback review prompt override", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
-
-    try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
-
-      mkdirSync(join(repoDir, ".pi"), { recursive: true });
-      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
-      writeFileSync(
-        join(repoDir, ".pi", "REVIEW.md"),
-        "Project-local review prompt from .pi. Focus on rollback safety and alerts.\n",
-        "utf8",
-      );
-      gitIn(repoDir, "add review.swift .pi/REVIEW.md");
-      gitIn(repoDir, 'commit -m "initial commit"');
-
-      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
-
-      const createdSession = makeSession("new-session", "w1");
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: () => undefined,
-          createSession: () => createdSession,
-          saveSession: vi.fn(),
-          deleteSession: vi.fn(),
-        },
-        sessions: {
-          setPendingExtensionFactories: vi.fn(),
-          startSession: vi.fn(async () => createdSession),
-          getActiveSession: vi.fn(() => createdSession),
-          stopSession: vi.fn(async () => undefined),
-        },
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
-      const res = makeResponse();
-
-      await routes.dispatch(
-        "POST",
-        "/workspaces/w1/quick-actions/session",
-        new URL("http://localhost/workspaces/w1/quick-actions/session"),
-        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
-        res as never,
-      );
-
-      expect(res.statusCode).toBe(201);
-      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
-
-      expect(body.visiblePrompt).toBe(
-        "Project-local review prompt from .pi. Focus on rollback safety and alerts.",
-      );
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "promptTemplateName required" });
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
@@ -520,31 +442,26 @@ describe("POST /workspaces/:wid/quick-actions/session", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 
     try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
+      initRepo(repoDir);
 
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Inspect: $ARGUMENTS\n",
+        "utf8",
+      );
       writeFileSync(join(repoDir, "tracked.swift"), "let value = 1\n", "utf8");
-      gitIn(repoDir, "add tracked.swift");
+      gitIn(repoDir, "add tracked.swift .pi/prompts/grill-me.md");
       gitIn(repoDir, 'commit -m "initial commit"');
 
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: () => undefined,
-        },
-        sessions: {},
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
       const res = makeResponse();
 
       await routes.dispatch(
         "POST",
         "/workspaces/w1/quick-actions/session",
         new URL("http://localhost/workspaces/w1/quick-actions/session"),
-        makeRequest({ action: "review", paths: ["missing.swift"] }) as never,
+        makeRequest({ paths: ["missing.swift"], promptTemplateName: "grill-me" }) as never,
         res as never,
       );
 

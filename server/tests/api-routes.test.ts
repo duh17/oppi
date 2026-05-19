@@ -21,6 +21,7 @@ const ROUTES = {
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
   wsReviewFiles: /^\/workspaces\/([^/]+)\/review\/files$/,
   wsReviewDiff: /^\/workspaces\/([^/]+)\/review\/diff$/,
+  wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
   wsQuickActionSession: /^\/workspaces\/([^/]+)\/quick-actions\/session$/,
   wsGraph: /^\/workspaces\/([^/]+)\/graph$/,
@@ -130,6 +131,12 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches GET /workspaces/:wid/review/diff", () => {
     const m = "/workspaces/ws-1/review/diff".match(ROUTES.wsReviewDiff);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+  });
+
+  it("matches GET /workspaces/:wid/quick-actions", () => {
+    const m = "/workspaces/ws-1/quick-actions".match(ROUTES.wsQuickActions);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
   });
