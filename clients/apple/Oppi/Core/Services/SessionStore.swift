@@ -40,6 +40,13 @@ final class SessionStore {
     /// parallel multi-agent tool calling.
     private var serverTurnEndedDates: [String: [String: Date]] = [:]
 
+    /// Sessions deleted locally or confirmed deleted by the server.
+    ///
+    /// Keep a short-lived tombstone so older in-flight snapshots or summary
+    /// events cannot resurrect a just-deleted row in the workspace list.
+    private var serverDeletedSessionTombstones: [String: [String: Date]] = [:]
+    private static let deletedSessionTombstoneTTL: TimeInterval = 600
+
     // ── Per-server freshness tracking ──
 
     private var serverLastSyncAt: [String: Date] = [:]
@@ -129,6 +136,7 @@ final class SessionStore {
         serverSessions.removeValue(forKey: serverId)
         serverListProjectionSessions.removeValue(forKey: serverId)
         serverTurnEndedDates.removeValue(forKey: serverId)
+        serverDeletedSessionTombstones.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
         serverIsSyncing.removeValue(forKey: serverId)
         serverSyncFailed.removeValue(forKey: serverId)
@@ -265,6 +273,7 @@ final class SessionStore {
     ) -> Bool {
         let current = sessions
         let incomingForWorkspace = incomingSummaries.map(\.session).compactMap { session -> Session? in
+            guard !isDeletedSessionTombstoned(session.id) else { return nil }
             guard session.workspaceId == nil || session.workspaceId == workspaceId else { return nil }
             var normalized = session
             if normalized.workspaceId == nil {
@@ -346,6 +355,8 @@ final class SessionStore {
     }
 
     private func merge(_ session: Session, into list: inout [Session]) -> Bool {
+        guard !isDeletedSessionTombstoned(session.id) else { return false }
+
         if let idx = list.firstIndex(where: { $0.id == session.id }) {
             let merged = mergePreservingContext(existing: list[idx], incoming: session)
             guard list[idx] != merged else { return false }
@@ -354,6 +365,41 @@ final class SessionStore {
             list.insert(session, at: 0)
         }
         return true
+    }
+
+    private func markDeletedSessionTombstone(_ sessionId: String, at date: Date = Date()) {
+        pruneDeletedSessionTombstones(now: date)
+        let key = activeServerKey
+        var tombstones = serverDeletedSessionTombstones[key] ?? [:]
+        tombstones[sessionId] = date
+        serverDeletedSessionTombstones[key] = tombstones
+    }
+
+    private func isDeletedSessionTombstoned(_ sessionId: String, now: Date = Date()) -> Bool {
+        let key = activeServerKey
+        guard let deletedAt = serverDeletedSessionTombstones[key]?[sessionId] else {
+            return false
+        }
+        if now.timeIntervalSince(deletedAt) <= Self.deletedSessionTombstoneTTL {
+            return true
+        }
+
+        serverDeletedSessionTombstones[key]?[sessionId] = nil
+        return false
+    }
+
+    private func pruneDeletedSessionTombstones(now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-Self.deletedSessionTombstoneTTL)
+        let key = activeServerKey
+        guard var tombstones = serverDeletedSessionTombstones[key] else { return }
+        tombstones = tombstones.filter { _, deletedAt in
+            deletedAt >= cutoff
+        }
+        if tombstones.isEmpty {
+            serverDeletedSessionTombstones.removeValue(forKey: key)
+        } else {
+            serverDeletedSessionTombstones[key] = tombstones
+        }
     }
 
     private func replaceActiveSessions(_ list: [Session]) {
@@ -463,6 +509,8 @@ final class SessionStore {
 
     /// Remove a session.
     func remove(id: String) {
+        markDeletedSessionTombstone(id)
+
         var list = sessions
         list.removeAll { $0.id == id }
         sessions = list
@@ -487,7 +535,8 @@ final class SessionStore {
     /// making newly-created sessions disappear when the user re-enters lists.
     func applyServerSnapshot(_ snapshot: [Session], preserveRecentWindow: TimeInterval = 180) {
         let now = Date()
-        let serverIds = Set(snapshot.map(\.id))
+        let filteredSnapshot = snapshot.filter { !isDeletedSessionTombstoned($0.id, now: now) }
+        let serverIds = Set(filteredSnapshot.map(\.id))
         let current = sessions
 
         let preservedLocals = current.filter { local in
@@ -498,7 +547,7 @@ final class SessionStore {
 
         let currentById = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
         var merged: [String: Session] = [:]
-        for remote in snapshot {
+        for remote in filteredSnapshot {
             if let existing = currentById[remote.id] {
                 merged[remote.id] = mergePreservingContext(existing: existing, incoming: remote)
             } else {

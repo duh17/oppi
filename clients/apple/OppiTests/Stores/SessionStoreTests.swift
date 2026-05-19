@@ -369,6 +369,46 @@ struct SessionStorePartitioningTests {
         #expect(store.sessions.map(\.id) == ["optimistic"])
     }
 
+    @Test func workspaceRecentSnapshotDoesNotReaddDeletedSessionFromStaleResponse() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        store.upsert(makeTestSession(id: "ghost", workspaceId: "w1", status: .stopped, lastActivity: now))
+
+        store.remove(id: "ghost")
+        store.applyWorkspaceRecentSnapshot(
+            workspaceId: "w1",
+            summaries: [SessionSummary(from: makeTestSession(id: "ghost", workspaceId: "w1", status: .stopped, lastActivity: now))],
+            requestStartedAt: now
+        )
+
+        #expect(store.session(id: "ghost") == nil)
+    }
+
+    @Test func summaryUpdateDoesNotReaddDeletedSession() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let session = makeTestSession(id: "ghost", workspaceId: "w1", status: .stopped)
+        store.upsert(session)
+
+        store.remove(id: "ghost")
+        _ = store.applySummary(SessionSummary(from: session))
+
+        #expect(store.session(id: "ghost") == nil)
+    }
+
+    @Test func serverSnapshotDoesNotReaddDeletedSession() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let session = makeTestSession(id: "ghost", workspaceId: "w1", status: .stopped)
+        store.upsert(session)
+
+        store.remove(id: "ghost")
+        store.applyServerSnapshot([session])
+
+        #expect(store.session(id: "ghost") == nil)
+    }
+
     // MARK: - Freshness
 
     @Test func freshnessPerServer() {
