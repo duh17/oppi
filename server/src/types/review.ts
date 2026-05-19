@@ -1,14 +1,9 @@
+import type { GitFileChange } from "./git.js";
 import type { Session } from "./session.js";
 
-export interface WorkspaceReviewFile {
-  /** Relative file path from repo root. */
-  path: string;
+export interface WorkspaceReviewFile extends GitFileChange {
   /** Two-char status code derived from `git status --porcelain`. */
   status: string;
-  /** Lines added vs HEAD (null for binary/untracked). */
-  addedLines: number | null;
-  /** Lines removed vs HEAD (null for binary/untracked). */
-  removedLines: number | null;
   /** File has staged changes in the index. */
   isStaged: boolean;
   /** File has unstaged changes in the working tree. */

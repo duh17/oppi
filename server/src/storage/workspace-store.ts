@@ -8,6 +8,7 @@ import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
   Workspace,
+  WorkspaceSandboxConfig,
   WorkspaceSystemPromptMode,
 } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
@@ -60,15 +61,13 @@ function normalizeHostMount(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizeSandboxConfig(
-  raw: unknown,
-): { allowedHosts?: string[]; env?: Record<string, string> } | undefined {
+function normalizeSandboxConfig(raw: unknown): WorkspaceSandboxConfig | undefined {
   if (!raw || typeof raw !== "object") {
     return undefined;
   }
 
   const obj = raw as Record<string, unknown>;
-  const result: { allowedHosts?: string[]; env?: Record<string, string> } = {};
+  const result: WorkspaceSandboxConfig = {};
 
   if (Array.isArray(obj.allowedHosts)) {
     result.allowedHosts = obj.allowedHosts.filter((h): h is string => typeof h === "string");

@@ -1,14 +1,19 @@
 // ─── Git status ───
 
-export interface GitFileStatus {
-  /** Two-char status code from `git status --porcelain` (e.g. " M", "??", "A ") */
-  status: string;
-  /** File path relative to repo root */
+export interface GitFileChange {
+  /** File path relative to repo root. */
   path: string;
-  /** Lines added vs HEAD (null for binary/untracked) */
+  /** Change status; source-specific format (porcelain, diff-tree, etc.). */
+  status: string;
+  /** Lines added (null when unavailable, such as binary or untracked files). */
   addedLines: number | null;
-  /** Lines removed vs HEAD (null for binary/untracked) */
+  /** Lines removed (null when unavailable, such as binary or untracked files). */
   removedLines: number | null;
+}
+
+export interface GitFileStatus extends GitFileChange {
+  /** Two-char status code from `git status --porcelain` (e.g. " M", "??", "A "). */
+  status: string;
 }
 
 export interface GitCommitSummary {
@@ -20,15 +25,9 @@ export interface GitCommitSummary {
   date: string;
 }
 
-export interface GitCommitFileInfo {
-  /** File path relative to repo root */
-  path: string;
-  /** Change status (M=modified, A=added, D=deleted, etc.) */
+export interface GitCommitFileInfo extends GitFileChange {
+  /** Change status (M=modified, A=added, D=deleted, etc.). */
   status: string;
-  /** Lines added (null for binary files) */
-  addedLines: number | null;
-  /** Lines removed (null for binary files) */
-  removedLines: number | null;
 }
 
 export interface GitCommitDetail {

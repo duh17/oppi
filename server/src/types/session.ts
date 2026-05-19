@@ -1,5 +1,12 @@
 // ─── Sessions ───
 
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface SessionSummaryChangeStats {
   /** Count of mutating file tool calls (edit/write) observed in this session. */
   mutatingToolCalls: number;
@@ -50,7 +57,7 @@ export interface Session {
 
   // Stats
   messageCount: number;
-  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  tokens: TokenUsage;
   cost: number;
   changeStats?: SessionChangeStats;
 
@@ -101,7 +108,7 @@ export interface SessionSummary {
   currentTurnStartedAt?: number;
   model?: string;
   messageCount: number;
-  tokens: Session["tokens"];
+  tokens: TokenUsage;
   cost: number;
   changeStats?: SessionSummaryChangeStats;
   contextTokens?: number;

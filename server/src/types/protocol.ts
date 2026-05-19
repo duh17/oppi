@@ -27,11 +27,14 @@ export interface ChatAttachmentRef {
 
 export type MessageQueueKind = "steer" | "follow_up";
 
-export interface MessageQueueItem {
-  id: string;
+export interface MessageQueuePayload {
   message: string;
   images?: ImageAttachment[];
   attachments?: ChatAttachmentRef[];
+}
+
+export interface MessageQueueItem extends MessageQueuePayload {
+  id: string;
   createdAt: number;
 }
 
@@ -41,11 +44,8 @@ export interface MessageQueueState {
   followUp: MessageQueueItem[];
 }
 
-export interface MessageQueueDraftItem {
+export interface MessageQueueDraftItem extends MessageQueuePayload {
   id?: string;
-  message: string;
-  images?: ImageAttachment[];
-  attachments?: ChatAttachmentRef[];
   createdAt?: number;
 }
 

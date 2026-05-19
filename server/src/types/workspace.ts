@@ -1,9 +1,22 @@
 // ─── Workspaces ───
 
 export type WorkspaceSystemPromptMode = "append" | "replace";
+export type WorkspaceAllowedPathAccess = "read" | "readwrite";
+export type WorkspaceRuntimeMode = "host" | "sandbox";
 
-export interface Workspace {
-  id: string;
+export interface WorkspaceAllowedPath {
+  path: string;
+  access: WorkspaceAllowedPathAccess;
+}
+
+export interface WorkspaceSandboxConfig {
+  /** Allowed egress hosts for network access. Default: ["*"] (all). */
+  allowedHosts?: string[];
+  /** Extra environment variables injected into the sandbox VM. */
+  env?: Record<string, string>;
+}
+
+export interface WorkspaceMutableConfig {
   name: string; // "coding", "research"
   description?: string; // shown in workspace picker
   icon?: string; // SF Symbol name or emoji
@@ -12,7 +25,7 @@ export interface Workspace {
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
+  allowedPaths?: WorkspaceAllowedPath[]; // Extra dirs beyond workspace
   allowedExecutables?: string[]; // Extra executables auto-allowed for this workspace (e.g. ["node", "python3"])
 
   // Context
@@ -32,16 +45,13 @@ export interface Workspace {
 
   // Runtime
   /** Workspace runtime mode. "host" = direct execution, "sandbox" = Gondolin micro-VM. */
-  runtime?: "host" | "sandbox";
+  runtime?: WorkspaceRuntimeMode;
   /** Sandbox configuration (only used when runtime is "sandbox"). */
-  sandboxConfig?: {
-    /** Allowed egress hosts for network access. Default: ["*"] (all). */
-    allowedHosts?: string[];
-    /** Extra environment variables injected into the sandbox VM. */
-    env?: Record<string, string>;
-  };
+  sandboxConfig?: WorkspaceSandboxConfig;
+}
 
-  // Metadata
+export interface Workspace extends WorkspaceMutableConfig {
+  id: string;
   createdAt: number;
   updatedAt: number;
 }

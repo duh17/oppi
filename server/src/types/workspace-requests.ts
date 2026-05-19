@@ -1,37 +1,28 @@
-import type { WorkspaceSystemPromptMode } from "./workspace.js";
+import type {
+  WorkspaceMutableConfig,
+  WorkspaceSandboxConfig,
+  WorkspaceSystemPromptMode,
+} from "./workspace.js";
 
-export interface CreateWorkspaceRequest {
-  name: string;
-  description?: string;
-  icon?: string;
-  skills: string[];
-  allowedPaths?: { path: string; access: "read" | "readwrite" }[];
-  allowedExecutables?: string[];
-  systemPrompt?: string;
+export interface CreateWorkspaceRequest extends Omit<WorkspaceMutableConfig, "systemPromptMode"> {
   systemPromptMode?: WorkspaceSystemPromptMode;
-  hostMount?: string;
-  defaultModel?: string;
-  tools?: string[];
-  extensions?: string[];
-  gitStatusEnabled?: boolean;
-  runtime?: "host" | "sandbox";
-  sandboxConfig?: { allowedHosts?: string[]; env?: Record<string, string> };
 }
 
-export interface UpdateWorkspaceRequest {
-  name?: string;
+type NullableWorkspaceUpdateKey =
+  | "description"
+  | "icon"
+  | "systemPrompt"
+  | "hostMount"
+  | "defaultModel"
+  | "sandboxConfig";
+
+export interface UpdateWorkspaceRequest extends Partial<
+  Omit<WorkspaceMutableConfig, NullableWorkspaceUpdateKey>
+> {
   description?: string | null;
   icon?: string | null;
-  skills?: string[];
-  allowedPaths?: { path: string; access: "read" | "readwrite" }[];
-  allowedExecutables?: string[];
   systemPrompt?: string | null;
-  systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string | null;
   defaultModel?: string | null;
-  tools?: string[];
-  extensions?: string[];
-  gitStatusEnabled?: boolean;
-  runtime?: "host" | "sandbox";
-  sandboxConfig?: { allowedHosts?: string[]; env?: Record<string, string> } | null;
+  sandboxConfig?: WorkspaceSandboxConfig | null;
 }
