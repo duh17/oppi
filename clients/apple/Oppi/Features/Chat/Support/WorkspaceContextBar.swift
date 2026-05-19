@@ -57,6 +57,116 @@ enum ContextBarScoping {
     }
 }
 
+enum ContextBarSubagentStatus: Equatable {
+    case waiting
+    case question
+    case working
+    case ready
+    case stopped
+    case error
+
+    struct Counts: Equatable {
+        var waiting = 0
+        var question = 0
+        var working = 0
+        var ready = 0
+        var stopped = 0
+        var error = 0
+    }
+
+    static func from(
+        status: SessionStatus,
+        pendingPermissionCount: Int,
+        pendingAskCount: Int
+    ) -> Self {
+        if pendingPermissionCount > 0 { return .waiting }
+        if pendingAskCount > 0 { return .question }
+
+        switch status {
+        case .starting, .busy, .stopping:
+            return .working
+        case .ready:
+            return .ready
+        case .stopped:
+            return .stopped
+        case .error:
+            return .error
+        }
+    }
+
+    static func counts(
+        for sessions: [Session],
+        pendingPermissionCount: (String) -> Int,
+        pendingAskCount: (String) -> Int
+    ) -> Counts {
+        var counts = Counts()
+
+        for session in sessions {
+            switch from(
+                status: session.status,
+                pendingPermissionCount: pendingPermissionCount(session.id),
+                pendingAskCount: pendingAskCount(session.id)
+            ) {
+            case .waiting:
+                counts.waiting += 1
+            case .question:
+                counts.question += 1
+            case .working:
+                counts.working += 1
+            case .ready:
+                counts.ready += 1
+            case .stopped:
+                counts.stopped += 1
+            case .error:
+                counts.error += 1
+            }
+        }
+
+        return counts
+    }
+
+    var label: String {
+        switch self {
+        case .waiting: "waiting"
+        case .question: "question"
+        case .working: "working"
+        case .ready: "ready"
+        case .stopped: "stopped"
+        case .error: "error"
+        }
+    }
+
+    var foregroundColor: Color {
+        switch self {
+        case .waiting, .working:
+            .themeOrange
+        case .question:
+            .themeBlue
+        case .ready:
+            .themeGreen
+        case .stopped:
+            .themeComment
+        case .error:
+            .themeRed
+        }
+    }
+
+    var backgroundColor: Color {
+        switch self {
+        case .waiting, .working:
+            Color.themeOrange.opacity(0.12)
+        case .question:
+            Color.themeBlue.opacity(0.12)
+        case .ready:
+            Color.themeGreen.opacity(0.12)
+        case .stopped:
+            Color.themeComment.opacity(0.1)
+        case .error:
+            Color.themeRed.opacity(0.12)
+        }
+    }
+}
+
 /// Expandable bar showing workspace git status.
 ///
 /// Pinned at the top of the chat view. Collapsed shows branch + dirty count + repo-wide +/-.
@@ -82,6 +192,8 @@ struct WorkspaceContextBar: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(PermissionStore.self) private var permissionStore
+    @Environment(AskRequestStore.self) private var askRequestStore
 
     @State private var isExpanded = false
     @State private var selectedFile: GitFileStatus?
@@ -223,20 +335,12 @@ struct WorkspaceContextBar: View {
 
     // MARK: - Agent counts
 
-    private var agentWorkingCount: Int {
-        childSessions.count { $0.status == .starting || $0.status == .busy || $0.status == .stopping }
-    }
-
-    private var agentReadyCount: Int {
-        childSessions.count { $0.status == .ready }
-    }
-
-    private var agentStoppedCount: Int {
-        childSessions.count { $0.status == .stopped }
-    }
-
-    private var agentErrorCount: Int {
-        childSessions.count { $0.status == .error }
+    private var agentStatusCounts: ContextBarSubagentStatus.Counts {
+        ContextBarSubagentStatus.counts(
+            for: childSessions,
+            pendingPermissionCount: pendingPermissionCount(for:),
+            pendingAskCount: pendingAskCount(for:)
+        )
     }
 
     /// All commits: recent from git status + any additionally loaded ones.
@@ -936,63 +1040,49 @@ struct WorkspaceContextBar: View {
     // MARK: - Agent Status Pills (collapsed header)
 
     private var agentStatusPills: some View {
-        HStack(spacing: 4) {
-            if agentWorkingCount > 0 {
-                compactAgentStatusPill(
-                    count: agentWorkingCount,
-                    foreground: .themeOrange,
-                    background: Color.themeOrange.opacity(0.12),
-                    accessibilityLabel: "\(agentWorkingCount) working"
-                )
+        let counts = agentStatusCounts
+
+        return HStack(spacing: 4) {
+            if counts.waiting > 0 {
+                compactAgentStatusPill(count: counts.waiting, status: .waiting)
             }
-            if agentReadyCount > 0 {
-                compactAgentStatusPill(
-                    count: agentReadyCount,
-                    foreground: .themeGreen,
-                    background: Color.themeGreen.opacity(0.12),
-                    accessibilityLabel: "\(agentReadyCount) ready"
-                )
+            if counts.question > 0 {
+                compactAgentStatusPill(count: counts.question, status: .question)
             }
-            if agentStoppedCount > 0 {
-                compactAgentStatusPill(
-                    count: agentStoppedCount,
-                    foreground: .themeComment,
-                    background: Color.themeComment.opacity(0.1),
-                    accessibilityLabel: "\(agentStoppedCount) stopped"
-                )
+            if counts.working > 0 {
+                compactAgentStatusPill(count: counts.working, status: .working)
             }
-            if agentErrorCount > 0 {
-                compactAgentStatusPill(
-                    count: agentErrorCount,
-                    foreground: .themeRed,
-                    background: Color.themeRed.opacity(0.12),
-                    accessibilityLabel: "\(agentErrorCount) error"
-                )
+            if counts.ready > 0 {
+                compactAgentStatusPill(count: counts.ready, status: .ready)
+            }
+            if counts.stopped > 0 {
+                compactAgentStatusPill(count: counts.stopped, status: .stopped)
+            }
+            if counts.error > 0 {
+                compactAgentStatusPill(count: counts.error, status: .error)
             }
         }
     }
 
     private func compactAgentStatusPill(
         count: Int,
-        foreground: Color,
-        background: Color,
-        accessibilityLabel: String
+        status: ContextBarSubagentStatus
     ) -> some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(foreground)
+                .fill(status.foregroundColor)
                 .frame(width: 5, height: 5)
 
             Text("\(count)")
                 .font(.appTagBold)
-                .foregroundStyle(foreground)
+                .foregroundStyle(status.foregroundColor)
                 .monospacedDigit()
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
-        .background(background, in: Capsule())
+        .background(status.backgroundColor, in: Capsule())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel("\(count) \(status.label)")
     }
 
     // MARK: - Agents Section (expanded)
@@ -1022,19 +1112,21 @@ struct WorkspaceContextBar: View {
     }
 
     private func agentRow(_ child: Session) -> some View {
-        HStack(spacing: 0) {
+        let status = agentStatus(for: child)
+
+        return HStack(spacing: 0) {
             Button {
                 onSelectChild?(child.id)
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     // Top line: status pill + name + chevron
                     HStack(spacing: 8) {
-                        agentStatusLabel(for: child.status)
+                        agentStatusLabel(for: status)
                             .fixedSize()
 
                         Text(child.displayTitle)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(child.status == .error ? .themeRed : .themeFg)
+                            .foregroundStyle(status == .error ? .themeRed : .themeFg)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
@@ -1106,24 +1198,29 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func agentStatusLabel(for status: SessionStatus) -> some View {
-        let (text, fg, bg): (String, Color, Color) = switch status {
-        case .starting, .busy, .stopping:
-            ("working", .themeOrange, Color.themeOrange.opacity(0.12))
-        case .ready:
-            ("ready", .themeGreen, Color.themeGreen.opacity(0.12))
-        case .stopped:
-            ("stopped", .themeComment, Color.themeComment.opacity(0.1))
-        case .error:
-            ("error", .themeRed, Color.themeRed.opacity(0.12))
-        }
+    private func pendingPermissionCount(for sessionId: String) -> Int {
+        permissionStore.pending(for: sessionId).count
+    }
 
-        return Text(text)
+    private func pendingAskCount(for sessionId: String) -> Int {
+        askRequestStore.hasPending(for: sessionId) ? 1 : 0
+    }
+
+    private func agentStatus(for child: Session) -> ContextBarSubagentStatus {
+        ContextBarSubagentStatus.from(
+            status: child.status,
+            pendingPermissionCount: pendingPermissionCount(for: child.id),
+            pendingAskCount: pendingAskCount(for: child.id)
+        )
+    }
+
+    private func agentStatusLabel(for status: ContextBarSubagentStatus) -> some View {
+        Text(status.label)
             .font(.caption2.monospaced().weight(.semibold))
-            .foregroundStyle(fg)
+            .foregroundStyle(status.foregroundColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
-            .background(bg, in: RoundedRectangle(cornerRadius: 4))
+            .background(status.backgroundColor, in: RoundedRectangle(cornerRadius: 4))
     }
 
     // MARK: - Helpers
