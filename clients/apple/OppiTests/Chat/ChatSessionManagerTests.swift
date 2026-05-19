@@ -170,6 +170,46 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    @Test func defocusedStreamExitDoesNotScheduleReconnect() async {
+        let parentId = "defocused-parent"
+        let childId = "defocused-child"
+        let manager = ChatSessionManager(sessionId: parentId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let sessionStore = connection.sessionStore
+        sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
+        var child = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
+        child.parentSessionId = parentId
+        sessionStore.upsert(child)
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1")))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+
+        connection.focusSession(childId)
+        streams.finish(index: 0)
+        await connectTask.value
+        try? await Task.sleep(for: .milliseconds(400))
+
+        #expect(manager.connectionGeneration == 0)
+        #expect(manager.entryState == .disconnected(reason: .streamEnded))
+
+        manager.cleanup()
+        connection.disconnectSession()
+    }
+
     @Test func stoppedSessionDoesNotOpenWebSocket() async {
         let sessionId = "stopped-session"
         let manager = ChatSessionManager(sessionId: sessionId)

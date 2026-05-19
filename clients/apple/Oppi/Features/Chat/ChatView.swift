@@ -246,6 +246,9 @@ struct ChatView: View {
                     sessionId: sessionId,
                     childSessions: childSessions,
                     onSelectChild: { childId in
+                        // Prime focus/transport before the push animation so the
+                        // parent session can't reclaim the shared WS first.
+                        connection.prepareForSessionReentry(childId)
                         childSessionToOpen = ChildSessionRoute(id: childId)
                     },
                     onReviewInCurrentSession: { prompt, files in

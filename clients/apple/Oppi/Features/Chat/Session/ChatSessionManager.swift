@@ -618,6 +618,8 @@ final class ChatSessionManager {
             shouldAutoReconnect = hasReceivedConnected
                 && generation == connectionGeneration
                 && wantsAutoReconnect
+                // Only the still-focused session may reclaim the shared transport.
+                && connection.isFocusedSession(sessionId)
                 && !connection.fatalSetupError
                 && sessionStore.sessions.first(where: { $0.id == sessionId })?.status != .stopped
         default:
