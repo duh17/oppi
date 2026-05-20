@@ -88,6 +88,37 @@ enum PermissionDeepLink {
     }
 }
 
+enum WorkspaceDeepLink {
+    struct Payload: Sendable {
+        let path: String
+        let name: String?
+        let serverFingerprint: String?
+    }
+
+    static func payload(from url: URL) -> Payload? {
+        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+            return nil
+        }
+        guard url.host?.lowercased() == "workspace" else {
+            return nil
+        }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            return nil
+        }
+        guard let rawPath = queryItems.first(where: { $0.name == "path" })?.value,
+              !rawPath.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return nil
+        }
+        let path = rawPath.removingPercentEncoding ?? rawPath
+        let rawName = queryItems.first(where: { $0.name == "name" })?.value
+        let name = rawName.flatMap { $0.removingPercentEncoding ?? $0 }?.trimmingCharacters(in: .whitespaces)
+        let nameOrNil = name.flatMap { $0.isEmpty ? nil : $0 }
+        let serverFingerprint = queryItems.first(where: { $0.name == "server" })?.value
+        return Payload(path: path, name: nameOrNil, serverFingerprint: serverFingerprint)
+    }
+}
+
 @main
 struct OppiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -239,6 +270,9 @@ struct OppiApp: App {
         if handleIncomingSessionURL(url) {
             return
         }
+        if handleIncomingWorkspaceURL(url) {
+            return
+        }
         await handleIncomingInviteURL(url)
     }
 
@@ -269,6 +303,32 @@ struct OppiApp: App {
         }
 
         // Session not found locally — just open the app to workspaces tab.
+        navigation.selectedTab = .workspaces
+        return true
+    }
+
+    /// Handle `oppi://workspace/?path=<path>&name=<name>[&server=<fingerprint>]` deep links.
+    @MainActor
+    private func handleIncomingWorkspaceURL(_ url: URL) -> Bool {
+        guard let payload = WorkspaceDeepLink.payload(from: url) else { return false }
+
+        let serverCount = serverStore.servers.count
+        if serverCount == 0 {
+            connection.extensionToast = "No servers paired — pair a server first"
+            return true
+        }
+
+        if let requestedFingerprint = payload.serverFingerprint {
+            guard serverStore.server(for: requestedFingerprint) != nil else {
+                connection.extensionToast = "Server not found for this workspace link"
+                return true
+            }
+        } else if serverCount > 1 {
+            connection.extensionToast = "Workspace link requires a server (multiple servers paired)"
+            return true
+        }
+
+        navigation.pendingWorkspaceDeepLink = payload
         navigation.selectedTab = .workspaces
         return true
     }

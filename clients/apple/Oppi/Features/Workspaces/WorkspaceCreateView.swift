@@ -19,11 +19,21 @@ struct WorkspaceCreateView: View {
     init(
         server: PairedServer,
         presentation: WorkspaceCreatePresentation = .standard,
+        prefillName: String? = nil,
+        prefillPath: String? = nil,
         onCreate: ((Workspace) -> Void)? = nil
     ) {
         self.server = server
         self.presentation = presentation
         self.onCreate = onCreate
+        if let prefillPath {
+            _name = State(initialValue: prefillName ?? "")
+            _hostMount = State(initialValue: prefillPath)
+            _isHostMountFromProjectPicker = State(initialValue: false)
+            _step = State(initialValue: .configure)
+        } else if let prefillName {
+            _name = State(initialValue: prefillName)
+        }
     }
 
     @Environment(ConnectionCoordinator.self) private var coordinator

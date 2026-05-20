@@ -37,6 +37,10 @@ final class AppNavigation {
     /// Consumed once by QuickSessionSheet, then cleared.
     var pendingQuickSessionDraft: String?
 
+    /// Pending workspace creation deep link payload. Consumed once by
+    /// WorkspaceHomeView, then cleared.
+    var pendingWorkspaceDeepLink: WorkspaceDeepLink.Payload?
+
     // MARK: - Quick Session Handoff
     //
     // These properties form a produce-once / consume-once handoff between

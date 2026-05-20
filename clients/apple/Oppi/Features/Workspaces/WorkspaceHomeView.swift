@@ -10,12 +10,16 @@ private struct WorkspaceCreateSheetContext: Identifiable {
     let server: PairedServer
     let presentation: WorkspaceCreatePresentation
     let openWorkspaceAfterCreate: Bool
+    let prefillName: String?
+    let prefillPath: String?
 
     var id: String {
         [
             server.id,
             presentation == .guidedFirstWorkspace ? "guided" : "standard",
-            openWorkspaceAfterCreate ? "open" : "stay"
+            openWorkspaceAfterCreate ? "open" : "stay",
+            prefillName ?? "",
+            prefillPath ?? ""
         ].joined(separator: "|")
     }
 }
@@ -70,6 +74,8 @@ struct WorkspaceHomeView: View {
             WorkspaceCreateView(
                 server: context.server,
                 presentation: context.presentation,
+                prefillName: context.prefillName,
+                prefillPath: context.prefillPath,
                 onCreate: { workspace in
                     guard context.openWorkspaceAfterCreate else { return }
                     pendingCreatedWorkspaceTarget = WorkspaceNavTarget(
@@ -96,6 +102,11 @@ struct WorkspaceHomeView: View {
         .task {
             await refresh(force: false)
             triggerGuidedCreateIfNeeded()
+            consumeWorkspaceDeepLinkIfNeeded()
+        }
+        .onChange(of: navigation.pendingWorkspaceDeepLink != nil) { _, hasPending in
+            guard hasPending else { return }
+            consumeWorkspaceDeepLinkIfNeeded()
         }
         .onChange(of: navigation.selectedTab) { _, selectedTab in
             guard selectedTab == .workspaces else { return }
@@ -286,12 +297,16 @@ struct WorkspaceHomeView: View {
     private func presentCreateWorkspace(
         on server: PairedServer,
         presentation: WorkspaceCreatePresentation = .standard,
-        openWorkspaceAfterCreate: Bool = false
+        openWorkspaceAfterCreate: Bool = false,
+        prefillName: String? = nil,
+        prefillPath: String? = nil
     ) {
         createSheetContext = WorkspaceCreateSheetContext(
             server: server,
             presentation: presentation,
-            openWorkspaceAfterCreate: openWorkspaceAfterCreate
+            openWorkspaceAfterCreate: openWorkspaceAfterCreate,
+            prefillName: prefillName,
+            prefillPath: prefillPath
         )
     }
 
@@ -319,6 +334,28 @@ struct WorkspaceHomeView: View {
             on: server,
             presentation: .guidedFirstWorkspace,
             openWorkspaceAfterCreate: true
+        )
+    }
+
+    /// Consume a pending workspace creation deep link, presenting
+    /// WorkspaceCreateView with pre-filled name and path.
+    private func consumeWorkspaceDeepLinkIfNeeded() {
+        guard let payload = navigation.pendingWorkspaceDeepLink else { return }
+        navigation.pendingWorkspaceDeepLink = nil
+
+        let targetServer: PairedServer?
+        if let fingerprint = payload.serverFingerprint {
+            targetServer = serverStore.server(for: fingerprint)
+        } else {
+            targetServer = servers.first
+        }
+
+        guard let server = targetServer else { return }
+
+        presentCreateWorkspace(
+            on: server,
+            prefillName: payload.name,
+            prefillPath: payload.path
         )
     }
 
