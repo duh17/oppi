@@ -92,6 +92,46 @@ struct FullScreenSelectedTextTests {
         #expect(!renderedText.contains("`inline code`"))
     }
 
+    @Test func liveMarkdownSourceUsesRichRenderingWhileStreaming() throws {
+        let markdown = "# Streaming plan\n\n**Decision** with `inline code`."
+        let stream = SourceTraceStream(
+            text: markdown,
+            filePath: nil,
+            isDone: false,
+            finalContent: .markdown(content: markdown, filePath: nil)
+        )
+        let controller = makeController(
+            content: .liveSource(snapshot: stream.snapshot, stream: stream)
+        )
+
+        let markdownView = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: controller.view))
+        let renderedText = timelineAllTextViews(in: markdownView)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+
+        #expect(renderedText.contains("Streaming plan"))
+        #expect(renderedText.contains("Decision"))
+        #expect(renderedText.contains("inline code"))
+        #expect(!renderedText.contains("# Streaming plan"))
+        #expect(!renderedText.contains("**Decision**"))
+        #expect(!renderedText.contains("`inline code`"))
+
+        let nextMarkdown = markdown + "\n\n## Next section"
+        stream.update(
+            text: nextMarkdown,
+            filePath: nil,
+            isDone: false,
+            finalContent: .markdown(content: nextMarkdown, filePath: nil)
+        )
+        controller.view.layoutIfNeeded()
+
+        let updatedText = timelineAllTextViews(in: markdownView)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+        #expect(updatedText.contains("Next section"))
+        #expect(!updatedText.contains("## Next section"))
+    }
+
     @Test func thinkingBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .thinking(content: "Think harder")

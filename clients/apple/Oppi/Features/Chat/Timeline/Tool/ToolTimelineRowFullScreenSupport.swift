@@ -142,13 +142,16 @@ enum ToolTimelineRowFullScreenSupport {
         }
 
         switch content {
-        case .code(let text, _, _, let filePath):
+        case .code(let text, let language, _, let filePath):
             guard !text.isEmpty else { return nil }
+            let renderContent: FullScreenCodeContent? = language == .html
+                ? .html(content: text, filePath: filePath)
+                : nil
             return SourceTraceStream.Snapshot(
                 text: text,
                 filePath: filePath,
                 isDone: configuration.isDone,
-                finalContent: nil
+                finalContent: renderContent
             )
 
         case .diff(let lines, let path):
@@ -167,7 +170,7 @@ enum ToolTimelineRowFullScreenSupport {
                 text: text,
                 filePath: nil,
                 isDone: configuration.isDone,
-                finalContent: nil
+                finalContent: .markdown(content: text, filePath: nil)
             )
 
         case .text(let text, _):

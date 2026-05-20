@@ -704,6 +704,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     init(
         content: String,
         stream: ThinkingTraceStream?,
+        isStreaming: Bool = false,
         palette: ThemePalette,
         plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
@@ -728,7 +729,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         let initialSnapshot = stream?.snapshot
-            ?? ThinkingTraceStream.Snapshot(text: content, isDone: true)
+            ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         latestSnapshot = initialSnapshot
 
         markdownWidthConstraint = markdownView.widthAnchor.constraint(
@@ -796,6 +797,12 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 
     private func handleStreamUpdate(_ snapshot: ThinkingTraceStream.Snapshot) {
+        latestSnapshot = snapshot
+        render(snapshot: snapshot)
+    }
+
+    func update(content: String, isStreaming: Bool) {
+        let snapshot = ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         latestSnapshot = snapshot
         render(snapshot: snapshot)
     }

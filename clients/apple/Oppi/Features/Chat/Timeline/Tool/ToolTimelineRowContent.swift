@@ -1907,7 +1907,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 terminalStream: nil
             )
         } else {
-            finalContent = nil
+            finalContent = snapshot.finalContent
         }
 
         fullScreenSourceStream.update(

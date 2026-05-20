@@ -83,6 +83,89 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("streaming markdown full screen content carries markdown render hint")
+    func streamingMarkdownFullScreenContentCarriesMarkdownRenderHint() throws {
+        let markdown = "# Streaming plan\n\nBody"
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: markdown),
+            copyOutputText: markdown,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: false
+        )
+        let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .markdown(text: markdown),
+            isDone: false
+        )
+        let sourceStream = SourceTraceStream(
+            text: markdown,
+            filePath: nil,
+            isDone: false,
+            finalContent: nil
+        )
+
+        let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
+            configuration: configuration,
+            outputCopyText: configuration.copyOutputText,
+            interactionPolicy: interactionPolicy,
+            terminalStream: nil,
+            sourceStream: sourceStream
+        )
+
+        guard case .liveSource(let snapshot, _) = fullScreenContent else {
+            Issue.record("Expected .liveSource for streaming markdown content")
+            return
+        }
+        guard case .markdown(let content, _, _)? = snapshot.finalContent else {
+            Issue.record("Expected streaming markdown to carry a markdown render hint")
+            return
+        }
+        #expect(content == markdown)
+        #expect(!snapshot.isDone)
+    }
+
+    @Test("streaming HTML full screen content carries HTML render hint")
+    func streamingHTMLFullScreenContentCarriesHTMLRenderHint() throws {
+        let html = "<h1>Streaming</h1>"
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .code(text: html, language: .html, startLine: 1, filePath: "report.html"),
+            copyOutputText: html,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: false
+        )
+        let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .code(text: html, language: .html, startLine: 1, filePath: "report.html"),
+            isDone: false
+        )
+        let sourceStream = SourceTraceStream(
+            text: html,
+            filePath: "report.html",
+            isDone: false,
+            finalContent: nil
+        )
+
+        let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
+            configuration: configuration,
+            outputCopyText: configuration.copyOutputText,
+            interactionPolicy: interactionPolicy,
+            terminalStream: nil,
+            sourceStream: sourceStream
+        )
+
+        guard case .liveSource(let snapshot, _) = fullScreenContent else {
+            Issue.record("Expected .liveSource for streaming HTML content")
+            return
+        }
+        guard case .html(let content, let filePath)? = snapshot.finalContent else {
+            Issue.record("Expected streaming HTML to carry an HTML render hint")
+            return
+        }
+        #expect(content == html)
+        #expect(filePath == "report.html")
+        #expect(!snapshot.isDone)
+    }
+
     @Test("expanded text activation opens full screen")
     func expandedTextActivationOpensFullScreen() throws {
         let harness = makeHostHarness()

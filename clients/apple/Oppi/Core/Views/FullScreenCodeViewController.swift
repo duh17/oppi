@@ -60,6 +60,8 @@ final class FullScreenCodeViewController: UIViewController {
     private weak var contentHostController: UIViewController?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
+    private var liveSourceMarkdownBodyView: NativeFullScreenMarkdownBody?
+    private var liveSourceHTMLBodyView: HTMLRenderView?
     private var liveSourceObserverCleanup: LiveSourceObserverCleanup?
     private var liveSourceCurrentSnapshot: SourceTraceStream.Snapshot?
     private var lastNavigationPresentation: NavigationPresentation?
@@ -193,8 +195,12 @@ final class FullScreenCodeViewController: UIViewController {
         switch content {
         case .liveSource(let snapshot, let stream):
             liveSourceCurrentSnapshot = snapshot
-            let body = makeLiveSourceBody(snapshot: snapshot, palette: palette)
-            installBodyView(body, on: viewController)
+            if snapshot.isDone {
+                let presentation = makePresentation()
+                installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+            } else {
+                installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, palette: palette)
+            }
             let observerID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
                 self?.handleLiveSourceUpdate(snapshot)
             }
@@ -449,19 +455,111 @@ final class FullScreenCodeViewController: UIViewController {
         return body
     }
 
+    private func makeLiveSourceMarkdownBody(
+        text: String,
+        filePath: String?,
+        workspaceContext: FullScreenCodeContent.WorkspaceContext?,
+        isStreaming: Bool,
+        palette: ThemePalette
+    ) -> NativeFullScreenMarkdownBody {
+        NativeFullScreenMarkdownBody(
+            content: text,
+            stream: nil,
+            isStreaming: isStreaming,
+            palette: palette,
+            plainTextFallbackThreshold: nil,
+            selectedTextPiRouter: selectedTextActionContext?.dispatcher,
+            selectedTextSourceContext: makeSourceContext(
+                surface: .fullScreenMarkdown,
+                filePath: filePath
+            ),
+            reviewCommentAnnotations: reviewCommentAnnotations,
+            workspaceID: workspaceContext?.workspaceID,
+            sessionID: workspaceContext?.sessionID,
+            serverBaseURL: workspaceContext?.serverBaseURL,
+            sourceFilePath: filePath,
+            perfSurface: .fullScreenMarkdown,
+            fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
+            fetchSessionFile: workspaceContext?.fetchSessionFile
+        )
+    }
+
+    private func makeLiveSourceHTMLBody(
+        text: String,
+        filePath: String?,
+        palette: ThemePalette
+    ) -> HTMLRenderView {
+        let piHandler = makePiWebViewHandler(
+            router: selectedTextActionContext?.dispatcher,
+            sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
+        )
+        let view = HTMLRenderView(htmlString: text, piActionHandler: piHandler)
+        view.backgroundColor = UIColor(palette.bgDark)
+        return view
+    }
+
+    private func clearLiveSourceBodyReferences() {
+        liveSourceBodyView = nil
+        liveSourceMarkdownBodyView = nil
+        liveSourceHTMLBodyView = nil
+    }
+
+    private func installOrUpdateLiveSourceStreamingBody(
+        snapshot: SourceTraceStream.Snapshot,
+        on viewController: UIViewController,
+        palette: ThemePalette
+    ) {
+        switch bodyContent(for: snapshot) {
+        case .markdown(let text, let filePath, let workspaceContext):
+            liveSourceBodyView = nil
+            liveSourceHTMLBodyView = nil
+            if let body = liveSourceMarkdownBodyView, installedBodyView === body {
+                body.update(content: text, isStreaming: true)
+            } else {
+                let body = makeLiveSourceMarkdownBody(
+                    text: text,
+                    filePath: filePath,
+                    workspaceContext: workspaceContext,
+                    isStreaming: true,
+                    palette: palette
+                )
+                liveSourceMarkdownBodyView = body
+                installBodyView(body, on: viewController)
+            }
+
+        case .html(let text, let filePath):
+            liveSourceBodyView = nil
+            liveSourceMarkdownBodyView = nil
+            if let body = liveSourceHTMLBodyView, installedBodyView === body {
+                body.load(text)
+            } else {
+                let body = makeLiveSourceHTMLBody(text: text, filePath: filePath, palette: palette)
+                liveSourceHTMLBodyView = body
+                installBodyView(body, on: viewController)
+            }
+
+        default:
+            liveSourceMarkdownBodyView = nil
+            liveSourceHTMLBodyView = nil
+            if let body = liveSourceBodyView, installedBodyView === body {
+                body.update(content: snapshot.text, isStreaming: true)
+            } else {
+                installBodyView(makeLiveSourceBody(snapshot: snapshot, palette: palette), on: viewController)
+            }
+        }
+    }
+
     private func handleLiveSourceUpdate(_ snapshot: SourceTraceStream.Snapshot) {
         liveSourceCurrentSnapshot = snapshot
         guard let viewController = contentHostController else { return }
 
         let palette = ThemeRuntimeState.currentThemeID().palette
         if snapshot.isDone {
-            liveSourceBodyView = nil
+            clearLiveSourceBodyReferences()
             let presentation = makePresentation()
             installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
-        } else if let liveSourceBodyView {
-            liveSourceBodyView.update(content: snapshot.text, isStreaming: true)
         } else {
-            installBodyView(makeLiveSourceBody(snapshot: snapshot, palette: palette), on: viewController)
+            installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, palette: palette)
         }
 
         configureNavigation(on: viewController, palette: palette)
@@ -481,7 +579,33 @@ final class FullScreenCodeViewController: UIViewController {
            let finalContent = snapshot.finalContent {
             return finalContent
         }
+        if let streamingContent = snapshot.finalContent {
+            return streamingSemanticContent(
+                from: streamingContent,
+                text: snapshot.text,
+                fallbackFilePath: snapshot.filePath
+            )
+        }
         return .plainText(content: snapshot.text, filePath: snapshot.filePath)
+    }
+
+    private func streamingSemanticContent(
+        from content: FullScreenCodeContent,
+        text: String,
+        fallbackFilePath: String?
+    ) -> FullScreenCodeContent {
+        switch content {
+        case .markdown(_, let filePath, let workspaceContext):
+            return .markdown(
+                content: text,
+                filePath: filePath ?? fallbackFilePath,
+                workspaceContext: workspaceContext
+            )
+        case .html(_, let filePath):
+            return .html(content: text, filePath: filePath ?? fallbackFilePath)
+        default:
+            return .plainText(content: text, filePath: fallbackFilePath)
+        }
     }
 
     private func bodyContent(for snapshot: SourceTraceStream.Snapshot) -> FullScreenCodeContent {
@@ -650,6 +774,15 @@ final class FullScreenCodeViewController: UIViewController {
 
         showSource.toggle()
         let palette = ThemeRuntimeState.currentThemeID().palette
+        if case .liveSource(let initialSnapshot, _) = content {
+            let snapshot = liveSourceCurrentSnapshot ?? initialSnapshot
+            if !snapshot.isDone {
+                installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, palette: palette)
+                configureNavigation(on: viewController, palette: palette)
+                return
+            }
+        }
+
         let presentation = makePresentation()
         installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
         configureNavigation(on: viewController, palette: palette)
