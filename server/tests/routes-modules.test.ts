@@ -684,7 +684,18 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           listWorkspaces: vi.fn(() => [{ id: "ws-1", name: "Default", skills: [] }]),
+          listWorkspaceSessionSummarySnapshots: vi.fn(() => [
+            {
+              workspaceId: "ws-1",
+              activeCount: 1,
+              stoppedCount: 2,
+              hasErrorRoot: false,
+              latestActivity: 1_700_000_000_000,
+            },
+          ]),
         },
+        gate: { getPendingForUser: vi.fn(() => []) },
+        sessions: { getActiveSessionIds: vi.fn(() => []) },
       } as unknown as RouteContext;
 
       const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
@@ -701,8 +712,14 @@ describe("routes modules", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(200);
 
-      const body = JSON.parse(res.body) as { workspaces: unknown[] };
+      const body = JSON.parse(res.body) as {
+        workspaces: unknown[];
+        summaries: Array<{ workspaceId: string; activeCount: number; stoppedCount: number }>;
+      };
       expect(body.workspaces).toHaveLength(1);
+      expect(body.summaries).toEqual([
+        expect.objectContaining({ workspaceId: "ws-1", activeCount: 1, stoppedCount: 2 }),
+      ]);
     });
 
     it("returns 404 for nonexistent workspace", async () => {
@@ -842,6 +859,49 @@ describe("routes modules", () => {
       expect(ctx.storage.createWorkspace).not.toHaveBeenCalled();
     });
 
+    it("marks review comments sent via the review comments collection", async () => {
+      const comment = { id: "rc-1", workspaceId: "ws-1", status: "sent" };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", skills: [] })),
+          markReviewCommentsSent: vi.fn(() => [comment]),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/review/comments/sent",
+        url: new URL("http://localhost/workspaces/ws-1/review/comments/sent"),
+        req: makeRequest({ ids: ["rc-1"], sessionId: "s1" }) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(ctx.storage.markReviewCommentsSent).toHaveBeenCalledWith("ws-1", {
+        ids: ["rc-1"],
+        sessionId: "s1",
+      });
+      expect(JSON.parse(res.body)).toEqual({ comments: [comment] });
+    });
+
+    it("does not handle the legacy review comments attach route", async () => {
+      const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/review/comments/attach-to-turn",
+        url: new URL("http://localhost/workspaces/ws-1/review/comments/attach-to-turn"),
+        req: makeRequest({ ids: ["rc-1"] }) as never,
+        res: makeResponse() as never,
+      });
+
+      expect(handled).toBe(false);
+    });
+
     it("returns false for unrelated routes", async () => {
       const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
 
@@ -858,7 +918,7 @@ describe("routes modules", () => {
   });
 
   describe("uploads module", () => {
-    it("creates, uploads, and fetches upload metadata in isolation", async () => {
+    it("creates and uploads content in isolation", async () => {
       const root = mkdtempSync(join(tmpdir(), "oppi-upload-routes-test-"));
       const ctx = {
         storage: {
@@ -914,38 +974,28 @@ describe("routes modules", () => {
       expect(contentBody.attachment.sizeBytes).toBe(5);
       expect(contentBody.attachment.sha256).toBeTruthy();
 
-      const getRes = makeResponse();
-      const fetched = await dispatch({
-        method: "GET",
-        path: `/workspaces/ws-1/uploads/${createBody.uploadId}`,
-        url: new URL(`http://localhost/workspaces/ws-1/uploads/${createBody.uploadId}`),
-        req: {} as never,
-        res: getRes as never,
-      });
-
-      expect(fetched).toBe(true);
-      expect(getRes.statusCode).toBe(200);
-      const getBody = JSON.parse(getRes.body) as { upload: { status: string; sizeBytes: number } };
-      expect(getBody.upload.status).toBe("complete");
-      expect(getBody.upload.sizeBytes).toBe(5);
-
       rmSync(root, { recursive: true, force: true });
     });
   });
 
   describe("sessions module", () => {
-    it("handles GET workspace sessions in isolation", async () => {
+    it("handles GET workspace home in isolation", async () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listAllWorkspaceSessionSnapshots: vi.fn(() => [
+          listWorkspaceTimeRangeSessionSnapshots: vi.fn(() => [
             { id: "s1", workspaceId: "ws-1", name: "Session 1" },
           ]),
+          listWorkspaceStoppedTimeBuckets: vi.fn(() => []),
+          listSessions: vi.fn(() => []),
+          getDataDir: vi.fn(() => tmpdir()),
         },
         sessions: {
           getActiveSessionIds: vi.fn(() => new Set()),
           getActiveSession: vi.fn(() => undefined),
+          getPendingAskMessage: vi.fn(() => undefined),
         },
+        gate: { getPendingForUser: vi.fn(() => []) },
         ensureSessionContextWindow: vi.fn((s: unknown) => s),
       } as unknown as RouteContext;
 
@@ -954,9 +1004,9 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/ws-1/sessions",
-        url: new URL("http://localhost/workspaces/ws-1/sessions"),
-        req: {} as never,
+        path: "/workspaces/ws-1/home",
+        url: new URL("http://localhost/workspaces/ws-1/home?sinceMs=0&untilMs=1000"),
+        req: { url: "/workspaces/ws-1/home?sinceMs=0&untilMs=1000" } as never,
         res: res as never,
       });
 
@@ -979,12 +1029,17 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listAllWorkspaceSessionSnapshots: vi.fn(() => []),
+          listWorkspaceTimeRangeSessionSnapshots: vi.fn(() => []),
+          listWorkspaceStoppedTimeBuckets: vi.fn(() => []),
+          listSessions: vi.fn(() => []),
+          getDataDir: vi.fn(() => tmpdir()),
         },
         sessions: {
           getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
           getActiveSession: vi.fn(() => activeSession),
+          getPendingAskMessage: vi.fn(() => undefined),
         },
+        gate: { getPendingForUser: vi.fn(() => []) },
         ensureSessionContextWindow: vi.fn((s: unknown) => s),
       } as unknown as RouteContext;
 
@@ -993,9 +1048,9 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/ws-1/sessions",
-        url: new URL("http://localhost/workspaces/ws-1/sessions"),
-        req: {} as never,
+        path: "/workspaces/ws-1/home",
+        url: new URL("http://localhost/workspaces/ws-1/home?sinceMs=0&untilMs=1000"),
+        req: { url: "/workspaces/ws-1/home?sinceMs=0&untilMs=1000" } as never,
         res: res as never,
       });
 
@@ -1005,7 +1060,7 @@ describe("routes modules", () => {
       expect(body.sessions.map((session) => session.id)).toEqual(["active-1"]);
     });
 
-    it("returns 404 for sessions in nonexistent workspace", async () => {
+    it("returns 404 for workspace home in nonexistent workspace", async () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => undefined),
@@ -1017,8 +1072,8 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/missing/sessions",
-        url: new URL("http://localhost/workspaces/missing/sessions"),
+        path: "/workspaces/missing/home",
+        url: new URL("http://localhost/workspaces/missing/home?sinceMs=0&untilMs=1000"),
         req: {} as never,
         res: res as never,
       });
@@ -1073,8 +1128,8 @@ describe("routes modules", () => {
 
         const handled = await dispatch({
           method: "GET",
-          path: "/workspaces/ws-1/sessions/s1/tool-output/tc-1/full",
-          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/tool-output/tc-1/full"),
+          path: "/workspaces/ws-1/sessions/s1/tool-output/tc-1",
+          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/tool-output/tc-1?full=true"),
           req: {} as never,
           res: res as never,
         });
@@ -1175,7 +1230,7 @@ describe("routes modules", () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it("validates missing theme body on PUT", async () => {
+    it("does not handle theme writes", async () => {
       const ctx = {
         storage: {
           getDataDir: vi.fn(() => "/tmp/oppi-test-nonexistent"),
@@ -1183,42 +1238,16 @@ describe("routes modules", () => {
       } as unknown as RouteContext;
 
       const dispatch = createThemeRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
 
       const handled = await dispatch({
         method: "PUT",
         path: "/themes/my-theme",
         url: new URL("http://localhost/themes/my-theme"),
         req: makeRequest({}) as never,
-        res: res as never,
+        res: makeResponse() as never,
       });
 
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body)).toEqual({ error: "Missing theme object in body" });
-    });
-
-    it("validates missing colors on PUT", async () => {
-      const ctx = {
-        storage: {
-          getDataDir: vi.fn(() => "/tmp/oppi-test-nonexistent"),
-        },
-      } as unknown as RouteContext;
-
-      const dispatch = createThemeRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
-
-      const handled = await dispatch({
-        method: "PUT",
-        path: "/themes/my-theme",
-        url: new URL("http://localhost/themes/my-theme"),
-        req: makeRequest({ theme: { name: "Test" } }) as never,
-        res: res as never,
-      });
-
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body)).toEqual({ error: "Missing colors object" });
+      expect(handled).toBe(false);
     });
 
     it("returns false for unrelated routes", async () => {

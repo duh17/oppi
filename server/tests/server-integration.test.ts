@@ -225,6 +225,8 @@ describe("workspaces API", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.workspaces).toEqual([]);
+    expect(body.summaries).toEqual([]);
+    expect(body.serverNow).toBeTypeOf("number");
   });
 
   it("POST /workspaces creates a workspace", async () => {
@@ -292,13 +294,14 @@ describe("workspaces API", () => {
     expect(getRes.status).toBe(404);
   });
 
-  it("GET /workspaces/:id/sessions returns sessions for workspace", async () => {
+  it("GET /workspaces/:id/home returns sessions for workspace", async () => {
     const createRes = await post("/workspaces", { name: "sessions-test", skills: [] });
     const { workspace } = await createRes.json();
 
-    const res = await get(`/workspaces/${workspace.id}/sessions`);
+    const res = await get(`/workspaces/${workspace.id}/home?sinceMs=0&untilMs=${Date.now()}`);
     expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.workspace.id).toBe(workspace.id);
     expect(body.sessions).toBeInstanceOf(Array);
     expect(body.sessions.length).toBe(0);
   });
@@ -596,40 +599,24 @@ describe("workspace file browser", () => {
     expect(res.status).toBe(404);
   });
 
-  // ── File search ──
+  // ── File index ──
 
-  it("searches files by name substring", async () => {
-    const res = await get(`/workspaces/${wsId}/files?search=Button`);
+  it("returns file index for client-side search", async () => {
+    const res = await get(`/workspaces/${wsId}/file-index`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.query).toBe("Button");
-    expect(body.entries).toBeInstanceOf(Array);
+    expect(body.paths).toBeInstanceOf(Array);
     expect(typeof body.truncated).toBe("boolean");
-    const paths = body.entries.map((e: { path: string }) => e.path);
-    expect(paths).toContain("src/components/Button.tsx");
+    expect(body.paths).toContain("src/components/Button.tsx");
   });
 
-  it("search is case-insensitive", async () => {
-    const res = await get(`/workspaces/${wsId}/files?search=readme`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.entries.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("search returns empty for no matches", async () => {
-    const res = await get(`/workspaces/${wsId}/files?search=zzzznotfound`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.entries).toHaveLength(0);
-  });
-
-  it("returns 400 for bare /files without search param", async () => {
+  it("returns 400 for bare /files without trailing slash", async () => {
     const res = await get(`/workspaces/${wsId}/files`);
     expect(res.status).toBe(400);
   });
 
-  it("search returns 404 for nonexistent workspace", async () => {
-    const res = await get("/workspaces/BOGUS/files?search=test");
+  it("file index returns 404 for nonexistent workspace", async () => {
+    const res = await get("/workspaces/BOGUS/file-index");
     expect(res.status).toBe(404);
   });
 
@@ -639,7 +626,7 @@ describe("workspace file browser", () => {
     const endpoints = [
       `/workspaces/${wsId}/files/`,
       `/workspaces/${wsId}/files/README.md?mode=browse`,
-      `/workspaces/${wsId}/files?search=test`,
+      `/workspaces/${wsId}/file-index`,
     ];
     for (const endpoint of endpoints) {
       const res = await get(endpoint, false);
@@ -762,7 +749,7 @@ describe("sessions API", () => {
       ).toBe(false);
 
       const sessionListRes = await get(
-        `/workspaces/${workspace.id}/session-list?sinceMs=0&untilMs=${Date.now() + 1_000}`,
+        `/workspaces/${workspace.id}/home?sinceMs=0&untilMs=${Date.now() + 1_000}`,
       );
       expect(sessionListRes.status).toBe(200);
       const sessionList = await sessionListRes.json();
@@ -1146,69 +1133,6 @@ describe("host directories API", () => {
 // ── Themes ──
 
 describe("themes API", () => {
-  const validTheme = {
-    theme: {
-      colors: {
-        // Base (13)
-        bg: "#1a1b26",
-        bgDark: "#16161e",
-        bgHighlight: "#292e42",
-        fg: "#c0caf5",
-        fgDim: "#a9b1d6",
-        comment: "#565f89",
-        blue: "#7aa2f7",
-        cyan: "#7dcfff",
-        green: "#9ece6a",
-        orange: "#ff9e64",
-        purple: "#bb9af7",
-        red: "#f7768e",
-        yellow: "#e0af68",
-        thinkingText: "#a9b1d6",
-        // User message (2)
-        userMessageBg: "#292e42",
-        userMessageText: "#c0caf5",
-        // Tool state (5)
-        toolPendingBg: "#1e2a4a",
-        toolSuccessBg: "#1e2e1e",
-        toolErrorBg: "#2e1e1e",
-        toolTitle: "#c0caf5",
-        toolOutput: "#a9b1d6",
-        // Markdown (10)
-        mdHeading: "#ffaa00",
-        mdLink: "#0000ff",
-        mdLinkUrl: "#666666",
-        mdCode: "#00ffff",
-        mdCodeBlock: "#00ff00",
-        mdCodeBlockBorder: "#808080",
-        mdQuote: "#808080",
-        mdQuoteBorder: "#808080",
-        mdHr: "#808080",
-        mdListBullet: "#00ffff",
-        // Diffs (3)
-        toolDiffAdded: "#00ff00",
-        toolDiffRemoved: "#ff0000",
-        toolDiffContext: "#808080",
-        // Syntax (9)
-        syntaxComment: "#6A9955",
-        syntaxKeyword: "#569CD6",
-        syntaxFunction: "#DCDCAA",
-        syntaxVariable: "#9CDCFE",
-        syntaxString: "#CE9178",
-        syntaxNumber: "#B5CEA8",
-        syntaxType: "#4EC9B0",
-        syntaxOperator: "#D4D4D4",
-        syntaxPunctuation: "#D4D4D4",
-        // Thinking (6)
-        thinkingOff: "#505050",
-        thinkingMinimal: "#6e6e6e",
-        thinkingLow: "#5f87af",
-        thinkingMedium: "#81a2be",
-        thinkingHigh: "#b294bb",
-        thinkingXhigh: "#d183e8",
-      },
-    },
-  };
-
   it("GET /themes returns theme list", async () => {
     const res = await get("/themes");
     expect(res.status).toBe(200);
@@ -1221,28 +1145,9 @@ describe("themes API", () => {
     expect(res.status).toBe(404);
   });
 
-  it("PUT /themes/:name creates a theme and GET returns it", async () => {
-    const putRes = await put("/themes/test-dark", validTheme);
-    expect([200, 201]).toContain(putRes.status);
-
-    const getRes = await get("/themes/test-dark");
-    expect(getRes.status).toBe(200);
-    const body = await getRes.json();
-    expect(body.theme).toBeDefined();
-  });
-
-  it("PUT /themes/:name rejects invalid theme", async () => {
-    const res = await put("/themes/bad", { theme: { colors: { bg: "not-hex" } } });
-    expect(res.status).toBe(400);
-  });
-
-  it("DELETE /themes/:name removes theme", async () => {
-    await put("/themes/delete-me", validTheme);
-    const delRes = await del("/themes/delete-me");
-    expect(delRes.status).toBe(200);
-
-    const getRes = await get("/themes/delete-me");
-    expect(getRes.status).toBe(404);
+  it("PUT /themes/:name is not part of the HTTP API", async () => {
+    const res = await put("/themes/test-dark", { theme: {} });
+    expect(res.status).toBe(404);
   });
 });
 
@@ -1301,11 +1206,9 @@ describe("device token API", () => {
     expect(res.status).toBe(400);
   });
 
-  it("DELETE /me/device-token removes token", async () => {
-    // Register first so there's something to delete
-    await post("/me/device-token", { deviceToken: "to-delete" });
+  it("DELETE /me/device-token is not part of the HTTP API", async () => {
     const res = await del("/me/device-token");
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
   });
 });
 

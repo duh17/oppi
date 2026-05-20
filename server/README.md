@@ -199,7 +199,7 @@ Pi provides the core runtime and extension model. Oppi builds on top of that wit
 
 ## Workspace files API
 
-`GET /workspaces/:id/files/<path>` serves directory listings and file content over HTTP. `GET /workspaces/:id/files?search=<q>` provides filename search. Used by the iOS file browser.
+`GET /workspaces/:id/files/<path>` serves directory listings and file content over HTTP. `GET /workspaces/:id/file-index` returns a flat path index for client-side filename search in the iOS file browser.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 import Foundation
 
-/// OAuth/device-code flow behavior exposed by `/provider-auth/providers`.
+/// OAuth/device-code flow behavior exposed by `/provider-auth/status`.
 struct ProviderAuthOAuthCapabilities: Codable, Sendable, Equatable {
     enum FlowType: String, Codable, Sendable {
         case oauthCallback = "oauth_callback"

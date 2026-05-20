@@ -177,7 +177,7 @@ final class MacAPIClient: Sendable {
                   (200..<300).contains(http.statusCode) else {
                 return nil
             }
-            return try JSONDecoder().decode(RuntimeUpdateResult.self, from: data)
+            return try JSONDecoder().decode(RuntimeUpdateResponse.self, from: data).result
         } catch {
             logger.error("Runtime update failed: \(error.localizedDescription)")
             return nil
@@ -238,9 +238,16 @@ private struct ConfigFile: Decodable {
 
 // MARK: - Runtime update model
 
+struct RuntimeUpdateResponse: Decodable {
+    let ok: Bool
+    let result: RuntimeUpdateResult
+}
+
 struct RuntimeUpdateResult: Decodable {
     let ok: Bool
     let message: String
+    let latestVersion: String?
+    let pendingVersion: String?
     let restartRequired: Bool
     let error: String?
     let updatedPackages: [UpdatedPackage]?

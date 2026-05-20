@@ -27,7 +27,7 @@ const TEST_SESSION: Session = {
   lastActivity: 1739750460000,
   model: "anthropic/claude-sonnet-4-20250514",
   messageCount: 5,
-  tokens: { input: 1500, output: 800 },
+  tokens: { input: 1500, output: 800, cacheRead: 250, cacheWrite: 100 },
   cost: 0.012,
   changeStats: {
     mutatingToolCalls: 3,
@@ -144,7 +144,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       channels: 1,
       chunkIndex: 0,
       audioBase64: "AAAA",
-      delivery: "directSpeak",
+      playbackBehavior: "playNow",
     },
 
     // Tool execution
@@ -489,6 +489,8 @@ describe("protocol snapshots", () => {
       expect(session.tokens).toBeDefined();
       expect(session.tokens.input).toBeTypeOf("number");
       expect(session.tokens.output).toBeTypeOf("number");
+      expect(session.tokens.cacheRead).toBeTypeOf("number");
+      expect(session.tokens.cacheWrite).toBeTypeOf("number");
       expect(session.cost).toBeTypeOf("number");
     }
   });

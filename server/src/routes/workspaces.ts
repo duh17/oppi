@@ -22,7 +22,7 @@ import { ReviewCommentStoreError } from "../storage/review-comment-dao.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import { hostMountValidationError } from "../host.js";
 import type {
-  AttachReviewCommentsToTurnRequest,
+  MarkReviewCommentsSentRequest,
   CreateReviewCommentRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
@@ -31,14 +31,12 @@ import type {
   UpdateWorkspaceRequest,
   Workspace,
   WorkspaceListSummary,
-  WorkspacePromptTemplatesResponse,
   WorkspaceQuickActionsResponse,
   WorkspaceQuickActionSelectionResponse,
   WorkspaceQuickActionSessionResponse,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import {
-  loadWorkspacePromptTemplates,
   loadWorkspaceQuickActionOptions,
   prepareWorkspaceQuickActionSession,
   WorkspaceQuickActionSessionError,
@@ -180,12 +178,16 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   function handleListWorkspaces(res: ServerResponse): void {
-    const workspaces = ctx.storage.listWorkspaces().map(removeUnknownSkills);
-    helpers.json(res, { workspaces });
+    const storedWorkspaces = ctx.storage.listWorkspaces();
+    const workspaces = storedWorkspaces.map(removeUnknownSkills);
+    const { serverNow, summaries } = buildWorkspaceListSummarySnapshot(storedWorkspaces);
+    helpers.json(res, { serverNow, workspaces, summaries });
   }
 
-  function handleListWorkspaceSummaries(res: ServerResponse): void {
-    const workspaces = ctx.storage.listWorkspaces();
+  function buildWorkspaceListSummarySnapshot(workspaces: Workspace[]): {
+    serverNow: number;
+    summaries: WorkspaceListSummary[];
+  } {
     const snapshotByWorkspaceId = new Map(
       ctx.storage
         .listWorkspaceSessionSummarySnapshots()
@@ -236,7 +238,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       };
     });
 
-    helpers.json(res, { serverNow: nowMs, summaries });
+    return { serverNow: nowMs, summaries };
   }
 
   async function handleCreateWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -617,7 +619,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  async function handleAttachReviewCommentsToTurn(
+  async function handleMarkReviewCommentsSent(
     wsId: string,
     req: IncomingMessage,
     res: ServerResponse,
@@ -629,8 +631,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     try {
-      const body = await helpers.parseBody<AttachReviewCommentsToTurnRequest>(req);
-      const comments = ctx.storage.attachReviewCommentsToTurn(wsId, body);
+      const body = await helpers.parseBody<MarkReviewCommentsSentRequest>(req);
+      const comments = ctx.storage.markReviewCommentsSent(wsId, body);
       helpers.json(res, { comments });
     } catch (error) {
       if (error instanceof ReviewCommentStoreError) {
@@ -691,33 +693,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       helpers.json(res, response);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load quick actions";
-      helpers.error(res, 500, message);
-    }
-  }
-
-  async function handleGetWorkspacePromptTemplates(
-    wsId: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    try {
-      const templates = await loadWorkspacePromptTemplates(workspace);
-      const response: WorkspacePromptTemplatesResponse = {
-        templates: templates.map((template) => ({
-          name: template.name,
-          description: template.description,
-          argumentHint: template.argumentHint,
-          sourceScope: template.sourceInfo.scope,
-        })),
-      };
-      helpers.json(res, response);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load prompt templates";
       helpers.error(res, 500, message);
     }
   }
@@ -834,11 +809,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return true;
     }
 
-    if (path === "/workspace-summaries" && method === "GET") {
-      handleListWorkspaceSummaries(res);
-      return true;
-    }
-
     if (path === "/workspaces" && method === "POST") {
       await handleCreateWorkspace(req, res);
       return true;
@@ -914,11 +884,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
-    const wsReviewCommentsAttachMatch = path.match(
-      /^\/workspaces\/([^/]+)\/review\/comments\/attach-to-turn$/,
-    );
-    if (wsReviewCommentsAttachMatch && method === "POST") {
-      await handleAttachReviewCommentsToTurn(wsReviewCommentsAttachMatch[1], req, res);
+    const wsReviewCommentsSentMatch = path.match(/^\/workspaces\/([^/]+)\/review\/comments\/sent$/);
+    if (wsReviewCommentsSentMatch && method === "POST") {
+      await handleMarkReviewCommentsSent(wsReviewCommentsSentMatch[1], req, res);
       return true;
     }
 
@@ -937,12 +905,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsQuickActionsMatch = path.match(/^\/workspaces\/([^/]+)\/quick-actions$/);
     if (wsQuickActionsMatch && method === "GET") {
       await handleGetWorkspaceQuickActions(wsQuickActionsMatch[1], res);
-      return true;
-    }
-
-    const wsPromptTemplatesMatch = path.match(/^\/workspaces\/([^/]+)\/prompt-templates$/);
-    if (wsPromptTemplatesMatch && method === "GET") {
-      await handleGetWorkspacePromptTemplates(wsPromptTemplatesMatch[1], res);
       return true;
     }
 

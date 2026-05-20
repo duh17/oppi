@@ -34,12 +34,11 @@ function makeRequest(body?: unknown): Readable {
 }
 
 describe("provider auth routes", () => {
-  it("handles GET /provider-auth/providers", async () => {
+  it("handles GET /provider-auth/status", async () => {
     const providerAuth = {
-      listProviders: vi.fn(() => [
+      getStatus: vi.fn(() => [
         { id: "openai-codex", name: "ChatGPT (Codex)", supportsApiKey: false },
       ]),
-      getStatus: vi.fn(() => []),
     } as unknown as RouteContext["providerAuth"];
 
     const routes = new RouteHandler({ providerAuth } as unknown as RouteContext);
@@ -47,14 +46,14 @@ describe("provider auth routes", () => {
 
     await routes.dispatch(
       "GET",
-      "/provider-auth/providers",
-      new URL("http://localhost/provider-auth/providers"),
+      "/provider-auth/status",
+      new URL("http://localhost/provider-auth/status"),
       makeRequest() as never,
       res as never,
     );
 
     expect(res.statusCode).toBe(200);
-    expect(providerAuth.listProviders).toHaveBeenCalledOnce();
+    expect(providerAuth.getStatus).toHaveBeenCalledOnce();
 
     const body = JSON.parse(res.body) as { providers: Array<{ id: string }> };
     expect(body.providers).toHaveLength(1);

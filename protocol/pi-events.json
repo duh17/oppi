@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical pi SDK events — emitted by AgentSession.subscribe(). Used to test server-side event translation (session-protocol.ts translatePiEvent).",
     "generated": "2026-02-21T02:30:00Z",
-    "eventCount": 31
+    "eventCount": 34
   },
   "events": [
     {
@@ -287,7 +287,7 @@
       "id": "ext-ui-001",
       "method": "select",
       "title": "Choose option",
-      "options": [{ "label": "Option A" }, { "label": "Option B" }],
+      "options": ["Option A", "Option B"],
       "message": "Pick one",
       "timeout": 30000
     },

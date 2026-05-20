@@ -85,7 +85,7 @@ describe("ReviewCommentStore", () => {
       reference: { source: "timeline_text", selectedText: "selected" },
     });
 
-    const updated = await store.attachToTurn({ ids: [comment.id], sessionId: "s1", turnId: "t1" });
+    const updated = await store.markSent({ ids: [comment.id], sessionId: "s1", turnId: "t1" });
 
     expect(updated).toHaveLength(1);
     expect(updated[0]?.status).toBe("sent");

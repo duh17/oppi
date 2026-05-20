@@ -30,7 +30,7 @@ import type {
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
-  AttachReviewCommentsToTurnRequest,
+  MarkReviewCommentsSentRequest,
   CreateReviewCommentRequest,
   CreateWorkspaceRequest,
   ReviewComment,
@@ -231,10 +231,6 @@ export class Storage {
     this.authStore.addPushDeviceToken(token);
   }
 
-  removePushDeviceToken(token: string): void {
-    this.authStore.removePushDeviceToken(token);
-  }
-
   getPushDeviceTokens(): string[] {
     return this.authStore.getPushDeviceTokens();
   }
@@ -339,11 +335,11 @@ export class Storage {
     this.reviewCommentStore.delete(workspaceId, commentId);
   }
 
-  attachReviewCommentsToTurn(
+  markReviewCommentsSent(
     workspaceId: string,
-    input: AttachReviewCommentsToTurnRequest,
+    input: MarkReviewCommentsSentRequest,
   ): ReviewComment[] {
-    return this.reviewCommentStore.attachToTurn(workspaceId, input);
+    return this.reviewCommentStore.markSent(workspaceId, input);
   }
 
   // ─── Workspaces ───

@@ -7,12 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
-import type {
-  DirectoryListingResponse,
-  FileEntry,
-  FileIndexResponse,
-  FileSearchResponse,
-} from "../types.js";
+import type { DirectoryListingResponse, FileEntry, FileIndexResponse } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -20,7 +15,6 @@ const execFileAsync = promisify(execFile);
 const MAX_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const MAX_TEXT_FILE_SIZE = 10 * 1024 * 1024; // 10 MB (browse mode)
 const MAX_DIR_ENTRIES = 1000;
-const MAX_SEARCH_RESULTS = 100;
 const GIT_TIMEOUT_MS = 5000;
 const WALK_MAX_FILES = 10_000;
 const WALK_MAX_DEPTH = 12;
@@ -417,41 +411,6 @@ export async function listDirectoryEntries(
   return { entries, truncated };
 }
 
-/** Search for files by path/name substring. Uses git ls-files when available, walks otherwise. */
-export async function searchWorkspaceFiles(
-  workspaceRoot: string,
-  query: string,
-): Promise<{ entries: FileEntry[]; truncated: boolean }> {
-  if (!query.trim()) return { entries: [], truncated: false };
-
-  const queryLower = query.toLowerCase().trim();
-  const filePaths = await collectFilePaths(workspaceRoot);
-
-  const matches = filePaths.filter((p) => p.toLowerCase().includes(queryLower));
-  const truncated = matches.length > MAX_SEARCH_RESULTS;
-  const limited = matches.slice(0, MAX_SEARCH_RESULTS);
-
-  const entries: FileEntry[] = [];
-  for (const relPath of limited) {
-    const fullPath = join(workspaceRoot, relPath);
-    try {
-      const fileStat = await stat(fullPath);
-      const pathParts = relPath.split("/");
-      entries.push({
-        name: pathParts[pathParts.length - 1],
-        path: relPath,
-        type: fileStat.isDirectory() ? "directory" : "file",
-        size: fileStat.size,
-        modifiedAt: Math.floor(fileStat.mtimeMs),
-      });
-    } catch {
-      continue;
-    }
-  }
-
-  return { entries, truncated };
-}
-
 async function walkDirectoryForSearch(root: string): Promise<string[]> {
   const results: string[] = [];
 
@@ -681,23 +640,6 @@ export function createWorkspaceFileRoutes(
     helpers.json(res, response);
   }
 
-  async function handleSearch(wsId: string, query: string, res: ServerResponse): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const workspaceRoot = resolveSdkSessionCwd(workspace);
-    const result = await searchWorkspaceFiles(workspaceRoot, query);
-    const response: FileSearchResponse = {
-      query,
-      entries: result.entries,
-      truncated: result.truncated,
-    };
-    helpers.json(res, response);
-  }
-
   return async ({ method, path, url, res }) => {
     // GET /workspaces/:id/file-index — flat path list for client-side fuzzy search
     const indexMatch = path.match(/^\/workspaces\/([^/]+)\/file-index$/);
@@ -706,14 +648,8 @@ export function createWorkspaceFileRoutes(
       return true;
     }
 
-    const searchMatch = path.match(/^\/workspaces\/([^/]+)\/files$/);
-    if (searchMatch && method === "GET") {
-      const searchQuery = url.searchParams.get("search");
-      if (searchQuery !== null) {
-        await handleSearch(searchMatch[1], searchQuery, res);
-        return true;
-      }
-      helpers.error(res, 400, "Missing search parameter or trailing slash for directory listing");
+    if (path.match(/^\/workspaces\/([^/]+)\/files$/) && method === "GET") {
+      helpers.error(res, 400, "Missing trailing slash for directory listing");
       return true;
     }
 

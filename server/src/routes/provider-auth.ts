@@ -36,11 +36,6 @@ export function createProviderAuthRoutes(
     }
 
     try {
-      if (path === "/provider-auth/providers" && method === "GET") {
-        helpers.json(res, { providers: ctx.providerAuth.listProviders() });
-        return true;
-      }
-
       if (path === "/provider-auth/status" && method === "GET") {
         helpers.json(res, { providers: ctx.providerAuth.getStatus() });
         return true;

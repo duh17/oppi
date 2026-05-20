@@ -444,36 +444,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.compressedJson(req, res, { sessions });
   }
 
-  function handleListWorkspaceSessions(
-    workspaceId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): void {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const serverNow = Date.now();
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const recentDaysParam = Number.parseInt(url.searchParams.get("recentDays") ?? "", 10);
-    const recentDays =
-      Number.isFinite(recentDaysParam) && recentDaysParam > 0 ? recentDaysParam : 0;
-
-    const sessions = summarizeWorkspaceListSessions(
-      mergeActiveWorkspaceSessions(
-        recentDays > 0
-          ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspaceId, recentDays, serverNow)
-          : ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId),
-        workspaceId,
-        recentDays > 0 ? { cutoffMs: serverNow - recentDays * 86_400_000 } : {},
-      ),
-    );
-
-    helpers.compressedJson(req, res, { sessions });
-  }
-
   async function handleWorkspaceSessionList(
     workspaceId: string,
     req: IncomingMessage,
@@ -523,52 +493,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     helpers.compressedJson(req, res, {
       workspace,
+      workspaceId,
+      sinceMs: timeRange.sinceMs,
+      untilMs: timeRange.untilMs,
       serverNow,
       sessions,
       attention: workspaceAttentionSnapshot(workspaceId, serverNow),
       importableSessions: importableSplit.visibleSessions,
       archiveBuckets,
-    });
-  }
-
-  async function handleWorkspaceSessionListBucket(
-    workspaceId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const timeRange = parseRequiredTimeRange(url);
-    if (!timeRange) {
-      helpers.error(res, 400, "sinceMs and untilMs are required and must form a valid range");
-      return;
-    }
-
-    const sessions = ctx.storage.listStoppedWorkspaceTimeRangeSessionSnapshots(
-      workspaceId,
-      timeRange.sinceMs,
-      timeRange.untilMs,
-    );
-    const importableSnapshot = listWorkspaceImportableSessions(workspace);
-    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
-    const importableSessions = importableSnapshot.sessions
-      .filter(
-        (session) =>
-          session.lastModified >= timeRange.sinceMs && session.lastModified < timeRange.untilMs,
-      )
-      .sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
-
-    helpers.compressedJson(req, res, {
-      workspaceId,
-      sinceMs: timeRange.sinceMs,
-      untilMs: timeRange.untilMs,
-      sessions: summarizeWorkspaceListSessions(sessions),
-      importableSessions,
     });
   }
 
@@ -1378,7 +1310,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    if (path === "/workspace-session-summaries" && method === "GET") {
+    if (path === "/sessions/recent" && method === "GET") {
       handleListRecentWorkspaceSessionSummaries(req, res);
       return true;
     }
@@ -1391,28 +1323,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    const wsSessionListBucketMatch = path.match(/^\/workspaces\/([^/]+)\/session-list-bucket$/);
-    if (wsSessionListBucketMatch && method === "GET") {
-      await handleWorkspaceSessionListBucket(wsSessionListBucketMatch[1], req, res);
-      return true;
-    }
-
-    const wsSessionListMatch = path.match(/^\/workspaces\/([^/]+)\/session-list$/);
-    if (wsSessionListMatch && method === "GET") {
-      await handleWorkspaceSessionList(wsSessionListMatch[1], req, res);
+    const wsHomeMatch = path.match(/^\/workspaces\/([^/]+)\/home$/);
+    if (wsHomeMatch && method === "GET") {
+      await handleWorkspaceSessionList(wsHomeMatch[1], req, res);
       return true;
     }
 
     const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
-    if (wsSessionsMatch) {
-      if (method === "GET") {
-        handleListWorkspaceSessions(wsSessionsMatch[1], req, res);
-        return true;
-      }
-      if (method === "POST") {
-        await handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
-        return true;
-      }
+    if (wsSessionsMatch && method === "POST") {
+      await handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
+      return true;
     }
 
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
@@ -1446,31 +1366,27 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    const wsSessionToolOutputFullMatch = path.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)\/full$/,
-    );
-    if (wsSessionToolOutputFullMatch && method === "GET") {
-      await handleGetFullToolOutput(
-        wsSessionToolOutputFullMatch[1],
-        wsSessionToolOutputFullMatch[2],
-        wsSessionToolOutputFullMatch[3],
-        req,
-        res,
-      );
-      return true;
-    }
-
     const wsSessionToolOutputMatch = path.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
     if (wsSessionToolOutputMatch && method === "GET") {
-      await handleGetToolOutput(
-        wsSessionToolOutputMatch[1],
-        wsSessionToolOutputMatch[2],
-        wsSessionToolOutputMatch[3],
-        req,
-        res,
-      );
+      if (url.searchParams.get("full") === "true") {
+        await handleGetFullToolOutput(
+          wsSessionToolOutputMatch[1],
+          wsSessionToolOutputMatch[2],
+          wsSessionToolOutputMatch[3],
+          req,
+          res,
+        );
+      } else {
+        await handleGetToolOutput(
+          wsSessionToolOutputMatch[1],
+          wsSessionToolOutputMatch[2],
+          wsSessionToolOutputMatch[3],
+          req,
+          res,
+        );
+      }
       return true;
     }
 

@@ -165,7 +165,7 @@ async function dispatch(mock: MockRouteContext, path: string, url: string): Prom
   });
 }
 
-describe("workspace session list routes", () => {
+describe("workspace home session routes", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-13T12:00:00Z"));
@@ -176,13 +176,13 @@ describe("workspace session list routes", () => {
     vi.useRealTimers();
   });
 
-  it("requires an explicit time range for the hot session list", async () => {
+  it("requires an explicit time range for workspace home", async () => {
     const mock = createMockContext();
 
     const handled = await dispatch(
       mock,
-      "/workspaces/ws-1/session-list",
-      "https://localhost/workspaces/ws-1/session-list",
+      "/workspaces/ws-1/home",
+      "https://localhost/workspaces/ws-1/home",
     );
 
     expect(handled).toBe(true);
@@ -242,8 +242,8 @@ describe("workspace session list routes", () => {
 
     const handled = await dispatch(
       mock,
-      "/workspaces/ws-1/session-list",
-      `https://localhost/workspaces/ws-1/session-list?sinceMs=${sinceMs}&untilMs=${untilMs}`,
+      "/workspaces/ws-1/home",
+      `https://localhost/workspaces/ws-1/home?sinceMs=${sinceMs}&untilMs=${untilMs}`,
     );
 
     expect(handled).toBe(true);
@@ -290,19 +290,8 @@ describe("workspace session list routes", () => {
     ]);
   });
 
-  it("returns workspace session summaries as thin summaries", async () => {
+  it("does not expose workspace session list through GET /workspaces/:id/sessions", async () => {
     const mock = createMockContext();
-    const now = Date.parse("2026-05-13T12:00:00Z");
-
-    mock.storage.listRecentWorkspaceSessionSnapshots.mockReturnValue([
-      makeSession({
-        id: "legacy-row",
-        status: "ready",
-        lastActivity: now,
-        piSessionFile: "/Users/chenda/.pi/agent/sessions/legacy-row.jsonl",
-        warnings: ["local warning"],
-      }),
-    ]);
 
     const handled = await dispatch(
       mock,
@@ -310,17 +299,9 @@ describe("workspace session list routes", () => {
       "https://localhost/workspaces/ws-1/sessions?recentDays=3",
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe(false);
     expect(mock.errors).toHaveLength(0);
-
-    const response = mock.responses[0]?.data as {
-      sessions: Array<Record<string, unknown>>;
-    };
-
-    expect(response.sessions).toHaveLength(1);
-    expect(response.sessions[0]?.id).toBe("legacy-row");
-    expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
-    expect(response.sessions[0]).not.toHaveProperty("warnings");
+    expect(mock.responses).toHaveLength(0);
   });
 
   it("returns aggregated recent workspace session summaries as thin summaries", async () => {
@@ -355,8 +336,8 @@ describe("workspace session list routes", () => {
 
     const handled = await dispatch(
       mock,
-      "/workspace-session-summaries",
-      "https://localhost/workspace-session-summaries?recentDays=3",
+      "/sessions/recent",
+      "https://localhost/sessions/recent?recentDays=3",
     );
 
     expect(handled).toBe(true);
@@ -379,9 +360,10 @@ describe("workspace session list routes", () => {
     const sinceMs = Date.parse("2026-05-10T00:00:00Z");
     const untilMs = Date.parse("2026-05-11T00:00:00Z");
 
-    mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
+    mock.storage.listWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
       makeSession({ id: "stopped-in-bucket", status: "stopped", lastActivity: sinceMs + 1_000 }),
     ]);
+    mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([]);
     localSessionState.snapshot = {
       lastScannedAt: Date.now(),
       sessions: [
@@ -400,8 +382,8 @@ describe("workspace session list routes", () => {
 
     const handled = await dispatch(
       mock,
-      "/workspaces/ws-1/session-list-bucket",
-      `https://localhost/workspaces/ws-1/session-list-bucket?sinceMs=${sinceMs}&untilMs=${untilMs}`,
+      "/workspaces/ws-1/home",
+      `https://localhost/workspaces/ws-1/home?sinceMs=${sinceMs}&untilMs=${untilMs}`,
     );
 
     expect(handled).toBe(true);

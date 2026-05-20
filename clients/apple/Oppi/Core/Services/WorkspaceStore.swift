@@ -393,18 +393,17 @@ final class WorkspaceStore {
 
         markSyncStarted(forServer: serverId)
 
-        async let fetchWorkspaces = api.listWorkspaces()
+        async let fetchCatalog = api.listWorkspaceCatalog()
         async let fetchSkills = api.listSkills()
-        async let fetchSummaries = api.listWorkspaceSummaries()
 
         do {
-            let (ws, sk) = try await (fetchWorkspaces, fetchSkills)
-            let summariesResponse = try? await fetchSummaries
+            let (catalog, sk) = try await (fetchCatalog, fetchSkills)
+            let ws = catalog.workspaces
             workspacesByServer[serverId] = ws
             skillsByServer[serverId] = sk
-            if let summariesResponse {
+            if let responseSummaries = catalog.summaries {
                 let summaries = Dictionary(
-                    uniqueKeysWithValues: summariesResponse.summaries.map { ($0.workspaceId, $0) }
+                    uniqueKeysWithValues: responseSummaries.map { ($0.workspaceId, $0) }
                 )
                 storedWorkspaceSummariesByServer[serverId] = summaries
                 workspaceSummariesByServer[serverId] = summaries

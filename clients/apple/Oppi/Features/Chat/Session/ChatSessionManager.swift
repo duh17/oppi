@@ -672,7 +672,7 @@ final class ChatSessionManager {
             }
 
             do {
-                let (session, _) = try await api.getSession(workspaceId: workspaceId, id: sessionId)
+                let (session, _) = try await api.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
                 connection.applyFetchedSessionState(session)
             } catch {
                 log.warning("Reconcile failed: \(error.localizedDescription)")
@@ -714,9 +714,9 @@ final class ChatSessionManager {
             }
 
             do {
-                let (_, fetchedTrace) = try await api.getSession(
+                let (_, fetchedTrace) = try await api.getWorkspaceSession(
                     workspaceId: workspaceId,
-                    id: sessionId,
+                    sessionId: sessionId,
                     traceView: .full
                 )
                 trace = fetchedTrace
@@ -1071,9 +1071,9 @@ final class ChatSessionManager {
             if let fetchHook = _fetchSessionTraceForTesting {
                 (session, trace) = try await fetchHook(workspaceId, sessionId)
             } else {
-                (session, trace) = try await api.getSession(
+                (session, trace) = try await api.getWorkspaceSession(
                     workspaceId: workspaceId,
-                    id: sessionId,
+                    sessionId: sessionId,
                     traceView: .full
                 )
             }

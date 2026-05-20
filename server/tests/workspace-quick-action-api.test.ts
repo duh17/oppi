@@ -270,6 +270,28 @@ describe("GET /workspaces/:wid/quick-actions", () => {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
+
+  it("does not expose the legacy prompt-templates endpoint", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-actions-legacy-"));
+
+    try {
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "GET",
+        "/workspaces/w1/prompt-templates",
+        new URL("http://localhost/workspaces/w1/prompt-templates"),
+        {} as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.body)).toEqual({ error: "Not found" });
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("workspace prompt-template quick actions", () => {

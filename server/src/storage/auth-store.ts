@@ -142,11 +142,6 @@ export class AuthStore {
     }
   }
 
-  removePushDeviceToken(token: string): void {
-    const tokens = this.configStore.getConfig().pushDeviceTokens || [];
-    this.configStore.updateConfig({ pushDeviceTokens: tokens.filter((t) => t !== token) });
-  }
-
   getPushDeviceTokens(): string[] {
     return this.configStore.getConfig().pushDeviceTokens || [];
   }

@@ -103,6 +103,43 @@ struct WorkspaceStoreOfflineTests {
         #expect(store.freshnessState() == .offline)
     }
 
+    @Test func loadUsesWorkspaceCatalogSummaries() async throws {
+        defer { WorkspaceStoreMockURLProtocol.handler = nil }
+
+        WorkspaceStoreMockURLProtocol.handler = { request in
+            let url = request.url!.absoluteString
+
+            if url.hasSuffix("/workspaces") {
+                let data = """
+                {
+                  "serverNow": 1700000000000,
+                  "workspaces": [{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}],
+                  "summaries": [{"workspaceId":"w1","activeCount":2,"stoppedCount":3,"hasAttention":true,"hasErrorRoot":false,"latestActivity":1500}]
+                }
+                """.data(using: .utf8)!
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (data, response)
+            }
+
+            if url.hasSuffix("/skills") {
+                let data = #"{"skills":[]}"#.data(using: .utf8)!
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (data, response)
+            }
+
+            throw URLError(.unsupportedURL)
+        }
+
+        let store = WorkspaceStore()
+        let api = makeAPIClient()
+        await store.load(api: api)
+
+        #expect(store.workspaces.map(\.id) == ["w1"])
+        #expect(store.workspaceSummaries["w1"]?.activeCount == 2)
+        #expect(store.workspaceSummaries["w1"]?.stoppedCount == 3)
+        #expect(store.workspaceSummaries["w1"]?.hasAttention == true)
+    }
+
     private func makeAPIClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WorkspaceStoreMockURLProtocol.self]

@@ -594,8 +594,8 @@ describe("workspace-scoped session route ownership", () => {
     {
       name: "full tool output",
       method: "GET",
-      path: "/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1/full",
-      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1/full",
+      path: "/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1?full=true",
     },
     {
       name: "session file",

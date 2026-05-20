@@ -107,22 +107,17 @@ struct WorkspaceFilesTests {
         #expect(!isHTML(tsEntry))
     }
 
-    // MARK: - FileSearchResponse
+    // MARK: - FileIndexResponse
 
-    @Test func fileSearchResponseDecodes() throws {
+    @Test func fileIndexResponseDecodes() throws {
         let json = """
         {
-          "query": "button",
-          "entries": [
-            {"name":"Button.tsx","type":"file","size":500,"modifiedAt":1710000000000,"path":"src/components/Button.tsx"}
-          ],
+          "paths": ["README.md", "src/components/Button.tsx"],
           "truncated": true
         }
         """
-        let response = try JSONDecoder().decode(FileSearchResponse.self, from: Data(json.utf8))
-        #expect(response.query == "button")
-        #expect(response.entries.count == 1)
+        let response = try JSONDecoder().decode(FileIndexResponse.self, from: Data(json.utf8))
+        #expect(response.paths == ["README.md", "src/components/Button.tsx"])
         #expect(response.truncated)
-        #expect(response.entries[0].path == "src/components/Button.tsx")
     }
 }

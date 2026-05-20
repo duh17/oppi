@@ -7,24 +7,24 @@
 import { describe, expect, it } from "vitest";
 
 const ROUTES = {
-  wsSessionsList: /^\/workspaces\/([^/]+)\/sessions$/,
+  sessionsRecent: /^\/sessions\/recent$/,
+  wsHome: /^\/workspaces\/([^/]+)\/home$/,
+  wsSessionsCreate: /^\/workspaces\/([^/]+)\/sessions$/,
   wsAttention: /^\/workspaces\/([^/]+)\/attention$/,
   wsSessionStop: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/,
   wsSessionResume: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
   wsSessionFork: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/,
   wsSessionToolOutput: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
-  wsSessionToolOutputFull: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)\/full$/,
   wsSessionFiles: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/,
   wsSessionOverallDiff: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
   wsSessionEvents: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
-  wsReviewFiles: /^\/workspaces\/([^/]+)\/review\/files$/,
   wsReviewDiff: /^\/workspaces\/([^/]+)\/review\/diff$/,
+  wsReviewCommentsSent: /^\/workspaces\/([^/]+)\/review\/comments\/sent$/,
   wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
   wsQuickActionSession: /^\/workspaces\/([^/]+)\/quick-actions\/session$/,
-  wsGraph: /^\/workspaces\/([^/]+)\/graph$/,
   permissionsPending: /^\/permissions\/pending$/,
   policyRules: /^\/policy\/rules$/,
   policyRuleDetail: /^\/policy\/rules\/([^/]+)$/,
@@ -35,8 +35,18 @@ const ROUTES = {
 };
 
 describe("Workspace-scoped API routes", () => {
-  it("matches GET /workspaces/:wid/sessions", () => {
-    const m = "/workspaces/ws-abc/sessions".match(ROUTES.wsSessionsList);
+  it("matches GET /sessions/recent", () => {
+    expect("/sessions/recent".match(ROUTES.sessionsRecent)).toBeTruthy();
+  });
+
+  it("matches GET /workspaces/:wid/home", () => {
+    const m = "/workspaces/ws-abc/home".match(ROUTES.wsHome);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-abc");
+  });
+
+  it("matches POST /workspaces/:wid/sessions", () => {
+    const m = "/workspaces/ws-abc/sessions".match(ROUTES.wsSessionsCreate);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-abc");
   });
@@ -71,16 +81,6 @@ describe("Workspace-scoped API routes", () => {
   it("matches GET /workspaces/:wid/sessions/:sid/tool-output/:tid", () => {
     const m = "/workspaces/ws-1/sessions/s1/tool-output/tc_abc123".match(
       ROUTES.wsSessionToolOutput,
-    );
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("ws-1");
-    expect(m![2]).toBe("s1");
-    expect(m![3]).toBe("tc_abc123");
-  });
-
-  it("matches GET /workspaces/:wid/sessions/:sid/tool-output/:tid/full", () => {
-    const m = "/workspaces/ws-1/sessions/s1/tool-output/tc_abc123/full".match(
-      ROUTES.wsSessionToolOutputFull,
     );
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
@@ -123,14 +123,14 @@ describe("Workspace-scoped API routes", () => {
     expect(m![2]).toBe("s1");
   });
 
-  it("matches GET /workspaces/:wid/review/files", () => {
-    const m = "/workspaces/ws-1/review/files".match(ROUTES.wsReviewFiles);
+  it("matches GET /workspaces/:wid/review/diff", () => {
+    const m = "/workspaces/ws-1/review/diff".match(ROUTES.wsReviewDiff);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
   });
 
-  it("matches GET /workspaces/:wid/review/diff", () => {
-    const m = "/workspaces/ws-1/review/diff".match(ROUTES.wsReviewDiff);
+  it("matches POST /workspaces/:wid/review/comments/sent", () => {
+    const m = "/workspaces/ws-1/review/comments/sent".match(ROUTES.wsReviewCommentsSent);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
   });
@@ -149,12 +149,6 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches POST /workspaces/:wid/quick-actions/session", () => {
     const m = "/workspaces/ws-1/quick-actions/session".match(ROUTES.wsQuickActionSession);
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("ws-1");
-  });
-
-  it("matches GET /workspaces/:wid/graph", () => {
-    const m = "/workspaces/ws-1/graph".match(ROUTES.wsGraph);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
   });

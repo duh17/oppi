@@ -111,7 +111,7 @@ struct APIClientTests {
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/workspace-session-summaries")
+            #expect(request.url?.path == "/sessions/recent")
             #expect(request.url?.query == "recentDays=3")
             return self.mockResponse(json: """
             {"sessions":[
@@ -133,7 +133,7 @@ struct APIClientTests {
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/workspace-session-summaries")
+            #expect(request.url?.path == "/sessions/recent")
             #expect(request.url?.query == "recentDays=3")
             return self.mockResponse(json: """
             {"sessions":[
@@ -255,7 +255,7 @@ struct APIClientTests {
             """)
         }
 
-        let (session, trace) = try await client.getSession(workspaceId: "w1", id: "s1")
+        let (session, trace) = try await client.getWorkspaceSession(workspaceId: "w1", sessionId: "s1")
         #expect(session.id == "s1")
         #expect(trace.count == 1)
         #expect(trace[0].type == .user)
@@ -278,7 +278,7 @@ struct APIClientTests {
             """)
         }
 
-        let (_, trace) = try await client.getSession(workspaceId: "w1", id: "s1", traceView: .full)
+        let (_, trace) = try await client.getWorkspaceSession(workspaceId: "w1", sessionId: "s1", traceView: .full)
         #expect(trace.count == 1)
     }
 
@@ -327,7 +327,7 @@ struct APIClientTests {
             """)
         }
 
-        let session = try await client.stopSession(workspaceId: "w1", id: "s1")
+        let session = try await client.stopWorkspaceSession(workspaceId: "w1", sessionId: "s1")
         #expect(session.status == .stopped)
     }
 
@@ -341,7 +341,7 @@ struct APIClientTests {
             return self.mockResponse(json: "{}")
         }
 
-        try await client.deleteSession(workspaceId: "w1", id: "s1")
+        try await client.deleteWorkspaceSession(workspaceId: "w1", sessionId: "s1")
     }
 
     // getSessionTrace removed — merged into getSession.
@@ -371,13 +371,41 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { _ in
             self.mockResponse(json: """
-            {"workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
+            {
+              "serverNow": 1700000000000,
+              "workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}],
+              "summaries":[{"workspaceId":"w1","activeCount":1,"stoppedCount":2,"hasAttention":true,"hasErrorRoot":false,"latestActivity":1500}]
+            }
             """)
         }
 
         let workspaces = try await client.listWorkspaces()
         #expect(workspaces.count == 1)
         #expect(workspaces[0].name == "Dev")
+    }
+
+    @Test func listWorkspaceCatalogDecodesSummaries() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces")
+            return self.mockResponse(json: """
+            {
+              "serverNow": 1700000000000,
+              "workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}],
+              "summaries":[{"workspaceId":"w1","activeCount":1,"stoppedCount":2,"hasAttention":true,"hasErrorRoot":false,"latestActivity":1500}]
+            }
+            """)
+        }
+
+        let catalog = try await client.listWorkspaceCatalog()
+        #expect(catalog.serverNow == 1700000000000)
+        #expect(catalog.workspaces.map(\.id) == ["w1"])
+        #expect(catalog.summaries?.count == 1)
+        #expect(catalog.summaries?.first?.workspaceId == "w1")
+        #expect(catalog.summaries?.first?.activeCount == 1)
+        #expect(catalog.summaries?.first?.latestActivity == Date(timeIntervalSince1970: 1.5))
     }
 
     @Test func getWorkspace() async throws {
@@ -618,97 +646,6 @@ struct APIClientTests {
         }
 
         try await client.deleteWorkspace(id: "w1")
-    }
-
-    @Test func getWorkspaceGraphBuildsQueryAndDecodesGraphs() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/workspaces/w1/graph")
-
-            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
-            let queryItems = components?.queryItems ?? []
-            #expect(queryItems.contains(where: { $0.name == "sessionId" && $0.value == "s1" }))
-            #expect(queryItems.contains(where: { $0.name == "include" && $0.value == "entry" }))
-            #expect(queryItems.contains(where: { $0.name == "entrySessionId" && $0.value == "pi-child" }))
-            #expect(queryItems.contains(where: { $0.name == "includePaths" && $0.value == "true" }))
-
-            return self.mockResponse(json: """
-            {
-              "workspaceId": "w1",
-              "generatedAt": 1700000000000,
-              "current": {
-                "sessionId": "s1",
-                "nodeId": "pi-child"
-              },
-              "sessionGraph": {
-                "nodes": [
-                  {
-                    "id": "pi-root",
-                    "createdAt": 1700000000000,
-                    "workspaceId": "w1",
-                    "attachedSessionIds": ["s0"],
-                    "activeSessionIds": []
-                  },
-                  {
-                    "id": "pi-child",
-                    "createdAt": 1700000100000,
-                    "workspaceId": "w1",
-                    "parentId": "pi-root",
-                    "attachedSessionIds": ["s1"],
-                    "activeSessionIds": ["s1"],
-                    "sessionFile": "/tmp/child.jsonl",
-                    "parentSessionFile": "/tmp/root.jsonl"
-                  }
-                ],
-                "edges": [
-                  {"from": "pi-root", "to": "pi-child", "type": "fork"}
-                ],
-                "roots": ["pi-root"]
-              },
-              "entryGraph": {
-                "piSessionId": "pi-child",
-                "nodes": [
-                  {"id": "m1", "type": "model_change", "timestamp": 1700000100000},
-                  {"id": "u1", "type": "message", "parentId": "m1", "timestamp": 1700000100500, "role": "user", "preview": "Try branch B"}
-                ],
-                "edges": [
-                  {"from": "m1", "to": "u1", "type": "parent"}
-                ],
-                "rootEntryId": "m1",
-                "leafEntryId": "u1"
-              }
-            }
-            """)
-        }
-
-        let graph = try await client.getWorkspaceGraph(
-            workspaceId: "w1",
-            sessionId: "s1",
-            includeEntryGraph: true,
-            entrySessionId: "pi-child",
-            includePaths: true
-        )
-
-        #expect(graph.workspaceId == "w1")
-        #expect(graph.current?.sessionId == "s1")
-        #expect(graph.current?.nodeId == "pi-child")
-        #expect(graph.sessionGraph.nodes.count == 2)
-        #expect(graph.sessionGraph.edges.first?.type == .fork)
-        #expect(graph.sessionGraph.roots == ["pi-root"])
-
-        let child = graph.sessionGraph.nodes.first(where: { $0.id == "pi-child" })
-        #expect(child?.parentId == "pi-root")
-        #expect(child?.activeSessionIds == ["s1"])
-        #expect(child?.sessionFile == "/tmp/child.jsonl")
-
-        #expect(graph.entryGraph?.piSessionId == "pi-child")
-        #expect(graph.entryGraph?.nodes.count == 2)
-        #expect(graph.entryGraph?.nodes.last?.role == "user")
-        #expect(graph.entryGraph?.nodes.last?.preview == "Try branch B")
-        #expect(graph.entryGraph?.edges.first?.type == .parent)
-        #expect(graph.entryGraph?.leafEntryId == "u1")
     }
 
     // MARK: - Skills
@@ -968,6 +905,32 @@ struct APIClientTests {
         #expect(step == 2)
     }
 
+    // MARK: - Review Comments
+
+    @Test func markReviewCommentsSentUsesSentEndpoint() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/workspaces/w1/review/comments/sent")
+            let body = try! JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
+            #expect(body?["ids"] as? [String] == ["rc-1"])
+            #expect(body?["sessionId"] as? String == "s1")
+            return self.mockResponse(json: """
+            {"comments":[{"id":"rc-1","workspaceId":"w1","sessionId":"s1","author":"human","status":"sent","body":"Looks good","reference":{"source":"file","path":"App.swift"},"createdAt":1,"updatedAt":2,"sentAt":2}]}
+            """)
+        }
+
+        let comments = try await client.markReviewCommentsSent(
+            workspaceId: "w1",
+            ids: ["rc-1"],
+            sessionId: "s1"
+        )
+        #expect(comments.map(\.id) == ["rc-1"])
+        #expect(comments.first?.status == .sent)
+    }
+
     // MARK: - Permissions
 
     @Test func respondToPermissionUsesRestEndpoint() async throws {
@@ -1007,18 +970,6 @@ struct APIClientTests {
         }
 
         try await client.registerDeviceToken("abc123")
-    }
-
-    @Test func unregisterDeviceToken() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "DELETE")
-            return self.mockResponse(json: "{}")
-        }
-
-        try await client.unregisterDeviceToken("abc123")
     }
 
     // MARK: - Error handling

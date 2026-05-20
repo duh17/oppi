@@ -86,17 +86,6 @@ export interface WorkspaceQuickActionsResponse {
   actions: WorkspaceQuickActionOption[];
 }
 
-export interface WorkspacePromptTemplateSummary {
-  name: string;
-  description: string;
-  argumentHint?: string;
-  sourceScope?: WorkspaceQuickActionOptionScope;
-}
-
-export interface WorkspacePromptTemplatesResponse {
-  templates: WorkspacePromptTemplateSummary[];
-}
-
 export interface CreateWorkspaceQuickActionSessionRequest {
   paths: string[];
   selectedSessionId?: string;
@@ -181,7 +170,7 @@ export interface UpdateReviewCommentRequest {
   body?: string;
 }
 
-export interface AttachReviewCommentsToTurnRequest {
+export interface MarkReviewCommentsSentRequest {
   ids: string[];
   sessionId?: string;
   turnId?: string;

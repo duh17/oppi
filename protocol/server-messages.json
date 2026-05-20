@@ -19,7 +19,9 @@
         "messageCount": 5,
         "tokens": {
           "input": 1500,
-          "output": 800
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
         },
         "cost": 0.012,
         "changeStats": {
@@ -64,7 +66,9 @@
         "messageCount": 5,
         "tokens": {
           "input": 1500,
-          "output": 800
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
         },
         "cost": 0.012,
         "changeStats": {
@@ -103,7 +107,9 @@
         "messageCount": 5,
         "tokens": {
           "input": 1500,
-          "output": 800
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
         },
         "cost": 0.012,
         "changeStats": {
@@ -181,7 +187,7 @@
       "channels": 1,
       "chunkIndex": 0,
       "audioBase64": "AAAA",
-      "delivery": "directSpeak"
+      "playbackBehavior": "playNow"
     },
     "tool_start": {
       "type": "tool_start",

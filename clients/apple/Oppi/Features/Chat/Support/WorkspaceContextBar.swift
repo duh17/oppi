@@ -1191,7 +1191,7 @@ struct WorkspaceContextBar: View {
         stoppingAgentIds.insert(child.id)
         defer { stoppingAgentIds.remove(child.id) }
         do {
-            let updated = try await api.stopSession(workspaceId: workspaceId, id: child.id)
+            let updated = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: child.id)
             sessionStore.upsert(updated)
         } catch {
             launchError = "Stop failed: \(error.localizedDescription)"

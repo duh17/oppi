@@ -112,6 +112,13 @@ actor APIClient {
         let pendingVersion: String?
         let restartRequired: Bool
         let error: String?
+        let updatedPackages: [UpdatedPackage]?
+
+        struct UpdatedPackage: Decodable, Sendable, Equatable {
+            let name: String
+            let from: String
+            let to: String
+        }
     }
 
     struct RuntimeUpdateResponse: Decodable, Sendable, Equatable {
@@ -255,30 +262,30 @@ actor APIClient {
         }
     }
 
-    /// Get a session with trace events for either context or full timeline view.
-    func getSession(
+    /// Get a workspace session with trace events for either context or full timeline view.
+    func getWorkspaceSession(
         workspaceId: String,
-        id: String,
+        sessionId: String,
         traceView: SessionTraceView = .context
     ) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(id)?view=\(traceView.rawValue)")
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)?view=\(traceView.rawValue)")
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.session, response.trace)
     }
 
-    /// Stop a running session.
-    func stopSession(workspaceId: String, id: String) async throws -> Session {
-        let data = try await post("/workspaces/\(workspaceId)/sessions/\(id)/stop", body: EmptyBody())
+    /// Stop a running workspace session.
+    func stopWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
+        let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/stop", body: EmptyBody())
         struct Response: Decodable { let session: Session? }
         let response = try JSONDecoder().decode(Response.self, from: data)
         if let session = response.session { return session }
-        return try await getSession(workspaceId: workspaceId, id: id).session
+        return try await getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId).session
     }
 
-    /// Delete a session permanently.
-    func deleteSession(workspaceId: String, id: String) async throws {
-        _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(id)")
+    /// Delete a workspace session permanently.
+    func deleteWorkspaceSession(workspaceId: String, sessionId: String) async throws {
+        _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(sessionId)")
     }
 
     // MARK: - Permissions
@@ -439,11 +446,21 @@ actor APIClient {
 
     // MARK: - Workspaces
 
+    struct WorkspaceCatalogResponse: Decodable, Sendable {
+        let serverNow: Int64?
+        let workspaces: [Workspace]
+        let summaries: [WorkspaceListSummary]?
+    }
+
+    /// List workspace cards, including optional list summaries for catalog/home UI.
+    func listWorkspaceCatalog() async throws -> WorkspaceCatalogResponse {
+        let data = try await get("/workspaces")
+        return try JSONDecoder().decode(WorkspaceCatalogResponse.self, from: data)
+    }
+
     /// List all workspaces for the authenticated user.
     func listWorkspaces() async throws -> [Workspace] {
-        let data = try await get("/workspaces")
-        struct Response: Decodable { let workspaces: [Workspace] }
-        return try JSONDecoder().decode(Response.self, from: data).workspaces
+        try await listWorkspaceCatalog().workspaces
     }
 
     // periphery:ignore - used by APIClientTests via @testable import
@@ -478,42 +495,6 @@ actor APIClient {
     /// Delete a workspace.
     func deleteWorkspace(id: String) async throws {
         _ = try await request("DELETE", path: "/workspaces/\(id)")
-    }
-
-    /// Fetch workspace fork/session graph with optional branch entry tree.
-    func getWorkspaceGraph(
-        workspaceId: String,
-        sessionId: String? = nil,
-        includeEntryGraph: Bool = false,
-        entrySessionId: String? = nil,
-        includePaths: Bool = false
-    ) async throws -> WorkspaceGraphResponse {
-        var query: [String] = []
-
-        if let sessionId, !sessionId.isEmpty {
-            try query.append("sessionId=\(encodeQueryPath(sessionId))")
-        }
-
-        if includeEntryGraph {
-            query.append("include=entry")
-        }
-
-        if let entrySessionId, !entrySessionId.isEmpty {
-            try query.append("entrySessionId=\(encodeQueryPath(entrySessionId))")
-        }
-
-        if includePaths {
-            query.append("includePaths=true")
-        }
-
-        let route = if query.isEmpty {
-            "/workspaces/\(workspaceId)/graph"
-        } else {
-            "/workspaces/\(workspaceId)/graph?\(query.joined(separator: "&"))"
-        }
-
-        let data = try await get(route)
-        return try JSONDecoder().decode(WorkspaceGraphResponse.self, from: data)
     }
 
     // MARK: - Git Commits
@@ -685,7 +666,7 @@ actor APIClient {
         }
 
         let data = try await post(
-            "/workspaces/\(workspaceId)/review/comments/attach-to-turn",
+            "/workspaces/\(workspaceId)/review/comments/sent",
             body: Body(ids: ids, sessionId: sessionId)
         )
         return try JSONDecoder().decode(ReviewCommentsResponse.self, from: data).comments
@@ -931,16 +912,6 @@ actor APIClient {
         }
     }
 
-    struct WorkspaceSummariesResponse: Decodable, Sendable {
-        let serverNow: Int64
-        let summaries: [WorkspaceListSummary]
-    }
-
-    func listWorkspaceSummaries() async throws -> WorkspaceSummariesResponse {
-        let data = try await get("/workspace-summaries")
-        return try JSONDecoder().decode(WorkspaceSummariesResponse.self, from: data)
-    }
-
     func getWorkspaceSessionList(
         workspaceId: String,
         since: Date,
@@ -948,7 +919,7 @@ actor APIClient {
     ) async throws -> WorkspaceSessionListResponse {
         let sinceMs = Int(since.timeIntervalSince1970 * 1000)
         let untilMs = Int(until.timeIntervalSince1970 * 1000)
-        let data = try await get("/workspaces/\(workspaceId)/session-list?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        let data = try await get("/workspaces/\(workspaceId)/home?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
         return try JSONDecoder().decode(WorkspaceSessionListResponse.self, from: data)
     }
 
@@ -959,28 +930,13 @@ actor APIClient {
     ) async throws -> WorkspaceSessionListBucketResponse {
         let sinceMs = Int(since.timeIntervalSince1970 * 1000)
         let untilMs = Int(until.timeIntervalSince1970 * 1000)
-        let data = try await get("/workspaces/\(workspaceId)/session-list-bucket?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        let data = try await get("/workspaces/\(workspaceId)/home?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
         return try JSONDecoder().decode(WorkspaceSessionListBucketResponse.self, from: data)
-    }
-
-    /// List all workspace session summaries.
-    func listAllWorkspaceSessionSummaries(workspaceId: String) async throws -> [SessionSummary] {
-        let data = try await get("/workspaces/\(workspaceId)/sessions")
-        return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
-    }
-
-    /// List recent workspace session summaries for one workspace.
-    func listRecentWorkspaceSessionSummaries(
-        workspaceId: String,
-        recentDays: Int = 3
-    ) async throws -> [SessionSummary] {
-        let data = try await get("/workspaces/\(workspaceId)/sessions?recentDays=\(recentDays)")
-        return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
     }
 
     /// List recent session summaries across all workspaces with one server request.
     func listRecentWorkspaceSessionSummaries(recentDays: Int = 3) async throws -> [SessionSummary] {
-        let data = try await get("/workspace-session-summaries?recentDays=\(recentDays)")
+        let data = try await get("/sessions/recent?recentDays=\(recentDays)")
         return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
     }
 
@@ -1053,23 +1009,6 @@ actor APIClient {
         let attachment: ChatAttachmentRef
     }
 
-    struct UploadMetadataResponse: Decodable, Sendable {
-        struct Upload: Decodable, Sendable {
-            let id: String
-            let status: String
-            let name: String
-            let mimeType: String
-            let detectedMimeType: String?
-            let sizeBytes: Int?
-            let sha256: String?
-            let kind: AttachmentKind?
-            let createdAt: Int
-            let expiresAt: Int
-        }
-
-        let upload: Upload
-    }
-
     func createUpload(
         workspaceId: String,
         name: String,
@@ -1108,11 +1047,6 @@ actor APIClient {
         return parsed.attachment
     }
 
-    func getUploadMetadata(workspaceId: String, uploadId: String) async throws -> UploadMetadataResponse {
-        let data = try await get("/workspaces/\(workspaceId)/uploads/\(uploadId)")
-        return try JSONDecoder().decode(UploadMetadataResponse.self, from: data)
-    }
-
     /// Create a session that resumes an existing local pi TUI session.
     func createWorkspaceSessionFromLocal(workspaceId: String, piSessionFile: String) async throws -> Session {
         struct Body: Encodable { let piSessionFile: String }
@@ -1149,32 +1083,12 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).session
     }
 
-    /// Stop a session via its workspace.
-    func stopWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
-        try await stopSession(workspaceId: workspaceId, id: sessionId)
-    }
-
-    // periphery:ignore - used by APIClientTests via @testable import
-    /// Get session detail via workspace path.
-    func getWorkspaceSession(
-        workspaceId: String,
-        sessionId: String,
-        traceView: SessionTraceView = .context
-    ) async throws -> (session: Session, trace: [TraceEvent]) {
-        try await getSession(workspaceId: workspaceId, id: sessionId, traceView: traceView)
-    }
-
-    /// Delete a session via workspace path.
-    func deleteWorkspaceSession(workspaceId: String, sessionId: String) async throws {
-        try await deleteSession(workspaceId: workspaceId, id: sessionId)
-    }
-
     // MARK: - Tool Output & Files
 
     /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.
     ///
     /// Used to lazy-load evicted tool output when the user expands an old tool call row.
-    func getToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
+    private func getToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
         let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)")
         struct Response: Decodable { let output: String; let isError: Bool }
         let response = try JSONDecoder().decode(Response.self, from: data)
@@ -1191,9 +1105,9 @@ actor APIClient {
     /// Fetch raw full (untruncated) tool output from the server temp-file side channel.
     ///
     /// Returns nil when the server no longer has the backing temp file (404).
-    func getFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
+    private func getFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
         do {
-            let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)/full")
+            let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)?full=true")
             struct Response: Decodable { let output: String }
             let response = try JSONDecoder().decode(Response.self, from: data)
             return response.output
@@ -1318,14 +1232,6 @@ actor APIClient {
     func registerDeviceToken(_ token: String, tokenType: String = "apns") async throws {
         struct Body: Encodable { let deviceToken: String; let tokenType: String }
         _ = try await post("/me/device-token", body: Body(deviceToken: token, tokenType: tokenType))
-    }
-
-    // periphery:ignore - used by APIClientTests via @testable import
-    /// Unregister APNs device token.
-    func unregisterDeviceToken(_ token: String) async throws {
-        struct Body: Encodable { let deviceToken: String }
-        let (data, response) = try await request("DELETE", path: "/me/device-token", body: Body(deviceToken: token))
-        try checkStatus(response, data: data)
     }
 
     // MARK: - Diagnostics

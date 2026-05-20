@@ -6,7 +6,7 @@ import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import type {
-  AttachReviewCommentsToTurnRequest,
+  MarkReviewCommentsSentRequest,
   CreateReviewCommentRequest,
   ReviewComment,
   ReviewCommentAttachment,
@@ -189,7 +189,7 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
     this.stmtDelete.run(workspaceId, id);
   }
 
-  attachToTurn(workspaceId: string, input: AttachReviewCommentsToTurnRequest): ReviewComment[] {
+  markSent(workspaceId: string, input: MarkReviewCommentsSentRequest): ReviewComment[] {
     this.assertLegacyHealthy(workspaceId);
 
     if (!Array.isArray(input.ids) || input.ids.length === 0) {

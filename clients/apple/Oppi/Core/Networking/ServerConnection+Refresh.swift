@@ -128,7 +128,7 @@ extension ServerConnection {
                         "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
                         "sessionCount": String(sessionSummaries.count),
                         "workspaceCount": String(workspaces.count),
-                        "source": "workspace_session_summaries",
+                        "source": "sessions_recent",
                     ]
                 )
             } catch {
@@ -301,14 +301,14 @@ extension ServerConnection {
             stashActiveExtensionDialogIfNeeded()
 
             do {
-                let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
+                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
                 applyFetchedSessionState(session)
             } catch {
                 logger.error("Failed to refresh session \(sessionId): \(error)")
             }
         } else {
             do {
-                let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
+                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
                 applyFetchedSessionState(session)
             } catch {
                 logger.error("Failed to refresh session metadata: \(error)")

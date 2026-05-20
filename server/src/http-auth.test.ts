@@ -31,11 +31,11 @@ describe("isQueryTokenAllowed", () => {
     expect(allowed("GET", "/workspaces/ws-1/files/image.png?mode=raw")).toBe(false);
   });
 
-  it("rejects workspace directory listing and search routes", () => {
+  it("rejects workspace directory listing and index routes", () => {
     expect(allowed("GET", "/workspaces/ws-1/files/?mode=browse")).toBe(false);
     expect(allowed("GET", "/workspaces/ws-1/files/folder/?mode=browse")).toBe(false);
     expect(allowed("GET", "/workspaces/ws-1/files/folder%2F?mode=browse")).toBe(false);
-    expect(allowed("GET", "/workspaces/ws-1/files?search=png")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/file-index")).toBe(false);
   });
 
   it("rejects JSON and control routes", () => {

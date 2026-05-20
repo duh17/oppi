@@ -2,7 +2,7 @@ import Foundation
 
 /// Models for the workspace file browser API.
 ///
-/// Mirrors `FileEntry`, `DirectoryListingResponse`, and `FileSearchResponse`
+/// Mirrors `FileEntry`, `DirectoryListingResponse`, and `FileIndexResponse`
 /// from `server/src/types.ts`.
 
 struct FileEntry: Codable, Sendable, Equatable, Identifiable, Hashable {
@@ -10,7 +10,7 @@ struct FileEntry: Codable, Sendable, Equatable, Identifiable, Hashable {
     let type: FileEntryType
     let size: Int
     let modifiedAt: Int
-    /// Workspace-relative path (present in search results).
+    /// Workspace-relative path when the caller needs full context.
     let path: String?
 
     var id: String { path ?? name }
@@ -47,13 +47,6 @@ enum FileEntryType: String, Codable, Sendable, Equatable, Hashable {
 
 struct DirectoryListingResponse: Codable, Sendable, Equatable {
     let path: String
-    let entries: [FileEntry]
-    let truncated: Bool
-}
-
-// periphery:ignore
-struct FileSearchResponse: Decodable, Sendable, Equatable {
-    let query: String
     let entries: [FileEntry]
     let truncated: Bool
 }

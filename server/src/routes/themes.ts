@@ -1,5 +1,5 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import type { ServerResponse } from "node:http";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -123,117 +123,7 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
   }
 
-  async function handlePutTheme(
-    name: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const body = await helpers.parseBody<{ theme: Record<string, unknown> }>(req);
-    const theme = body.theme;
-    if (!theme || typeof theme !== "object") {
-      helpers.error(res, 400, "Missing theme object in body");
-      return;
-    }
-    const colors = theme.colors as Record<string, string> | undefined;
-    const requiredKeys = [
-      "bg",
-      "bgDark",
-      "bgHighlight",
-      "fg",
-      "fgDim",
-      "comment",
-      "blue",
-      "cyan",
-      "green",
-      "orange",
-      "purple",
-      "red",
-      "yellow",
-      "thinkingText",
-      "userMessageBg",
-      "userMessageText",
-      "toolPendingBg",
-      "toolSuccessBg",
-      "toolErrorBg",
-      "toolTitle",
-      "toolOutput",
-      "mdHeading",
-      "mdLink",
-      "mdLinkUrl",
-      "mdCode",
-      "mdCodeBlock",
-      "mdCodeBlockBorder",
-      "mdQuote",
-      "mdQuoteBorder",
-      "mdHr",
-      "mdListBullet",
-      "toolDiffAdded",
-      "toolDiffRemoved",
-      "toolDiffContext",
-      "syntaxComment",
-      "syntaxKeyword",
-      "syntaxFunction",
-      "syntaxVariable",
-      "syntaxString",
-      "syntaxNumber",
-      "syntaxType",
-      "syntaxOperator",
-      "syntaxPunctuation",
-      "thinkingOff",
-      "thinkingMinimal",
-      "thinkingLow",
-      "thinkingMedium",
-      "thinkingHigh",
-      "thinkingXhigh",
-    ];
-    if (!colors || typeof colors !== "object") {
-      helpers.error(res, 400, "Missing colors object");
-      return;
-    }
-    const missing = requiredKeys.filter((k) => !(k in colors));
-    if (missing.length > 0) {
-      helpers.error(res, 400, `Missing color keys: ${missing.join(", ")}`);
-      return;
-    }
-    for (const [key, value] of Object.entries(colors)) {
-      if (typeof value !== "string") {
-        helpers.error(res, 400, `Invalid color value for "${key}": expected string`);
-        return;
-      }
-      if (value !== "" && !/^#[0-9a-fA-F]{6}$/.test(value)) {
-        helpers.error(res, 400, `Invalid hex color for "${key}": ${value}`);
-        return;
-      }
-    }
-    const dir = themesDir();
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!sanitizedName) {
-      helpers.error(res, 400, "Invalid theme name");
-      return;
-    }
-    const themeData = {
-      name: (theme.name as string) ?? sanitizedName,
-      colorScheme: (theme.colorScheme as string) ?? "dark",
-      colors,
-    };
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(join(dir, `${sanitizedName}.json`), JSON.stringify(themeData, null, 2), "utf8");
-    helpers.json(res, { theme: themeData, saved: true }, 201);
-  }
-
-  function handleDeleteTheme(name: string, res: ServerResponse): void {
-    const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, "");
-    const filePath = join(themesDir(), `${sanitizedName}.json`);
-    if (!existsSync(filePath)) {
-      helpers.error(res, 404, `Theme "${name}" not found`);
-      return;
-    }
-    unlinkSync(filePath);
-    helpers.json(res, { deleted: true });
-  }
-
-  return async ({ method, path, req, res }) => {
+  return async ({ method, path, res }) => {
     if (path === "/themes" && method === "GET") {
       handleListThemes(res);
       return true;
@@ -244,14 +134,6 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       const themeName = decodeURIComponent(themeMatch[1]);
       if (method === "GET") {
         handleGetTheme(themeName, res);
-        return true;
-      }
-      if (method === "PUT") {
-        await handlePutTheme(themeName, req, res);
-        return true;
-      }
-      if (method === "DELETE") {
-        handleDeleteTheme(themeName, res);
         return true;
       }
     }

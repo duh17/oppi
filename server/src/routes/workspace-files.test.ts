@@ -14,7 +14,6 @@ import {
   isBrowseMediaContentType,
   isStreamingMediaContentType,
   listDirectoryEntries,
-  searchWorkspaceFiles,
   getFileIndex,
 } from "./workspace-files.js";
 
@@ -472,13 +471,13 @@ describe("listDirectoryEntries", () => {
   });
 });
 
-// MARK: - searchWorkspaceFiles
+// MARK: - getFileIndex
 
-describe("searchWorkspaceFiles", () => {
+describe("getFileIndex", () => {
   let tmpRoot: string;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-search-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-index-"));
     mkdirSync(join(tmpRoot, "src", "components"), { recursive: true });
     mkdirSync(join(tmpRoot, "node_modules", "dep"), { recursive: true });
     writeFileSync(join(tmpRoot, "README.md"), "# Hello");
@@ -496,76 +495,28 @@ describe("searchWorkspaceFiles", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("finds files matching query by name", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "index");
-    expect(result.entries.length).toBeGreaterThanOrEqual(1);
-    const paths = result.entries.map((e) => e.path);
-    expect(paths).toContain("src/index.ts");
+  test("returns flat file paths for client-side search", async () => {
+    const result = await getFileIndex(tmpRoot);
+    expect(result.paths).toContain("README.md");
+    expect(result.paths).toContain("src/index.ts");
+    expect(result.paths).toContain("src/App.tsx");
+    expect(result.paths).toContain("src/components/Button.tsx");
+    expect(result.truncated).toBe(false);
   });
 
-  test("search is case-insensitive", async () => {
-    const upper = await searchWorkspaceFiles(tmpRoot, "README");
-    expect(upper.entries.length).toBeGreaterThanOrEqual(1);
-
-    const lower = await searchWorkspaceFiles(tmpRoot, "readme");
-    expect(lower.entries.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test("matches path components", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "components");
-    expect(result.entries.length).toBeGreaterThanOrEqual(1);
-    expect(result.entries.some((e) => e.path?.includes("components"))).toBe(true);
-  });
-
-  test("returns empty for no matches", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "zzzznotfound");
-    expect(result.entries).toHaveLength(0);
-  });
-
-  test("returns empty for empty query", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "");
-    expect(result.entries).toHaveLength(0);
-  });
-
-  test("returns empty for whitespace-only query", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "   ");
-    expect(result.entries).toHaveLength(0);
-  });
-
-  test("entries include name, path, type, size, modifiedAt", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "Button");
-    expect(result.entries.length).toBeGreaterThanOrEqual(1);
-    const button = result.entries.find((e) => e.name === "Button.tsx");
-    expect(button).toBeDefined();
-    expect(button!.path).toBe("src/components/Button.tsx");
-    expect(button!.type).toBe("file");
-    expect(button!.size).toBeGreaterThan(0);
-    expect(button!.modifiedAt).toBeGreaterThan(0);
-  });
-
-  test("skips files in ignored directories (walk fallback)", async () => {
-    // tmpRoot is not a git repo, so the walk fallback is used
-    const result = await searchWorkspaceFiles(tmpRoot, "dep");
-    const paths = result.entries.map((e) => e.path);
-    expect(paths).not.toContain("node_modules/dep/index.js");
-  });
-
-  test("finds files with extension in query", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, ".tsx");
-    expect(result.entries.length).toBeGreaterThanOrEqual(2);
-    const paths = result.entries.map((e) => e.path);
-    expect(paths).toContain("src/App.tsx");
-    expect(paths).toContain("src/components/Button.tsx");
+  test("skips files in ignored directories when walking", async () => {
+    const result = await getFileIndex(tmpRoot);
+    expect(result.paths).not.toContain("node_modules/dep/index.js");
   });
 });
 
-// MARK: - searchWorkspaceFiles (git-backed)
+// MARK: - getFileIndex (git-backed)
 
-describe("searchWorkspaceFiles with git repo", () => {
+describe("getFileIndex with git repo", () => {
   let tmpRoot: string;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-git-search-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-git-index-"));
     execSync("git init", { cwd: tmpRoot, stdio: "ignore" });
     execSync("git config user.email test@test.com", { cwd: tmpRoot, stdio: "ignore" });
     execSync("git config user.name Test", { cwd: tmpRoot, stdio: "ignore" });
@@ -575,7 +526,6 @@ describe("searchWorkspaceFiles with git repo", () => {
     writeFileSync(join(tmpRoot, "README.md"), "# Hello");
     writeFileSync(join(tmpRoot, "src", "app.ts"), "console.log('hi')");
     writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "module.exports = {}");
-    // .gitignore to exclude node_modules
     writeFileSync(join(tmpRoot, ".gitignore"), "node_modules/\n");
 
     execSync("git add -A && git commit -m init", { cwd: tmpRoot, stdio: "ignore" });
@@ -586,25 +536,16 @@ describe("searchWorkspaceFiles with git repo", () => {
   });
 
   test("uses git ls-files and respects .gitignore", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "index");
-    const paths = result.entries.map((e) => e.path);
-    // node_modules/dep/index.js is gitignored — should not appear
-    expect(paths).not.toContain("node_modules/dep/index.js");
+    const result = await getFileIndex(tmpRoot);
+    expect(result.paths).toContain("src/app.ts");
+    expect(result.paths).not.toContain("node_modules/dep/index.js");
   });
 
-  test("finds tracked files", async () => {
-    const result = await searchWorkspaceFiles(tmpRoot, "app");
-    const paths = result.entries.map((e) => e.path);
-    expect(paths).toContain("src/app.ts");
-  });
-
-  test("finds untracked but non-ignored files", async () => {
-    // Create an untracked file that's not in .gitignore
+  test("includes untracked but non-ignored files", async () => {
     writeFileSync(join(tmpRoot, "src", "new-feature.ts"), "export {}");
 
-    const result = await searchWorkspaceFiles(tmpRoot, "new-feature");
-    const paths = result.entries.map((e) => e.path);
-    expect(paths).toContain("src/new-feature.ts");
+    const result = await getFileIndex(tmpRoot);
+    expect(result.paths).toContain("src/new-feature.ts");
   });
 });
 

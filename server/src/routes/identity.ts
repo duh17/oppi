@@ -245,17 +245,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { ok: true });
   }
 
-  async function handleDeleteDeviceToken(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const body = await helpers.parseBody<{ deviceToken: string }>(req);
-    if (body.deviceToken) {
-      ctx.storage.removePushDeviceToken(body.deviceToken);
-      log.info("identity.push.device_token.removed", {
-        owner: ctx.storage.getOwnerName(),
-      });
-    }
-    helpers.json(res, { ok: true });
-  }
-
   function handleGetDailyDetail(date: string, url: URL, res: ServerResponse): void {
     const parsed = new Date(date + "T00:00:00Z");
     if (isNaN(parsed.getTime())) {
@@ -321,12 +310,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       handleGetServerStats(url, res);
       return true;
     }
-    if (path === "/server/runtime/status" && method === "GET") {
-      const force = url.searchParams.get("force") === "true";
-      const status = await ctx.getRuntimeUpdateStatus({ force });
-      helpers.json(res, status);
-      return true;
-    }
     if (path === "/server/runtime/update" && method === "POST") {
       await handleRuntimeUpdate(res);
       return true;
@@ -339,11 +322,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       await handleRegisterDeviceToken(req, res);
       return true;
     }
-    if (path === "/me/device-token" && method === "DELETE") {
-      await handleDeleteDeviceToken(req, res);
-      return true;
-    }
-
     if (path === "/server/auto-title" && method === "GET") {
       const config = ctx.storage.getConfig();
       helpers.json(res, config.autoTitle ?? { enabled: false });

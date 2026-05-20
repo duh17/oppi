@@ -1,5 +1,5 @@
 import type {
-  AttachReviewCommentsToTurnRequest,
+  MarkReviewCommentsSentRequest,
   CreateReviewCommentRequest,
   ReviewComment,
   UpdateReviewCommentRequest,
@@ -26,5 +26,5 @@ export interface ReviewCommentDao {
   create(workspaceId: string, input: CreateReviewCommentRequest): ReviewComment;
   update(workspaceId: string, id: string, patch: UpdateReviewCommentRequest): ReviewComment;
   delete(workspaceId: string, id: string): void;
-  attachToTurn(workspaceId: string, input: AttachReviewCommentsToTurnRequest): ReviewComment[];
+  markSent(workspaceId: string, input: MarkReviewCommentsSentRequest): ReviewComment[];
 }

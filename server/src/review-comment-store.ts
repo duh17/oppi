@@ -4,7 +4,7 @@ import {
   type ReviewCommentListFilters,
 } from "./storage/review-comment-dao.js";
 import type {
-  AttachReviewCommentsToTurnRequest,
+  MarkReviewCommentsSentRequest,
   CreateReviewCommentRequest,
   ReviewComment,
   UpdateReviewCommentRequest,
@@ -44,8 +44,8 @@ export class ReviewCommentStore {
     this.store.delete(this.workspaceId, id);
   }
 
-  async attachToTurn(input: AttachReviewCommentsToTurnRequest): Promise<ReviewComment[]> {
-    return this.store.attachToTurn(this.workspaceId, input);
+  async markSent(input: MarkReviewCommentsSentRequest): Promise<ReviewComment[]> {
+    return this.store.markSent(this.workspaceId, input);
   }
 
   close(): void {
