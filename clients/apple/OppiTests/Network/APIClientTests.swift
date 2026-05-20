@@ -151,6 +151,39 @@ struct APIClientTests {
         #expect(sessions[0].currentTurnStartedAt == Date(timeIntervalSince1970: 1.5))
     }
 
+    @Test func getWorkspaceSessionListBucketRequestsStoppedScope() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/home")
+            let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+            #expect(query["sinceMs"] == "1000")
+            #expect(query["untilMs"] == "2000")
+            #expect(query["scope"] == "stopped")
+            return self.mockResponse(json: """
+            {
+              "workspaceId":"w1",
+              "sinceMs":1000,
+              "untilMs":2000,
+              "sessions":[
+                {"id":"s1","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":1500,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}
+              ],
+              "importableSessions":[]
+            }
+            """)
+        }
+
+        let response = try await client.getWorkspaceSessionListBucket(
+            workspaceId: "w1",
+            since: Date(timeIntervalSince1970: 1),
+            until: Date(timeIntervalSince1970: 2)
+        )
+
+        #expect(response.sessionSummaries.map(\.id) == ["s1"])
+    }
+
     @Test func createSession() async throws {
         let client = makeClient()
         defer { cleanup() }

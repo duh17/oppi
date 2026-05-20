@@ -9,6 +9,7 @@ struct WorkspaceStoppedSessionsSection: View {
     let childSummary: (Session) -> SessionRow.ChildSummary?
     let modelSummaries: (Session) -> [SessionModelSummary]
     let searchSnippet: (String) -> AttributedString?
+    let onOpenSession: (Session) -> Void
     let onResumeSession: (Session) -> Void
     let onDeleteSession: (Session) -> Void
     let onImportLocal: (LocalSession) -> Void
@@ -138,7 +139,9 @@ struct WorkspaceStoppedSessionsSection: View {
                     ForEach(group.items) { item in
                         switch item {
                         case .session(let session):
-                            NavigationLink(value: session.id) {
+                            Button {
+                                onOpenSession(session)
+                            } label: {
                                 SessionRow(
                                     session: session,
                                     pendingCount: 0,
@@ -148,6 +151,7 @@ struct WorkspaceStoppedSessionsSection: View {
                                     searchSnippet: searchSnippet(session.id)
                                 )
                             }
+                            .buttonStyle(.plain)
                             .accessibilityIdentifier("session.nav.\(session.id)")
                             .listRowBackground(Color.themeBg)
                             .swipeActions(edge: .leading) {
@@ -213,7 +217,9 @@ struct WorkspaceStoppedSessionsSection: View {
                         ForEach(archiveItems(for: bucket)) { item in
                             switch item {
                             case .session(let session):
-                                NavigationLink(value: session.id) {
+                                Button {
+                                    onOpenSession(session)
+                                } label: {
                                     SessionRow(
                                         session: session,
                                         pendingCount: 0,
@@ -223,6 +229,7 @@ struct WorkspaceStoppedSessionsSection: View {
                                         searchSnippet: searchSnippet(session.id)
                                     )
                                 }
+                                .buttonStyle(.plain)
                                 .accessibilityIdentifier("session.nav.\(session.id)")
                                 .listRowBackground(Color.themeBg)
                                 .swipeActions(edge: .leading) {

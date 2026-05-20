@@ -930,7 +930,7 @@ actor APIClient {
     ) async throws -> WorkspaceSessionListBucketResponse {
         let sinceMs = Int(since.timeIntervalSince1970 * 1000)
         let untilMs = Int(until.timeIntervalSince1970 * 1000)
-        let data = try await get("/workspaces/\(workspaceId)/home?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        let data = try await get("/workspaces/\(workspaceId)/home?sinceMs=\(sinceMs)&untilMs=\(untilMs)&scope=stopped")
         return try JSONDecoder().decode(WorkspaceSessionListBucketResponse.self, from: data)
     }
 

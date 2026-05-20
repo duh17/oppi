@@ -77,6 +77,11 @@ interface MockRouteContext {
     listSessions: ReturnType<typeof vi.fn>;
     getDataDir: ReturnType<typeof vi.fn>;
   };
+  sessions: {
+    getActiveSessionIds: ReturnType<typeof vi.fn>;
+    getActiveSession: ReturnType<typeof vi.fn>;
+    getPendingAskMessage: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteContext {
@@ -105,13 +110,15 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     getDataDir: vi.fn().mockReturnValue("/tmp/oppi-workspace-session-list-tests"),
   };
 
+  const sessions = {
+    getActiveSessionIds: vi.fn().mockReturnValue([]),
+    getActiveSession: vi.fn(),
+    getPendingAskMessage: vi.fn(),
+  };
+
   const ctx = {
     storage,
-    sessions: {
-      getActiveSessionIds: vi.fn().mockReturnValue([]),
-      getActiveSession: vi.fn(),
-      getPendingAskMessage: vi.fn(),
-    },
+    sessions,
     gate: {
       getPendingForUser: vi.fn().mockReturnValue([]),
     },
@@ -148,7 +155,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     },
   };
 
-  return { ctx, helpers, responses, errors, storage };
+  return { ctx, helpers, responses, errors, storage, sessions };
 }
 
 async function dispatch(mock: MockRouteContext, path: string, url: string): Promise<boolean> {
@@ -191,6 +198,25 @@ describe("workspace home session routes", () => {
       {
         status: 400,
         message: "sinceMs and untilMs are required and must form a valid range",
+      },
+    ]);
+  });
+
+  it("rejects unknown workspace home scopes", async () => {
+    const mock = createMockContext();
+
+    const handled = await dispatch(
+      mock,
+      "/workspaces/ws-1/home",
+      "https://localhost/workspaces/ws-1/home?sinceMs=0&untilMs=1000&scope=archive",
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.responses).toHaveLength(0);
+    expect(mock.errors).toEqual([
+      {
+        status: 400,
+        message: "scope must be 'stopped' when provided",
       },
     ]);
   });
@@ -355,12 +381,19 @@ describe("workspace home session routes", () => {
     expect(response.sessions[1]).not.toHaveProperty("warnings");
   });
 
-  it("returns only the requested bucket contents", async () => {
+  it("returns only the requested stopped bucket contents", async () => {
     const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
     const sinceMs = Date.parse("2026-05-10T00:00:00Z");
     const untilMs = Date.parse("2026-05-11T00:00:00Z");
 
     mock.storage.listWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
+      makeSession({ id: "active-leak", status: "busy", lastActivity: Date.now() }),
+    ]);
+    mock.sessions.getActiveSessionIds.mockReturnValue(["live-active"]);
+    mock.sessions.getActiveSession.mockReturnValue(
+      makeSession({ id: "live-active", status: "busy", lastActivity: Date.now() }),
+    );
+    mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
       makeSession({ id: "stopped-in-bucket", status: "stopped", lastActivity: sinceMs + 1_000 }),
     ]);
     mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([]);
@@ -383,11 +416,17 @@ describe("workspace home session routes", () => {
     const handled = await dispatch(
       mock,
       "/workspaces/ws-1/home",
-      `https://localhost/workspaces/ws-1/home?sinceMs=${sinceMs}&untilMs=${untilMs}`,
+      `https://localhost/workspaces/ws-1/home?sinceMs=${sinceMs}&untilMs=${untilMs}&scope=stopped`,
     );
 
     expect(handled).toBe(true);
     expect(mock.errors).toHaveLength(0);
+    expect(mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots).toHaveBeenCalledWith(
+      "ws-1",
+      sinceMs,
+      untilMs,
+    );
+    expect(mock.storage.listWorkspaceTimeRangeSessionSnapshots).not.toHaveBeenCalled();
 
     const response = mock.responses[0]?.data as {
       workspaceId: string;

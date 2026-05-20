@@ -178,6 +178,78 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.currentTurnStartedAt == turnStart)
     }
 
+    @Test func upsertPreservesWorkspaceContextAndModelWhenIncomingUpdateOmitsThem() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let initial = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            workspaceName: "Oppi",
+            status: .stopped,
+            model: "openai-codex/gpt-5.4"
+        )
+        store.upsert(initial)
+
+        let incoming = makeTestSession(id: "s1", workspaceId: nil, workspaceName: nil, status: .stopped, model: nil)
+        store.upsert(incoming)
+
+        #expect(store.session(id: "s1")?.workspaceId == "w1")
+        #expect(store.session(id: "s1")?.workspaceName == "Oppi")
+        #expect(store.session(id: "s1")?.model == "openai-codex/gpt-5.4")
+    }
+
+    @Test func applyServerSnapshotPreservesWorkspaceContextAndModelWhenSnapshotOmitsThem() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let local = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            workspaceName: "Oppi",
+            status: .stopped,
+            model: "openai-codex/gpt-5.4"
+        )
+        store.upsert(local)
+
+        let remote = makeTestSession(id: "s1", workspaceId: nil, workspaceName: nil, status: .stopped, model: nil)
+        store.applyServerSnapshot([remote])
+
+        #expect(store.session(id: "s1")?.workspaceId == "w1")
+        #expect(store.session(id: "s1")?.workspaceName == "Oppi")
+        #expect(store.session(id: "s1")?.model == "openai-codex/gpt-5.4")
+    }
+
+    @Test func applyWorkspaceRecentSnapshotNormalizesMissingWorkspaceContext() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let incoming = makeTestSession(id: "s1", workspaceId: nil, status: .stopped)
+        store.applyWorkspaceRecentSnapshot(workspaceId: "w1", summaries: [SessionSummary(from: incoming)])
+
+        #expect(store.session(id: "s1")?.workspaceId == "w1")
+    }
+
+    @Test func cacheSessionForNavigationDoesNotAddArchiveRowToListProjection() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let hot = makeTestSession(id: "hot", workspaceId: "w1", status: .stopped)
+        store.applyWorkspaceRecentSnapshot(workspaceId: "w1", summaries: [SessionSummary(from: hot)])
+
+        let archived = makeTestSession(
+            id: "archived",
+            workspaceId: "w1",
+            status: .stopped,
+            createdAt: Date(timeIntervalSince1970: 1_600_000_000),
+            lastActivity: Date(timeIntervalSince1970: 1_600_000_000)
+        )
+        store.cacheSessionForNavigation(archived)
+
+        #expect(store.session(id: "archived")?.workspaceId == "w1")
+        #expect(store.listProjectionSessions(workspaceId: "w1").map(\.id) == ["hot"])
+    }
+
     @Test func applySummaryUsesUpsertMergeSemantics() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

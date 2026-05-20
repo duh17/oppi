@@ -462,21 +462,33 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
+    const scope = url.searchParams.get("scope");
+    if (scope !== null && scope !== "stopped") {
+      helpers.error(res, 400, "scope must be 'stopped' when provided");
+      return;
+    }
+
     const serverNow = Date.now();
-    const sessions = summarizeWorkspaceListSessions(
-      mergeActiveWorkspaceSessions(
-        ctx.storage.listWorkspaceTimeRangeSessionSnapshots(
+    const stoppedOnly = scope === "stopped";
+    const projectedSessions = stoppedOnly
+      ? ctx.storage.listStoppedWorkspaceTimeRangeSessionSnapshots(
           workspaceId,
           timeRange.sinceMs,
           timeRange.untilMs,
-        ),
-        workspaceId,
-        {
-          cutoffMs: timeRange.sinceMs,
-          untilMs: timeRange.untilMs,
-        },
-      ),
-    );
+        )
+      : mergeActiveWorkspaceSessions(
+          ctx.storage.listWorkspaceTimeRangeSessionSnapshots(
+            workspaceId,
+            timeRange.sinceMs,
+            timeRange.untilMs,
+          ),
+          workspaceId,
+          {
+            cutoffMs: timeRange.sinceMs,
+            untilMs: timeRange.untilMs,
+          },
+        );
+    const sessions = summarizeWorkspaceListSessions(projectedSessions);
 
     const importableSnapshot = listWorkspaceImportableSessions(workspace);
     refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);

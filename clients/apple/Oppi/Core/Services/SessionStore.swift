@@ -223,6 +223,25 @@ final class SessionStore {
         upsertMerged(session)
     }
 
+    /// Cache a session for direct navigation without broadening the cold list projection.
+    ///
+    /// Archive rows need enough full-session context for `ChatView` resolution, but
+    /// opening an old row must not make it appear in the hot workspace list.
+    @discardableResult
+    func cacheSessionForNavigation(_ session: Session) -> Bool {
+        var list = sessions
+        guard merge(session, into: &list) else { return false }
+        serverSessions[activeServerKey] = list
+
+        if var projection = serverListProjectionSessions[activeServerKey],
+           projection.contains(where: { $0.id == session.id }) {
+            _ = merge(session, into: &projection)
+            serverListProjectionSessions[activeServerKey] = projection
+        }
+
+        return true
+    }
+
     /// Insert or update several sessions as a single store mutation.
     ///
     /// Use for REST list refreshes so cold list projections are invalidated once
@@ -487,6 +506,16 @@ final class SessionStore {
 
         if merged.contextWindow == nil {
             merged.contextWindow = existing.contextWindow
+        }
+
+        if merged.workspaceId == nil || merged.workspaceId?.isEmpty == true {
+            merged.workspaceId = existing.workspaceId
+        }
+        if merged.workspaceName == nil || merged.workspaceName?.isEmpty == true {
+            merged.workspaceName = existing.workspaceName
+        }
+        if merged.model == nil || merged.model?.isEmpty == true {
+            merged.model = existing.model
         }
 
         if merged.currentTurnStartedAt == nil,

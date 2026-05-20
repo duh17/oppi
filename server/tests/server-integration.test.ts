@@ -306,6 +306,46 @@ describe("workspaces API", () => {
     expect(body.sessions.length).toBe(0);
   });
 
+  it("GET /workspaces/:id/home scope=stopped excludes active sessions", async () => {
+    const createRes = await post("/workspaces", { name: "stopped-scope-test", skills: [] });
+    const { workspace } = await createRes.json();
+    const now = Date.now();
+    const sinceMs = now - 40 * 86_400_000;
+    const untilMs = sinceMs + 86_400_000;
+
+    storage.saveSession({
+      id: `${workspace.id}-stopped-in-bucket`,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      status: "stopped",
+      createdAt: sinceMs,
+      lastActivity: sinceMs + 1_000,
+      messageCount: 1,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    });
+    storage.saveSession({
+      id: `${workspace.id}-active-outside-bucket`,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      status: "busy",
+      createdAt: now,
+      lastActivity: now,
+      messageCount: 1,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    });
+
+    const res = await get(
+      `/workspaces/${workspace.id}/home?sinceMs=${sinceMs}&untilMs=${untilMs}&scope=stopped`,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sessions.map((session: { id: string }) => session.id)).toEqual([
+      `${workspace.id}-stopped-in-bucket`,
+    ]);
+  });
+
   it("GET /workspaces/:id/attention returns an authoritative empty snapshot", async () => {
     const createRes = await post("/workspaces", { name: "attention-test", skills: [] });
     const { workspace } = await createRes.json();
@@ -837,12 +877,15 @@ describe("WebSocket", () => {
   });
 
   it("rejects WS upgrade with mismatched Origin header", async () => {
-    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/sessions/test/stream`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Origin: "http://evil.example.com",
+    const ws = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/workspaces/test/sessions/test/stream`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Origin: "http://evil.example.com",
+        },
       },
-    });
+    );
     const rejection = await waitForUpgradeRejection(ws);
     expect(rejection.statusCode).toBe(403);
   });

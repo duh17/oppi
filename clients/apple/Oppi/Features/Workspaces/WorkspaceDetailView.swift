@@ -514,6 +514,9 @@ struct WorkspaceDetailView: View {
                     return modelSummaries(for: session, descendants: descendants)
                 },
                 searchSnippet: { searchStore.snippetsBySessionId[$0] },
+                onOpenSession: { session in
+                    openStoppedSession(session)
+                },
                 onResumeSession: { session in
                     Task { await resumeSession(session) }
                 },
@@ -901,6 +904,18 @@ struct WorkspaceDetailView: View {
         }
     }
 
+    private func openStoppedSession(_ session: Session) {
+        var normalized = session
+        if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
+            normalized.workspaceId = currentWorkspace.id
+        }
+        if normalized.workspaceName == nil || normalized.workspaceName?.isEmpty == true {
+            normalized.workspaceName = currentWorkspace.name
+        }
+        sessionStore.cacheSessionForNavigation(normalized)
+        navigateToSessionId = normalized.id
+    }
+
     private func importAndResumeLocal(_ local: LocalSession) async {
         guard let api = apiClient else { return }
         isImportingLocal = true
@@ -961,7 +976,13 @@ struct WorkspaceDetailView: View {
                 since: bucket.startAt,
                 until: bucket.endAt
             )
-            archiveStoppedSessionsByBucketID[bucket.id] = response.sessionSummaries.map(\.session)
+            archiveStoppedSessionsByBucketID[bucket.id] = response.sessionSummaries
+                .map(\.session)
+                .filter { session in
+                    session.status == .stopped &&
+                        session.lastActivity >= bucket.startAt &&
+                        session.lastActivity < bucket.endAt
+                }
             archiveLocalSessionsByBucketID[bucket.id] = response.importableSessions
         } catch {
             self.error = "Failed to load older sessions: \(error.localizedDescription)"
