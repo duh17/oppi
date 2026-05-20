@@ -2,6 +2,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type RouteSurface = "core" | "admin" | "internal";
 export type RouteAuth = "none" | "owner" | "query-token-browse";
 export type RouteTransport = "http" | "websocket";
+export type RouteProfile = "native-runtime" | "native-admin";
 
 export type SchemaRef = `#/components/schemas/${string}`;
 
@@ -20,6 +21,7 @@ export interface ApiRouteSpec {
   surface: RouteSurface;
   auth: RouteAuth;
   transport?: RouteTransport;
+  profiles?: readonly RouteProfile[];
   description?: string;
   schemas?: ApiRouteSchemas;
 }
@@ -27,7 +29,102 @@ export interface ApiRouteSpec {
 const schemaRef = (name: string): SchemaRef => `#/components/schemas/${name}` as SchemaRef;
 const errorResponse = schemaRef("ErrorResponse");
 
-export const apiRouteSpecs = [
+const nativeRuntimeOperationIds = new Set<string>([
+  "getHealth",
+  "pairDevice",
+  "getCurrentUser",
+  "getServerInfo",
+  "listModels",
+  "registerDeviceToken",
+  "listWorkspaceCatalog",
+  "getWorkspace",
+  "getWorkspaceHome",
+  "getWorkspaceFileIndex",
+  "getWorkspaceFilesRoot",
+  "getWorkspaceFile",
+  "createUpload",
+  "putUploadContent",
+  "createWorkspaceSession",
+  "getWorkspaceSession",
+  "deleteWorkspaceSession",
+  "stopWorkspaceSession",
+  "resumeWorkspaceSession",
+  "forkWorkspaceSession",
+  "getSessionEvents",
+  "getSessionOverallDiff",
+  "getSessionFile",
+  "getSessionTouchedFile",
+  "getSessionAttachment",
+  "getSessionToolOutput",
+  "openSessionStream",
+  "openSessionAudioStream",
+  "searchSessions",
+  "listRecentSessions",
+  "getWorkspaceGitStatus",
+  "listWorkspaceCommits",
+  "getWorkspaceCommit",
+  "getWorkspaceCommitDiff",
+  "getWorkspaceReviewDiff",
+  "listReviewComments",
+  "createReviewComment",
+  "markReviewCommentsSent",
+  "updateReviewComment",
+  "deleteReviewComment",
+  "listWorkspaceQuickActions",
+  "prepareWorkspaceQuickActionSelection",
+  "createWorkspaceQuickActionSession",
+  "respondToPermission",
+]);
+
+const nativeAdminOperationIds = new Set<string>([
+  "getCodexUsage",
+  "getServerStats",
+  "getDailyServerStats",
+  "updateServerRuntime",
+  "getAutoTitleConfig",
+  "setAutoTitleConfig",
+  "getSubagentConfig",
+  "setSubagentConfig",
+  "createWorkspace",
+  "updateWorkspace",
+  "deleteWorkspace",
+  "getPolicyFallback",
+  "updatePolicyFallback",
+  "listPolicyRules",
+  "createPolicyRule",
+  "updatePolicyRule",
+  "deletePolicyRule",
+  "listPolicyAudit",
+  "listProviderAuthStatus",
+  "startProviderAuthFlow",
+  "getProviderAuthFlow",
+  "submitProviderAuthPromptResponse",
+  "submitProviderAuthManualCode",
+  "cancelProviderAuthFlow",
+  "setProviderApiKey",
+  "removeProviderCredential",
+  "listSkills",
+  "getSkill",
+  "getSkillFile",
+  "listExtensions",
+  "listHostDirectories",
+  "getHostPathStatus",
+  "completeHostPath",
+  "createHostPath",
+  "listThemes",
+  "getTheme",
+  "uploadMetricKitPayload",
+  "uploadChatMetrics",
+]);
+
+function routeProfilesFor(operationId: string): readonly RouteProfile[] | undefined {
+  const profiles: RouteProfile[] = [];
+  if (nativeRuntimeOperationIds.has(operationId)) profiles.push("native-runtime");
+  if (nativeAdminOperationIds.has(operationId)) profiles.push("native-admin");
+  return profiles.length > 0 ? profiles : undefined;
+}
+
+const rawApiRouteSpecs = [
   {
     method: "GET",
     path: "/health",
@@ -199,13 +296,8 @@ export const apiRouteSpecs = [
     method: "GET",
     path: "/workspaces/{workspaceId}/attention",
     operationId: "getWorkspaceAttention",
-    surface: "core",
+    surface: "internal",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      response: schemaRef("WorkspaceAttentionResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -578,9 +670,8 @@ export const apiRouteSpecs = [
     method: "GET",
     path: "/permissions/pending",
     operationId: "listPendingPermissions",
-    surface: "core",
+    surface: "internal",
     auth: "owner",
-    schemas: { response: schemaRef("PendingPermissionsResponse"), error: errorResponse },
   },
   {
     method: "POST",
@@ -827,6 +918,11 @@ export const apiRouteSpecs = [
     auth: "owner",
   },
 ] as const satisfies readonly ApiRouteSpec[];
+
+export const apiRouteSpecs = rawApiRouteSpecs.map((route): ApiRouteSpec => {
+  const profiles = routeProfilesFor(route.operationId);
+  return profiles ? { ...route, profiles } : route;
+});
 
 interface CompiledRoutePattern {
   pattern: string;

@@ -14,7 +14,6 @@ const initialSchemaOperationIds = [
   "updateWorkspace",
   "deleteWorkspace",
   "getWorkspaceHome",
-  "getWorkspaceAttention",
   "getWorkspaceFileIndex",
   "createWorkspaceSession",
   "getWorkspaceSession",
@@ -33,8 +32,95 @@ const initialSchemaOperationIds = [
   "listWorkspaceQuickActions",
   "prepareWorkspaceQuickActionSelection",
   "createWorkspaceQuickActionSession",
-  "listPendingPermissions",
   "respondToPermission",
+];
+
+const nativeRuntimeOperationIds = [
+  "getHealth",
+  "pairDevice",
+  "getCurrentUser",
+  "getServerInfo",
+  "listModels",
+  "registerDeviceToken",
+  "listWorkspaceCatalog",
+  "getWorkspace",
+  "getWorkspaceHome",
+  "getWorkspaceFileIndex",
+  "getWorkspaceFilesRoot",
+  "getWorkspaceFile",
+  "createUpload",
+  "putUploadContent",
+  "createWorkspaceSession",
+  "getWorkspaceSession",
+  "deleteWorkspaceSession",
+  "stopWorkspaceSession",
+  "resumeWorkspaceSession",
+  "forkWorkspaceSession",
+  "getSessionEvents",
+  "getSessionOverallDiff",
+  "getSessionFile",
+  "getSessionTouchedFile",
+  "getSessionAttachment",
+  "getSessionToolOutput",
+  "openSessionStream",
+  "openSessionAudioStream",
+  "searchSessions",
+  "listRecentSessions",
+  "getWorkspaceGitStatus",
+  "listWorkspaceCommits",
+  "getWorkspaceCommit",
+  "getWorkspaceCommitDiff",
+  "getWorkspaceReviewDiff",
+  "listReviewComments",
+  "createReviewComment",
+  "markReviewCommentsSent",
+  "updateReviewComment",
+  "deleteReviewComment",
+  "listWorkspaceQuickActions",
+  "prepareWorkspaceQuickActionSelection",
+  "createWorkspaceQuickActionSession",
+  "respondToPermission",
+];
+
+const nativeAdminOperationIds = [
+  "getCodexUsage",
+  "getServerStats",
+  "getDailyServerStats",
+  "updateServerRuntime",
+  "getAutoTitleConfig",
+  "setAutoTitleConfig",
+  "getSubagentConfig",
+  "setSubagentConfig",
+  "createWorkspace",
+  "updateWorkspace",
+  "deleteWorkspace",
+  "getPolicyFallback",
+  "updatePolicyFallback",
+  "listPolicyRules",
+  "createPolicyRule",
+  "updatePolicyRule",
+  "deletePolicyRule",
+  "listPolicyAudit",
+  "listProviderAuthStatus",
+  "startProviderAuthFlow",
+  "getProviderAuthFlow",
+  "submitProviderAuthPromptResponse",
+  "submitProviderAuthManualCode",
+  "cancelProviderAuthFlow",
+  "setProviderApiKey",
+  "removeProviderCredential",
+  "listSkills",
+  "getSkill",
+  "getSkillFile",
+  "listExtensions",
+  "listHostDirectories",
+  "getHostPathStatus",
+  "completeHostPath",
+  "createHostPath",
+  "listThemes",
+  "getTheme",
+  "uploadMetricKitPayload",
+  "uploadChatMetrics",
 ];
 
 describe("api route registry", () => {
@@ -70,6 +156,35 @@ describe("api route registry", () => {
     expect(normalizeRegisteredPathPattern("/server/stats/daily/2026-05-19")).toBe(
       "/server/stats/daily/:date",
     );
+  });
+
+  it("tracks native route profiles", () => {
+    const byProfile = (profile: "native-runtime" | "native-admin") =>
+      apiRouteSpecs
+        .filter((route) => route.profiles?.includes(profile))
+        .map((route) => route.operationId)
+        .sort();
+
+    expect(byProfile("native-runtime")).toEqual([...nativeRuntimeOperationIds].sort());
+    expect(byProfile("native-admin")).toEqual([...nativeAdminOperationIds].sort());
+  });
+
+  it("keeps internal/debug routes out of native client profiles", () => {
+    const allowedInternalProfileOperationIds = new Set(["getHealth"]);
+    for (const route of apiRouteSpecs.filter((candidate) => candidate.surface === "internal")) {
+      if (allowedInternalProfileOperationIds.has(route.operationId)) continue;
+      expect(route.profiles, `${route.operationId} profiles`).toBeUndefined();
+    }
+  });
+
+  it("demotes standalone attention snapshots out of the native client contract", () => {
+    const byOperationId = new Map(apiRouteSpecs.map((route) => [route.operationId, route]));
+
+    expect(byOperationId.get("getWorkspaceAttention")?.surface).toBe("internal");
+    expect(byOperationId.get("getWorkspaceAttention")?.profiles).toBeUndefined();
+    expect(byOperationId.get("listPendingPermissions")?.surface).toBe("internal");
+    expect(byOperationId.get("listPendingPermissions")?.profiles).toBeUndefined();
+    expect(byOperationId.get("respondToPermission")?.profiles).toContain("native-runtime");
   });
 
   it("tracks the initial schema-covered route set", () => {
