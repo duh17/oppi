@@ -25,6 +25,7 @@ import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { BoundSessionStreamMux, SessionAudioStreamMux } from "./stream.js";
 import { UserEventStore } from "./user-event-store.js";
 import { RouteHandler } from "./routes/index.js";
+import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { ServerResourceSampler } from "./server-resource-sampler.js";
@@ -172,32 +173,10 @@ export function formatPermissionRequestLog(opts: {
  * so HTTP request metrics aggregate by route pattern, not by resource.
  */
 function normalizePathPattern(path: string): string {
+  const registered = normalizeRegisteredPathPattern(path);
+  if (registered) return registered;
+
   return path
-    .replace(/^\/workspaces\/[^/]+\/sessions$/, "/workspaces/:workspaceId/sessions")
-    .replace(
-      /^\/workspaces\/[^/]+\/sessions\/[^/]+$/,
-      "/workspaces/:workspaceId/sessions/:sessionId",
-    )
-    .replace(/^\/workspace-session-summaries$/, "/workspace-session-summaries")
-    .replace(/^\/workspaces\/[^/]+\/session-list$/, "/workspaces/:workspaceId/session-list")
-    .replace(
-      /^\/workspaces\/[^/]+\/session-list-bucket$/,
-      "/workspaces/:workspaceId/session-list-bucket",
-    )
-    .replace(/^\/workspaces\/[^/]+\/attention$/, "/workspaces/:workspaceId/attention")
-    .replace(/^\/workspaces\/[^/]+\/git-status$/, "/workspaces/:workspaceId/git-status")
-    .replace(/^\/workspaces\/[^/]+\/review\/comments$/, "/workspaces/:workspaceId/review/comments")
-    .replace(/^\/workspaces\/[^/]+\/quick-actions$/, "/workspaces/:workspaceId/quick-actions")
-    .replace(
-      /^\/workspaces\/[^/]+\/quick-actions\/selection$/,
-      "/workspaces/:workspaceId/quick-actions/selection",
-    )
-    .replace(
-      /^\/workspaces\/[^/]+\/quick-actions\/session$/,
-      "/workspaces/:workspaceId/quick-actions/session",
-    )
-    .replace(/^\/workspaces\/[^/]+\/file-index$/, "/workspaces/:workspaceId/file-index")
-    .replace(/^\/workspaces\/[^/]+\/stream\/events$/, "/workspaces/:workspaceId/stream/events")
     .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/:id")
     .replace(/\/[0-9a-f]{16,}/gi, "/:id");
 }
