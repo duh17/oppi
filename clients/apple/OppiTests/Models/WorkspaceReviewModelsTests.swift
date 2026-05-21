@@ -133,4 +133,62 @@ struct WorkspaceReviewModelsTests {
 
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: diff, error: "boom") == .loaded(diff))
     }
+
+    @Test func fileDetailFallsBackWhenSessionDiffIsEmptyButGitShowsLineChanges() {
+        let file = makeReviewFile(addedLines: 2, removedLines: 5)
+        let emptySessionDiff = makeReviewDiff(addedLines: 0, removedLines: 0, hunkCount: 0)
+
+        #expect(WorkspaceReviewFileDetailView.shouldFallbackToWorkspaceDiff(
+            sessionDiff: emptySessionDiff,
+            file: file
+        ))
+    }
+
+    @Test func fileDetailKeepsSessionDiffWhenItHasVisibleChanges() {
+        let file = makeReviewFile(addedLines: 2, removedLines: 5)
+        let sessionDiff = makeReviewDiff(addedLines: 1, removedLines: 1, hunkCount: 1)
+
+        #expect(!WorkspaceReviewFileDetailView.shouldFallbackToWorkspaceDiff(
+            sessionDiff: sessionDiff,
+            file: file
+        ))
+    }
+
+    private func makeReviewFile(addedLines: Int?, removedLines: Int?) -> WorkspaceReviewFile {
+        WorkspaceReviewFile(
+            path: "Sources/App.swift",
+            status: "M",
+            addedLines: addedLines,
+            removedLines: removedLines,
+            isStaged: false,
+            isUnstaged: true,
+            isUntracked: false,
+            selectedSessionTouched: true
+        )
+    }
+
+    private func makeReviewDiff(
+        addedLines: Int,
+        removedLines: Int,
+        hunkCount: Int
+    ) -> WorkspaceReviewDiffResponse {
+        let hunk = WorkspaceReviewDiffHunk(
+            oldStart: 1,
+            oldCount: 1,
+            newStart: 1,
+            newCount: 1,
+            lines: []
+        )
+        return WorkspaceReviewDiffResponse(
+            workspaceId: "w1",
+            path: "Sources/App.swift",
+            baselineText: "old",
+            currentText: "new",
+            addedLines: addedLines,
+            removedLines: removedLines,
+            hunks: Array(repeating: hunk, count: hunkCount),
+            revisionCount: 1,
+            cacheKey: "session"
+        )
+    }
 }

@@ -382,11 +382,14 @@ struct WorkspaceReviewFileDetailView: View {
     private func loadBestAvailableDiff(api: APIClient) async throws -> WorkspaceReviewDiffResponse {
         if let selectedSessionId {
             do {
-                return try await api.getSessionDiff(
+                let sessionDiff = try await api.getSessionDiff(
                     workspaceId: workspaceId,
                     sessionId: selectedSessionId,
                     path: file.path
                 )
+                if !Self.shouldFallbackToWorkspaceDiff(sessionDiff: sessionDiff, file: file) {
+                    return sessionDiff
+                }
             } catch {
                 // Older sessions may lack trace mutations for this path; fall back to the
                 // Git work-tree diff so the review surface still opens.
@@ -394,6 +397,17 @@ struct WorkspaceReviewFileDetailView: View {
         }
 
         return try await api.getWorkspaceReviewDiff(workspaceId: workspaceId, path: file.path)
+    }
+
+    static func shouldFallbackToWorkspaceDiff(
+        sessionDiff: WorkspaceReviewDiffResponse,
+        file: WorkspaceReviewFile
+    ) -> Bool {
+        let visibleGitLineChanges = (file.addedLines ?? 0) + (file.removedLines ?? 0)
+        guard visibleGitLineChanges > 0 else { return false }
+        return sessionDiff.hunks.isEmpty
+            && sessionDiff.addedLines == 0
+            && sessionDiff.removedLines == 0
     }
 }
 
