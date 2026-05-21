@@ -78,10 +78,11 @@ export type {
 
 const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":", "#"]);
 
-/** Restriction rank for comparing decisions: deny > ask > allow. */
+/** Restriction rank for comparing decisions: deny > ask > auto > allow. */
 function restrictionRank(decision: string): number {
-  if (decision === "deny") return 2;
-  if (decision === "ask") return 1;
+  if (decision === "deny") return 3;
+  if (decision === "ask") return 2;
+  if (decision === "auto") return 1;
   return 0;
 }
 const FILE_PATH_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
@@ -1077,8 +1078,8 @@ export class PolicyEngine {
       const bPrefix = b.rule.pattern ? literalPrefixLength(b.rule.pattern) : 0;
       if (aPrefix !== bPrefix) return bPrefix - aPrefix;
 
-      const aDecisionBias = a.rule.decision === "ask" ? 1 : 0;
-      const bDecisionBias = b.rule.decision === "ask" ? 1 : 0;
+      const aDecisionBias = restrictionRank(a.rule.decision);
+      const bDecisionBias = restrictionRank(b.rule.decision);
       if (aDecisionBias !== bDecisionBias) return bDecisionBias - aDecisionBias;
 
       return a.index - b.index;

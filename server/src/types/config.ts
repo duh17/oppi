@@ -1,6 +1,6 @@
 // ─── Server Config ───
 
-export type PolicyDecision = "allow" | "ask" | "block";
+export type PolicyDecision = "allow" | "auto" | "ask" | "block";
 
 export interface PolicyMatch {
   tool?: string;
@@ -112,6 +112,18 @@ export interface ServerConfig {
   autoTitle?: {
     enabled: boolean;
     model?: string; // "provider/model-id" (e.g. "anthropic/claude-haiku-3")
+  };
+
+  /**
+   * Auto permission review configuration. When enabled, policy decisions of
+   * "auto" call a model that can only allow or ask the human.
+   */
+  autoPermission?: {
+    enabled: boolean;
+    model?: string; // "provider/model-id"
+    prompt?: string;
+    timeoutMs?: number;
+    maxTokens?: number;
   };
 
   /**

@@ -1,29 +1,29 @@
 import UIKit
 
 enum BashCommandPolicyRuleDecision: String, CaseIterable, Sendable {
-    case ask
     case allow
-    case deny
+    case auto
+    case ask
 
     var menuTitle: String {
         switch self {
+        case .allow:
+            String(localized: "Allow Automatically")
+        case .auto:
+            String(localized: "Review Automatically")
         case .ask:
             String(localized: "Ask Before Running")
-        case .allow:
-            String(localized: "Approve Automatically")
-        case .deny:
-            String(localized: "Deny Automatically")
         }
     }
 
     var systemImageName: String {
         switch self {
-        case .ask:
-            "questionmark.circle"
         case .allow:
             "checkmark.circle"
-        case .deny:
-            "xmark.circle"
+        case .auto:
+            "shield.fill"
+        case .ask:
+            "questionmark.circle"
         }
     }
 
@@ -34,12 +34,12 @@ enum BashCommandPolicyRuleDecision: String, CaseIterable, Sendable {
         let display = compact.count > 96 ? String(compact.prefix(95)) + "…" : compact
 
         switch self {
+        case .allow:
+            return "Allow bash: \(display)"
+        case .auto:
+            return "Auto-review bash: \(display)"
         case .ask:
             return "Ask before bash: \(display)"
-        case .allow:
-            return "Approve bash: \(display)"
-        case .deny:
-            return "Deny bash: \(display)"
         }
     }
 }
@@ -157,8 +157,7 @@ enum ToolTimelineRowContextMenuBuilder {
             children: BashCommandPolicyRuleDecision.allCases.map { decision in
                 UIAction(
                     title: decision.menuTitle,
-                    image: UIImage(systemName: decision.systemImageName),
-                    attributes: decision == .deny ? [.destructive] : []
+                    image: UIImage(systemName: decision.systemImageName)
                 ) { _ in
                     onAdd(decision)
                 }

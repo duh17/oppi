@@ -1,6 +1,6 @@
 import type { Rule } from "./rules.js";
 
-export type PolicyAction = "allow" | "ask" | "deny";
+export type PolicyAction = "allow" | "auto" | "ask" | "deny";
 
 export interface PolicyRule {
   tool?: string; // "bash" | "write" | "edit" | "read" | "*"

@@ -10,6 +10,14 @@ struct WorkspacePolicyView: View {
 
     @State private var fallbackDecision: PolicyFallbackDecision = .allow
     @State private var isUpdatingFallback = false
+    @State private var autoReviewEnabled = false
+    @State private var autoReviewModel = ""
+    @State private var autoReviewPrompt = ""
+    @State private var autoReviewTimeoutMs: Int?
+    @State private var autoReviewMaxTokens: Int?
+    @State private var autoReviewSavedSnapshot: APIClient.AutoPermissionConfig?
+    @State private var models: [ModelInfo] = []
+    @State private var isSavingAutoReview = false
     @State private var rules: [PolicyRuleRecord] = []
     @State private var auditEntries: [PolicyAuditEntry] = []
     @State private var isLoading = false
@@ -29,7 +37,7 @@ struct WorkspacePolicyView: View {
                 }
             }
 
-            Section("Default Fallback") {
+            Section {
                 Picker("When no rule matches", selection: Binding(
                     get: { fallbackDecision },
                     set: { newValue in
@@ -39,11 +47,68 @@ struct WorkspacePolicyView: View {
                     }
                 )) {
                     Text("Allow").tag(PolicyFallbackDecision.allow)
+                    Text("Auto").tag(PolicyFallbackDecision.auto)
                     Text("Ask").tag(PolicyFallbackDecision.ask)
-                    Text("Deny").tag(PolicyFallbackDecision.deny)
                 }
                 .pickerStyle(.segmented)
                 .disabled(isLoading || isUpdatingFallback)
+            } header: {
+                Text("Default Fallback")
+            } footer: {
+                Text("Auto uses the configured reviewer model. It can only allow or ask you.")
+            }
+
+            Section {
+                Toggle("Enable Auto Review", isOn: $autoReviewEnabled)
+
+                if groupedModels.isEmpty {
+                    LabeledContent("Model") {
+                        Text("No compatible models")
+                            .foregroundStyle(.themeComment)
+                    }
+                } else {
+                    Picker("Model", selection: $autoReviewModel) {
+                        ForEach(groupedModels) { group in
+                            Section {
+                                ForEach(group.models) { model in
+                                    Text(model.name).tag(model.fullId)
+                                }
+                            } header: {
+                                Text(group.provider)
+                            }
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Review Prompt")
+                        .font(.subheadline)
+                    TextEditor(text: $autoReviewPrompt)
+                        .font(.caption.monospaced())
+                        .frame(minHeight: 180)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color(.separator).opacity(0.7), lineWidth: 1)
+                        )
+                }
+                .padding(.vertical, 4)
+
+                Button {
+                    Task { await saveAutoReviewConfig() }
+                } label: {
+                    if isSavingAutoReview {
+                        ProgressView()
+                    } else {
+                        Text("Save Auto Review")
+                    }
+                }
+                .disabled(!hasAutoReviewChanges || isSavingAutoReview || (autoReviewEnabled && autoReviewModel.isEmpty))
+            } header: {
+                Text("Auto Review")
+            } footer: {
+                Text("Use Auto for commands that should get a fast model review before interrupting you. Risky, unclear, or unconfigured reviews fall back to Ask.")
             }
 
             Section("Remembered Rules") {
@@ -149,16 +214,36 @@ struct WorkspacePolicyView: View {
         }
     }
 
+    private var groupedModels: [ModelGroup] {
+        AutoTitleModelCatalog.compatibleModelGroups(from: models)
+    }
+
+    private var currentAutoReviewConfig: APIClient.AutoPermissionConfig {
+        APIClient.AutoPermissionConfig(
+            enabled: autoReviewEnabled,
+            model: autoReviewModel.isEmpty ? nil : autoReviewModel,
+            prompt: autoReviewPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : autoReviewPrompt,
+            timeoutMs: autoReviewTimeoutMs,
+            maxTokens: autoReviewMaxTokens
+        )
+    }
+
+    private var hasAutoReviewChanges: Bool {
+        guard let saved = autoReviewSavedSnapshot else { return false }
+        return saved.enabled != currentAutoReviewConfig.enabled ||
+        saved.model != currentAutoReviewConfig.model ||
+        saved.prompt != currentAutoReviewConfig.prompt ||
+        saved.timeoutMs != currentAutoReviewConfig.timeoutMs ||
+        saved.maxTokens != currentAutoReviewConfig.maxTokens
+    }
+
     @ViewBuilder
     private func rememberedRuleRow(_ rule: PolicyRuleRecord) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(rule.label)
                 .font(.subheadline)
             HStack(spacing: 8) {
-                let chipColor: Color =
-                    rule.decision == "deny" ? .themeRed :
-                    (rule.decision == "ask" ? .themeOrange : .themeGreen)
-                policyChip(rule.decision.uppercased(), color: chipColor)
+                policyChip(rule.decision.uppercased(), color: policyDecisionColor(rule.decision))
                 policyChip(rule.scope.capitalized, color: .themeBlue)
             }
 
@@ -176,6 +261,19 @@ struct WorkspacePolicyView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private func policyDecisionColor(_ decision: String) -> Color {
+        switch decision {
+        case "deny":
+            return .themeRed
+        case "ask":
+            return .themeOrange
+        case "auto":
+            return .themeBlue
+        default:
+            return .themeGreen
+        }
     }
 
     @ViewBuilder
@@ -214,12 +312,47 @@ struct WorkspacePolicyView: View {
             async let rulesTask = api.listPolicyRules(workspaceId: workspace.id)
             async let auditTask = api.listPolicyAudit(workspaceId: workspace.id, limit: 80)
             async let fallbackTask = api.getPolicyFallback()
+            async let autoPermissionTask = api.getAutoPermissionConfig()
+            async let modelsTask = api.listModels()
 
             rules = try await rulesTask
             auditEntries = try await auditTask
+            models = try await modelsTask
             let loadedFallback = try await fallbackTask
+            let autoPermissionConfig = try await autoPermissionTask
             fallbackDecision = loadedFallback
+            applyAutoReviewConfig(autoPermissionConfig)
             onFallbackChanged(loadedFallback)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func applyAutoReviewConfig(_ config: APIClient.AutoPermissionConfig) {
+        autoReviewEnabled = config.enabled
+        autoReviewModel = config.model ?? AutoTitleModelCatalog.firstCompatibleModelID(from: models) ?? ""
+        autoReviewPrompt = config.prompt ?? ""
+        autoReviewTimeoutMs = config.timeoutMs
+        autoReviewMaxTokens = config.maxTokens
+        autoReviewSavedSnapshot = APIClient.AutoPermissionConfig(
+            enabled: config.enabled,
+            model: config.model,
+            prompt: config.prompt,
+            timeoutMs: config.timeoutMs,
+            maxTokens: config.maxTokens
+        )
+    }
+
+    private func saveAutoReviewConfig() async {
+        guard let api = apiClient else { return }
+
+        isSavingAutoReview = true
+        defer { isSavingAutoReview = false }
+
+        do {
+            let saved = try await api.setAutoPermissionConfig(currentAutoReviewConfig)
+            applyAutoReviewConfig(saved)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -294,7 +427,7 @@ private struct RememberedRuleDraft: Identifiable {
         ruleId = rule.id
         scope = rule.scope
         workspaceId = rule.workspaceId
-        decision = rule.decision
+        decision = rule.decision == "deny" ? "ask" : rule.decision
         label = rule.label
         tool = rule.tool ?? ""
         executable = rule.executable ?? ""
@@ -369,8 +502,8 @@ private struct RememberedRuleEditorView: View {
 
                 Picker("Decision", selection: $draft.decision) {
                     Text("Allow").tag("allow")
+                    Text("Auto").tag("auto")
                     Text("Ask").tag("ask")
-                    Text("Deny").tag("deny")
                 }
 
                 TextField("label", text: $draft.label)

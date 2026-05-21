@@ -73,16 +73,16 @@ describe("policy fallback routes", () => {
       "PATCH",
       "/policy/fallback",
       new URL("http://localhost/policy/fallback"),
-      makeRequest({ fallback: "deny" }) as never,
+      makeRequest({ fallback: "auto" }) as never,
       res as never,
     );
 
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toMatchObject({ fallback: "deny" });
-    expect(setDefaultFallback).toHaveBeenCalledWith("deny");
+    expect(JSON.parse(res.body)).toMatchObject({ fallback: "auto" });
+    expect(setDefaultFallback).toHaveBeenCalledWith("auto");
     expect(updateConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        policy: expect.objectContaining({ fallback: "block" }),
+        policy: expect.objectContaining({ fallback: "auto" }),
       }),
     );
   });
@@ -112,7 +112,7 @@ describe("policy fallback routes", () => {
 
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toMatchObject({
-      error: 'fallback must be one of "allow", "ask", "deny"',
+      error: 'fallback must be one of "allow", "auto", "ask", "deny"',
     });
     expect(setDefaultFallback).not.toHaveBeenCalled();
     expect(updateConfig).not.toHaveBeenCalled();

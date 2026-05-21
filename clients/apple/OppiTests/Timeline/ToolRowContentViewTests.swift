@@ -335,9 +335,9 @@ struct ToolTimelineRowContentViewTests {
         let submenu = try #require(menu.children.compactMap { $0 as? UIMenu }.first)
         #expect(submenu.title == "Add Policy Rule")
         #expect(timelineActionTitles(in: submenu) == [
+            "Allow Automatically",
+            "Review Automatically",
             "Ask Before Running",
-            "Approve Automatically",
-            "Deny Automatically",
         ])
     }
 

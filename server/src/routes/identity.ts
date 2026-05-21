@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
+import { DEFAULT_AUTO_PERMISSION_REVIEW_PROMPT } from "../auto-permission-reviewer.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -300,7 +301,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return true;
     }
     if (path === "/server/auto-title" && method === "PUT") {
-      const body = await helpers.parseBody<{ enabled?: boolean; model?: string }>(req);
+      const body = await helpers.parseBody<{ enabled?: boolean; model?: string | null }>(req);
       const current = ctx.storage.getConfig().autoTitle ?? { enabled: false };
       const updated = {
         enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
@@ -313,6 +314,65 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       };
       ctx.storage.updateConfig({ autoTitle: updated });
       helpers.json(res, updated);
+      return true;
+    }
+    if (path === "/server/auto-permission" && method === "GET") {
+      const config = ctx.storage.getConfig();
+      const current = config.autoPermission ?? { enabled: false };
+      helpers.json(res, {
+        enabled: current.enabled,
+        model: current.model,
+        prompt: current.prompt ?? DEFAULT_AUTO_PERMISSION_REVIEW_PROMPT,
+        timeoutMs: current.timeoutMs,
+        maxTokens: current.maxTokens,
+      });
+      return true;
+    }
+    if (path === "/server/auto-permission" && method === "PUT") {
+      const body = await helpers.parseBody<{
+        enabled?: boolean;
+        model?: string | null;
+        prompt?: string | null;
+        timeoutMs?: number | null;
+        maxTokens?: number | null;
+      }>(req);
+      const current = ctx.storage.getConfig().autoPermission ?? { enabled: false };
+      const updated = {
+        enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
+        model:
+          typeof body.model === "string" && body.model.trim().length > 0
+            ? body.model.trim()
+            : body.model === null
+              ? undefined
+              : current.model,
+        prompt:
+          typeof body.prompt === "string" && body.prompt.trim().length > 0
+            ? body.prompt.trim()
+            : body.prompt === null
+              ? undefined
+              : current.prompt,
+        timeoutMs:
+          typeof body.timeoutMs === "number" &&
+          Number.isFinite(body.timeoutMs) &&
+          body.timeoutMs > 0
+            ? Math.floor(body.timeoutMs)
+            : body.timeoutMs === null
+              ? undefined
+              : current.timeoutMs,
+        maxTokens:
+          typeof body.maxTokens === "number" &&
+          Number.isFinite(body.maxTokens) &&
+          body.maxTokens > 0
+            ? Math.floor(body.maxTokens)
+            : body.maxTokens === null
+              ? undefined
+              : current.maxTokens,
+      };
+      ctx.storage.updateConfig({ autoPermission: updated });
+      helpers.json(res, {
+        ...updated,
+        prompt: updated.prompt ?? DEFAULT_AUTO_PERMISSION_REVIEW_PROMPT,
+      });
       return true;
     }
     return false;

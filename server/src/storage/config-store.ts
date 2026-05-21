@@ -126,6 +126,7 @@ function normalizeConfig(
     "pushDeviceTokens",
     "liveActivityToken",
     "autoTitle",
+    "autoPermission",
     "asr",
     "uploadStore",
     "extensions",
@@ -379,11 +380,16 @@ function normalizeConfig(
     const parseDecision = (
       rawDecision: unknown,
       decisionPath: string,
-    ): "allow" | "ask" | "block" | null => {
-      if (rawDecision === "allow" || rawDecision === "ask" || rawDecision === "block") {
+    ): "allow" | "auto" | "ask" | "block" | null => {
+      if (
+        rawDecision === "allow" ||
+        rawDecision === "auto" ||
+        rawDecision === "ask" ||
+        rawDecision === "block"
+      ) {
         return rawDecision;
       }
-      errors.push(`${decisionPath}: expected one of allow|ask|block`);
+      errors.push(`${decisionPath}: expected one of allow|auto|ask|block`);
       changed = true;
       return null;
     };
@@ -463,7 +469,7 @@ function normalizeConfig(
       permPath: string,
     ): {
       id: string;
-      decision: "allow" | "ask" | "block";
+      decision: "allow" | "auto" | "ask" | "block";
       label?: string;
       reason?: string;
       match: {
@@ -610,13 +616,18 @@ function normalizeConfig(
         const parseHeuristicValue = (
           rawHeuristic: unknown,
           hPath: string,
-        ): "allow" | "ask" | "block" | false | undefined => {
+        ): "allow" | "auto" | "ask" | "block" | false | undefined => {
           if (rawHeuristic === undefined) return undefined;
           if (rawHeuristic === false) return false;
-          if (rawHeuristic === "allow" || rawHeuristic === "ask" || rawHeuristic === "block") {
+          if (
+            rawHeuristic === "allow" ||
+            rawHeuristic === "auto" ||
+            rawHeuristic === "ask" ||
+            rawHeuristic === "block"
+          ) {
             return rawHeuristic;
           }
-          errors.push(`${hPath}: expected one of allow|ask|block or false`);
+          errors.push(`${hPath}: expected one of allow|auto|ask|block or false`);
           changed = true;
           return undefined;
         };
@@ -694,6 +705,43 @@ function normalizeConfig(
       autoTitle.model = at.model.trim();
     }
     config.autoTitle = autoTitle;
+  }
+
+  // Auto-permission reviewer configuration
+  if ("autoPermission" in obj && isRecord(obj.autoPermission)) {
+    const ap = obj.autoPermission;
+    const allowedAutoPermissionKeys = new Set([
+      "enabled",
+      "model",
+      "prompt",
+      "timeoutMs",
+      "maxTokens",
+    ]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(ap)) {
+        if (!allowedAutoPermissionKeys.has(key)) {
+          errors.push(`config.autoPermission.${key}: unknown key`);
+        }
+      }
+    }
+
+    const autoPermission: NonNullable<ServerConfig["autoPermission"]> = {
+      enabled: typeof ap.enabled === "boolean" ? ap.enabled : false,
+    };
+    if (typeof ap.model === "string" && ap.model.trim().length > 0) {
+      autoPermission.model = ap.model.trim();
+    }
+    if (typeof ap.prompt === "string" && ap.prompt.trim().length > 0) {
+      autoPermission.prompt = ap.prompt.trim();
+    }
+    if (typeof ap.timeoutMs === "number" && Number.isFinite(ap.timeoutMs) && ap.timeoutMs > 0) {
+      autoPermission.timeoutMs = Math.floor(ap.timeoutMs);
+    }
+    if (typeof ap.maxTokens === "number" && Number.isFinite(ap.maxTokens) && ap.maxTokens > 0) {
+      autoPermission.maxTokens = Math.floor(ap.maxTokens);
+    }
+    config.autoPermission = autoPermission;
   }
 
   // ASR / dictation pipeline config

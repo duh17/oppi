@@ -70,6 +70,7 @@ import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
 import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
 import { getPackageInfo } from "./version.js";
+import { AutoPermissionReviewer } from "./auto-permission-reviewer.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
@@ -454,9 +455,22 @@ export class Server {
       new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
     );
 
+    const autoPermissionReviewer = new AutoPermissionReviewer({
+      getConfig: () => this.storage.getConfig().autoPermission ?? { enabled: false },
+      modelRegistry: this.modelRegistry,
+      onMetrics: (metrics) => {
+        this.opsMetrics.record("server.gate_auto_review_ms", metrics.durationMs, {
+          model: metrics.model,
+          status: metrics.status,
+          tokens: String(metrics.tokens),
+        });
+      },
+    });
+
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {
       approvalTimeoutMs: config.approvalTimeoutMs,
       metrics: this.opsMetrics,
+      autoPermissionReviewer,
     });
     // Scan both host skills (~/.pi/agent/skills/) and bundled skills (server/skills/).
     const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");

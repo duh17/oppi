@@ -12,12 +12,12 @@ import type {
   ResolvedHeuristics,
 } from "./policy-types.js";
 
-function mapDecisionToAction(decision: "allow" | "ask" | "block"): PolicyAction {
+function mapDecisionToAction(decision: "allow" | "auto" | "ask" | "block"): PolicyAction {
   if (decision === "block") return "deny";
   return decision;
 }
 
-function mapDecisionToRuleDecision(decision: "allow" | "ask" | "block"): RuleDecision {
+function mapDecisionToRuleDecision(decision: "allow" | "auto" | "ask" | "block"): RuleDecision {
   if (decision === "block") return "deny";
   return decision;
 }

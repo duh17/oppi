@@ -415,6 +415,30 @@ actor APIClient {
         return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
     }
 
+    // MARK: - Auto Permission Review
+
+    /// Server-side auto permission review configuration.
+    struct AutoPermissionConfig: Codable, Sendable {
+        var enabled: Bool
+        var model: String?
+        var prompt: String?
+        var timeoutMs: Int?
+        var maxTokens: Int?
+    }
+
+    /// Fetch the current auto permission review configuration.
+    func getAutoPermissionConfig() async throws -> AutoPermissionConfig {
+        let data = try await get("/server/auto-permission")
+        return try JSONDecoder().decode(AutoPermissionConfig.self, from: data)
+    }
+
+    /// Update the auto permission review configuration.
+    @discardableResult
+    func setAutoPermissionConfig(_ config: AutoPermissionConfig) async throws -> AutoPermissionConfig {
+        let data = try await put("/server/auto-permission", body: config)
+        return try JSONDecoder().decode(AutoPermissionConfig.self, from: data)
+    }
+
     // MARK: - Themes
 
     /// List available custom themes on the server.

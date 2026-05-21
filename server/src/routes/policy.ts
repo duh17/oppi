@@ -42,16 +42,16 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     const normalizedFallback =
       rawFallback === "deny"
         ? "deny"
-        : rawFallback === "allow" || rawFallback === "ask"
+        : rawFallback === "allow" || rawFallback === "auto" || rawFallback === "ask"
           ? rawFallback
           : null;
 
     if (!normalizedFallback) {
-      helpers.error(res, 400, 'fallback must be one of "allow", "ask", "deny"');
+      helpers.error(res, 400, 'fallback must be one of "allow", "auto", "ask", "deny"');
       return;
     }
 
-    const persistedFallback: "allow" | "ask" | "block" =
+    const persistedFallback: "allow" | "auto" | "ask" | "block" =
       normalizedFallback === "deny" ? "block" : normalizedFallback;
 
     const currentConfig = ctx.storage.getConfig();
@@ -109,11 +109,14 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
 
     const rawDecision = body.decision;
     const decision =
-      rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
+      rawDecision === "allow" ||
+      rawDecision === "auto" ||
+      rawDecision === "ask" ||
+      rawDecision === "deny"
         ? rawDecision
         : null;
     if (!decision) {
-      helpers.error(res, 400, 'decision must be one of "allow", "ask", "deny"');
+      helpers.error(res, 400, 'decision must be one of "allow", "auto", "ask", "deny"');
       return;
     }
 
@@ -260,7 +263,7 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     }
 
     const updates: {
-      decision?: "allow" | "ask" | "deny";
+      decision?: "allow" | "auto" | "ask" | "deny";
       tool?: string | null;
       pattern?: string | null;
       executable?: string | null;
@@ -271,11 +274,14 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     if (hasField("decision")) {
       const rawDecision = body.decision;
       const normalized =
-        rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
+        rawDecision === "allow" ||
+        rawDecision === "auto" ||
+        rawDecision === "ask" ||
+        rawDecision === "deny"
           ? rawDecision
           : null;
       if (!normalized) {
-        helpers.error(res, 400, 'decision must be one of "allow", "ask", "deny"');
+        helpers.error(res, 400, 'decision must be one of "allow", "auto", "ask", "deny"');
         return;
       }
       updates.decision = normalized;

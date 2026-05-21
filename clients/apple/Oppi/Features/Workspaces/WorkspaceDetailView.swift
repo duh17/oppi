@@ -10,54 +10,15 @@ func workspaceYourTurnSorted(
     hasPermissionInQueue: (String) -> Bool,
     hasAskInQueue: (String) -> Bool
 ) -> [Session] {
-    sessions.sorted { lhs, rhs in
-        let lhsPermPending = hasPermissionInQueue(lhs.id)
-        let rhsPermPending = hasPermissionInQueue(rhs.id)
-        if lhsPermPending != rhsPermPending { return lhsPermPending }
-
-        let lhsAskPending = hasAskInQueue(lhs.id)
-        let rhsAskPending = hasAskInQueue(rhs.id)
-        if lhsAskPending != rhsAskPending { return lhsAskPending }
-
-        if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity < rhs.lastActivity }
-        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
-        return lhs.id < rhs.id
+    SessionListPresentation.sortYourTurn(sessions) { sessionId in
+        SessionListAttentionCounts(
+            permissionCount: hasPermissionInQueue(sessionId) ? 1 : 0,
+            askCount: hasAskInQueue(sessionId) ? 1 : 0
+        )
     }
 }
 
-struct WorkspaceRefreshPollingPolicy: Equatable {
-    private(set) var gracePollsRemaining: Int = 0
-    private var hadActiveWork = false
-    let postTransitionGracePolls: Int
-
-    init(postTransitionGracePolls: Int = 2) {
-        self.postTransitionGracePolls = postTransitionGracePolls
-    }
-
-    mutating func shouldRefresh(hasActiveWork: Bool, hasAttention: Bool) -> Bool {
-        if hasActiveWork {
-            hadActiveWork = true
-            gracePollsRemaining = postTransitionGracePolls
-            return true
-        }
-
-        if hadActiveWork {
-            hadActiveWork = false
-            gracePollsRemaining = max(gracePollsRemaining, postTransitionGracePolls)
-        }
-
-        if hasAttention {
-            return true
-        }
-
-        if gracePollsRemaining > 0 {
-            gracePollsRemaining -= 1
-            return true
-        }
-
-        return false
-    }
-}
+typealias WorkspaceRefreshPollingPolicy = SessionListRefreshPollingPolicy
 
 /// Detail view for a workspace — shows its sessions with management actions.
 ///
@@ -73,6 +34,10 @@ enum SessionDeleteConfirmationPolicy {
     ) {
         clearPending()
         performDelete(session)
+    }
+
+    static func deleteMessage(for session: Session) -> String {
+        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), and generated media attachments served by Oppi."
     }
 }
 
@@ -109,13 +74,9 @@ private struct SessionDeleteConfirmationModifier: ViewModifier {
             }
         } message: {
             if let session = pendingSession {
-                Text(deleteMessage(for: session))
+                Text(SessionDeleteConfirmationPolicy.deleteMessage(for: session))
             }
         }
-    }
-
-    private func deleteMessage(for session: Session) -> String {
-        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), and generated media attachments served by Oppi."
     }
 }
 
@@ -194,23 +155,23 @@ struct WorkspaceDetailView: View {
 
     private var policyFallbackIconName: String {
         switch policyFallback {
-        case .deny:
-            return "lock.fill"
-        case .ask:
-            return "hand.raised.fill"
         case .allow:
             return "lock.open.fill"
+        case .auto:
+            return "shield.fill"
+        case .ask:
+            return "hand.raised.fill"
         }
     }
 
     private var policyFallbackColor: Color {
         switch policyFallback {
-        case .deny:
-            return .themeRed
-        case .ask:
-            return .themeOrange
         case .allow:
             return .themeGreen
+        case .auto:
+            return .themeBlue
+        case .ask:
+            return .themeOrange
         }
     }
 
@@ -306,59 +267,39 @@ struct WorkspaceDetailView: View {
 
     /// Classify a root session into Your Turn / Working / Stopped.
     ///
-    /// Priority:
-    /// 1. `aggregatePendingCount > 0` → Your Turn (even if parent is busy)
-    /// 2. blank draft awaiting first prompt → Your Turn
-    /// 3. Any descendant working → Working (tree still active)
-    /// 4. status == .error → Your Turn
-    /// 5. status == .ready → Your Turn
-    /// 6. status == .busy / .starting / .stopping → Working
-    /// 7. status == .stopped → Stopped
-    private enum SessionSection {
-        case yourTurn
-        case working
-        case stopped
-    }
-
+    /// Shared with the top-level Sessions page so attention, idle drafts,
+    /// descendant work, and terminal states move through the same rules.
     private func classifySession(
         _ session: Session,
         using childIndex: SessionTreeHelper.ChildIndex
-    ) -> SessionSection {
-        if session.status == .stopped { return .stopped }
-
+    ) -> SessionListActiveSectionKind? {
         let pendingCount = SessionTreeHelper.aggregatePendingCount(
             of: session.id, in: activeSessions,
             pendingForSession: { permissionStore.pending(for: $0).count }
         )
-        if pendingCount > 0 { return .yourTurn }
-
-        // Pending ask questions also count as "your turn"
         let askCount = SessionTreeHelper.aggregatePendingCount(
             of: session.id, in: activeSessions,
             pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
         )
-        if askCount > 0 { return .yourTurn }
-        if session.isAwaitingFirstPrompt { return .yourTurn }
 
         // Parent is idle but has working children → tree is still working.
         let descendants = childIndex.allDescendants(of: session.id)
-        let workingCount = descendants.filter {
+        let hasWorkingDescendant = descendants.contains {
             if $0.isAwaitingFirstPrompt { return false }
             switch $0.status {
             case .starting, .busy, .stopping: return true
             default: return false
             }
-        }.count
-        if workingCount > 0 { return .working }
-
-        switch session.status {
-        case .error, .ready:
-            return .yourTurn
-        case .busy, .starting, .stopping:
-            return .working
-        case .stopped:
-            return .stopped
         }
+
+        return SessionListPresentation.activeSectionKind(
+            for: session,
+            attention: SessionListAttentionCounts(
+                permissionCount: pendingCount,
+                askCount: askCount
+            ),
+            hasWorkingDescendant: hasWorkingDescendant
+        )
     }
 
     private var viewData: ViewData {
@@ -387,7 +328,7 @@ struct WorkspaceDetailView: View {
             switch classifySession(root, using: activeChildIndex) {
             case .yourTurn: yourTurnUnfiltered.append(root)
             case .working: workingUnfiltered.append(root)
-            case .stopped: stoppedUnfiltered.append(root)
+            case nil: stoppedUnfiltered.append(root)
             }
         }
 
@@ -418,7 +359,7 @@ struct WorkspaceDetailView: View {
             let filtered = hasSessionSearchQuery
                 ? workingUnfiltered.filter { rootOrDescendantMatchesSearch($0, using: activeChildIndex) }
                 : workingUnfiltered
-            return filtered.sorted { $0.createdAt > $1.createdAt }
+            return SessionListPresentation.sortWorking(filtered)
         }()
 
         // Stopped: filter to true roots, apply search, most recently stopped first

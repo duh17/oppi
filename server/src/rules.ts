@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { generateId } from "./id.js";
 import { createLogger } from "./logger.js";
 
-export type RuleDecision = "allow" | "ask" | "deny";
+export type RuleDecision = "allow" | "auto" | "ask" | "deny";
 export type RuleScope = "session" | "workspace" | "global";
 export type RuleSource = "preset" | "learned" | "manual";
 
@@ -143,7 +143,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseDecision(value: unknown): RuleDecision | null {
-  if (value === "allow" || value === "ask" || value === "deny") return value;
+  if (value === "allow" || value === "auto" || value === "ask" || value === "deny") {
+    return value;
+  }
   return null;
 }
 

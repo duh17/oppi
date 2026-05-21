@@ -92,6 +92,8 @@ const settingsOperationIds = [
   "updateServerRuntime",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
+  "getAutoPermissionConfig",
+  "setAutoPermissionConfig",
   "createWorkspace",
   "updateWorkspace",
   "deleteWorkspace",

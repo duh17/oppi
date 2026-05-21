@@ -21,6 +21,7 @@ struct CreateWorkspaceRequest: Encodable {
     var systemPrompt: String?
     var systemPromptMode: WorkspaceSystemPromptMode?
     var hostMount: String?
+    var defaultModel: String?
     var gitStatusEnabled: Bool?
     var tools: [String]? = nil
     var extensions: [String]?
@@ -39,6 +40,7 @@ struct UpdateWorkspaceRequest {
         systemPrompt: JSONValue? = nil,
         systemPromptMode: WorkspaceSystemPromptMode? = nil,
         hostMount: JSONValue? = nil,
+        defaultModel: JSONValue? = nil,
         gitStatusEnabled: Bool? = nil,
         tools: [String]? = nil,
         extensions: [String]? = nil,
@@ -67,6 +69,9 @@ struct UpdateWorkspaceRequest {
         if let hostMount {
             body["hostMount"] = hostMount
         }
+        if let defaultModel {
+            body["defaultModel"] = defaultModel
+        }
         if let gitStatusEnabled {
             body["gitStatusEnabled"] = .bool(gitStatusEnabled)
         }
@@ -88,17 +93,17 @@ struct UpdateWorkspaceRequest {
 
 enum PolicyFallbackDecision: String, CaseIterable, Codable, Sendable {
     case allow
+    case auto
     case ask
-    case deny
 
     init(serverValue: String) {
         switch serverValue {
         case "allow":
             self = .allow
-        case "ask":
+        case "auto":
+            self = .auto
+        case "ask", "deny":
             self = .ask
-        case "deny":
-            self = .deny
         default:
             self = .ask
         }

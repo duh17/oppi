@@ -14,6 +14,7 @@ import { parseBashCommand, splitBashCommandChain, type GateRequest } from "./pol
 import { normalizeApprovalChoice } from "./policy-approval.js";
 import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
+import type { AutoPermissionReviewer } from "./auto-permission-reviewer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -77,7 +78,10 @@ function primaryBashExecutable(command: string): string | undefined {
 export interface GateServerOptions {
   approvalTimeoutMs?: number;
   metrics?: ServerMetricCollector;
+  autoPermissionReviewer?: AutoPermissionReviewer;
 }
+
+const AUTO_REVIEW_UNAVAILABLE = "Auto review unavailable, asking human";
 
 export class GateServer extends EventEmitter {
   private defaultPolicy: PolicyEngine;
@@ -89,6 +93,7 @@ export class GateServer extends EventEmitter {
   readonly auditLog: AuditLog;
   private readonly approvalTimeoutMs: number;
   private readonly metrics?: ServerMetricCollector;
+  private readonly autoPermissionReviewer?: AutoPermissionReviewer;
 
   constructor(
     defaultPolicy: PolicyEngine,
@@ -101,6 +106,7 @@ export class GateServer extends EventEmitter {
     this.ruleStore = ruleStore;
     this.auditLog = auditLog;
     this.metrics = options.metrics;
+    this.autoPermissionReviewer = options.autoPermissionReviewer;
 
     const configuredTimeout = options.approvalTimeoutMs;
     this.approvalTimeoutMs =
@@ -119,11 +125,11 @@ export class GateServer extends EventEmitter {
     this.sessionPolicies.set(sessionId, policy);
   }
 
-  getDefaultFallback(): "allow" | "ask" | "deny" {
+  getDefaultFallback(): "allow" | "auto" | "ask" | "deny" {
     return this.defaultPolicy.getDefaultAction();
   }
 
-  setDefaultFallback(action: "allow" | "ask" | "deny"): void {
+  setDefaultFallback(action: "allow" | "auto" | "ask" | "deny"): void {
     this.defaultPolicy.setDefaultAction(action);
     for (const policy of this.sessionPolicies.values()) {
       policy.setDefaultAction(action);
@@ -445,11 +451,59 @@ export class GateServer extends EventEmitter {
       return { action: "deny", reason: decision.reason };
     }
 
-    // action === "ask" — create pending decision, wait for phone
+    let pendingReason = decision.reason;
+
+    if (decision.action === "auto") {
+      const autoReview = this.autoPermissionReviewer
+        ? await this.autoPermissionReviewer.review({
+            sessionId: guard.sessionId,
+            workspaceId: guard.workspaceId,
+            request: req,
+            displaySummary,
+            policyReason: decision.reason,
+          })
+        : {
+            outcome: "ask" as const,
+            status: "not_configured" as const,
+            reason: AUTO_REVIEW_UNAVAILABLE,
+          };
+
+      if (autoReview.outcome === "allow") {
+        this.auditLog.record({
+          sessionId: guard.sessionId,
+          workspaceId: guard.workspaceId,
+          tool: req.tool,
+          displaySummary,
+          decision: "allow",
+          resolvedBy: "auto_review",
+          layer: "auto_review",
+          ruleId: decision.ruleId,
+          ruleSummary: autoReview.reason || decision.ruleLabel,
+        });
+        this.emit("tool_allowed", {
+          sessionId: guard.sessionId,
+          ...req,
+          decision: { ...decision, action: "allow" as const, reason: autoReview.reason },
+        });
+        if (this.metrics) {
+          try {
+            this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
+            this.metrics.record("server.gate_decision", 1, { action: "auto_allow" });
+          } catch {}
+        }
+        return { action: "allow" };
+      }
+
+      pendingReason = autoReview.reason || decision.reason;
+    }
+
+    // action === "ask" or auto-review deferred — create pending decision, wait for phone
     if (this.metrics) {
       try {
         this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
-        this.metrics.record("server.gate_decision", 1, { action: "ask" });
+        this.metrics.record("server.gate_decision", 1, {
+          action: decision.action === "auto" ? "auto_ask" : "ask",
+        });
       } catch {}
     }
     const requestId = generateId(12);
@@ -469,7 +523,7 @@ export class GateServer extends EventEmitter {
         input: req.input,
         toolCallId: req.toolCallId,
         displaySummary,
-        reason: decision.reason,
+        reason: pendingReason,
         createdAt,
         timeoutAt,
         expires,

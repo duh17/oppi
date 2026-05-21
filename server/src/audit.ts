@@ -34,7 +34,7 @@ export interface AuditEntry {
 
   // What happened
   decision: "allow" | "deny";
-  resolvedBy: "policy" | "user" | "timeout" | "extension_lost";
+  resolvedBy: "policy" | "auto_review" | "user" | "timeout" | "extension_lost";
   layer: string;
   ruleId?: string;
   ruleSummary?: string;
