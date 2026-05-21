@@ -1209,6 +1209,47 @@ struct APIClientTests {
         try await client.registerDeviceToken("abc123")
     }
 
+    // MARK: - Diagnostics
+
+    @Test func uploadChatMetricsUsesSharedPostPathWithSortedTags() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/telemetry/chat-metrics")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+
+            let body = self.requestBodyData(request)
+            let bodyText = String(data: body, encoding: .utf8) ?? ""
+            #expect(bodyText.contains(#""tags":{"a":"first","z":"last"}"#))
+
+            return self.mockResponse(json: "{\"ok\":true,\"accepted\":1,\"windowStartMs\":1,\"windowEndMs\":1}")
+        }
+
+        try await client.uploadChatMetrics(
+            request: ChatMetricUploadRequest(
+                generatedAt: 1,
+                appVersion: "1.0",
+                buildNumber: "1",
+                osVersion: "test-os",
+                deviceModel: "test-device",
+                samples: [
+                    ChatMetricSample(
+                        ts: 1,
+                        metric: .timelineApplyMs,
+                        value: 3,
+                        unit: .ms,
+                        sessionId: "s1",
+                        workspaceId: "w1",
+                        tags: ["z": "last", "a": "first"]
+                    ),
+                ]
+            )
+        )
+    }
+
     // MARK: - Error handling
 
     @Test func serverErrorExtractsMessage() async throws {

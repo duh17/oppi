@@ -1419,14 +1419,11 @@ actor APIClient {
 
     func uploadChatMetrics(request body: ChatMetricUploadRequest) async throws {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        var req = try URLRequest(url: makeURL(path: "/telemetry/chat-metrics"))
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try Self.chatMetricsEncoder.encode(body)
-        logger.debug("POST /telemetry/chat-metrics")
-        let (data, response) = try await session.data(for: req)
-        try checkStatus(response, data: data)
+        _ = try await post(
+            "/telemetry/chat-metrics",
+            body: body,
+            encoder: Self.chatMetricsEncoder
+        )
     }
 
     // MARK: - Private
@@ -1443,8 +1440,12 @@ actor APIClient {
         return data
     }
 
-    private func post<T: Encodable>(_ path: String, body: T) async throws -> Data {
-        let (data, response) = try await request("POST", path: path, body: body)
+    private func post<T: Encodable>(
+        _ path: String,
+        body: T,
+        encoder: JSONEncoder? = nil
+    ) async throws -> Data {
+        let (data, response) = try await request("POST", path: path, body: body, encoder: encoder)
         try checkStatus(response, data: data)
         return data
     }
@@ -1471,12 +1472,17 @@ actor APIClient {
         return try await session.data(for: req)
     }
 
-    private func request<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
+    private func request<T: Encodable>(
+        _ method: String,
+        path: String,
+        body: T,
+        encoder: JSONEncoder? = nil
+    ) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
+        req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
         logger.debug("\(method) \(path)")
         return try await session.data(for: req)
     }
