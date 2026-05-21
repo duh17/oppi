@@ -24,14 +24,18 @@ final class ServerConnection {
     private(set) var focusedSessionStreamEndpointKind = "none"
     private var focusedSessionStreamSessionId: String?
     private var focusedSessionStreamWorkspaceId: String?
+    private var focusedSessionStreamURL: URL?
     private(set) var transportPath: ConnectionTransportPath = .paired
 
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
-        if !streamCapabilitiesLoaded {
-            return "loading"
+        if streamCapabilitiesRefreshFailed, streamCapabilitiesLoaded, missingRequiredSplitStreamCapabilities.isEmpty {
+            return "ready:refreshFailed"
         }
         if streamCapabilitiesRefreshFailed {
             return "refreshFailed"
+        }
+        if !streamCapabilitiesLoaded {
+            return "loading"
         }
         if missingRequiredSplitStreamCapabilities.isEmpty {
             return "ready"
@@ -41,7 +45,6 @@ final class ServerConnection {
 
     var hasRequiredSplitStreamCapabilities: Bool {
         streamCapabilitiesLoaded
-            && !streamCapabilitiesRefreshFailed
             && missingRequiredSplitStreamCapabilities.isEmpty
     }
 
@@ -380,17 +383,22 @@ final class ServerConnection {
 
         guard shouldReconnect else { return }
 
-        ClientLog.info("Network", "Force stream reconnect after path change", metadata: [
+        var pathChangeMetadata: [String: String] = [
             "wasLAN": wasOnLAN ? "true" : "false",
             "wsStatus": String(describing: statusBeforePathChange),
-            "focusedSession": focusedSessionId ?? "none",
-        ])
+            "hasFocusedSession": focusedSessionId == nil ? "false" : "true",
+        ]
+        pathChangeMetadata.merge(ClientLog.endpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
+        pathChangeMetadata.merge(ClientLog.endpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
+        ClientLog.warning("Network", "Force stream reconnect after path change", metadata: pathChangeMetadata)
 
         // Tear down old WS + consumption task. Per-session continuations
         // are preserved; the active endpoint will be reopened below.
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         wsClient.disconnect()
+
+        refreshPreparedFocusedSessionEndpointAfterEndpointChange()
 
         // Reconnect with the updated (Tailscale) endpoint.
         connectStream()
@@ -486,6 +494,7 @@ final class ServerConnection {
 
     func refreshStreamCapabilities() async {
         guard let apiClient else { return }
+        let hadLoadedCapabilities = streamCapabilitiesLoaded
         do {
             let info = try await apiClient.serverInfo()
             let capabilities = info.capabilities
@@ -499,11 +508,25 @@ final class ServerConnection {
             }
             streamCapabilitiesLoaded = true
         } catch {
-            splitSessionStreamAvailable = false
-            sessionAudioStreamAvailable = false
-            missingRequiredSplitStreamCapabilities = []
+            // Do not let a transient handoff failure permanently poison stream
+            // capability state. If we already had a good capability snapshot,
+            // keep using it; otherwise leave the state unloaded so the next
+            // session entry retries /server/info instead of returning nil forever.
             streamCapabilitiesRefreshFailed = true
-            streamCapabilitiesLoaded = true
+            if !hadLoadedCapabilities {
+                splitSessionStreamAvailable = false
+                sessionAudioStreamAvailable = false
+                missingRequiredSplitStreamCapabilities = []
+                streamCapabilitiesLoaded = false
+            }
+
+            var metadata = ClientLog.networkErrorMetadata(error)
+            metadata["hadLoadedCapabilities"] = hadLoadedCapabilities ? "true" : "false"
+            metadata["capabilityStatus"] = requiredSplitStreamCapabilitiesStatusForDiagnostics
+            metadata["transport"] = transportPath.rawValue
+            let apiBaseURL = await apiClient.baseURL
+            metadata.merge(ClientLog.endpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
+            ClientLog.warning("Network", "Stream capability refresh failed", metadata: metadata)
         }
     }
 
@@ -695,6 +718,7 @@ final class ServerConnection {
         focusedSessionStreamEndpointKind = "none"
         focusedSessionStreamSessionId = nil
         focusedSessionStreamWorkspaceId = nil
+        focusedSessionStreamURL = nil
         wsClient?.setStreamURL(nil)
     }
 
@@ -718,6 +742,7 @@ final class ServerConnection {
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<SessionStreamEvent>? {
         await refreshStreamCapabilitiesIfNeeded()
         guard hasRequiredSplitStreamCapabilities else {
+            recordSessionStreamUnavailable(reason: streamCapabilityUnavailableReason())
             return nil
         }
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
@@ -730,7 +755,9 @@ final class ServerConnection {
 
     private func prepareFocusedSessionStreamEndpoint(sessionId: String, workspaceId: String) {
         if focusedSessionStreamTargetMatches(sessionId: sessionId, workspaceId: workspaceId) {
-            // Keep a live/reconnecting transport for the same bound endpoint.
+            // Keep a live/reconnecting transport for the same bound endpoint,
+            // but still recompute the URL below. Endpoint selection may have
+            // changed after Wi-Fi/cellular handoff while the session target did not.
         } else if focusedSessionStreamEndpointKind == "split_session",
                   hasActiveFocusedSessionStreamTransport() {
             disconnectStream()
@@ -738,16 +765,84 @@ final class ServerConnection {
             clearFocusedSessionStreamEndpoint()
         }
 
-        guard hasRequiredSplitStreamCapabilities, let selection = endpointSelection else { return }
-        guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else { return }
-        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
-        components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
-        guard let sessionStreamURL = components.url else { return }
+        guard hasRequiredSplitStreamCapabilities, let selection = endpointSelection else {
+            recordSessionStreamUnavailable(reason: hasRequiredSplitStreamCapabilities ? "missingEndpointSelection" : streamCapabilityUnavailableReason())
+            return
+        }
+        guard let sessionStreamURL = makeFocusedSessionStreamURL(
+            selection: selection,
+            sessionId: sessionId,
+            workspaceId: workspaceId
+        ) else {
+            recordSessionStreamUnavailable(reason: "invalidStreamURL")
+            return
+        }
+
+        let previousURL = focusedSessionStreamURL
         focusedSessionStreamEndpointKind = "split_session"
         focusedSessionStreamSessionId = sessionId
         focusedSessionStreamWorkspaceId = workspaceId
+        focusedSessionStreamURL = sessionStreamURL
         wsClient?.setPreferredEndpoint(selection)
         wsClient?.setStreamURL(sessionStreamURL)
+
+        if let previousURL, previousURL != sessionStreamURL {
+            var metadata: [String: String] = [
+                "transport": selection.transportPath.rawValue,
+                "urlChanged": "true",
+            ]
+            metadata.merge(ClientLog.endpointMetadata(previousURL, prefix: "previousStream")) { current, _ in current }
+            metadata.merge(ClientLog.endpointMetadata(sessionStreamURL, prefix: "nextStream")) { current, _ in current }
+            ClientLog.warning("Network", "Focused stream endpoint changed", metadata: metadata)
+        }
+    }
+
+    private func makeFocusedSessionStreamURL(
+        selection: EndpointSelection,
+        sessionId: String,
+        workspaceId: String
+    ) -> URL? {
+        guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
+        components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
+        return components.url
+    }
+
+    private func refreshPreparedFocusedSessionEndpointAfterEndpointChange() {
+        guard focusedSessionStreamEndpointKind == "split_session",
+              let sessionId = focusedSessionStreamSessionId,
+              let workspaceId = focusedSessionStreamWorkspaceId else {
+            return
+        }
+
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+    }
+
+    private func streamCapabilityUnavailableReason() -> String {
+        if streamCapabilitiesRefreshFailed && !streamCapabilitiesLoaded {
+            return "capabilityRefreshFailed"
+        }
+        if !streamCapabilitiesLoaded {
+            return "capabilityNotLoaded"
+        }
+        if !missingRequiredSplitStreamCapabilities.isEmpty {
+            return "missingCapability:\(missingRequiredSplitStreamCapabilities.joined(separator: ","))"
+        }
+        return "unknown"
+    }
+
+    private func recordSessionStreamUnavailable(reason: String) {
+        var metadata: [String: String] = [
+            "reason": reason,
+            "capabilityStatus": requiredSplitStreamCapabilitiesStatusForDiagnostics,
+            "transport": transportPath.rawValue,
+            "hasWebSocketClient": wsClient == nil ? "false" : "true",
+        ]
+        metadata.merge(ClientLog.endpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
+        metadata.merge(ClientLog.endpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
+        ClientLog.warning("Network", "Session stream unavailable", metadata: metadata)
     }
 
     func cancelDeferredQueueSync() {
@@ -1109,6 +1204,18 @@ final class ServerConnection {
     // periphery:ignore - used by stream coordinator tests via @testable import
     func setFocusedSessionStreamEndpointKindForTesting(_ kind: String) {
         focusedSessionStreamEndpointKind = kind
+    }
+
+    func setAPIClientForTesting(_ client: APIClient) {
+        apiClient = client
+    }
+
+    func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, workspaceId: String) {
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+    }
+
+    var focusedSessionStreamURLForTesting: URL? {
+        focusedSessionStreamURL
     }
 
     func setSplitStreamCapabilitiesForTesting(

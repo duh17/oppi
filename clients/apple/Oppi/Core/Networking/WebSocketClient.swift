@@ -246,7 +246,7 @@ final class WebSocketClient {
                 ClientLog.error(
                     "WebSocket",
                     "WS send callback error",
-                    metadata: Self.mergeMetadata(baseMetadata, extra: ["error": String(describing: error)])
+                    metadata: Self.mergeMetadata(baseMetadata, extra: ClientLog.networkErrorMetadata(error))
                 )
                 resolver.resolve(.failure(error))
             } else {
@@ -497,7 +497,7 @@ final class WebSocketClient {
                         logger.error("WebSocket receive error: \(error)")
                         self.wsLogError(
                             "WebSocket receive error",
-                            metadata: ["error": String(describing: error)]
+                            metadata: ClientLog.networkErrorMetadata(error)
                         )
                     } else {
                         logger.debug("Suppressed duplicate WebSocket receive error: \(String(describing: error), privacy: .public)")
