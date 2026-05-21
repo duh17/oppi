@@ -120,7 +120,7 @@ func providerMonogram(_ provider: String?) -> String {
     case "anthropic": return "A"
     case "openai", "azure-openai-responses": return "O"
     case "google", "google-vertex": return "G"
-    case "deepseek": return "D"
+    case "deepseek", "ds4": return "D"
     case "openrouter": return "R"
     case "amazon-bedrock": return "B"
     case "mistral", "minimax": return "M"
@@ -590,6 +590,7 @@ private let providersWithLogoAsset: Set<String> = [
     "anthropic",
     "cerebras",
     "deepseek",
+    "ds4",
     "fireworks",
     "github-copilot",
     "huggingface",
@@ -610,6 +611,7 @@ private let knownProviderDisplayNames: [String: String] = [
     "azure-openai-responses": "Azure OpenAI",
     "cerebras": "Cerebras",
     "deepseek": "DeepSeek",
+    "ds4": "DS4 Dwarf Star",
     "github-copilot": "GitHub Copilot",
     "google": "Google",
     "google-antigravity": "Google Antigravity",

@@ -23,7 +23,7 @@ enum ProviderColor {
             return palette.orange
         case "openai", "azure-openai-responses", "github-copilot":
             return palette.green
-        case "google", "google-vertex", "google-antigravity", "google-gemini-cli", "deepseek":
+        case "google", "google-vertex", "google-antigravity", "google-gemini-cli", "deepseek", "ds4":
             return palette.blue
         case "meta", "meta-llama", "openrouter", "vercel-ai-gateway", "opencode":
             return palette.cyan

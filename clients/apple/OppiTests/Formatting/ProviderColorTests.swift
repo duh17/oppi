@@ -16,6 +16,7 @@ struct ProviderColorTests {
         expectColor("mistral/mistral-large", equals: palette.red)
         expectColor("mistralai/mistral-medium", equals: palette.red)
         expectColor("deepseek/deepseek-r1", equals: palette.blue)
+        expectColor("ds4/deepseek-v4-flash", equals: palette.blue)
         expectColor("xai/grok-3", equals: palette.yellow)
 
         // Provider matching is case-insensitive.
@@ -26,6 +27,12 @@ struct ProviderColorTests {
         #expect(ProviderIcon.displayName(for: "deepseek") == "DeepSeek")
         #expect(ProviderIcon.mark(for: "deepseek") == "D")
         #expect(ProviderIcon.logoAssetName(for: "deepseek") == "provider-deepseek")
+    }
+
+    @Test func resolvesDS4ProviderDisplayMetadata() {
+        #expect(ProviderIcon.displayName(for: "ds4") == "DS4 Dwarf Star")
+        #expect(ProviderIcon.mark(for: "ds4") == "D")
+        #expect(ProviderIcon.logoAssetName(for: "ds4") == "provider-ds4")
     }
 
     @Test func fallsBackToPurpleForMissingMalformedOrUnknownModel() {
