@@ -18,13 +18,13 @@ struct SessionToolbar: View {
     }
 
     private var modelDisplay: String {
-        guard let model = effectiveModel else { return "no model" }
+        guard let model = effectiveModel else { return "default" }
         return shortModelName(model)
     }
 
-    private var modelProvider: String {
-        guard let model = effectiveModel else { return "" }
-        return providerFromModel(model) ?? ""
+    private var modelProvider: String? {
+        guard let model = effectiveModel else { return nil }
+        return providerFromModel(model)
     }
 
     private var thinkingTint: Color {
@@ -63,8 +63,14 @@ struct SessionToolbar: View {
         Spacer(minLength: 0)
 
         Button(action: onModelTap) {
-            PillLabel(text: modelDisplay, showChevron: true) {
-                ProviderIcon(provider: modelProvider)
+            PillLabel(
+                text: modelDisplay,
+                showChevron: true,
+                showsLeadingIcon: modelProvider != nil
+            ) {
+                if let modelProvider {
+                    ProviderIcon(provider: modelProvider)
+                }
             }
         }
         .buttonStyle(.plain)

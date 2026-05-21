@@ -636,4 +636,14 @@ struct ServerConnectionStreamTests {
         #expect(conn.makeDictationStreamClientForFocusedSession() != nil)
     }
 
+    @Test func sessionAudioDictationClientCanUseExplicitTargetWithoutFocusedSession() {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+
+        #expect(conn.makeDictationStreamClient(workspaceId: "w1", sessionId: "s1") == nil)
+
+        conn.sessionAudioStreamAvailable = true
+        #expect(conn.makeDictationStreamClient(workspaceId: "w1", sessionId: "s1") != nil)
+        #expect(conn.makeDictationStreamClientForFocusedSession() == nil)
+    }
+
 }

@@ -303,6 +303,23 @@ struct QuickSessionTests {
         #expect(AppPreferences.QuickSession.lastWorkspaceId == nil)
     }
 
+    @Test func pendingDictationCleanupRoundTripAndDedupes() {
+        AppPreferences.QuickSession.clearPendingDictationCleanups()
+        let cleanup = AppPreferences.QuickSession.PendingDictationCleanup(
+            serverId: "server-1",
+            workspaceId: "ws-1",
+            sessionId: "sess-1"
+        )
+
+        AppPreferences.QuickSession.enqueuePendingDictationCleanup(cleanup)
+        AppPreferences.QuickSession.enqueuePendingDictationCleanup(cleanup)
+
+        #expect(AppPreferences.QuickSession.pendingDictationCleanups == [cleanup])
+
+        AppPreferences.QuickSession.removePendingDictationCleanup(cleanup)
+        #expect(AppPreferences.QuickSession.pendingDictationCleanups.isEmpty)
+    }
+
 }
 
 // MARK: - StartQuickSessionIntent (static properties)

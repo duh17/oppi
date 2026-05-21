@@ -552,6 +552,7 @@ final class VoiceInputManager {
     /// Set by ChatView when server connection is active.
     private(set) var serverCredentials: ServerCredentials?
     private(set) var serverConnection: ServerConnection?
+    private(set) var serverDictationTarget: ServerDictationTarget?
 
     /// User-selected engine routing mode.
     private(set) var engineMode: EngineMode = .auto
@@ -595,6 +596,12 @@ final class VoiceInputManager {
     /// Called by ChatView alongside setServerCredentials.
     func setServerConnection(_ connection: ServerConnection?) {
         serverConnection = connection
+    }
+
+    /// Pin server dictation to a specific workspace/session audio stream.
+    /// Chat views leave this nil and use the focused session fallback.
+    func setServerDictationTarget(_ target: ServerDictationTarget?) {
+        serverDictationTarget = target
     }
 
     /// Set engine mode directly.
@@ -689,7 +696,8 @@ final class VoiceInputManager {
                     locale: locale,
                     source: source,
                     serverCredentials: serverCredentials,
-                    serverConnection: serverConnection
+                    serverConnection: serverConnection,
+                    serverDictationTarget: serverDictationTarget
                 )
             )
 
@@ -811,7 +819,8 @@ final class VoiceInputManager {
             locale: locale,
             source: source,
             serverCredentials: serverCredentials,
-            serverConnection: serverConnection
+            serverConnection: serverConnection,
+            serverDictationTarget: serverDictationTarget
         )
         let provider = try provider(for: engine)
         var modelPathTag = "warm_cache"

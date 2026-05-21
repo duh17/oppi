@@ -31,11 +31,12 @@ struct ContentView: View {
         crossSessionPending.first
     }
 
-    /// Sheet detents: taller when active sessions are shown.
+    private let quickSessionCompactDetentHeight: CGFloat = 150
+
+    /// Sheet detents: keep Quick Session as a compact composer instead of
+    /// expanding into a mostly empty half sheet when the keyboard appears.
     private var quickSessionDetents: Set<PresentationDetent> {
-        coordinator.hasActiveSessions
-            ? [.medium, .large]
-            : [.height(130), .medium]
+        [.height(quickSessionCompactDetentHeight)]
     }
 
     var body: some View {
@@ -151,11 +152,9 @@ struct ContentView: View {
         }, content: {
             QuickSessionSheet()
                 .presentationDetents(quickSessionDetents)
-                .presentationDragIndicator(coordinator.hasActiveSessions ? .visible : .hidden)
+                .presentationDragIndicator(.hidden)
                 .presentationBackgroundInteraction(
-                    coordinator.hasActiveSessions
-                        ? .enabled(upThrough: .medium)
-                        : .enabled(upThrough: .height(130))
+                    .enabled(upThrough: .height(quickSessionCompactDetentHeight))
                 )
                 .presentationCornerRadius(24)
         })

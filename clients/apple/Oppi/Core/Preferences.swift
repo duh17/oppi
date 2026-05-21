@@ -298,6 +298,13 @@ enum AppPreferences {
 
         private static let lastWorkspaceIdKey = "\(prefix).lastWorkspaceId"
         private static let defaultWorkspaceIdKey = "\(prefix).defaultWorkspaceId"
+        private static let pendingDictationCleanupKey = "\(prefix).pendingDictationCleanup"
+
+        struct PendingDictationCleanup: Codable, Sendable, Equatable {
+            let serverId: String
+            let workspaceId: String
+            let sessionId: String
+        }
 
         // MARK: Workspace
 
@@ -345,6 +352,47 @@ enum AppPreferences {
 
         static func preferredWorkspaceId(in workspaces: [(id: String, name: String)]) -> String? {
             preferredWorkspaceSelection(in: workspaces)?.id
+        }
+
+        // MARK: Pending Dictation Cleanup
+
+        static var pendingDictationCleanups: [PendingDictationCleanup] {
+            guard let data = UserDefaults.standard.data(forKey: pendingDictationCleanupKey) else {
+                return []
+            }
+            do {
+                return try JSONDecoder().decode([PendingDictationCleanup].self, from: data)
+            } catch {
+                UserDefaults.standard.removeObject(forKey: pendingDictationCleanupKey)
+                return []
+            }
+        }
+
+        static func enqueuePendingDictationCleanup(_ cleanup: PendingDictationCleanup) {
+            var items = pendingDictationCleanups
+            if !items.contains(cleanup) {
+                items.append(cleanup)
+            }
+            savePendingDictationCleanups(items)
+        }
+
+        static func removePendingDictationCleanup(_ cleanup: PendingDictationCleanup) {
+            let items = pendingDictationCleanups.filter { $0 != cleanup }
+            savePendingDictationCleanups(items)
+        }
+
+        static func clearPendingDictationCleanups() {
+            UserDefaults.standard.removeObject(forKey: pendingDictationCleanupKey)
+        }
+
+        private static func savePendingDictationCleanups(_ items: [PendingDictationCleanup]) {
+            guard !items.isEmpty else {
+                clearPendingDictationCleanups()
+                return
+            }
+            if let data = try? JSONEncoder().encode(items) {
+                UserDefaults.standard.set(data, forKey: pendingDictationCleanupKey)
+            }
         }
 
     }

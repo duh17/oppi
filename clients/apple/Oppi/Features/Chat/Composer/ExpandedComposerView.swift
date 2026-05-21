@@ -39,6 +39,7 @@ struct ExpandedComposerView: View {
     var modelOverride: String? = nil
     let thinkingLevel: ThinkingLevel
     var voiceInputManager: VoiceInputManager?
+    var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)? = nil
     let onSend: () -> Void
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
@@ -411,6 +412,7 @@ struct ExpandedComposerView: View {
                     )
                 case .idle:
                     do {
+                        try await onPrepareVoiceInput?(manager)
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,

@@ -206,6 +206,8 @@ enum ChatSessionTelemetry {
             switch quickSessionError {
             case .noConnection:
                 return "no_connection"
+            case .noWorkspace:
+                return "no_workspace"
             }
         }
 

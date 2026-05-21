@@ -32,6 +32,7 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var systemPrompt: String?
     var systemPromptMode: WorkspaceSystemPromptMode = .append
     var hostMount: String?      // Host directory mounted as /work
+    var defaultModel: String?   // Optional default model for new sessions
 
     // Tools and extensions
     var tools: [String]?
@@ -110,7 +111,7 @@ extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, name, description, icon
         case skills
-        case systemPrompt, systemPromptMode, hostMount
+        case systemPrompt, systemPromptMode, hostMount, defaultModel
         case tools, extensions
         case gitStatusEnabled
         case runtime, sandboxConfig
@@ -125,6 +126,7 @@ extension Workspace: Codable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         skills = try c.decode([String].self, forKey: .skills)
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
+        defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
         tools = try c.decodeIfPresent([String].self, forKey: .tools)
@@ -150,6 +152,7 @@ extension Workspace: Codable {
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
+        try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encodeIfPresent(tools, forKey: .tools)
         try c.encodeIfPresent(extensions, forKey: .extensions)
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)

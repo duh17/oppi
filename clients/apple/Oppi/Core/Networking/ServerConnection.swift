@@ -1161,18 +1161,25 @@ final class ServerConnection {
         serverDictationAvailable = available
     }
 
-    func makeDictationStreamClientForFocusedSession() -> DictationStreamClient? {
+    func makeDictationStreamClient(workspaceId: String, sessionId: String) -> DictationStreamClient? {
         guard sessionAudioStreamAvailable,
-              let context = focusedSessionStore.focused,
-              let workspaceId = context.workspaceId,
               let selection = endpointSelection,
               let credentials else { return nil }
         return DictationStreamClient(
             baseURL: selection.baseURL,
             workspaceId: workspaceId,
-            sessionId: context.sessionId,
+            sessionId: sessionId,
             token: credentials.token,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
+    }
+
+    func makeDictationStreamClientForFocusedSession() -> DictationStreamClient? {
+        guard let context = focusedSessionStore.focused,
+              let workspaceId = context.workspaceId else { return nil }
+        return makeDictationStreamClient(
+            workspaceId: workspaceId,
+            sessionId: context.sessionId
         )
     }
 

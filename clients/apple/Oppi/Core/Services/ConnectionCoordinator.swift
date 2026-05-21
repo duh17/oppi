@@ -501,19 +501,6 @@ final class ConnectionCoordinator {
             .sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// Whether any non-stopped sessions exist across all servers.
-    /// Used by QuickSessionSheet presentation (detent sizing, drag indicator).
-    var hasActiveSessions: Bool {
-        connections.values.contains { conn in
-            conn.sessionStore.listProjectionSessions.contains { session in
-                switch session.status {
-                case .busy, .starting, .stopping, .ready, .error: return true
-                case .stopped: return false
-                }
-            }
-        }
-    }
-
     /// Whether any audio playback is active across all servers.
     var hasActiveAudioPlayback: Bool {
         connections.values.contains { $0.audioPlayer.hasActivePlayback }

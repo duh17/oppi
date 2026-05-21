@@ -32,6 +32,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let sendProgressText: String?
     let isStopping: Bool
     var voiceInputManager: VoiceInputManager?
+    var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)? = nil
     let showForceStop: Bool
     let isForceStopInFlight: Bool
     var askRequest: AskRequest?
@@ -632,6 +633,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     )
                 case .idle:
                     do {
+                        try await onPrepareVoiceInput?(manager)
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,

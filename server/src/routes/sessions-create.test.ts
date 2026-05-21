@@ -285,6 +285,14 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "custom-model");
   });
 
+  it("uses workspace default model when request omits model", async () => {
+    const mock = createMockContext(makeWorkspace({ defaultModel: "openai-codex/gpt-5.4" }));
+
+    await dispatchCreate(mock, { prompt: "hello" });
+
+    expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "openai-codex/gpt-5.4");
+  });
+
   it("omits model when request does not specify one so Pi settings choose", async () => {
     const mock = createMockContext();
 
@@ -334,6 +342,18 @@ describe("POST /workspaces/:id/sessions", () => {
 
     expect(mock.sessions.forwardClientCommand).not.toHaveBeenCalled();
     expect(mock.sessions.sendPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists thinking level for promptless session creation", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, { thinking: "high" });
+
+    expect(mock.sessions.startSession).not.toHaveBeenCalled();
+    expect(mock.sessions.forwardClientCommand).not.toHaveBeenCalled();
+    const lastSaveIndex = mock.storage.saveSession.mock.calls.length - 1;
+    const savedSession = mock.storage.saveSession.mock.calls[lastSaveIndex]![0] as Session;
+    expect(savedSession.thinkingLevel).toBe("high");
   });
 
   it("passes images to sendPrompt when provided", async () => {

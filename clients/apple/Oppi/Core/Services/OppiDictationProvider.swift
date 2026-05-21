@@ -61,14 +61,14 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
             transport = prepared.transport
             messageStream = prepared.messages
         } else {
-            guard let client = connection.makeDictationStreamClientForFocusedSession() else {
+            guard let client = Self.makeDictationStreamClient(connection: connection, target: context.serverDictationTarget) else {
                 throw VoiceInputError.serverNotConnected
             }
             transport = client
             messageStream = client.connect()
         }
 #else
-        guard let client = connection.makeDictationStreamClientForFocusedSession() else {
+        guard let client = Self.makeDictationStreamClient(connection: connection, target: context.serverDictationTarget) else {
             throw VoiceInputError.serverNotConnected
         }
         transport = client
@@ -111,6 +111,19 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
                 transport: transportTag
             )
         )
+    }
+
+    private static func makeDictationStreamClient(
+        connection: ServerConnection,
+        target: ServerDictationTarget?
+    ) -> DictationStreamClient? {
+        if let target {
+            return connection.makeDictationStreamClient(
+                workspaceId: target.workspaceId,
+                sessionId: target.sessionId
+            )
+        }
+        return connection.makeDictationStreamClientForFocusedSession()
     }
 
     /// Wait for `dictation_ready` from the server by monitoring the dictation subscription.

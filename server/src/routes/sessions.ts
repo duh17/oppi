@@ -912,6 +912,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
     }>(req);
+    const requestedModel =
+      typeof body.model === "string" && body.model.trim().length > 0
+        ? body.model.trim()
+        : undefined;
+    const workspaceDefaultModel =
+      typeof workspace.defaultModel === "string" && workspace.defaultModel.trim().length > 0
+        ? workspace.defaultModel.trim()
+        : undefined;
 
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
@@ -949,7 +957,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
       }
 
-      const session = ctx.storage.createSession(sessionName, body.model);
+      const session = ctx.storage.createSession(sessionName, requestedModel);
 
       session.workspaceId = workspace.id;
       session.workspaceName = workspace.name;
@@ -980,7 +988,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       }
     }
 
-    const session = ctx.storage.createSession(body.name, body.model);
+    const session = ctx.storage.createSession(body.name, requestedModel ?? workspaceDefaultModel);
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
@@ -989,6 +997,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
     if (body.ephemeral === true) {
       session.ephemeral = true;
+    }
+    if (body.thinking) {
+      session.thinkingLevel = body.thinking;
     }
     ctx.storage.saveSession(session);
 
