@@ -133,12 +133,6 @@ struct SettingsView: View {
                     }
                 }
 
-                NavigationLink {
-                    SubagentSettingsView()
-                } label: {
-                    Label("Subagents", systemImage: "point.3.connected.trianglepath.dotted")
-                }
-
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
                     ForEach(AppPreferences.ScreenAwake.TimeoutPreset.allCases) { preset in
                         Text(preset.label).tag(preset)

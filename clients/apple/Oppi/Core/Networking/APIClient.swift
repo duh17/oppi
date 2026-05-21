@@ -127,19 +127,6 @@ actor APIClient {
         let status: ServerInfo.RuntimeUpdateInfo
     }
 
-    // MARK: - Server-managed agent config
-
-    func getSubagentConfig() async throws -> SubagentConfig {
-        let data = try await get("/server/subagents")
-        return try JSONDecoder().decode(SubagentConfig.self, from: data)
-    }
-
-    func setSubagentConfig(_ config: SubagentConfig) async throws -> SubagentConfig {
-        let (data, response) = try await request("PUT", path: "/server/subagents", body: config)
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(SubagentConfig.self, from: data)
-    }
-
     /// Trigger a server runtime update (`npm install -g <runtime>@latest`).
     ///
     /// Returns operation result plus the latest runtime update status snapshot.

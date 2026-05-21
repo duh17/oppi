@@ -3,7 +3,6 @@ import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
-import { defaultSubagentConfig } from "../storage/config-store.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -20,33 +19,6 @@ const PAIRING_WINDOW_MS = 60_000;
 const PAIRING_COOLDOWN_MS = 120_000;
 
 const log = createLogger({ base: { component: "route_identity" } });
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function mergeSubagentConfig(
-  current: Record<string, unknown>,
-  incoming: Record<string, unknown>,
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = {
-    ...current,
-    ...incoming,
-  };
-
-  if ("modelPolicy" in incoming) {
-    // Treat modelPolicy as authoritative when supplied. The Apple settings UI
-    // sends an empty object to clear approved/default/profile policy; deep
-    // merging here would resurrect deleted profiles or defaults.
-    if (isObjectRecord(incoming.modelPolicy)) {
-      merged.modelPolicy = incoming.modelPolicy;
-    } else {
-      delete merged.modelPolicy;
-    }
-  }
-
-  return merged;
-}
 
 export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const pairingFailuresBySource = new Map<string, number[]>();
@@ -343,32 +315,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       helpers.json(res, updated);
       return true;
     }
-    if (path === "/server/subagents" && method === "GET") {
-      helpers.json(res, ctx.storage.getConfig().extensions?.subagents ?? defaultSubagentConfig());
-      return true;
-    }
-    if (path === "/server/subagents" && method === "PUT") {
-      const body = await helpers.parseBody<Record<string, unknown>>(req);
-      if (!isObjectRecord(body)) {
-        helpers.error(res, 400, "subagent config object required");
-        return true;
-      }
-
-      const config = ctx.storage.getConfig();
-      const current = {
-        ...(config.extensions?.subagents ?? defaultSubagentConfig()),
-      } as unknown as Record<string, unknown>;
-      const updated = mergeSubagentConfig(current, body);
-      ctx.storage.updateConfig({
-        extensions: {
-          ...(config.extensions ?? {}),
-          subagents: updated as never,
-        },
-      });
-      helpers.json(res, ctx.storage.getConfig().extensions?.subagents ?? defaultSubagentConfig());
-      return true;
-    }
-
     return false;
   };
 }

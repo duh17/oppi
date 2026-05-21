@@ -92,8 +92,6 @@ const settingsOperationIds = [
   "updateServerRuntime",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
-  "getSubagentConfig",
-  "setSubagentConfig",
   "createWorkspace",
   "updateWorkspace",
   "deleteWorkspace",
@@ -236,6 +234,7 @@ describe("api route registry", () => {
     expect(paths.has("/workspaces/{workspaceId}/home")).toBe(false);
     expect(paths.has("/provider-auth/providers")).toBe(false);
     expect(paths.has("/server/runtime/status")).toBe(false);
+    expect(paths.has("/server/subagents")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/prompt-templates")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/review/comments/attach-to-turn")).toBe(false);
     expect(
