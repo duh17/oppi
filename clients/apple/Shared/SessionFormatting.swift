@@ -43,6 +43,32 @@ enum SessionFormatting {
         NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
     }
 
+    /// Format a UI count compactly: 1452 → "1.5k", 12000 → "12k".
+    static func compactCount(_ count: Int) -> String {
+        let sign = count < 0 ? "-" : ""
+        let magnitude = count == Int.min ? Int.max : abs(count)
+        if magnitude < 1_000 { return "\(count)" }
+
+        let value: Double
+        let suffix: String
+        if magnitude >= 999_500_000 {
+            value = Double(magnitude) / 1_000_000_000
+            suffix = "B"
+        } else if magnitude >= 999_500 {
+            value = Double(magnitude) / 1_000_000
+            suffix = "M"
+        } else {
+            value = Double(magnitude) / 1_000
+            suffix = "k"
+        }
+
+        var formatted = String(format: value < 10 ? "%.1f" : "%.0f", value)
+        if formatted.hasSuffix(".0") {
+            formatted.removeLast(2)
+        }
+        return "\(sign)\(formatted)\(suffix)"
+    }
+
     /// Format byte count for display: 1234 → "1.2 KB", 5242880 → "5.0 MB".
     static func byteCount(_ bytes: Int) -> String {
         if bytes < 1024 { return "\(bytes) B" }

@@ -462,24 +462,30 @@ struct WorkspaceContextBar: View {
                     }
 
                     if displayFileCount > 0 {
-                        Text("\(displayFileCount) changed")
+                        Text("\(SessionFormatting.compactCount(displayFileCount)) changed")
                             .font(.caption.monospaced().weight(.semibold))
                             .foregroundStyle(dirtyColor)
+                            .lineLimit(1)
                     }
 
                     if displayAddedLines > 0 || displayRemovedLines > 0 {
                         HStack(spacing: 4) {
                             if displayAddedLines > 0 {
-                                Text("+\(displayAddedLines)")
+                                Text("+\(SessionFormatting.compactCount(displayAddedLines))")
                                     .font(.caption2.monospaced().bold())
                                     .foregroundStyle(.themeDiffAdded)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
                             if displayRemovedLines > 0 {
-                                Text("-\(displayRemovedLines)")
+                                Text("-\(SessionFormatting.compactCount(displayRemovedLines))")
                                     .font(.caption2.monospaced().bold())
                                     .foregroundStyle(.themeDiffRemoved)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
                         }
+                        .fixedSize(horizontal: true, vertical: false)
                     }
 
                     Spacer(minLength: 0)
@@ -488,14 +494,18 @@ struct WorkspaceContextBar: View {
                         if ahead > 0 || behind > 0 {
                             HStack(spacing: 4) {
                                 if ahead > 0 {
-                                    Text("\u{2191}\(ahead)")
+                                    Text("\u{2191}\(SessionFormatting.compactCount(ahead))")
                                         .font(.caption2.monospaced())
                                         .foregroundStyle(.themeDiffAdded)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
                                 }
                                 if behind > 0 {
-                                    Text("\u{2193}\(behind)")
+                                    Text("\u{2193}\(SessionFormatting.compactCount(behind))")
                                         .font(.caption2.monospaced())
                                         .foregroundStyle(.themeOrange)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
                                 }
                             }
                         }
