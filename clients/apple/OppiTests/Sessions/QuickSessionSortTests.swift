@@ -288,6 +288,48 @@ struct QuickSessionSortTests {
     }
 }
 
+// MARK: - Sessions Home Sections
+
+@Suite("Shared Session List Active Sections")
+struct SessionsHomeActiveSectionTests {
+
+    @Test func permissionRoutesBusySessionToYourTurn() {
+        let session = makeSession(id: "perm", status: .busy)
+        let section = SessionListPresentation.activeSectionKind(
+            for: session,
+            attention: SessionListAttentionCounts(permissionCount: 1, askCount: 0)
+        )
+        #expect(section == .yourTurn)
+    }
+
+    @Test func askRoutesReadySessionToYourTurn() {
+        let session = makeSession(id: "ask", status: .ready)
+        let section = SessionListPresentation.activeSectionKind(
+            for: session,
+            attention: SessionListAttentionCounts(permissionCount: 0, askCount: 1)
+        )
+        #expect(section == .yourTurn)
+    }
+
+    @Test func busyWithoutAttentionRoutesToWorking() {
+        let session = makeSession(id: "busy", status: .busy)
+        let section = SessionListPresentation.activeSectionKind(for: session)
+        #expect(section == .working)
+    }
+
+    @Test func readyWithoutAttentionRoutesToYourTurn() {
+        let session = makeSession(id: "ready", status: .ready)
+        let section = SessionListPresentation.activeSectionKind(for: session)
+        #expect(section == .yourTurn)
+    }
+
+    @Test func stoppedSessionHasNoActiveSection() {
+        let session = makeSession(id: "stopped", status: .stopped)
+        let section = SessionListPresentation.activeSectionKind(for: session)
+        #expect(section == nil)
+    }
+}
+
 // MARK: - QuickSessionNav
 
 @Suite("Quick Session Nav")

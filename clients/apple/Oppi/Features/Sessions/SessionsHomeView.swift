@@ -8,9 +8,11 @@ private struct SessionsHomeRoute: Hashable {
 private struct SessionsHomeSessionRow: Identifiable, Equatable {
     var id: String { "\(serverId):\(session.id)" }
     let serverId: String
+    let workspaceId: String?
     let session: Session
     let pendingPermissionCount: Int
     let pendingAskCount: Int
+    let activeSectionKind: SessionListActiveSectionKind?
 }
 
 private struct SessionsHomeWorkspaceGroup: Identifiable, Equatable {
@@ -43,17 +45,28 @@ struct SessionsHomeView: View {
     @State private var recentRows: [SessionsHomeSessionRow] = []
     @State private var isRefreshing = false
     @State private var errorText: String?
+    @State private var actionError: String?
+    @State private var pendingDeleteRow: SessionsHomeSessionRow?
     @State private var hasLoadedOnce = false
 
     var body: some View {
+        let yourTurnRows = activeYourTurnRows
+        let workingRows = activeWorkingRows
+        let activeRowIds = Set((yourTurnRows + workingRows).map(\.id))
+        let visibleRecentRows = recentRows.filter { !activeRowIds.contains($0.id) }
+
         NavigationStack(path: $path) {
             List {
-                if !activeGroups.isEmpty {
-                    activeSection
+                if !yourTurnRows.isEmpty {
+                    activeRowsSection("Your Turn", rows: yourTurnRows)
                 }
 
-                if !recentRows.isEmpty {
-                    recentSection
+                if !workingRows.isEmpty {
+                    activeRowsSection("Working", rows: workingRows)
+                }
+
+                if !visibleRecentRows.isEmpty {
+                    recentSection(rows: visibleRecentRows)
                 }
             }
             .accessibilityIdentifier("sessions.home.list")
@@ -71,37 +84,222 @@ struct SessionsHomeView: View {
                 }
             }
             .overlay {
-                if activeGroups.isEmpty, recentRows.isEmpty, !isRefreshing {
+                if yourTurnRows.isEmpty, workingRows.isEmpty, visibleRecentRows.isEmpty, !isRefreshing {
                     emptyState
                 }
             }
             .refreshable {
                 await refresh(force: true)
             }
-            .task {
+            .task(id: refreshTaskId) {
                 await refresh(force: false)
+                await runRefreshPolling()
             }
             .navigationDestination(for: SessionsHomeRoute.self) { route in
                 serverScopedChatDestination(route)
             }
-        }
-    }
-
-    private var activeSection: some View {
-        ForEach(activeGroups) { group in
-            Section {
-                ForEach(group.sessions) { row in
-                    sessionButton(row: row, workspace: group.workspace, showWorkspaceContext: false)
+            .confirmationDialog(
+                "Delete Session?",
+                isPresented: isDeleteConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                if let row = pendingDeleteRow {
+                    Button("Delete Session", role: .destructive) {
+                        SessionDeleteConfirmationPolicy.confirm(
+                            session: row.session,
+                            clearPending: { pendingDeleteRow = nil },
+                            performDelete: { _ in
+                                Task { await deleteSession(row) }
+                            }
+                        )
+                    }
                 }
-            } header: {
-                workspaceHeader(group)
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteRow = nil
+                }
+            } message: {
+                if let session = pendingDeleteRow?.session {
+                    Text(SessionDeleteConfirmationPolicy.deleteMessage(for: session))
+                }
+            }
+            .alert("Error", isPresented: actionErrorPresented) {
+                Button("OK", role: .cancel) { actionError = nil }
+            } message: {
+                Text(actionError ?? "")
             }
         }
     }
 
-    private var recentSection: some View {
+    private var refreshTaskId: String {
+        coordinator.connections.keys.sorted().joined(separator: "|")
+    }
+
+    private var isDeleteConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteRow != nil },
+            set: { newValue in
+                if !newValue { pendingDeleteRow = nil }
+            }
+        )
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { actionError != nil },
+            set: { newValue in
+                if !newValue { actionError = nil }
+            }
+        )
+    }
+
+    private var activeRows: [SessionsHomeSessionRow] {
+        let apiRowsByKey = Dictionary(uniqueKeysWithValues: activeGroups.flatMap { group in
+            group.sessions.map { row in (row.id, row) }
+        })
+
+        return coordinator.connections
+            .sorted { $0.key < $1.key }
+            .flatMap { serverId, conn in
+                activeRows(
+                    serverId: serverId,
+                    connection: conn,
+                    apiRowsByKey: apiRowsByKey
+                )
+            }
+    }
+
+    private var activeYourTurnRows: [SessionsHomeSessionRow] {
+        activeRows
+            .filter { activeSectionKind(for: $0) == .yourTurn }
+            .sorted { lhs, rhs in
+                SessionListPresentation.compareYourTurn(
+                    lhs.session,
+                    lhsAttention: attentionCounts(for: lhs),
+                    rhs.session,
+                    rhsAttention: attentionCounts(for: rhs)
+                )
+            }
+    }
+
+    private var activeWorkingRows: [SessionsHomeSessionRow] {
+        activeRows
+            .filter { activeSectionKind(for: $0) == .working }
+            .sorted { lhs, rhs in
+                if SessionListPresentation.compareWorking(lhs.session, rhs.session) { return true }
+                if SessionListPresentation.compareWorking(rhs.session, lhs.session) { return false }
+                return lhs.id < rhs.id
+            }
+    }
+
+    private func activeRows(
+        serverId: String,
+        connection conn: ServerConnection,
+        apiRowsByKey: [String: SessionsHomeSessionRow]
+    ) -> [SessionsHomeSessionRow] {
+        let liveSessions = conn.sessionStore.listProjectionSessions
+        let liveById = Dictionary(uniqueKeysWithValues: liveSessions.map { ($0.id, $0) })
+        let liveActiveSessions = liveSessions.filter { $0.status != .stopped }
+        let apiFallbackSessions = apiRowsByKey.values
+            .filter { row in
+                row.serverId == serverId && liveById[row.session.id] == nil && row.session.status != .stopped
+            }
+            .map(\.session)
+        let candidateSessions = liveActiveSessions + apiFallbackSessions
+        let candidateIds = Set(candidateSessions.map(\.id))
+        let childIndex = SessionTreeHelper.ChildIndex(sessions: candidateSessions)
+
+        let roots = candidateSessions.filter { session in
+            guard let parentSessionId = session.parentSessionId else { return true }
+            return !candidateIds.contains(parentSessionId)
+        }
+
+        return roots.compactMap { session in
+            let descendantIds = childIndex.allDescendants(of: session.id).map(\.id)
+            let attention = attentionCounts(
+                sessionId: session.id,
+                descendantIds: descendantIds,
+                serverId: serverId,
+                connection: conn,
+                apiRowsByKey: apiRowsByKey
+            )
+            let hasWorkingDescendant = childIndex.allDescendants(of: session.id).contains {
+                if $0.isAwaitingFirstPrompt { return false }
+                switch $0.status {
+                case .starting, .busy, .stopping: return true
+                default: return false
+                }
+            }
+            guard let sectionKind = SessionListPresentation.activeSectionKind(
+                for: session,
+                attention: attention,
+                hasWorkingDescendant: hasWorkingDescendant
+            ) else {
+                return nil
+            }
+
+            return SessionsHomeSessionRow(
+                serverId: serverId,
+                workspaceId: session.workspaceId,
+                session: session,
+                pendingPermissionCount: attention.permissionCount,
+                pendingAskCount: attention.askCount,
+                activeSectionKind: sectionKind
+            )
+        }
+    }
+
+    private func activeSectionKind(for row: SessionsHomeSessionRow) -> SessionListActiveSectionKind? {
+        row.activeSectionKind ?? SessionListPresentation.activeSectionKind(
+            for: row.session,
+            attention: attentionCounts(for: row)
+        )
+    }
+
+    private func attentionCounts(for row: SessionsHomeSessionRow) -> SessionListAttentionCounts {
+        SessionListAttentionCounts(
+            permissionCount: row.pendingPermissionCount,
+            askCount: row.pendingAskCount
+        )
+    }
+
+    private func attentionCounts(
+        sessionId: String,
+        descendantIds: [String],
+        serverId: String,
+        connection conn: ServerConnection,
+        apiRowsByKey: [String: SessionsHomeSessionRow]
+    ) -> SessionListAttentionCounts {
+        let relevantIds = [sessionId] + descendantIds
+        let livePermissionCount = relevantIds.reduce(0) { total, id in
+            total + conn.permissionStore.pending(for: id).count
+        }
+        let liveAskCount = relevantIds.reduce(0) { total, id in
+            total + (conn.askRequestStore.hasPending(for: id) ? 1 : 0)
+        }
+        let apiPermissionCount = relevantIds.reduce(0) { total, id in
+            total + (apiRowsByKey["\(serverId):\(id)"]?.pendingPermissionCount ?? 0)
+        }
+        let apiAskCount = relevantIds.reduce(0) { total, id in
+            total + (apiRowsByKey["\(serverId):\(id)"]?.pendingAskCount ?? 0)
+        }
+
+        return SessionListAttentionCounts(
+            permissionCount: max(livePermissionCount, apiPermissionCount),
+            askCount: max(liveAskCount, apiAskCount)
+        )
+    }
+
+    private func activeRowsSection(_ title: String, rows: [SessionsHomeSessionRow]) -> some View {
+        Section(title) {
+            ForEach(rows) { row in
+                sessionButton(row: row, workspace: nil, showWorkspaceContext: true)
+            }
+        }
+    }
+
+    private func recentSection(rows: [SessionsHomeSessionRow]) -> some View {
         Section {
-            ForEach(recentRows) { row in
+            ForEach(rows) { row in
                 sessionButton(row: row, workspace: nil, showWorkspaceContext: true)
             }
         } header: {
@@ -150,28 +348,6 @@ struct SessionsHomeView: View {
         }
     }
 
-    @ViewBuilder
-    private func workspaceHeader(_ group: SessionsHomeWorkspaceGroup) -> some View {
-        HStack(spacing: 6) {
-            if let icon = group.workspace.icon {
-                Text(icon)
-                    .font(.caption)
-            }
-            Text(group.workspace.name.uppercased())
-                .font(.caption2.monospaced().weight(.semibold))
-                .tracking(0.8)
-
-            if coordinator.connections.count > 1 {
-                Text(serverLabel(for: group.serverId))
-                    .font(.caption2.monospaced())
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(.themeComment.opacity(0.1), in: Capsule())
-            }
-        }
-        .foregroundStyle(.themeComment)
-    }
-
     private func sessionButton(
         row: SessionsHomeSessionRow,
         workspace: Workspace?,
@@ -182,10 +358,19 @@ struct SessionsHomeView: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 if showWorkspaceContext {
-                    Text(row.session.workspaceName ?? workspace?.name ?? "Workspace")
-                        .font(.caption2.monospaced().weight(.medium))
-                        .foregroundStyle(.themeComment)
-                        .textCase(.uppercase)
+                    HStack(spacing: 6) {
+                        Text(row.session.workspaceName ?? workspace?.name ?? "Workspace")
+                            .textCase(.uppercase)
+
+                        if coordinator.connections.count > 1 {
+                            Text(serverLabel(for: row.serverId))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(.themeComment.opacity(0.1), in: Capsule())
+                        }
+                    }
+                    .font(.caption2.monospaced().weight(.medium))
+                    .foregroundStyle(.themeComment)
                 }
 
                 SessionRow(
@@ -199,6 +384,23 @@ struct SessionsHomeView: View {
         }
         .buttonStyle(.plain)
         .listRowBackground(Color.themeBg)
+        .swipeActions(edge: .trailing, allowsFullSwipe: row.session.status == .stopped) {
+            if row.session.status == .stopped {
+                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
+                    pendingDeleteRow = row
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .tint(.themeRed)
+            } else {
+                Button {
+                    Task { await stopSession(row) }
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .tint(.themeOrange)
+            }
+        }
     }
 
     private func activitySummary(for row: SessionsHomeSessionRow) -> String? {
@@ -216,6 +418,122 @@ struct SessionsHomeView: View {
     private func open(_ row: SessionsHomeSessionRow) {
         guard coordinator.switchToServer(row.serverId) else { return }
         path.append(SessionsHomeRoute(serverId: row.serverId, sessionId: row.session.id))
+    }
+
+    private func stopSession(_ row: SessionsHomeSessionRow) async {
+        guard let workspaceId = row.workspaceId, !workspaceId.isEmpty else {
+            actionError = "Stop failed: missing workspace for this session."
+            return
+        }
+        guard let conn = coordinator.connection(for: row.serverId), let api = conn.apiClient else {
+            actionError = "Stop failed: server is offline."
+            return
+        }
+
+        do {
+            let updated = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: row.session.id)
+            conn.sessionStore.upsert(updated)
+            await refresh(force: true)
+        } catch {
+            actionError = "Stop failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func deleteSession(_ row: SessionsHomeSessionRow) async {
+        guard let workspaceId = row.workspaceId, !workspaceId.isEmpty else {
+            actionError = "Delete failed: missing workspace for this session."
+            return
+        }
+        guard let conn = coordinator.connection(for: row.serverId), let api = conn.apiClient else {
+            actionError = "Delete failed: server is offline."
+            return
+        }
+
+        conn.sessionStore.remove(id: row.session.id)
+        removeRowLocally(row)
+
+        do {
+            try await api.deleteWorkspaceSession(workspaceId: workspaceId, sessionId: row.session.id)
+        } catch let apiError as APIError {
+            // 404 means already deleted server-side — local removal above is sufficient.
+            if case .server(let status, _) = apiError, status == 404 { /* ok */ } else {
+                actionError = "Delete failed: \(apiError.localizedDescription)"
+            }
+        } catch {
+            actionError = "Delete failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func removeRowLocally(_ row: SessionsHomeSessionRow) {
+        recentRows.removeAll { $0.id == row.id }
+        activeGroups = activeGroups.compactMap { group in
+            let sessions = group.sessions.filter { $0.id != row.id }
+            guard !sessions.isEmpty else { return nil }
+            return SessionsHomeWorkspaceGroup(
+                serverId: group.serverId,
+                workspace: group.workspace,
+                sessions: sessions
+            )
+        }
+    }
+
+    private func runRefreshPolling() async {
+        var policy = SessionListRefreshPollingPolicy()
+
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(Int.random(in: 10...15)))
+            guard !Task.isCancelled else { break }
+
+            let state = pollingState()
+            guard policy.shouldRefresh(
+                hasActiveWork: state.hasActiveWork,
+                hasAttention: state.hasAttention
+            ) else {
+                continue
+            }
+
+            await refresh(force: true)
+        }
+    }
+
+    private func pollingState() -> (hasActiveWork: Bool, hasAttention: Bool) {
+        var hasActiveWork = false
+        var hasAttention = false
+
+        for conn in coordinator.connections.values {
+            let sessions = conn.sessionStore.listProjectionSessions
+            let activeSessionIds = Set(sessions.filter { $0.status != .stopped }.map(\.id))
+
+            if sessions.contains(where: { session in
+                switch session.status {
+                case .starting, .busy, .stopping:
+                    return true
+                case .ready, .stopped, .error:
+                    return false
+                }
+            }) {
+                hasActiveWork = true
+            }
+
+            if conn.permissionStore.pending.contains(where: { activeSessionIds.contains($0.sessionId) }) ||
+                conn.askRequestStore.pending.values.contains(where: { activeSessionIds.contains($0.sessionId) }) {
+                hasAttention = true
+            }
+        }
+
+        for row in activeRows {
+            if row.pendingPermissionCount > 0 || row.pendingAskCount > 0 {
+                hasAttention = true
+            }
+            switch row.session.status {
+            case .starting, .busy, .stopping:
+                hasActiveWork = true
+            case .ready, .stopped, .error:
+                break
+            }
+        }
+
+        return (hasActiveWork, hasAttention)
     }
 
     private func refresh(force: Bool) async {
@@ -251,9 +569,11 @@ struct SessionsHomeView: View {
                         sessions: group.sessions.map { row in
                             SessionsHomeSessionRow(
                                 serverId: serverId,
+                                workspaceId: group.workspace.id,
                                 session: row.summary.session,
                                 pendingPermissionCount: row.pendingPermissionCount,
-                                pendingAskCount: row.pendingAskCount
+                                pendingAskCount: row.pendingAskCount,
+                                activeSectionKind: nil
                             )
                         }
                     )
@@ -272,9 +592,11 @@ struct SessionsHomeView: View {
                     .map { summary in
                         SessionsHomeSessionRow(
                             serverId: serverId,
+                            workspaceId: summary.workspaceId ?? summary.session.workspaceId,
                             session: summary.session,
                             pendingPermissionCount: 0,
-                            pendingAskCount: 0
+                            pendingAskCount: 0,
+                            activeSectionKind: nil
                         )
                     })
             } catch {
@@ -310,9 +632,11 @@ struct SessionsHomeView: View {
             ).map { session in
                 SessionsHomeSessionRow(
                     serverId: serverId,
+                    workspaceId: workspace.id,
                     session: session,
                     pendingPermissionCount: conn.permissionStore.pending(for: session.id).count,
-                    pendingAskCount: conn.askRequestStore.hasPending(for: session.id) ? 1 : 0
+                    pendingAskCount: conn.askRequestStore.hasPending(for: session.id) ? 1 : 0,
+                    activeSectionKind: nil
                 )
             }
             return SessionsHomeWorkspaceGroup(serverId: serverId, workspace: workspace, sessions: rows)
@@ -328,9 +652,11 @@ struct SessionsHomeView: View {
             .map { session in
                 SessionsHomeSessionRow(
                     serverId: serverId,
+                    workspaceId: session.workspaceId,
                     session: session,
                     pendingPermissionCount: 0,
-                    pendingAskCount: 0
+                    pendingAskCount: 0,
+                    activeSectionKind: nil
                 )
             }
     }
