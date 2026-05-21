@@ -27,8 +27,7 @@ function hasCompletedWaitTurn(
 ): boolean {
   if (session.status !== "ready") return false;
   return (
-    session.tokens.output > baselineOutputTokens ||
-    session.messageCount > baselineMessageCount
+    session.tokens.output > baselineOutputTokens || session.messageCount > baselineMessageCount
   );
 }
 
@@ -61,10 +60,7 @@ function appendChangeStatsLines(
     for (const filePath of changeStats.changedFiles.slice(0, 10)) {
       lines.push(`  ${shortenPath(filePath)}`);
     }
-    if (
-      changeStats.changedFilesOverflow &&
-      changeStats.changedFilesOverflow > 0
-    ) {
+    if (changeStats.changedFilesOverflow && changeStats.changedFilesOverflow > 0) {
       lines.push(`  ... and ${changeStats.changedFilesOverflow} more`);
     }
   }
@@ -110,9 +106,7 @@ export function buildChildCompletionText(
   const status = session?.status ?? "unknown";
   const cost = session?.cost ?? 0;
 
-  lines.push(
-    `Agent "${childName}" (${childId}) finished: ${status.toUpperCase()}`,
-  );
+  lines.push(`Agent "${childName}" (${childId}) finished: ${status.toUpperCase()}`);
   lines.push(
     `${session?.messageCount ?? 0} messages, ${formatCost(cost)}, ${formatDuration(durationMs)}`,
   );
@@ -196,9 +190,7 @@ export function waitForChildCompletion(
         cleanup();
         const message = error instanceof Error ? error.message : String(error);
         reject(
-          new Error(
-            `Child agent completed its waited turn but could not be stopped: ${message}`,
-          ),
+          new Error(`Child agent completed its waited turn but could not be stopped: ${message}`),
         );
         return;
       }
@@ -233,13 +225,7 @@ export function waitForChildCompletion(
         finalize(false);
         return;
       }
-      if (
-        hasCompletedWaitTurn(
-          session,
-          baselineOutputTokens,
-          baselineMessageCount,
-        )
-      ) {
+      if (hasCompletedWaitTurn(session, baselineOutputTokens, baselineMessageCount)) {
         void stopAfterCompletedTurn();
         return;
       }

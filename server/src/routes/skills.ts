@@ -9,7 +9,7 @@ import {
   scanDirectories,
 } from "../host.js";
 import { listConfiguredHostExtensions } from "../extension-loader.js";
-import { FIRST_PARTY_EXTENSION_NAMES } from "../../extensions/first-party.js";
+import { BUILT_IN_EXTENSION_NAMES } from "../../extensions/built-ins.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
@@ -32,7 +32,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         ...ext,
         source: "pi" as const,
       }));
-    const oppiExtensions = FIRST_PARTY_EXTENSION_NAMES.map((name) => ({
+    const oppiExtensions = BUILT_IN_EXTENSION_NAMES.map((name) => ({
       name,
       path: "oppi-server",
       kind: "built-in" as const,

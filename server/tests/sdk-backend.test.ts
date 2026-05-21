@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
 import { hostMountValidationError } from "../src/host.js";
-import { resolveSdkSessionCwd, SdkBackend } from "../src/sdk-backend.js";
+import {
+  resolveSdkSessionCwd,
+  SdkBackend,
+  type BuiltInExtensionContext,
+} from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import type { AskQuestion, Session, Workspace } from "../src/types.js";
 
@@ -59,6 +63,130 @@ describe("hostMountValidationError", () => {
     try {
       expect(hostMountValidationError(file)).toContain("Host working directory is not a directory");
     } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+function makeSession(overrides: Partial<Session> = {}): Session {
+  return {
+    id: "sess-test",
+    workspaceId: "w1",
+    status: "starting",
+    createdAt: Date.now(),
+    lastActivity: Date.now(),
+    messageCount: 0,
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: 0,
+    ...overrides,
+  };
+}
+
+function makeBuiltInContext(): BuiltInExtensionContext {
+  return {
+    storage: {} as never,
+    subagents: {
+      context: {
+        workspaceId: "w1",
+        sessionId: "sess-test",
+        async spawnChild() {
+          throw new Error("not used");
+        },
+        async spawnDetached() {
+          throw new Error("not used");
+        },
+        listChildren() {
+          return [];
+        },
+        getSession() {
+          return undefined;
+        },
+        listWorkspaceSessions() {
+          return [];
+        },
+        subscribe() {
+          return () => {};
+        },
+        getAvailableModelIds() {
+          return [];
+        },
+        async stopSession() {
+          throw new Error("not used");
+        },
+        async resumeSession() {
+          throw new Error("not used");
+        },
+        async sendMessage() {
+          throw new Error("not used");
+        },
+      },
+      childMode: false,
+      subagentConfig: {
+        maxDepth: 1,
+        autoStopWhenDone: false,
+        childIdleTimeoutMs: 300_000,
+        startupGraceMs: 60_000,
+        defaultWaitTimeoutMs: 1_800_000,
+      },
+    },
+  };
+}
+
+describe("SdkBackend built-in extensions", () => {
+  it("injects explicitly enabled built-ins without file package paths", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-builtins-"));
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "Built-ins Test",
+        runtime: "host",
+        hostMount: cwd,
+        extensions: ["ask"],
+      } as Workspace,
+      builtInExtensionContext: makeBuiltInContext(),
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+      const extensions = resourceLoader.getExtensions().extensions;
+
+      expect(
+        extensions.some((ext) => ext.path.startsWith("<inline:") && ext.tools.has("ask")),
+      ).toBe(true);
+      expect(extensions.some((ext) => ext.resolvedPath.includes("oppi-extensions"))).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("seeds the pi session thinking level from stored Oppi session state", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-thinking-seed-"));
+    const backend = await SdkBackend.create({
+      session: makeSession({ thinkingLevel: "high" }),
+      workspace: {
+        id: "w1",
+        name: "Thinking Seed Test",
+        runtime: "host",
+        hostMount: cwd,
+        extensions: [],
+      } as Workspace,
+      builtInExtensionContext: makeBuiltInContext(),
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      expect(backend.session.thinkingLevel).toBe("high");
+    } finally {
+      await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
     }
   });

@@ -4,8 +4,7 @@
 # Usage:
 #   docker compose -f e2e/docker-compose.e2e.yml up -d
 #   docker compose -f e2e/docker-compose.e2e.yml down -v
-# Run from server/. The build context is the repository root so the image can
-# include both server/ and first-party oppi-extensions/ sources.
+# Run from server/. The build context is the repository root.
 #
 # The test harness manages lifecycle automatically.
 

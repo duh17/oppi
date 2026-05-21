@@ -34,17 +34,38 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { GateServer } from "./gate.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
-import { isFirstPartyExtensionName, isManagedExtensionName } from "../extensions/first-party.js";
 import {
-  getReloadableFirstPartyExtensionPaths,
-  withReloadableFirstPartyExtensionContext,
-  type ReloadableFirstPartyExtensionContext,
-} from "./first-party-extension-runtime.js";
+  BUILT_IN_EXTENSION_NAMES,
+  isBuiltInExtensionName,
+  isManagedExtensionName,
+  isWorkspaceBuiltInExtensionEnabled,
+} from "../extensions/built-ins.js";
+import { createAskFactory } from "../extensions/ask.js";
+import { createOppiAdminFactory } from "../extensions/oppi-admin.js";
+import { createSubagentsFactory, type SubagentsContext } from "../extensions/subagents.js";
+import { createVoiceFactory } from "../extensions/voice.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { Storage } from "./storage.js";
 import { SdkUiBridge, type ExtensionUIResponsePayload } from "./sdk-ui-bridge.js";
 import { extensionNameFromPath } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
-import type { Session, Workspace } from "./types.js";
+import type { Session, SubagentConfig, Workspace } from "./types.js";
+
+type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
+
+function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
+  switch (level) {
+    case "off":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return level;
+    default:
+      return undefined;
+  }
+}
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
 function parseModelId(modelId: string): { provider: string; model: string } | null {
@@ -99,6 +120,15 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
   return resolveHostPath(rawHostMount);
 }
 
+export interface BuiltInExtensionContext {
+  storage: Storage;
+  subagents: {
+    context: SubagentsContext;
+    childMode: boolean;
+    subagentConfig: SubagentConfig;
+  };
+}
+
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
@@ -114,8 +144,8 @@ export interface SdkBackendConfig {
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
-  /** Session-scoped deps for Oppi's reloadable first-party extensions. */
-  reloadableFirstPartyExtensionContext?: ReloadableFirstPartyExtensionContext;
+  /** Session-scoped deps for Oppi built-in extensions. */
+  builtInExtensionContext?: BuiltInExtensionContext;
   /** Additional extension factories injected for this session. */
   extraExtensionFactories?: ExtensionFactory[];
   /** Operational metrics collector for SDK timing. */
@@ -123,6 +153,43 @@ export interface SdkBackendConfig {
 }
 
 const log = createLogger({ base: { component: "sdk_backend" } });
+
+function createBuiltInExtensionFactories(
+  workspace: Workspace | undefined,
+  context: BuiltInExtensionContext | undefined,
+): ExtensionFactory[] {
+  if (!context) {
+    return [];
+  }
+
+  const factories: ExtensionFactory[] = [];
+  for (const name of BUILT_IN_EXTENSION_NAMES) {
+    if (!isWorkspaceBuiltInExtensionEnabled(workspace, name)) {
+      continue;
+    }
+
+    switch (name) {
+      case "ask":
+        factories.push(createAskFactory());
+        break;
+      case "subagents":
+        factories.push(
+          createSubagentsFactory(context.subagents.context, {
+            childMode: context.subagents.childMode,
+            subagentConfig: context.subagents.subagentConfig,
+          }),
+        );
+        break;
+      case "voice":
+        factories.push(createVoiceFactory(context.storage));
+        break;
+      case "oppi-admin":
+        factories.push(createOppiAdminFactory(context.storage));
+        break;
+    }
+  }
+  return factories;
+}
 
 /**
  * Wraps a pi AgentSession for use by SessionManager.
@@ -214,17 +281,17 @@ export class SdkBackend {
           createPermissionGateFactory(config.gate, session.id, config.workspaceId || "", cwd),
         );
       }
+      extensionFactories.push(
+        ...createBuiltInExtensionFactories(workspace, config.builtInExtensionContext),
+      );
       if (config.extraExtensionFactories) {
         extensionFactories.push(...config.extraExtensionFactories);
       }
 
-      const firstPartyExtensionPaths = getReloadableFirstPartyExtensionPaths();
-
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
-      // File-based extensions stay enabled so /reload can re-import Oppi's
-      // first-party ones. Extension factories (permission gate + temporary
-      // pending factories) are still injected here.
+      // Built-in Oppi extensions are injected as in-process factories when the
+      // workspace explicitly enables them.
       // Pi's auto-discovered permission-gate extension is filtered out since
       // oppi has its own policy engine (GateServer). Without this, both gates
       // run and the pi extension blocks commands it considers "dangerous" with
@@ -233,19 +300,19 @@ export class SdkBackend {
         cwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        additionalExtensionPaths: firstPartyExtensionPaths,
         additionalSkillPaths: config.skillPaths ?? [],
         noSkills: true,
         noThemes: true,
         extensionFactories,
         appendSystemPrompt: workspace?.systemPrompt ? [workspace.systemPrompt] : undefined,
         extensionsOverride: (base) => {
-          // 1. Filter out extensions managed directly by oppi-server.
-          //    permission-gate is replaced by oppi's own policy engine.
-          //    ask, voice, and subagents stay file-based so /reload can re-import them.
-          let filtered = base.extensions.filter(
-            (ext) => !isManagedExtensionName(getLoadedExtensionName(ext)),
-          );
+          // 1. Filter out names owned directly by oppi-server from host paths.
+          //    Built-ins are injected above as inline factories when enabled.
+          let filtered = base.extensions.filter((ext) => {
+            if (ext.path.startsWith("<inline:")) return true;
+            const name = getLoadedExtensionName(ext);
+            return !isManagedExtensionName(name) && !isBuiltInExtensionName(name);
+          });
 
           // 2. If the workspace specifies an extensions allowlist, that allowlist is
           //    authoritative. Always keep inline factory extensions (path "<inline:N>")
@@ -256,16 +323,6 @@ export class SdkBackend {
             filtered = filtered.filter((ext) => {
               if (ext.path.startsWith("<inline:")) return true;
               return allowed.has(getLoadedExtensionName(ext));
-            });
-          } else {
-            // 3. Without an explicit allowlist, keep normal pi discovery intact but
-            //    leave Oppi-owned extension names off unless the workspace opted in.
-            filtered = filtered.filter((ext) => {
-              const name = getLoadedExtensionName(ext);
-              if (!isFirstPartyExtensionName(name)) {
-                return true;
-              }
-              return false;
             });
           }
 
@@ -291,13 +348,6 @@ export class SdkBackend {
           return { ...base, extensions: filtered };
         },
       });
-      const firstPartyExtensionContext = config.reloadableFirstPartyExtensionContext;
-      if (firstPartyExtensionContext) {
-        const reloadWithContext = loader.reload.bind(loader);
-        loader.reload = () =>
-          withReloadableFirstPartyExtensionContext(firstPartyExtensionContext, reloadWithContext);
-      }
-
       await loader.reload();
 
       // Sandbox mode: create tools backed by Gondolin micro-VM
@@ -383,6 +433,7 @@ export class SdkBackend {
         authStorage,
         modelRegistry,
         model,
+        thinkingLevel: normalizeThinkingLevel(session.thinkingLevel),
         sessionManager,
         settingsManager,
         resourceLoader: loader,

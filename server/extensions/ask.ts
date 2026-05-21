@@ -67,7 +67,7 @@ function displayAnswer(question: AskQuestion | undefined, answer: AskAnswer): st
 }
 
 /**
- * First-party ask extension.
+ * Oppi built-in ask extension.
  *
  * Oppi intercepts ask tool execution and renders it as a native AskCard on iOS.
  * Keeping the tool definition server-owned ensures the mobile UI contract and

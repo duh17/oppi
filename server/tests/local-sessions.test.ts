@@ -228,7 +228,7 @@ describe("discoverLocalSessions", () => {
     expect(found).toBeUndefined();
   });
 
-  it("filters out first-party subagent child sessions", async () => {
+  it("filters out built-in subagent child sessions", async () => {
     writeFileSync(
       join(testDir, "2026-02-20T00-00-00-000Z_uuid-subagent.jsonl"),
       makeSessionJsonl({

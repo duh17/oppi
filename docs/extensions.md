@@ -1,21 +1,66 @@
 # Oppi extension behavior
 
-This page explains how Oppi uses pi extensions at runtime. It is for workspace admins and developers who need to know what Oppi loads, what it filters, and what behaves differently on mobile.
+This page explains Oppi's runtime behavior for pi extensions: what Oppi loads, what workspaces can enable, what standalone pi sees, and how terminal-oriented extension UI appears on mobile.
 
-For extension authoring details such as layouts, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
+It is for Oppi workspace admins and Oppi developers. It is not an extension-authoring guide. For pi package layout, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
 
-- pi extension docs: `server/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`
-- pi examples: `server/node_modules/@mariozechner/pi-coding-agent/examples/extensions/`
+- pi extension docs: `@earendil-works/pi-coding-agent/docs/extensions.md`
+- pi package docs: `@earendil-works/pi-coding-agent/docs/packages.md`
+- pi examples: `@earendil-works/pi-coding-agent/examples/extensions/`
+
+## Core rule
+
+Oppi server-owned tools live in `server/extensions/` and are enabled per workspace. They are not pi package resources.
+
+Installing or running Oppi server must not write to `~/.pi/agent/settings.json`, run `pi install`, or implicitly enable any extension in standalone pi. Standalone pi only loads what the user explicitly installs or loads with pi.
+
+## Extension surfaces
+
+| Surface | Enabled by | Declared in | Loaded by | Notes |
+|---|---|---|---|---|
+| Host pi extensions | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader | Must work without Oppi server services |
+| Oppi built-ins | Workspace `extensions` allowlist | `server/extensions/` | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
+| `permission-gate` | Oppi server policy | Server-managed, not package-declared | Oppi server | Never loaded from host extension paths |
+| Mobile UI compatibility | Native Oppi client + server bridge | Protocol and UI bridge code | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs |
+
+This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
+
+## If we add a pi package later
+
+Pi's standard package model is still the source of truth. A future package can declare resources under the `pi` key:
+
+```json
+{
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions/my-extension.ts"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"],
+    "themes": ["./themes"]
+  }
+}
+```
+
+Only put an entry in `pi.extensions` when that extension works in plain pi. Tools that need Oppi storage, session spawning, trace inspection, workspace admin APIs, or mobile-only behavior belong in `server/extensions/`.
+
+If Oppi later ships a standalone package, users must opt in explicitly:
+
+```bash
+pi install <package-or-path>
+# or temporary for one run:
+pi -e <package-or-path>
+```
 
 ## What Oppi changes
 
-Oppi keeps pi's extension system, then adds three rules on top:
+Oppi keeps pi's extension system, then adds these rules:
 
-1. **Oppi-owned first-party names**: `ask`, `subagents`, `voice`
-2. **One reserved server-managed name**: `permission-gate`
-3. **Workspace allowlist filtering** through `workspace.extensions`
+1. **Built-in workspace extensions**: `ask`, `subagents`, `voice`, and `oppi-admin`.
+2. **One server-managed policy name**: `permission-gate`.
+3. **Workspace allowlist filtering** through `workspace.extensions`.
+4. **Mobile UI compatibility** for common extension UI calls.
 
-Oppi also renders some extension UI differently on mobile.
+Oppi does not replace pi discovery. It filters host-loaded extensions and injects server-owned built-ins when the workspace explicitly enables them.
 
 ## How extension loading works
 
@@ -25,25 +70,26 @@ At session startup, Oppi begins with pi's normal extension sources for the sessi
 - settings-declared extension paths (`settings.json` `extensions` arrays)
 - package-provided extensions installed through pi (`pi install`)
 
-Oppi does not replace that discovery process. It filters and augments the result.
+Oppi then filters out server-owned names from those host paths and injects enabled built-ins as in-process factories.
+
+## Reload behavior
+
+`/reload` still reloads host pi extensions, skills, prompts, and themes through pi's resource loader.
+
+Oppi built-ins are server code. `/reload` recreates their inline factory registrations for the active session, but it does not hot-reload edited `server/extensions/*.ts` source files. Changing built-in implementation code requires restarting or rebuilding the Oppi server.
 
 ## Oppi-owned names
 
-Oppi reserves one fully server-managed name:
+`permission-gate` is fully server-managed. It is backed by Oppi's policy server and is never loaded from host extension paths.
 
-- `permission-gate`
-
-That name is never loaded from host extension paths.
-
-Oppi also provides three first-party extension names:
+Oppi also exposes these built-in extension names in the workspace extension picker:
 
 - `ask`
 - `subagents`
 - `voice`
+- `oppi-admin`
 
-These are implemented by the Oppi server and exposed in the workspace extension picker so a workspace can opt into them without separately installing a pi package.
-
-For `/reload`, Oppi loads small wrapper files under `oppi-extensions/extensions/`. Those wrappers are internal runtime shims for Oppi. They are not meant to be treated as generic package-installed pi extensions.
+A workspace can opt into those names without installing a pi package. That workspace opt-in affects Oppi server sessions only; it does not install anything into standalone pi.
 
 ## Workspace allowlist behavior
 
@@ -51,11 +97,11 @@ If a workspace sets `extensions`, that field is authoritative. Only the listed o
 
 That means:
 
-- include `ask`, `subagents`, or `voice` explicitly if you want them
+- include `ask`, `subagents`, `voice`, or `oppi-admin` explicitly if you want them
 - omitting one of those names disables it for that workspace
 - `permission-gate` is not controlled through this list because it is server-managed
 
-If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves Oppi-owned first-party names off by default.
+If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves Oppi built-ins off by default.
 
 ## Extension picker behavior
 
@@ -63,13 +109,13 @@ If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves Op
 
 The picker response:
 
-- resolves extensions through pi's normal settings and package resolver
+- resolves host extensions through pi's normal settings and package resolver
 - includes auto-discovered global and project-local extensions
 - includes package-installed extensions
 - includes settings-declared local extension paths
-- includes Oppi-owned names (`ask`, `subagents`, `voice`)
+- includes Oppi built-ins (`ask`, `subagents`, `voice`, `oppi-admin`)
 - excludes managed names such as `permission-gate`
-- deduplicates by extension name using pi precedence rules
+- deduplicates by extension name using Oppi built-ins first, then pi host extensions
 
 ## Mobile rendering differences
 
@@ -132,7 +178,7 @@ Rules for mobile compatibility:
 - treat rich or multiline output as expanded content, not collapsed row chrome
 - prefer structured tool `details` over terminal-rendered snapshots when both exist
 
-If a terminal renderer or mobile sidecar produces multiple lines for a collapsed summary, Oppi should use the first line for the collapsed row and treat the remaining lines as expanded fallback content when no better `details.expandedText` / `presentationFormat` output exists.
+If a terminal renderer or mobile sidecar produces multiple lines for a collapsed summary, Oppi uses the first line for the collapsed row and treats the remaining lines as expanded fallback content when no better `details.expandedText` / `presentationFormat` output exists.
 
 Priority for expanded output:
 
@@ -179,25 +225,18 @@ Oppi maps fire-and-forget extension UI calls to a compact native card above the 
 
 This is a native mobile surface, not a terminal footer/header. `setFooter`, `setHeader`, arbitrary `custom()` components, and editor replacement remain terminal-first APIs with limited compatibility behavior in Oppi.
 
-## Permission gate
-
-`permission-gate` is not a host extension you install or toggle per workspace.
-
-Oppi replaces that behavior with an in-process permission system wired through the server and mobile approval flow.
-
 ## Relevant implementation files
-
-These paths matter if you need to verify behavior against the codebase:
 
 | File | Why it matters |
 |---|---|
-| `server/extensions/first-party.ts` | First-party and managed-name rules |
+| `server/extensions/built-ins.ts` | Built-in and managed-name rules |
 | `server/src/routes/skills.ts` | Workspace extension picker (`GET /extensions`) |
-| `server/src/sdk-backend.ts` | Extension filtering and workspace allowlist behavior |
-| `server/src/first-party-extension-runtime.ts` | Reload support for Oppi-owned extensions |
-| `server/extensions/ask.ts` | First-party ask tool |
-| `oppi-extensions/src/subagents/index.ts` | First-party subagents toolset |
-| `server/extensions/voice.ts` | First-party voice tool |
+| `server/src/sdk-backend.ts` | Extension filtering, built-in injection, and workspace allowlist behavior |
+| `server/src/sdk-ui-bridge.ts` | Extension UI bridge from pi APIs to Oppi protocol events |
+| `server/extensions/ask.ts` | Built-in ask tool |
+| `server/extensions/subagents/` | Built-in subagents toolset |
+| `server/extensions/voice.ts` | Built-in voice tool |
+| `server/extensions/oppi-admin.ts` | Built-in workspace/admin tool |
 | `server/src/mobile-renderer.ts` | Mobile tool-row rendering |
 
 ## When to read pi docs instead

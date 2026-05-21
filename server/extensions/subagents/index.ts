@@ -1,5 +1,5 @@
 /**
- * subagents — first-party extension for managing child sessions.
+ * subagents — Oppi built-in extension for managing child sessions.
  *
  * Root and detached sessions get:
  *   spawn_agent, stop_agent, send_message, inspect_agent
@@ -7,18 +7,13 @@
  * Child sessions get the non-spawning subset:
  *   send_message, inspect_agent
  *
- * Injected as an in-process first-party factory extension.
+ * Injected as an in-process server-owned factory extension.
  * Uses direct SessionManager methods — no HTTP round-trip needed.
  */
 
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type {
-  ServerMessage,
-  Session,
-  SubagentConfig,
-  SubagentModelProfileConfig,
-} from "./model-types.js";
+import type { ServerMessage, SubagentConfig, SubagentModelProfileConfig } from "./model-types.js";
 import {
   renderFullResponse,
   renderOverview,
@@ -123,8 +118,7 @@ const inspectAgentParams = Type.Object({
   }),
   turn: Type.Optional(
     Type.Number({
-      description:
-        "Turn number to drill into (1-based). Omit for overview of all turns.",
+      description: "Turn number to drill into (1-based). Omit for overview of all turns.",
     }),
   ),
   tool: Type.Optional(
@@ -175,9 +169,7 @@ function isInWorkspace(ctx: SubagentsContext, sessionId: string): boolean {
 function buildAgentPreamble(ctx: SubagentsContext): string {
   const sender = ctx.getSession(ctx.sessionId);
   const name = sender?.name;
-  return name
-    ? `[From agent "${name}" (${ctx.sessionId})]`
-    : `[From agent ${ctx.sessionId}]`;
+  return name ? `[From agent "${name}" (${ctx.sessionId})]` : `[From agent ${ctx.sessionId}]`;
 }
 
 function normalizeProfileName(value: string): string {
@@ -195,9 +187,7 @@ function resolveProfile(
   if (!requestedProfile) return {};
   const profiles = subagentConfig.modelPolicy?.profiles ?? {};
   const requested = normalizeProfileName(requestedProfile);
-  const entry = Object.entries(profiles).find(
-    ([name]) => normalizeProfileName(name) === requested,
-  );
+  const entry = Object.entries(profiles).find(([name]) => normalizeProfileName(name) === requested);
   if (!entry) return {};
   return { profileName: entry[0], profile: entry[1] };
 }
@@ -254,10 +244,7 @@ export function createSubagentsFactory(
       if (cleanup) cleanup();
     };
 
-    const armChildCompletionHook = (
-      childId: string,
-      childName: string,
-    ): void => {
+    const armChildCompletionHook = (childId: string, childName: string): void => {
       clearCompletionWatcher(childId);
 
       let finished = false;
@@ -277,10 +264,7 @@ export function createSubagentsFactory(
           ctx,
           childId,
           childName,
-          Math.max(
-            0,
-            Date.now() - (ctx.getSession(childId)?.createdAt ?? Date.now()),
-          ),
+          Math.max(0, Date.now() - (ctx.getSession(childId)?.createdAt ?? Date.now())),
         );
         const parentSession = ctx.getSession(ctx.sessionId);
 
@@ -383,13 +367,9 @@ export function createSubagentsFactory(
           signal: AbortSignal | undefined,
           onUpdate,
         ) {
-          const { profileName, profile } = resolveProfile(
-            subagentConfig,
-            params.profile,
-          );
+          const { profileName, profile } = resolveProfile(subagentConfig, params.profile);
           if (params.profile && !profile) {
-            const configuredProfiles =
-              listConfiguredProfileNames(subagentConfig);
+            const configuredProfiles = listConfiguredProfileNames(subagentConfig);
             const suffix =
               configuredProfiles.length > 0
                 ? ` Available profiles:\n${configuredProfiles.map((name) => `  - ${name}`).join("\n")}`
@@ -411,18 +391,10 @@ export function createSubagentsFactory(
           }
 
           const effectiveModel =
-            params.model ??
-            profile?.model ??
-            subagentConfig.modelPolicy?.defaultModel;
+            params.model ?? profile?.model ?? subagentConfig.modelPolicy?.defaultModel;
           const effectiveThinking =
-            params.thinking ??
-            profile?.thinking ??
-            subagentConfig.modelPolicy?.defaultThinking;
-          const spawnPrompt = buildProfilePrompt(
-            params.message,
-            profileName,
-            profile,
-          );
+            params.thinking ?? profile?.thinking ?? subagentConfig.modelPolicy?.defaultThinking;
+          const spawnPrompt = buildProfilePrompt(params.message, profileName, profile);
           const name = params.name || params.message.slice(0, 80);
 
           // Depth check: prevent unbounded recursive spawning
@@ -442,10 +414,7 @@ export function createSubagentsFactory(
             };
           }
 
-          const policyError = validateApprovedModel(
-            subagentConfig,
-            effectiveModel,
-          );
+          const policyError = validateApprovedModel(subagentConfig, effectiveModel);
           if (policyError) {
             return {
               content: [{ type: "text" as const, text: policyError }],
@@ -603,9 +572,7 @@ export function createSubagentsFactory(
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return {
-              content: [
-                { type: "text", text: `Failed to spawn agent: ${msg}` },
-              ],
+              content: [{ type: "text", text: `Failed to spawn agent: ${msg}` }],
               details: { agentId: "", name, status: "error" },
             };
           }
@@ -630,10 +597,7 @@ export function createSubagentsFactory(
         ],
         parameters: stopAgentParams,
 
-        async execute(
-          _toolCallId: string,
-          params: Static<typeof stopAgentParams>,
-        ) {
+        async execute(_toolCallId: string, params: Static<typeof stopAgentParams>) {
           // Look up the session
           const session = ctx.getSession(params.id);
           if (!session) {
@@ -708,9 +672,7 @@ export function createSubagentsFactory(
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return {
-              content: [
-                { type: "text" as const, text: `Failed to stop agent: ${msg}` },
-              ],
+              content: [{ type: "text" as const, text: `Failed to stop agent: ${msg}` }],
               details: {
                 agentId: params.id,
                 name: session.name ?? undefined,
@@ -748,10 +710,7 @@ export function createSubagentsFactory(
       ],
       parameters: sendMessageParams,
 
-      async execute(
-        _toolCallId: string,
-        params: Static<typeof sendMessageParams>,
-      ) {
+      async execute(_toolCallId: string, params: Static<typeof sendMessageParams>) {
         // Look up the session
         const session = ctx.getSession(params.id);
         if (!session) {
@@ -916,17 +875,12 @@ export function createSubagentsFactory(
       ],
       parameters: inspectAgentParams,
 
-      async execute(
-        _toolCallId: string,
-        params: Static<typeof inspectAgentParams>,
-      ) {
+      async execute(_toolCallId: string, params: Static<typeof inspectAgentParams>) {
         // Look up the session
         const session = ctx.getSession(params.id);
         if (!session) {
           return {
-            content: [
-              { type: "text", text: `Session not found: ${params.id}` },
-            ],
+            content: [{ type: "text", text: `Session not found: ${params.id}` }],
             details: { sessionId: params.id, level: "overview" },
           };
         }

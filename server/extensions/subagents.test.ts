@@ -3,10 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import {
-  createSubagentsFactory,
-  type SubagentsContext,
-} from "../../oppi-extensions/src/subagents/index.js";
+import { createSubagentsFactory, type SubagentsContext } from "./subagents/index.js";
 import type { Session, ServerMessage, SubagentConfig } from "../src/types.js";
 
 // ---------------------------------------------------------------------------

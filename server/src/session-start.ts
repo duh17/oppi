@@ -148,7 +148,7 @@ export class SessionStartCoordinator {
           workspaceId: identity.workspaceId,
           permissionGate: useGate,
           skillPaths,
-          reloadableFirstPartyExtensionContext: {
+          builtInExtensionContext: {
             storage: this.deps.storage,
             subagents: {
               context: subagentsCtx,

@@ -4,7 +4,7 @@ Oppi's `subagents` extension lets an agent create and manage child sessions insi
 
 ## Enabling the extension
 
-`subagents` is a first-party Oppi extension name. It is not enabled automatically.
+`subagents` is an Oppi built-in extension name. It is not enabled automatically.
 
 To use it in a workspace, include `subagents` in that workspace's `extensions` list.
 

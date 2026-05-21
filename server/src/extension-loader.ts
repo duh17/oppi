@@ -14,7 +14,7 @@ import {
   type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
 
-import { isManagedExtensionName } from "../extensions/first-party.js";
+import { isBuiltInExtensionName, isManagedExtensionName } from "../extensions/built-ins.js";
 import { createLogger } from "./logger.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
@@ -100,7 +100,7 @@ export function extensionNameFromPath(path: string): string {
  *
  * Scans the global host directory (`~/.pi/agent/extensions`) and, when `cwd`
  * is provided, the project-local directory (`<cwd>/.pi/extensions`). Managed
- * first-party extensions are excluded.
+ * built-in extensions are excluded.
  *
  * The result is deduplicated by extension name. Project-local entries win over
  * global ones because pi loads local extensions first.
@@ -298,7 +298,7 @@ function toHostExtensionInfo(absPath: string): HostExtensionInfo | null {
     }
   }
 
-  if (!isValidExtensionName(name) || isManagedExtensionName(name)) {
+  if (!isValidExtensionName(name) || isManagedExtensionName(name) || isBuiltInExtensionName(name)) {
     return null;
   }
 

@@ -18,18 +18,11 @@ export interface SubagentsContext {
   listChildren(): Session[];
   getSession(sessionId: string): Session | undefined;
   listWorkspaceSessions(): Session[];
-  subscribe(
-    sessionId: string,
-    callback: (msg: ServerMessage) => void,
-  ): () => void;
+  subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void;
   getAvailableModelIds(): string[];
   stopSession(sessionId: string): Promise<void>;
   resumeSession(sessionId: string): Promise<Session>;
-  sendMessage(
-    sessionId: string,
-    message: string,
-    behavior?: "steer" | "followUp",
-  ): Promise<void>;
+  sendMessage(sessionId: string, message: string, behavior?: "steer" | "followUp"): Promise<void>;
 }
 
 export interface SendMessageDetails {

@@ -33,7 +33,6 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --no-audit --no-fund --ignore-scripts
 
 COPY server/ ./
-COPY oppi-extensions/ ../oppi-extensions/
 RUN npm run build
 
 COPY server/docker/entrypoint.sh /usr/local/bin/oppi-entrypoint.sh

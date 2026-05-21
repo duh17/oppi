@@ -13,7 +13,7 @@ import type { Session, ServerMessage } from "../src/types.js";
 import {
   createSubagentsFactory,
   type SubagentsContext,
-} from "../../oppi-extensions/src/subagents/index.js";
+} from "../extensions/subagents/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

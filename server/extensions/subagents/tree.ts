@@ -32,10 +32,7 @@ export function getRootSessionId(ctx: TreeContext): string {
   }
 }
 
-export function getDescendants(
-  rootId: string,
-  allSessions: Session[],
-): Session[] {
+export function getDescendants(rootId: string, allSessions: Session[]): Session[] {
   const descendants: Session[] = [];
   const visited = new Set<string>([rootId]);
   const queue = [rootId];

@@ -61,9 +61,7 @@ function formatToolArgs(name: string, args: Record<string, unknown>): string {
     case "edit":
       return shortenPath(String(args.path ?? ""));
     default: {
-      const firstStringArg = Object.values(args).find(
-        (value) => typeof value === "string",
-      );
+      const firstStringArg = Object.values(args).find((value) => typeof value === "string");
       return firstStringArg
         ? String(firstStringArg).slice(0, 60)
         : JSON.stringify(args).slice(0, 60);
@@ -80,8 +78,7 @@ export function parseJsonlTrace(tracePath: string): ParsedTurn[] {
   }
 
   const lines = raw.trim().split("\n");
-  const entries: Array<{ type: string; message?: Record<string, unknown> }> =
-    [];
+  const entries: Array<{ type: string; message?: Record<string, unknown> }> = [];
   for (const line of lines) {
     try {
       entries.push(JSON.parse(line));
@@ -175,10 +172,7 @@ export function parseJsonlTrace(tracePath: string): ParsedTurn[] {
 }
 
 export function renderOverview(turns: ParsedTurn[]): string {
-  const totalTools = turns.reduce(
-    (sum, turn) => sum + turn.toolCalls.length,
-    0,
-  );
+  const totalTools = turns.reduce((sum, turn) => sum + turn.toolCalls.length, 0);
   const totalErrors = turns.reduce((sum, turn) => sum + turn.errorCount, 0);
 
   const filesChanged = new Set<string>();
@@ -220,9 +214,7 @@ export function renderOverview(turns: ParsedTurn[]): string {
         : "text only";
 
     const errorMarker =
-      turn.errorCount > 0
-        ? ` <- ${turn.errorCount} error${turn.errorCount > 1 ? "s" : ""}`
-        : "";
+      turn.errorCount > 0 ? ` <- ${turn.errorCount} error${turn.errorCount > 1 ? "s" : ""}` : "";
 
     const prompt = turn.userMessage.slice(0, 60).replace(/\n/g, " ");
     lines.push(`  Turn ${turn.turnNumber}: [${toolSummary}]${errorMarker}`);
@@ -232,18 +224,13 @@ export function renderOverview(turns: ParsedTurn[]): string {
   const lastTurn = turns[turns.length - 1];
   if (lastTurn?.assistantText) {
     lines.push("");
-    lines.push(
-      `Last response: "${truncate(lastTurn.assistantText.replace(/\n/g, " "), 200)}"`,
-    );
+    lines.push(`Last response: "${truncate(lastTurn.assistantText.replace(/\n/g, " "), 200)}"`);
   }
 
   return lines.join("\n");
 }
 
-export function renderTurnDetail(
-  turns: ParsedTurn[],
-  turnNumber: number,
-): string {
+export function renderTurnDetail(turns: ParsedTurn[], turnNumber: number): string {
   const turn = turns.find((entry) => entry.turnNumber === turnNumber);
   if (!turn) {
     return `Turn ${turnNumber} not found. ${turns.length} turns available (1-${turns.length}).`;
@@ -253,20 +240,14 @@ export function renderTurnDetail(
   lines.push(
     `Turn ${turn.turnNumber} (${turn.toolCalls.length} tool calls, ${turn.errorCount} errors)`,
   );
-  lines.push(
-    `Prompt: "${truncate(turn.userMessage.replace(/\n/g, " "), 200)}"`,
-  );
+  lines.push(`Prompt: "${truncate(turn.userMessage.replace(/\n/g, " "), 200)}"`);
   lines.push("");
 
   for (const toolCall of turn.toolCalls) {
     const errorLabel = toolCall.isError ? " ERROR" : "";
-    lines.push(
-      `  [${toolCall.index}] ${toolCall.name}: ${toolCall.argsPreview}${errorLabel}`,
-    );
+    lines.push(`  [${toolCall.index}] ${toolCall.name}: ${toolCall.argsPreview}${errorLabel}`);
     if (toolCall.isError && toolCall.outputPreview) {
-      for (const previewLine of toolCall.outputPreview
-        .split("\n")
-        .slice(0, 3)) {
+      for (const previewLine of toolCall.outputPreview.split("\n").slice(0, 3)) {
         lines.push(`       ${previewLine.slice(0, 120)}`);
       }
     }
@@ -280,17 +261,13 @@ export function renderTurnDetail(
   return lines.join("\n");
 }
 
-export function renderFullResponse(
-  turns: ParsedTurn[],
-  turnNumber?: number,
-): string {
+export function renderFullResponse(turns: ParsedTurn[], turnNumber?: number): string {
   if (turnNumber !== undefined) {
     const turn = turns.find((entry) => entry.turnNumber === turnNumber);
     if (!turn) {
       return `Turn ${turnNumber} not found. ${turns.length} turns available (1-${turns.length}).`;
     }
-    if (!turn.assistantText)
-      return `Turn ${turnNumber} has no assistant response text.`;
+    if (!turn.assistantText) return `Turn ${turnNumber} has no assistant response text.`;
     return turn.assistantText;
   }
 
@@ -322,9 +299,7 @@ export function renderToolDetail(
   for (const [key, value] of Object.entries(toolCall.fullArgs)) {
     const formatted = typeof value === "string" ? value : JSON.stringify(value);
     if (formatted.length > 500) {
-      lines.push(
-        `  ${key}: (${formatted.length} chars) ${formatted.slice(0, 200)}...`,
-      );
+      lines.push(`  ${key}: (${formatted.length} chars) ${formatted.slice(0, 200)}...`);
     } else {
       lines.push(`  ${key}: ${formatted}`);
     }
@@ -333,9 +308,7 @@ export function renderToolDetail(
   lines.push("");
   const outputLines = toolCall.fullOutput.split("\n");
   const maxLines = 80;
-  lines.push(
-    `Output (${toolCall.fullOutput.length} chars, ${outputLines.length} lines):`,
-  );
+  lines.push(`Output (${toolCall.fullOutput.length} chars, ${outputLines.length} lines):`);
   if (outputLines.length > maxLines) {
     lines.push(`  ... (${outputLines.length - maxLines} lines omitted)`);
   }

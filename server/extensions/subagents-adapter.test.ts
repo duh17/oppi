@@ -40,7 +40,7 @@ function createContext(): SubagentsContext {
 }
 
 describe("subagents adapter", () => {
-  it("loads the oppi-extensions implementation and registers tools", async () => {
+  it("loads the server subagents implementation and registers tools", async () => {
     const tools = new Map<string, unknown>();
     const factory = createSubagentsFactory(createContext());
 
