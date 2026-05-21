@@ -25,6 +25,7 @@ describe("Storage config validation", () => {
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.approvalTimeoutMs).toBe(120_000);
     expect(result.config?.tls?.mode).toBe("self-signed");
+    expect(result.config?.images?.autoResize).toBe(false);
   });
 
   it("rejects unknown top-level keys in strict mode", () => {
@@ -345,6 +346,34 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(true);
     expect(result.config?.asr).toBeUndefined();
+  });
+
+  it("preserves image auto-resize config", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      images: {
+        autoResize: true,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.images?.autoResize).toBe(true);
+  });
+
+  it("rejects invalid image config in strict mode", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      images: {
+        autoResize: "yes",
+        unknownField: true,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("config.images.autoResize: expected boolean");
+    expect(result.errors).toContain("config.images.unknownField: unknown key");
   });
 
   it("omits asr when sttEndpoint is empty", () => {

@@ -791,7 +791,8 @@ struct DataImagePreviewView: View {
                         .aspectRatio(contentMode: .fit)
                         .onTapGesture {
                             guard allowsFullscreenStaticImage else { return }
-                            FullScreenImageViewController.present(image: image)
+                            let fullResolutionImage = UIImage(data: data) ?? image
+                            FullScreenImageViewController.present(image: fullResolutionImage)
                         },
                     aspectRatio: aspectRatio
                 )

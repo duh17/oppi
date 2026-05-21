@@ -69,6 +69,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     runtimeEnv: {},
     tls: { mode: "self-signed" },
     policy: defaultPolicy(),
+    images: {
+      autoResize: false,
+    },
     uploadStore: {
       mode: "local",
       path: join(dataDir, "uploads"),
@@ -128,6 +131,7 @@ function normalizeConfig(
     "autoTitle",
     "autoPermission",
     "asr",
+    "images",
     "uploadStore",
     "extensions",
   ]);
@@ -765,6 +769,40 @@ function normalizeConfig(
 
     if (Object.keys(asrConfig).length > 0) {
       config.asr = asrConfig;
+    }
+  }
+
+  // Image attachment preprocessing configuration
+  if ("images" in obj) {
+    if (!isRecord(obj.images)) {
+      errors.push("config.images: expected object");
+      changed = true;
+    } else {
+      const images = obj.images;
+      const allowedImageKeys = new Set(["autoResize"]);
+
+      if (strictUnknown) {
+        for (const key of Object.keys(images)) {
+          if (!allowedImageKeys.has(key)) {
+            errors.push(`config.images.${key}: unknown key`);
+          }
+        }
+      }
+
+      const imageConfig: NonNullable<ServerConfig["images"]> = {};
+      if ("autoResize" in images) {
+        if (typeof images.autoResize === "boolean") {
+          imageConfig.autoResize = images.autoResize;
+        } else {
+          errors.push("config.images.autoResize: expected boolean");
+          changed = true;
+        }
+      }
+
+      config.images = {
+        ...(config.images ?? {}),
+        ...imageConfig,
+      };
     }
   }
 

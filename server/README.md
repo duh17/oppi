@@ -213,6 +213,7 @@ Key config sections:
 | -------- | ----------------------------------------------------------------------- |
 | `tls`    | HTTPS mode: `self-signed`, `tailscale`, or `none`                       |
 | `asr`    | Dictation pipeline: STT backend endpoint                                |
+| `images` | Image attachment preprocessing before upload                            |
 | `policy` | Permission gate rules (allow/deny/ask per tool, guardrails, heuristics) |
 
 Model routing and API keys are managed by pi (`pi auth`), not the oppi config.
@@ -224,10 +225,11 @@ cat ~/.config/oppi/config.json | jq .          # raw config
 cat ~/.config/oppi/config.json | jq '.asr'     # single section
 node dist/src/cli.js config show                # formatted overview
 node dist/src/cli.js config get asr             # top-level key
-node dist/src/cli.js config set tls '{"mode":"self-signed"}'  # set via CLI (SETTABLE_KEYS only)
+node dist/src/cli.js config set images.autoResize false
+node dist/src/cli.js config set tls '{"mode":"self-signed"}'
 ```
 
-For sections not in `SETTABLE_KEYS` (like `asr`, `policy`), edit `config.json` directly and restart the server.
+For unsupported nested keys, edit `config.json` directly and restart the server.
 
 See [config-schema.md](docs/config-schema.md) for full reference.
 

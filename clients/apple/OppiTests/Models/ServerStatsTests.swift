@@ -910,6 +910,9 @@ struct ServerStatsTests {
             "lastUpdatedAt": null,
             "lastUpdateError": null
           },
+          "images": {
+            "autoResize": false
+          },
           "stats": {
             "workspaceCount": 3,
             "activeSessionCount": 2,
@@ -933,6 +936,7 @@ struct ServerStatsTests {
         #expect(info.runtimeUpdate?.updateAvailable == true)
         #expect(info.runtimeUpdate?.latestVersion == "1.3.0")
         #expect(info.runtimeUpdate?.pendingVersion == nil)
+        #expect(info.images?.autoResize == false)
 
         #expect(info.stats.workspaceCount == 3)
         #expect(info.stats.skillCount == 12)
@@ -965,6 +969,7 @@ struct ServerStatsTests {
 
         #expect(info.identity == nil)
         #expect(info.runtimeUpdate == nil)
+        #expect(info.images == nil)
         #expect(info.stats.totalSessionCount == 0)
     }
 
@@ -988,6 +993,7 @@ struct ServerStatsTests {
             identity: nil,
             runtimeUpdate: nil,
             uploadProtocol: nil,
+            images: nil,
             capabilities: nil,
             stats: ServerInfo.ServerStats(
                 workspaceCount: 0,

@@ -1216,6 +1216,13 @@ struct ChatView: View {
             throw APIError.server(status: 503, message: "No server connection available")
         }
 
+        let imageAutoResize: Bool
+        if localAttachments.contains(where: { $0.source == .image }) {
+            imageAutoResize = await imageAutoResizeEnabled(api: api)
+        } else {
+            imageAutoResize = false
+        }
+
         var uploaded: [ChatAttachmentRef] = []
         for (index, pending) in localAttachments.enumerated() {
             attachmentPreparationText = "Uploading attachment \(index + 1) of \(localAttachments.count)…"
@@ -1223,12 +1230,22 @@ struct ChatView: View {
             let payload: (data: Data, mimeType: String, name: String)
             switch pending.source {
             case .image:
-                guard let imageAttachment = pending.imageAttachment,
-                      let data = Data(base64Encoded: imageAttachment.data, options: .ignoreUnknownCharacters) else {
+                guard let imageAttachment = pending.imageAttachment else {
                     throw APIError.server(status: 400, message: "Invalid pending image data")
                 }
-                let name = pending.displayName.lowercased().hasSuffix(".jpg") ? pending.displayName : "image-\(index + 1).jpg"
-                payload = (data, imageAttachment.mimeType, name)
+                let uploadAttachment = PendingImage.uploadAttachment(
+                    from: imageAttachment,
+                    autoResize: imageAutoResize
+                )
+                guard let data = Data(base64Encoded: uploadAttachment.data, options: .ignoreUnknownCharacters) else {
+                    throw APIError.server(status: 400, message: "Invalid pending image data")
+                }
+                let name = imageUploadName(
+                    displayName: pending.displayName,
+                    mimeType: uploadAttachment.mimeType,
+                    index: index
+                )
+                payload = (data, uploadAttachment.mimeType, name)
             case .localFile:
                 guard let data = pending.localFileData,
                       let mimeType = pending.localMimeType else {
@@ -1254,6 +1271,34 @@ struct ChatView: View {
             uploaded.append(attachment)
         }
         return uploaded
+    }
+
+    private func imageAutoResizeEnabled(api: APIClient) async -> Bool {
+        do {
+            return try await api.serverInfo().images?.autoResize ?? false
+        } catch {
+            return false
+        }
+    }
+
+    private func imageUploadName(displayName: String, mimeType: String, index: Int) -> String {
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileExtension = imageUploadFileExtension(for: mimeType)
+        if !trimmed.isEmpty,
+           trimmed.lowercased().hasSuffix(".\(fileExtension)") {
+            return trimmed
+        }
+        return "image-\(index + 1).\(fileExtension)"
+    }
+
+    private func imageUploadFileExtension(for mimeType: String) -> String {
+        switch mimeType.split(separator: ";", maxSplits: 1).first?.lowercased() {
+        case "image/png": return "png"
+        case "image/gif": return "gif"
+        case "image/webp": return "webp"
+        case "image/jpeg", "image/jpg": return "jpg"
+        default: return "jpg"
+        }
     }
 
     private func uploadPreparationErrorMessage(_ error: Error) -> String {

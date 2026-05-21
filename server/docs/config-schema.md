@@ -182,6 +182,14 @@ Configures server-side dictation routing to an external STT backend.
 | ----------------- | ------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `asr.sttEndpoint` | string | -       | STT backend base URL. When set, server dictation is enabled on the session audio stream and audio is forwarded to the backend in real time. Oppi does not persist dictation audio locally. |
 
+### Images
+
+Controls client-side preprocessing for image attachments before upload.
+
+| Setting             | Type    | Default | Description                                                                                                                                                                         |
+| ------------------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `images.autoResize` | boolean | `false` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget. When `false`, clients upload original image bytes where possible. |
+
 ### Policy
 
 `policy` config controls the permission gate defaults. The runtime source of truth for allow/ask/deny tool rules is `~/.config/oppi/rules.json`; `policy.guardrails` and `policy.permissions` are seed inputs copied into `rules.json` when missing and then evaluated with learned/manual rules. Full evaluation order and pattern matching are documented in [policy-engine.md](policy-engine.md).
@@ -278,6 +286,7 @@ oppi token rotate
   "runtimeEnv": {},
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
+  "images": { "autoResize": false },
   "extensions": {
     "subagents": { "maxDepth": 1, "autoStopWhenDone": true }
   },
@@ -305,6 +314,7 @@ Examples:
 ```bash
 oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
+oppi config set images.autoResize false
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config set extensions.voice.defaultVoiceId warm-technical-teammate
 oppi config validate

@@ -858,6 +858,8 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   "autoPermission.maxTokens": { type: "number", desc: "Auto permission review response token cap" },
   asr: { type: "json", desc: "ASR config JSON object" },
   "asr.sttEndpoint": { type: "string", desc: "STT backend base URL" },
+  images: { type: "json", desc: "Image attachment preprocessing config JSON object" },
+  "images.autoResize": { type: "boolean", desc: "Resize large image attachments before upload" },
   uploadStore: { type: "json", desc: "Upload store config JSON object" },
   "uploadStore.mode": { type: "string", desc: "Upload store mode" },
   "uploadStore.path": { type: "string", desc: "Upload store path" },
@@ -1517,6 +1519,7 @@ function cmdHelp(): void {
   );
   console.log(`    ${c.dim("oppi config set port 8080")}`);
   console.log(`    ${c.dim("oppi config set asr.sttEndpoint http://127.0.0.1:7936")}`);
+  console.log(`    ${c.dim("oppi config set images.autoResize false")}`);
   console.log(`    ${c.dim("oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937")}`);
   console.log(`    ${c.dim('oppi config set tls \'{"mode":"self-signed"}\'')}`);
   console.log("");

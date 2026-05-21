@@ -174,6 +174,7 @@ struct ServerInfoTests {
             identity: nil,
             runtimeUpdate: nil,
             uploadProtocol: nil,
+            images: nil,
             capabilities: nil,
             stats: .init(workspaceCount: 0, activeSessionCount: 0, totalSessionCount: 0, skillCount: 0, modelCount: 0)
         )

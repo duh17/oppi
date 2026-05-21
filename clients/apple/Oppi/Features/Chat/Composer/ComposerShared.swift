@@ -42,7 +42,10 @@ enum ComposerShared {
             Task {
                 guard let data = try? await item.loadTransferable(type: Data.self) else { return }
                 guard let uiImage = UIImage(data: data) else { return }
-                let pending = PendingImage.from(uiImage)
+                let mimeType = item.supportedContentTypes
+                    .compactMap(\.preferredMIMEType)
+                    .first
+                let pending = PendingImage.from(data: data, mimeType: mimeType, image: uiImage)
                 await MainActor.run {
                     pendingAttachments.wrappedValue.append(pending.pendingAttachment)
                 }

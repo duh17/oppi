@@ -134,6 +134,11 @@ export interface ServerConfig {
     sttEndpoint?: string;
   };
 
+  /** Image attachment preprocessing performed by clients before upload. */
+  images?: {
+    autoResize?: boolean;
+  };
+
   /** Local upload store config for chat attachments. */
   uploadStore?: UploadStoreConfig;
 

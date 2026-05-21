@@ -383,7 +383,8 @@ struct ExpandedComposerView: View {
             isPresented: $showPhotoPicker,
             selection: $photoSelection,
             maxSelectionCount: 5,
-            matching: .images
+            matching: .images,
+            preferredItemEncoding: .current
         )
     }
 

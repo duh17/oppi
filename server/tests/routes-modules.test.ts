@@ -187,6 +187,9 @@ describe("routes modules", () => {
               maxFileBytes: 123,
               maxTurnBytes: 456,
             },
+            images: {
+              autoResize: true,
+            },
           })),
           listWorkspaces: vi.fn(() => []),
           listSessions: vi.fn(() => []),
@@ -219,8 +222,10 @@ describe("routes modules", () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as {
         uploadProtocol: { version: number; maxFileBytes: number; maxTurnBytes: number };
+        images: { autoResize: boolean };
       };
       expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
+      expect(body.images).toEqual({ autoResize: true });
     });
 
     it("returns false for unrelated routes", async () => {
