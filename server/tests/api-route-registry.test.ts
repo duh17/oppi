@@ -13,8 +13,7 @@ const initialSchemaOperationIds = [
   "getWorkspace",
   "updateWorkspace",
   "deleteWorkspace",
-  "getWorkspaceHome",
-  "getWorkspaceFileIndex",
+  "getWorkspacePaths",
   "createWorkspaceSession",
   "getWorkspaceSession",
   "deleteWorkspaceSession",
@@ -35,7 +34,7 @@ const initialSchemaOperationIds = [
   "respondToPermission",
 ];
 
-const nativeRuntimeOperationIds = [
+const supervisionOperationIds = [
   "getHealth",
   "pairDevice",
   "getCurrentUser",
@@ -44,12 +43,14 @@ const nativeRuntimeOperationIds = [
   "registerDeviceToken",
   "listWorkspaceCatalog",
   "getWorkspace",
-  "getWorkspaceHome",
-  "getWorkspaceFileIndex",
-  "getWorkspaceFilesRoot",
-  "getWorkspaceFile",
-  "createUpload",
-  "putUploadContent",
+  "listWorkspaceSessions",
+  "listWorkspaceSessionBuckets",
+  "getWorkspacePaths",
+  "getWorkspaceContentsRoot",
+  "getWorkspaceContents",
+  "getWorkspaceRaw",
+  "createSessionAttachment",
+  "putSessionAttachmentContent",
   "createWorkspaceSession",
   "getWorkspaceSession",
   "deleteWorkspaceSession",
@@ -57,20 +58,22 @@ const nativeRuntimeOperationIds = [
   "resumeWorkspaceSession",
   "forkWorkspaceSession",
   "getSessionEvents",
-  "getSessionOverallDiff",
-  "getSessionFile",
-  "getSessionTouchedFile",
+  "listSessionChanges",
+  "getSessionDiff",
+  "getSessionRaw",
   "getSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
   "openSessionAudioStream",
   "searchSessions",
+  "listSessions",
   "listRecentSessions",
   "getWorkspaceGitStatus",
+  "listWorkspaceGitChanges",
+  "getWorkspaceGitDiff",
   "listWorkspaceCommits",
   "getWorkspaceCommit",
   "getWorkspaceCommitDiff",
-  "getWorkspaceReviewDiff",
   "listReviewComments",
   "createReviewComment",
   "markReviewCommentsSent",
@@ -82,7 +85,7 @@ const nativeRuntimeOperationIds = [
   "respondToPermission",
 ];
 
-const nativeAdminOperationIds = [
+const settingsOperationIds = [
   "getCodexUsage",
   "getServerStats",
   "getDailyServerStats",
@@ -135,18 +138,34 @@ describe("api route registry", () => {
   });
 
   it("normalizes high-cardinality route paths for metrics", () => {
-    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/home")).toBe(
-      "/workspaces/:workspaceId/home",
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/contents/")).toBe(
+      "/workspaces/:workspaceId/contents",
     );
-    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/files/")).toBe(
-      "/workspaces/:workspaceId/files",
+    expect(
+      normalizeRegisteredPathPattern("/workspaces/ws-1/contents/src/components/Button.tsx"),
+    ).toBe("/workspaces/:workspaceId/contents/:path");
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/raw/src/components/Button.tsx")).toBe(
+      "/workspaces/:workspaceId/raw/:path",
     );
-    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/files/src/components/Button.tsx")).toBe(
-      "/workspaces/:workspaceId/files/:path",
+
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/raw/src/App.swift")).toBe(
+      "/workspaces/:workspaceId/sessions/:sessionId/raw/:path",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/changes")).toBe(
+      "/workspaces/:workspaceId/sessions/:sessionId/changes",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/diff")).toBe(
+      "/workspaces/:workspaceId/sessions/:sessionId/diff",
     );
     expect(
       normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/tool-output/tc_abc123"),
     ).toBe("/workspaces/:workspaceId/sessions/:sessionId/tool-output/:toolCallId");
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/status")).toBe(
+      "/workspaces/:workspaceId/git/status",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/diff")).toBe(
+      "/workspaces/:workspaceId/git/diff",
+    );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/review/comments/rc-1")).toBe(
       "/workspaces/:workspaceId/review/comments/:commentId",
     );
@@ -158,22 +177,22 @@ describe("api route registry", () => {
     );
   });
 
-  it("tracks native route profiles", () => {
-    const byProfile = (profile: "native-runtime" | "native-admin") =>
+  it("tracks native client route uses", () => {
+    const byUse = (use: "supervision" | "settings") =>
       apiRouteSpecs
-        .filter((route) => route.profiles?.includes(profile))
+        .filter((route) => route.nativeClientUses?.includes(use))
         .map((route) => route.operationId)
         .sort();
 
-    expect(byProfile("native-runtime")).toEqual([...nativeRuntimeOperationIds].sort());
-    expect(byProfile("native-admin")).toEqual([...nativeAdminOperationIds].sort());
+    expect(byUse("supervision")).toEqual([...supervisionOperationIds].sort());
+    expect(byUse("settings")).toEqual([...settingsOperationIds].sort());
   });
 
-  it("keeps internal/debug routes out of native client profiles", () => {
+  it("keeps internal/debug routes out of native client uses", () => {
     const allowedInternalProfileOperationIds = new Set(["getHealth"]);
     for (const route of apiRouteSpecs.filter((candidate) => candidate.surface === "internal")) {
       if (allowedInternalProfileOperationIds.has(route.operationId)) continue;
-      expect(route.profiles, `${route.operationId} profiles`).toBeUndefined();
+      expect(route.nativeClientUses, `${route.operationId} native client uses`).toBeUndefined();
     }
   });
 
@@ -181,10 +200,10 @@ describe("api route registry", () => {
     const byOperationId = new Map(apiRouteSpecs.map((route) => [route.operationId, route]));
 
     expect(byOperationId.get("getWorkspaceAttention")?.surface).toBe("internal");
-    expect(byOperationId.get("getWorkspaceAttention")?.profiles).toBeUndefined();
+    expect(byOperationId.get("getWorkspaceAttention")?.nativeClientUses).toBeUndefined();
     expect(byOperationId.get("listPendingPermissions")?.surface).toBe("internal");
-    expect(byOperationId.get("listPendingPermissions")?.profiles).toBeUndefined();
-    expect(byOperationId.get("respondToPermission")?.profiles).toContain("native-runtime");
+    expect(byOperationId.get("listPendingPermissions")?.nativeClientUses).toBeUndefined();
+    expect(byOperationId.get("respondToPermission")?.nativeClientUses).toContain("supervision");
   });
 
   it("tracks the initial schema-covered route set", () => {
@@ -216,6 +235,7 @@ describe("api route registry", () => {
   it("does not register retired cleanup routes", () => {
     const paths = new Set(apiRouteSpecs.map((route) => route.path));
 
+    expect(paths.has("/workspaces/{workspaceId}/home")).toBe(false);
     expect(paths.has("/provider-auth/providers")).toBe(false);
     expect(paths.has("/server/runtime/status")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/prompt-templates")).toBe(false);
@@ -223,5 +243,15 @@ describe("api route registry", () => {
     expect(
       paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/tool-output/{toolCallId}/full"),
     ).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/file-index")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/files")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/files/{path+}")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/uploads")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/uploads/{uploadId}/content")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/files")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/touched-file")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/overall-diff")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/git-status")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/review/diff")).toBe(false);
   });
 });

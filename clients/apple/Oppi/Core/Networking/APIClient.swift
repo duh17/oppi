@@ -522,7 +522,7 @@ actor APIClient {
 
     /// Fetch git status for a workspace's host directory.
     func getGitStatus(workspaceId: String) async throws -> GitStatus {
-        let data = try await get("/workspaces/\(workspaceId)/git-status")
+        let data = try await get("/workspaces/\(workspaceId)/git/status")
         return try JSONDecoder().decode(GitStatus.self, from: data)
     }
 
@@ -532,7 +532,7 @@ actor APIClient {
         path: String
     ) async throws -> WorkspaceReviewDiffResponse {
         let encodedPath = try encodeQueryPath(path)
-        let route = "/workspaces/\(workspaceId)/review/diff?path=\(encodedPath)"
+        let route = "/workspaces/\(workspaceId)/git/diff?path=\(encodedPath)"
         let data = try await get(route)
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
@@ -878,11 +878,108 @@ actor APIClient {
         struct Attention: Decodable, Sendable {
             let permissions: [PermissionRequest]
             let asks: [AskRequest]
+
+            static let empty = Attention(permissions: [], asks: [])
         }
 
         let workspaceId: String
         let serverNow: Int64
         let attention: Attention
+    }
+
+    struct WorkspaceSessionManagedRow: Decodable, Sendable, Equatable {
+        let summary: SessionSummary
+        let pendingPermissionCount: Int
+        let pendingAskCount: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case pendingPermissionCount, pendingAskCount
+        }
+
+        init(from decoder: Decoder) throws {
+            summary = try SessionSummary(from: decoder)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            pendingPermissionCount = try container.decodeIfPresent(Int.self, forKey: .pendingPermissionCount) ?? 0
+            pendingAskCount = try container.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
+        }
+    }
+
+    enum WorkspaceSessionListRow: Decodable, Sendable, Equatable {
+        case session(WorkspaceSessionManagedRow)
+        case tui(LocalSession)
+
+        private enum CodingKeys: String, CodingKey {
+            case source
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if try container.decodeIfPresent(String.self, forKey: .source) == "tui" {
+                self = .tui(try LocalSession(from: decoder))
+            } else {
+                self = .session(try WorkspaceSessionManagedRow(from: decoder))
+            }
+        }
+    }
+
+    struct WorkspaceSessionCollectionResponse: Decodable, Sendable, Equatable {
+        let workspaceId: String
+        let sinceMs: Int64?
+        let untilMs: Int64?
+        let serverNow: Int64
+        let active: [WorkspaceSessionListRow]
+        let stopped: [WorkspaceSessionListRow]
+
+        var sessionSummaries: [SessionSummary] {
+            (active + stopped).compactMap { row in
+                if case .session(let row) = row { return row.summary }
+                return nil
+            }
+        }
+
+        var importableSessions: [LocalSession] {
+            stopped.compactMap { row in
+                if case .tui(let session) = row { return session }
+                return nil
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case workspaceId, sinceMs, untilMs, serverNow, active, stopped
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            workspaceId = try c.decode(String.self, forKey: .workspaceId)
+            sinceMs = try c.decodeIfPresent(Int64.self, forKey: .sinceMs)
+            untilMs = try c.decodeIfPresent(Int64.self, forKey: .untilMs)
+            serverNow = try c.decode(Int64.self, forKey: .serverNow)
+            active = try c.decodeIfPresent([WorkspaceSessionListRow].self, forKey: .active) ?? []
+            stopped = try c.decodeIfPresent([WorkspaceSessionListRow].self, forKey: .stopped) ?? []
+        }
+    }
+
+    struct WorkspaceSessionBucketsResponse: Decodable, Sendable {
+        let workspaceId: String
+        let status: String
+        let beforeMs: Int64
+        let serverNow: Int64
+        let buckets: [WorkspaceSessionArchiveBucket]
+    }
+
+    struct GlobalActiveSessionGroupsResponse: Decodable, Sendable {
+        struct WorkspaceGroup: Decodable, Sendable {
+            let workspace: Workspace
+            let workspaceId: String
+            let sessions: [WorkspaceSessionManagedRow]
+            let pendingAttentionCount: Int
+            let latestActivity: Int64
+        }
+
+        let status: String
+        let groupBy: String
+        let serverNow: Int64
+        let workspaces: [WorkspaceGroup]
     }
 
     struct WorkspaceSessionListResponse: Decodable, Sendable {
@@ -912,15 +1009,48 @@ actor APIClient {
         }
     }
 
+    func getWorkspaceAttention(workspaceId: String) async throws -> WorkspaceAttentionResponse {
+        let data = try await get("/workspaces/\(workspaceId)/attention")
+        return try JSONDecoder().decode(WorkspaceAttentionResponse.self, from: data)
+    }
+
+    func getWorkspaceSessionList(
+        workspace: Workspace,
+        since: Date,
+        until: Date
+    ) async throws -> WorkspaceSessionListResponse {
+        let workspaceId = workspace.id
+        let sinceMs = Int64(since.timeIntervalSince1970 * 1000)
+        let untilMs = Int64(until.timeIntervalSince1970 * 1000)
+
+        async let sectionsData = get("/workspaces/\(workspaceId)/sessions?status=active,stopped&sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        async let bucketsData = get("/workspaces/\(workspaceId)/session-buckets?status=stopped&beforeMs=\(sinceMs)")
+        async let attention = getWorkspaceAttention(workspaceId: workspaceId)
+
+        let resolvedSectionsData = try await sectionsData
+        let resolvedBucketsData = try await bucketsData
+        let resolvedAttention = try await attention
+
+        let sections = try JSONDecoder().decode(WorkspaceSessionCollectionResponse.self, from: resolvedSectionsData)
+        let buckets = try JSONDecoder().decode(WorkspaceSessionBucketsResponse.self, from: resolvedBucketsData)
+
+        return WorkspaceSessionListResponse(
+            workspace: workspace,
+            serverNow: sections.serverNow,
+            sessionSummaries: sections.sessionSummaries,
+            attention: resolvedAttention.attention,
+            importableSessions: sections.importableSessions,
+            archiveBuckets: buckets.buckets
+        )
+    }
+
     func getWorkspaceSessionList(
         workspaceId: String,
         since: Date,
         until: Date
     ) async throws -> WorkspaceSessionListResponse {
-        let sinceMs = Int(since.timeIntervalSince1970 * 1000)
-        let untilMs = Int(until.timeIntervalSince1970 * 1000)
-        let data = try await get("/workspaces/\(workspaceId)/home?sinceMs=\(sinceMs)&untilMs=\(untilMs)")
-        return try JSONDecoder().decode(WorkspaceSessionListResponse.self, from: data)
+        let workspace = try await getWorkspace(id: workspaceId)
+        return try await getWorkspaceSessionList(workspace: workspace, since: since, until: until)
     }
 
     func getWorkspaceSessionListBucket(
@@ -928,10 +1058,22 @@ actor APIClient {
         since: Date,
         until: Date
     ) async throws -> WorkspaceSessionListBucketResponse {
-        let sinceMs = Int(since.timeIntervalSince1970 * 1000)
-        let untilMs = Int(until.timeIntervalSince1970 * 1000)
-        let data = try await get("/workspaces/\(workspaceId)/home?sinceMs=\(sinceMs)&untilMs=\(untilMs)&scope=stopped")
-        return try JSONDecoder().decode(WorkspaceSessionListBucketResponse.self, from: data)
+        let sinceMs = Int64(since.timeIntervalSince1970 * 1000)
+        let untilMs = Int64(until.timeIntervalSince1970 * 1000)
+        let data = try await get("/workspaces/\(workspaceId)/sessions?status=stopped&sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        let sections = try JSONDecoder().decode(WorkspaceSessionCollectionResponse.self, from: data)
+        return WorkspaceSessionListBucketResponse(
+            workspaceId: workspaceId,
+            sinceMs: sinceMs,
+            untilMs: untilMs,
+            sessionSummaries: sections.sessionSummaries,
+            importableSessions: sections.importableSessions
+        )
+    }
+
+    func listGlobalActiveSessionGroups() async throws -> GlobalActiveSessionGroupsResponse {
+        let data = try await get("/sessions?status=active&groupBy=workspace")
+        return try JSONDecoder().decode(GlobalActiveSessionGroupsResponse.self, from: data)
     }
 
     /// List recent session summaries across all workspaces with one server request.
@@ -1009,36 +1151,50 @@ actor APIClient {
         let attachment: ChatAttachmentRef
     }
 
-    func createUpload(
+    private struct UploadCreateBody: Encodable {
+        let name: String
+        let mimeType: String
+        let sizeBytes: Int
+        let purpose: String
+    }
+
+    func createSessionAttachmentUpload(
         workspaceId: String,
+        sessionId: String,
         name: String,
         mimeType: String,
         sizeBytes: Int,
         purpose: String = "chat_attachment"
     ) async throws -> CreateUploadResponse {
-        struct Body: Encodable {
-            let name: String
-            let mimeType: String
-            let sizeBytes: Int
-            let purpose: String
-        }
-
         let data = try await post(
-            "/workspaces/\(workspaceId)/uploads",
-            body: Body(name: name, mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose)
+            "/workspaces/\(workspaceId)/sessions/\(sessionId)/attachments",
+            body: UploadCreateBody(name: name, mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose)
         )
         return try JSONDecoder().decode(CreateUploadResponse.self, from: data)
     }
 
-    func uploadAttachmentContent(
+    func uploadSessionAttachmentContent(
         workspaceId: String,
-        uploadId: String,
+        sessionId: String,
+        attachmentId: String,
         data body: Data,
         contentType: String = "application/octet-stream"
     ) async throws -> ChatAttachmentRef {
+        try await putAttachmentContent(
+            path: "/workspaces/\(workspaceId)/sessions/\(sessionId)/attachments/\(attachmentId)/content",
+            data: body,
+            contentType: contentType
+        )
+    }
+
+    private func putAttachmentContent(
+        path: String,
+        data body: Data,
+        contentType: String
+    ) async throws -> ChatAttachmentRef {
         let (data, response) = try await request(
             "PUT",
-            path: "/workspaces/\(workspaceId)/uploads/\(uploadId)/content",
+            path: path,
             body: body,
             contentType: contentType
         )
@@ -1141,7 +1297,7 @@ actor APIClient {
     /// in a tool call row to view the current file on disk.
     // periphery:ignore - used by APIClientTests + RemoteFileView (transitively unused)
     func getSessionFile(workspaceId: String, sessionId: String, path: String) async throws -> String {
-        let data = try await get(url: makeSessionFileURL(workspaceId: workspaceId, sessionId: sessionId, route: "files", path: path))
+        let data = try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
         // File content is returned as raw bytes — decode as UTF-8 text
         guard let text = String(data: data, encoding: .utf8) else {
             throw APIError.server(status: 422, message: "File is not text (binary content)")
@@ -1152,15 +1308,15 @@ actor APIClient {
     // periphery:ignore - used by RemoteFileView (transitively unused)
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get(url: makeSessionFileURL(workspaceId: workspaceId, sessionId: sessionId, route: "files", path: path))
+        return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
     }
 
-    /// Fetch a workspace file by path (images, etc.) from the workspace file endpoint.
+    /// Fetch a workspace file by path (images, etc.) from the workspace raw endpoint.
     ///
     /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
     /// Returns raw `Data` so the caller can decode as `UIImage`.
     func fetchWorkspaceFile(workspaceID: String, path: String) async throws -> Data {
-        return try await get(url: makeWorkspaceFileURL(workspaceId: workspaceID, path: path))
+        return try await get(url: makeWorkspaceRawURL(workspaceId: workspaceID, path: path))
     }
 
     // MARK: - Workspace File Browser
@@ -1171,7 +1327,7 @@ actor APIClient {
     /// should include a trailing slash (e.g. "src/").
     func listWorkspaceDirectory(workspaceId: String, path: String = "") async throws -> DirectoryListingResponse {
         let data = try await get(
-            url: makeWorkspaceFileURL(
+            url: makeWorkspaceContentsURL(
                 workspaceId: workspaceId,
                 path: path,
                 directory: true
@@ -1185,7 +1341,7 @@ actor APIClient {
     /// Returns all workspace-relative file paths in a single response.
     /// The client caches this and filters locally for instant search feedback.
     func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse {
-        let data = try await get("/workspaces/\(workspaceId)/file-index")
+        let data = try await get("/workspaces/\(workspaceId)/paths")
         return try JSONDecoder().decode(FileIndexResponse.self, from: data)
     }
 
@@ -1193,13 +1349,7 @@ actor APIClient {
     ///
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
     func browseWorkspaceFile(workspaceId: String, path: String) async throws -> Data {
-        return try await get(
-            url: makeWorkspaceFileURL(
-                workspaceId: workspaceId,
-                path: path,
-                queryItems: [URLQueryItem(name: "mode", value: "browse")]
-            )
-        )
+        return try await get(url: makeWorkspaceRawURL(workspaceId: workspaceId, path: path))
     }
 
     /// Build an authenticated URL for streaming media via AVPlayer.
@@ -1208,14 +1358,29 @@ actor APIClient {
     /// server without needing custom header injection. No data is downloaded
     /// by this method — AVPlayer handles progressive download and buffering.
     func browseFileStreamURL(workspaceId: String, path: String) throws -> URL {
-        try makeWorkspaceFileURL(
+        try makeWorkspaceRawURL(
             workspaceId: workspaceId,
             path: path,
-            queryItems: [
-                URLQueryItem(name: "mode", value: "browse"),
-                URLQueryItem(name: "token", value: token),
-            ]
+            queryItems: [URLQueryItem(name: "token", value: token)]
         )
+    }
+
+    /// List files touched (written/edited) by a specific session.
+    func listSessionChanges(workspaceId: String, sessionId: String) async throws -> SessionChangesResponse {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/changes")
+        return try JSONDecoder().decode(SessionChangesResponse.self, from: data)
+    }
+
+    /// Fetch a session-derived diff for a touched file.
+    func getSessionDiff(
+        workspaceId: String,
+        sessionId: String,
+        path: String
+    ) async throws -> WorkspaceReviewDiffResponse {
+        let encodedPath = try encodeQueryPath(path)
+        let route = "/workspaces/\(workspaceId)/sessions/\(sessionId)/diff?path=\(encodedPath)"
+        let data = try await get(route)
+        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
     /// Fetch content of a file that was touched (written/edited) by a specific session.
@@ -1223,7 +1388,7 @@ actor APIClient {
     /// Works for both workspace-relative paths and absolute paths (e.g. ~/.agent/diagrams/).
     /// The server validates the path exists in the session's `changeStats.changedFiles`.
     func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get(url: makeSessionFileURL(workspaceId: workspaceId, sessionId: sessionId, route: "touched-file", path: path))
+        return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
     }
 
     // MARK: - Device Token
@@ -1368,7 +1533,7 @@ actor APIClient {
         return encoded
     }
 
-    private func makeWorkspaceFileURL(
+    private func makeWorkspaceContentsURL(
         workspaceId: String,
         path: String,
         queryItems: [URLQueryItem] = [],
@@ -1377,22 +1542,31 @@ actor APIClient {
         let normalizedPath = path == "/" ? "" : path
         let trailingSlash = directory || normalizedPath.hasSuffix("/")
         return try makeURL(
-            pathSegments: ["workspaces", workspaceId, "files"],
+            pathSegments: ["workspaces", workspaceId, "contents"],
             appendedPath: normalizedPath,
             queryItems: queryItems,
             trailingSlash: trailingSlash
         )
     }
 
-    private func makeSessionFileURL(
+    private func makeWorkspaceRawURL(
+        workspaceId: String,
+        path: String,
+        queryItems: [URLQueryItem] = []
+    ) throws -> URL {
+        try makeURL(
+            pathSegments: ["workspaces", workspaceId, "raw", path],
+            queryItems: queryItems
+        )
+    }
+
+    private func makeSessionRawURL(
         workspaceId: String,
         sessionId: String,
-        route: String,
         path: String
     ) throws -> URL {
         try makeURL(
-            pathSegments: ["workspaces", workspaceId, "sessions", sessionId, route],
-            queryItems: [URLQueryItem(name: "path", value: path)]
+            pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw", path]
         )
     }
 
@@ -1449,8 +1623,7 @@ actor APIClient {
     /// Build a request URL from an API path that may include a query string.
     ///
     /// `URL.appendingPathComponent` encodes `?` as a literal path character,
-    /// which breaks routes like `/workspaces/:workspaceId/sessions/:id/files?path=...`
-    /// and yields 404.
+    /// which breaks routes with query strings and yields 404.
     private func makeURL(path: String) throws -> URL {
         let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         let rawPath = parts.first.map(String.init) ?? ""

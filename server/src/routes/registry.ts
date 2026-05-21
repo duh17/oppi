@@ -1,8 +1,12 @@
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type RouteSurface = "core" | "admin" | "internal";
-export type RouteAuth = "none" | "owner" | "query-token-browse";
+export type RouteAuth = "none" | "owner" | "query-token-get";
 export type RouteTransport = "http" | "websocket";
-export type RouteProfile = "native-runtime" | "native-admin";
+// Which iOS/Mac app flows should depend on this route?
+// - supervision: watching and controlling agent sessions.
+// - settings: configuring the local server and workspaces.
+// This is separate from `surface`, which answers who owns the route: core, admin, or internal.
+export type NativeClientUse = "supervision" | "settings";
 
 export type SchemaRef = `#/components/schemas/${string}`;
 
@@ -21,7 +25,7 @@ export interface ApiRouteSpec {
   surface: RouteSurface;
   auth: RouteAuth;
   transport?: RouteTransport;
-  profiles?: readonly RouteProfile[];
+  nativeClientUses?: readonly NativeClientUse[];
   description?: string;
   schemas?: ApiRouteSchemas;
 }
@@ -29,7 +33,7 @@ export interface ApiRouteSpec {
 const schemaRef = (name: string): SchemaRef => `#/components/schemas/${name}` as SchemaRef;
 const errorResponse = schemaRef("ErrorResponse");
 
-const nativeRuntimeOperationIds = new Set<string>([
+const supervisionOperationIds = new Set<string>([
   "getHealth",
   "pairDevice",
   "getCurrentUser",
@@ -38,12 +42,14 @@ const nativeRuntimeOperationIds = new Set<string>([
   "registerDeviceToken",
   "listWorkspaceCatalog",
   "getWorkspace",
-  "getWorkspaceHome",
-  "getWorkspaceFileIndex",
-  "getWorkspaceFilesRoot",
-  "getWorkspaceFile",
-  "createUpload",
-  "putUploadContent",
+  "listWorkspaceSessions",
+  "listWorkspaceSessionBuckets",
+  "getWorkspacePaths",
+  "getWorkspaceContentsRoot",
+  "getWorkspaceContents",
+  "getWorkspaceRaw",
+  "createSessionAttachment",
+  "putSessionAttachmentContent",
   "createWorkspaceSession",
   "getWorkspaceSession",
   "deleteWorkspaceSession",
@@ -51,20 +57,22 @@ const nativeRuntimeOperationIds = new Set<string>([
   "resumeWorkspaceSession",
   "forkWorkspaceSession",
   "getSessionEvents",
-  "getSessionOverallDiff",
-  "getSessionFile",
-  "getSessionTouchedFile",
+  "listSessionChanges",
+  "getSessionDiff",
+  "getSessionRaw",
   "getSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
   "openSessionAudioStream",
   "searchSessions",
+  "listSessions",
   "listRecentSessions",
   "getWorkspaceGitStatus",
+  "listWorkspaceGitChanges",
+  "getWorkspaceGitDiff",
   "listWorkspaceCommits",
   "getWorkspaceCommit",
   "getWorkspaceCommitDiff",
-  "getWorkspaceReviewDiff",
   "listReviewComments",
   "createReviewComment",
   "markReviewCommentsSent",
@@ -76,7 +84,7 @@ const nativeRuntimeOperationIds = new Set<string>([
   "respondToPermission",
 ]);
 
-const nativeAdminOperationIds = new Set<string>([
+const settingsOperationIds = new Set<string>([
   "getCodexUsage",
   "getServerStats",
   "getDailyServerStats",
@@ -117,11 +125,11 @@ const nativeAdminOperationIds = new Set<string>([
   "uploadChatMetrics",
 ]);
 
-function routeProfilesFor(operationId: string): readonly RouteProfile[] | undefined {
-  const profiles: RouteProfile[] = [];
-  if (nativeRuntimeOperationIds.has(operationId)) profiles.push("native-runtime");
-  if (nativeAdminOperationIds.has(operationId)) profiles.push("native-admin");
-  return profiles.length > 0 ? profiles : undefined;
+function nativeClientUsesFor(operationId: string): readonly NativeClientUse[] | undefined {
+  const uses: NativeClientUse[] = [];
+  if (supervisionOperationIds.has(operationId)) uses.push("supervision");
+  if (settingsOperationIds.has(operationId)) uses.push("settings");
+  return uses.length > 0 ? uses : undefined;
 }
 
 const rawApiRouteSpecs = [
@@ -281,19 +289,6 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/home",
-    operationId: "getWorkspaceHome",
-    surface: "core",
-    auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      query: schemaRef("WorkspaceHomeQuery"),
-      response: schemaRef("WorkspaceHomeResponse"),
-      error: errorResponse,
-    },
-  },
-  {
-    method: "GET",
     path: "/workspaces/{workspaceId}/attention",
     operationId: "getWorkspaceAttention",
     surface: "internal",
@@ -301,8 +296,8 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/file-index",
-    operationId: "getWorkspaceFileIndex",
+    path: "/workspaces/{workspaceId}/paths",
+    operationId: "getWorkspacePaths",
     surface: "core",
     auth: "owner",
     schemas: {
@@ -313,34 +308,55 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/files",
-    operationId: "getWorkspaceFilesRoot",
+    path: "/workspaces/{workspaceId}/contents",
+    operationId: "getWorkspaceContentsRoot",
     surface: "core",
     auth: "owner",
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/files/{path+}",
-    operationId: "getWorkspaceFile",
+    path: "/workspaces/{workspaceId}/contents/{path+}",
+    operationId: "getWorkspaceContents",
     surface: "core",
-    auth: "query-token-browse",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/raw/{path+}",
+    operationId: "getWorkspaceRaw",
+    surface: "core",
+    auth: "query-token-get",
   },
 
   {
     method: "POST",
-    path: "/workspaces/{workspaceId}/uploads",
-    operationId: "createUpload",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/attachments",
+    operationId: "createSessionAttachment",
     surface: "core",
     auth: "owner",
   },
   {
     method: "PUT",
-    path: "/workspaces/{workspaceId}/uploads/{uploadId}/content",
-    operationId: "putUploadContent",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/attachments/{attachmentId}/content",
+    operationId: "putSessionAttachmentContent",
     surface: "core",
     auth: "owner",
   },
 
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/sessions",
+    operationId: "listWorkspaceSessions",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/session-buckets",
+    operationId: "listWorkspaceSessionBuckets",
+    surface: "core",
+    auth: "owner",
+  },
   {
     method: "POST",
     path: "/workspaces/{workspaceId}/sessions",
@@ -431,31 +447,32 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/overall-diff",
-    operationId: "getSessionOverallDiff",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/changes",
+    operationId: "listSessionChanges",
     surface: "core",
     auth: "owner",
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/files",
-    operationId: "getSessionFile",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/diff",
+    operationId: "getSessionDiff",
     surface: "core",
     auth: "owner",
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/touched-file",
-    operationId: "getSessionTouchedFile",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}",
+    operationId: "getSessionRaw",
     surface: "core",
     auth: "owner",
   },
+
   {
     method: "GET",
     path: "/workspaces/{workspaceId}/sessions/{sessionId}/attachments/{attachmentId}",
     operationId: "getSessionAttachment",
     surface: "core",
-    auth: "query-token-browse",
+    auth: "query-token-get",
   },
   {
     method: "GET",
@@ -496,6 +513,13 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
+    path: "/sessions",
+    operationId: "listSessions",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
     path: "/sessions/recent",
     operationId: "listRecentSessions",
     surface: "core",
@@ -523,11 +547,26 @@ const rawApiRouteSpecs = [
 
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/git-status",
+    path: "/workspaces/{workspaceId}/git/status",
     operationId: "getWorkspaceGitStatus",
     surface: "core",
     auth: "owner",
   },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/git/changes",
+    operationId: "listWorkspaceGitChanges",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/git/diff",
+    operationId: "getWorkspaceGitDiff",
+    surface: "core",
+    auth: "owner",
+  },
+
   {
     method: "GET",
     path: "/workspaces/{workspaceId}/git/commits",
@@ -549,13 +588,7 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
   },
-  {
-    method: "GET",
-    path: "/workspaces/{workspaceId}/review/diff",
-    operationId: "getWorkspaceReviewDiff",
-    surface: "core",
-    auth: "owner",
-  },
+
   {
     method: "GET",
     path: "/workspaces/{workspaceId}/review/comments",
@@ -920,8 +953,8 @@ const rawApiRouteSpecs = [
 ] as const satisfies readonly ApiRouteSpec[];
 
 export const apiRouteSpecs = rawApiRouteSpecs.map((route): ApiRouteSpec => {
-  const profiles = routeProfilesFor(route.operationId);
-  return profiles ? { ...route, profiles } : route;
+  const nativeClientUses = nativeClientUsesFor(route.operationId);
+  return nativeClientUses ? { ...route, nativeClientUses } : route;
 });
 
 interface CompiledRoutePattern {

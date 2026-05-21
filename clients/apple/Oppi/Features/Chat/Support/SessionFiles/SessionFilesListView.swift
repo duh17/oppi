@@ -17,7 +17,10 @@ struct SessionFilesListView: View {
     var fileDetailActionScope: SelectedTextActionScope? = nil
 
     @Environment(GitStatusStore.self) private var gitStatusStore
+    @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
+
+    @State private var loadedChangedFiles: [String]?
 
     /// Files from git status, keyed by path for fast lookup.
     private var gitFilesByPath: [String: GitFileStatus] {
@@ -25,36 +28,50 @@ struct SessionFilesListView: View {
         return Dictionary(uniqueKeysWithValues: files.map { ($0.path, $0) })
     }
 
+    private var currentChangedFiles: [String] {
+        loadedChangedFiles ?? changedFiles
+    }
+
+    private var sessionChangesLoadKey: String {
+        "\(workspaceId ?? "")|\(sessionId)"
+    }
+
     /// Filtered + sorted files. When searching, uses FuzzyMatch for scoring.
     private var displayFiles: [(path: String, positions: [Int])] {
+        let files = currentChangedFiles
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
-            return changedFiles.map { ($0, []) }
+            return files.map { ($0, []) }
         }
-        return FuzzyMatch.search(query: query, candidates: changedFiles, limit: 100)
+        return FuzzyMatch.search(query: query, candidates: files, limit: 100)
             .map { ($0.path, $0.positions) }
     }
 
     var body: some View {
         let files = displayFiles
-        if changedFiles.isEmpty {
-            ContentUnavailableView(
-                "No Files",
-                systemImage: "doc.text",
-                description: Text("This session hasn't created or edited any files yet.")
-            )
-            .background(Color.themeBgDark)
-        } else if files.isEmpty {
-            ContentUnavailableView.search(text: searchText)
+        Group {
+            if currentChangedFiles.isEmpty {
+                ContentUnavailableView(
+                    "No Files",
+                    systemImage: "doc.text",
+                    description: Text("This session hasn't created or edited any files yet.")
+                )
                 .background(Color.themeBgDark)
-        } else {
-            List {
-                ForEach(files, id: \.path) { file in
-                    fileRow(path: file.path, matchPositions: file.positions)
+            } else if files.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+                    .background(Color.themeBgDark)
+            } else {
+                List {
+                    ForEach(files, id: \.path) { file in
+                        fileRow(path: file.path, matchPositions: file.positions)
+                    }
                 }
+                .listStyle(.plain)
+                .background(Color.themeBgDark)
             }
-            .listStyle(.plain)
-            .background(Color.themeBgDark)
+        }
+        .task(id: sessionChangesLoadKey) {
+            await loadSessionChanges()
         }
     }
 
@@ -130,6 +147,27 @@ struct SessionFilesListView: View {
             dismiss()
             router.dispatch(request)
         })
+    }
+
+    @MainActor
+    private func loadSessionChanges() async {
+        guard let workspaceId, let apiClient else {
+            loadedChangedFiles = nil
+            return
+        }
+
+        do {
+            let response = try await apiClient.listSessionChanges(
+                workspaceId: workspaceId,
+                sessionId: sessionId
+            )
+            guard !Task.isCancelled else { return }
+            loadedChangedFiles = response.files.map(\.path)
+        } catch {
+            // Keep the live session snapshot as the fallback list.
+            guard !Task.isCancelled else { return }
+            loadedChangedFiles = nil
+        }
     }
 
     @ViewBuilder

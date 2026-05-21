@@ -26,6 +26,7 @@ import type {
   CreateReviewCommentRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
+  GitStatus,
   Session,
   UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
@@ -36,6 +37,7 @@ import type {
   WorkspaceQuickActionSessionResponse,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
+import { buildWorkspaceReviewFilesResponse } from "../workspace-review.js";
 import {
   loadWorkspaceQuickActionOptions,
   prepareWorkspaceQuickActionSession,
@@ -371,6 +373,27 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, { ok: true });
   }
 
+  function emptyGitStatus(): GitStatus {
+    return {
+      isGitRepo: false,
+      branch: null,
+      headSha: null,
+      ahead: null,
+      behind: null,
+      dirtyCount: 0,
+      untrackedCount: 0,
+      stagedCount: 0,
+      files: [],
+      totalFiles: 0,
+      addedLines: 0,
+      removedLines: 0,
+      stashCount: 0,
+      lastCommitMessage: null,
+      lastCommitDate: null,
+      recentCommits: [],
+    };
+  }
+
   async function handleGetWorkspaceGitStatus(wsId: string, res: ServerResponse): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
@@ -379,29 +402,32 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     if (!workspace.hostMount) {
-      helpers.json(res, {
-        isGitRepo: false,
-        branch: null,
-        headSha: null,
-        ahead: null,
-        behind: null,
-        dirtyCount: 0,
-        untrackedCount: 0,
-        stagedCount: 0,
-        files: [],
-        totalFiles: 0,
-        addedLines: 0,
-        removedLines: 0,
-        stashCount: 0,
-        lastCommitMessage: null,
-        lastCommitDate: null,
-        recentCommits: [],
-      });
+      helpers.json(res, emptyGitStatus());
       return;
     }
 
     const status = await getGitStatus(workspace.hostMount);
     helpers.json(res, status);
+  }
+
+  async function handleGetWorkspaceGitChanges(wsId: string, res: ServerResponse): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const gitStatus = workspace.hostMount
+      ? await getGitStatus(workspace.hostMount)
+      : emptyGitStatus();
+    helpers.json(
+      res,
+      buildWorkspaceReviewFilesResponse({
+        workspaceId: wsId,
+        gitStatus,
+        workspaceRoot: workspace.hostMount,
+      }),
+    );
   }
 
   async function handleGetWorkspaceCommitLog(
@@ -838,9 +864,21 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return true;
     }
 
-    const wsGitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
-    if (wsGitStatusMatch && method === "GET") {
-      await handleGetWorkspaceGitStatus(wsGitStatusMatch[1], res);
+    const wsGitStatusResourceMatch = path.match(/^\/workspaces\/([^/]+)\/git\/status$/);
+    if (wsGitStatusResourceMatch && method === "GET") {
+      await handleGetWorkspaceGitStatus(wsGitStatusResourceMatch[1], res);
+      return true;
+    }
+
+    const wsGitChangesMatch = path.match(/^\/workspaces\/([^/]+)\/git\/changes$/);
+    if (wsGitChangesMatch && method === "GET") {
+      await handleGetWorkspaceGitChanges(wsGitChangesMatch[1], res);
+      return true;
+    }
+
+    const wsGitDiffMatch = path.match(/^\/workspaces\/([^/]+)\/git\/diff$/);
+    if (wsGitDiffMatch && method === "GET") {
+      await handleGetWorkspaceReviewDiff(wsGitDiffMatch[1], url, req, res);
       return true;
     }
 
@@ -905,12 +943,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsQuickActionsMatch = path.match(/^\/workspaces\/([^/]+)\/quick-actions$/);
     if (wsQuickActionsMatch && method === "GET") {
       await handleGetWorkspaceQuickActions(wsQuickActionsMatch[1], res);
-      return true;
-    }
-
-    const wsReviewDiffMatch = path.match(/^\/workspaces\/([^/]+)\/review\/diff$/);
-    if (wsReviewDiffMatch && method === "GET") {
-      await handleGetWorkspaceReviewDiff(wsReviewDiffMatch[1], url, req, res);
       return true;
     }
 

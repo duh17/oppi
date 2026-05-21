@@ -417,7 +417,7 @@ function buildHunks(lines: MutableReviewLine[]): WorkspaceReviewDiffHunk[] {
  * Convert flat diff lines into numbered, word-highlighted hunks.
  *
  * Shared by both the git-based workspace review diff endpoint and the
- * trace-based session overall-diff endpoint.
+ * trace-based session diff endpoint.
  */
 export function buildDiffHunks(flatLines: FlatDiffLine[]): WorkspaceReviewDiffHunk[] {
   const lines = numberDiffLines(flatLines);

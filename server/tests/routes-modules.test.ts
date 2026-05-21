@@ -918,11 +918,16 @@ describe("routes modules", () => {
   });
 
   describe("uploads module", () => {
-    it("creates and uploads content in isolation", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-upload-routes-test-"));
+    it("creates session-scoped attachment uploads and rejects wrong sessions", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-session-upload-routes-test-"));
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Workspace" })),
+          getSession: vi.fn((sessionId: string) =>
+            sessionId === "sess-1" || sessionId === "sess-2"
+              ? { id: sessionId, workspaceId: "ws-1" }
+              : undefined,
+          ),
           getConfig: vi.fn(() => ({
             dataDir: root,
             uploadStore: {
@@ -940,8 +945,8 @@ describe("routes modules", () => {
       const createRes = makeResponse();
       const created = await dispatch({
         method: "POST",
-        path: "/workspaces/ws-1/uploads",
-        url: new URL("http://localhost/workspaces/ws-1/uploads"),
+        path: "/workspaces/ws-1/sessions/sess-1/attachments",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/sess-1/attachments"),
         req: makeRequest({
           name: "note.txt",
           mimeType: "text/plain",
@@ -953,14 +958,33 @@ describe("routes modules", () => {
 
       expect(created).toBe(true);
       expect(createRes.statusCode).toBe(201);
-      const createBody = JSON.parse(createRes.body) as { uploadId: string };
-      expect(createBody.uploadId).toMatch(/^upl_/);
+      const createBody = JSON.parse(createRes.body) as { uploadId: string; contentUrl: string };
+      expect(createBody.contentUrl).toBe(
+        `/workspaces/ws-1/sessions/sess-1/attachments/${createBody.uploadId}/content`,
+      );
+
+      const wrongSessionRes = makeResponse();
+      const wrongSession = await dispatch({
+        method: "PUT",
+        path: `/workspaces/ws-1/sessions/sess-2/attachments/${createBody.uploadId}/content`,
+        url: new URL(
+          `http://localhost/workspaces/ws-1/sessions/sess-2/attachments/${createBody.uploadId}/content`,
+        ),
+        req: makeRawRequest("hello") as never,
+        res: wrongSessionRes as never,
+      });
+
+      expect(wrongSession).toBe(true);
+      expect(wrongSessionRes.statusCode).toBe(404);
+      expect(JSON.parse(wrongSessionRes.body)).toEqual({ error: "Upload not found" });
 
       const contentRes = makeResponse();
       const uploaded = await dispatch({
         method: "PUT",
-        path: `/workspaces/ws-1/uploads/${createBody.uploadId}/content`,
-        url: new URL(`http://localhost/workspaces/ws-1/uploads/${createBody.uploadId}/content`),
+        path: `/workspaces/ws-1/sessions/sess-1/attachments/${createBody.uploadId}/content`,
+        url: new URL(
+          `http://localhost/workspaces/ws-1/sessions/sess-1/attachments/${createBody.uploadId}/content`,
+        ),
         req: makeRawRequest("hello") as never,
         res: contentRes as never,
       });
@@ -968,8 +992,9 @@ describe("routes modules", () => {
       expect(uploaded).toBe(true);
       expect(contentRes.statusCode).toBe(200);
       const contentBody = JSON.parse(contentRes.body) as {
-        attachment: { source: string; sizeBytes: number; sha256?: string };
+        attachment: { id: string; source: string; sizeBytes: number; sha256?: string };
       };
+      expect(contentBody.attachment.id).toBe(createBody.uploadId);
       expect(contentBody.attachment.source).toBe("upload");
       expect(contentBody.attachment.sizeBytes).toBe(5);
       expect(contentBody.attachment.sha256).toBeTruthy();
@@ -979,14 +1004,34 @@ describe("routes modules", () => {
   });
 
   describe("sessions module", () => {
-    it("handles GET workspace home in isolation", async () => {
+    it("handles GET workspace sessions in isolation", async () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listWorkspaceTimeRangeSessionSnapshots: vi.fn(() => [
-            { id: "s1", workspaceId: "ws-1", name: "Session 1" },
+          listAllWorkspaceSessionSnapshots: vi.fn(() => [
+            {
+              id: "s1",
+              workspaceId: "ws-1",
+              status: "ready",
+              createdAt: 0,
+              lastActivity: 10,
+              messageCount: 0,
+              tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              cost: 0,
+            },
           ]),
-          listWorkspaceStoppedTimeBuckets: vi.fn(() => []),
+          listStoppedWorkspaceTimeRangeSessionSnapshots: vi.fn(() => [
+            {
+              id: "stopped-1",
+              workspaceId: "ws-1",
+              status: "stopped",
+              createdAt: 0,
+              lastActivity: 20,
+              messageCount: 0,
+              tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              cost: 0,
+            },
+          ]),
           listSessions: vi.fn(() => []),
           getDataDir: vi.fn(() => tmpdir()),
         },
@@ -1004,9 +1049,13 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/ws-1/home",
-        url: new URL("http://localhost/workspaces/ws-1/home?sinceMs=0&untilMs=1000"),
-        req: { url: "/workspaces/ws-1/home?sinceMs=0&untilMs=1000" } as never,
+        path: "/workspaces/ws-1/sessions",
+        url: new URL(
+          "http://localhost/workspaces/ws-1/sessions?status=active,stopped&sinceMs=0&untilMs=1000",
+        ),
+        req: {
+          url: "/workspaces/ws-1/sessions?status=active,stopped&sinceMs=0&untilMs=1000",
+        } as never,
         res: res as never,
       });
 
@@ -1014,23 +1063,28 @@ describe("routes modules", () => {
       expect(res.statusCode).toBe(200);
 
       const body = JSON.parse(res.body) as {
-        sessions: unknown[];
+        active: Array<{ id: string }>;
+        stopped: Array<{ id: string }>;
       };
-      expect(body.sessions).toHaveLength(1);
+      expect(body.active.map((session) => session.id)).toEqual(["s1"]);
+      expect(body.stopped.map((session) => session.id)).toEqual(["stopped-1"]);
     });
 
-    it("merges active in-memory sessions into workspace snapshots", async () => {
+    it("merges active in-memory sessions into workspace session snapshots", async () => {
       const activeSession = {
         id: "active-1",
         workspaceId: "ws-1",
         status: "busy",
+        createdAt: 0,
         lastActivity: 20,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
       };
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listWorkspaceTimeRangeSessionSnapshots: vi.fn(() => []),
-          listWorkspaceStoppedTimeBuckets: vi.fn(() => []),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => []),
           listSessions: vi.fn(() => []),
           getDataDir: vi.fn(() => tmpdir()),
         },
@@ -1048,19 +1102,19 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/ws-1/home",
-        url: new URL("http://localhost/workspaces/ws-1/home?sinceMs=0&untilMs=1000"),
-        req: { url: "/workspaces/ws-1/home?sinceMs=0&untilMs=1000" } as never,
+        path: "/workspaces/ws-1/sessions",
+        url: new URL("http://localhost/workspaces/ws-1/sessions?status=active"),
+        req: { url: "/workspaces/ws-1/sessions?status=active" } as never,
         res: res as never,
       });
 
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as { sessions: Array<{ id: string }> };
-      expect(body.sessions.map((session) => session.id)).toEqual(["active-1"]);
+      const body = JSON.parse(res.body) as { active: Array<{ id: string }> };
+      expect(body.active.map((session) => session.id)).toEqual(["active-1"]);
     });
 
-    it("returns 404 for workspace home in nonexistent workspace", async () => {
+    it("returns 404 for workspace sessions in nonexistent workspace", async () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => undefined),
@@ -1072,8 +1126,8 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/missing/home",
-        url: new URL("http://localhost/workspaces/missing/home?sinceMs=0&untilMs=1000"),
+        path: "/workspaces/missing/sessions",
+        url: new URL("http://localhost/workspaces/missing/sessions?status=active"),
         req: {} as never,
         res: res as never,
       });
@@ -1145,10 +1199,19 @@ describe("routes modules", () => {
       }
     });
 
-    it("validates path param on session file access", async () => {
+    it("lists session changes on the resource-shaped route", async () => {
       const ctx = {
         storage: {
-          getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => ({
+            id: "s1",
+            workspaceId: "ws-1",
+            changeStats: {
+              filesChanged: 2,
+              changedFiles: ["src/App.swift", "README.md"],
+              changedFilesOverflow: 1,
+            },
+          })),
         },
       } as unknown as RouteContext;
 
@@ -1157,15 +1220,21 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/workspaces/ws-1/sessions/s1/files",
-        url: new URL("http://localhost/workspaces/ws-1/sessions/s1/files"),
+        path: "/workspaces/ws-1/sessions/s1/changes",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/s1/changes"),
         req: {} as never,
         res: res as never,
       });
 
       expect(handled).toBe(true);
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body)).toEqual({ error: "path parameter required" });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        workspaceId: "ws-1",
+        sessionId: "s1",
+        files: [{ path: "src/App.swift" }, { path: "README.md" }],
+        changedFileCount: 2,
+        changedFilesOverflow: 1,
+      });
     });
 
     it("validates since param on session events", async () => {

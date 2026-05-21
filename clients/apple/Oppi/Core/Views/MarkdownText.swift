@@ -155,7 +155,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
 // MARK: - Shared Workspace File URL Helpers
 
 enum WorkspaceFileURL {
-    /// Build `{base}/workspaces/{workspaceID}/files/{path}`.
+    /// Build `{base}/workspaces/{workspaceID}/raw/{path}`.
     static func make(baseURL: URL, workspaceID: String, filePath: String) -> URL? {
         guard !workspaceID.isEmpty else { return nil }
         let normalizedPath = filePath.hasPrefix("/") ? String(filePath.dropFirst()) : filePath
@@ -164,11 +164,12 @@ enum WorkspaceFileURL {
         return baseURL
             .appendingPathComponent("workspaces")
             .appendingPathComponent(workspaceID)
-            .appendingPathComponent("files")
+            .appendingPathComponent("raw")
             .appendingPathComponent(normalizedPath)
     }
 
-    /// Parse `{base}/workspaces/{workspaceID}/files/{path}`.
+    /// Parse `{base}/workspaces/{workspaceID}/raw/{path}`.
+    /// Also accepts legacy `/files/` URLs from older transcript renders.
     static func parse(_ url: URL) -> (workspaceID: String, filePath: String)? {
         let components = url.pathComponents
 
@@ -180,14 +181,14 @@ enum WorkspaceFileURL {
         let workspaceID = components[workspaceIndex + 1]
         guard !workspaceID.isEmpty else { return nil }
 
-        let filesSearchStart = workspaceIndex + 2
-        guard filesSearchStart < components.count,
-              let filesIndex = components[filesSearchStart..<components.count].firstIndex(of: "files"),
-              components.count > filesIndex + 1 else {
+        let routeSearchStart = workspaceIndex + 2
+        guard routeSearchStart < components.count,
+              let routeIndex = components[routeSearchStart..<components.count].firstIndex(where: { $0 == "raw" || $0 == "files" }),
+              components.count > routeIndex + 1 else {
             return nil
         }
 
-        let filePath = components[(filesIndex + 1)...].joined(separator: "/")
+        let filePath = components[(routeIndex + 1)...].joined(separator: "/")
         guard !filePath.isEmpty else { return nil }
 
         return (workspaceID: workspaceID, filePath: filePath)
@@ -254,9 +255,10 @@ enum FlatSegment: Sendable {
     /// native selection can cross paragraph/list/heading boundaries.
     /// Code blocks and tables remain standalone segments.
     ///
-    /// When image links resolve to absolute, workspace-relative, or session
-    /// file URLs, paragraph image inlines are promoted to `.image` segments
-    /// instead of the alt-text fallback.
+    /// When image links resolve to remote, workspace-relative, or session file
+    /// URLs, paragraph image inlines are promoted to `.image` segments instead
+    /// of the alt-text fallback. Direct remote URL fetching is still gated by
+    /// `NativeMarkdownImageView`.
     /// Cached paragraph separator. Created once to avoid repeated allocation.
     private static let paragraphSeparator = AttributedString("\n\n")
 
@@ -709,7 +711,8 @@ enum FlatSegment: Sendable {
     ///   the workspace file API when `workspaceID` and `serverBaseURL` are set.
     /// - **Absolute filesystem paths**: resolved through the session-scoped file API.
     /// - **Absolute URLs** (e.g. `https://example.com/photo.jpg`): passed
-    ///   through directly for `NativeMarkdownImageView` to fetch via URLSession.
+    ///   through directly for `NativeMarkdownImageView` to show as tap-to-load
+    ///   remote images.
     ///
     /// Skips `data:` URIs (too large to display inline).
     private static func resolveImageURL(

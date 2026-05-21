@@ -533,7 +533,7 @@ struct FlatSegmentImageResolutionTests {
         #expect(segments.count == 1)
         if case .image(let alt, let url) = segments[0] {
             #expect(alt == "Chart")
-            #expect(url.absoluteString.contains("/workspaces/ws-abc123/files/charts/mockup.png"))
+            #expect(url.absoluteString.contains("/workspaces/ws-abc123/raw/charts/mockup.png"))
             #expect(url.absoluteString.hasPrefix("https://server.example.com"))
         } else {
             Issue.record("Expected .image segment, got \(segments[0])")
@@ -589,7 +589,7 @@ struct FlatSegmentImageResolutionTests {
         }
         if case .image(let alt, let url) = segments[1] {
             #expect(alt == "Chart")
-            #expect(url.absoluteString.contains("/files/chart.png"))
+            #expect(url.absoluteString.contains("/raw/chart.png"))
         } else {
             Issue.record("Expected resolvable mixed paragraph image to render")
         }
@@ -613,7 +613,7 @@ struct FlatSegmentImageResolutionTests {
         }
         if case .image(let alt, let url) = segments[1] {
             #expect(alt == "Red green")
-            #expect(url.absoluteString.contains("/files/fixtures/red-green.\(ext)"))
+            #expect(url.absoluteString.contains("/raw/fixtures/red-green.\(ext)"))
         } else {
             Issue.record("Expected read-supported markdown image to become an image segment")
         }
@@ -682,7 +682,7 @@ struct FlatSegmentImageResolutionTests {
         )
         if case .image(_, let url) = segments[0] {
             let abs = url.absoluteString
-            #expect(abs.contains("/workspaces/my-workspace/files/output/figure1.jpg"))
+            #expect(abs.contains("/workspaces/my-workspace/raw/output/figure1.jpg"))
             #expect(abs.hasPrefix("https://pi.local:8080"))
         } else {
             Issue.record("Expected .image segment")
@@ -761,7 +761,7 @@ struct FlatSegmentImageResolutionTests {
         #expect(segments.count == 1)
         if case .image(_, let url) = segments[0] {
             // Should resolve to docs/images/chart.png, not images/chart.png
-            #expect(url.absoluteString.contains("/files/docs/images/chart.png"),
+            #expect(url.absoluteString.contains("/raw/docs/images/chart.png"),
                     "Expected docs/images/chart.png, got \(url.absoluteString)")
         } else {
             Issue.record("Expected .image segment, got \(segments[0])")
@@ -836,7 +836,7 @@ struct FlatSegmentImageResolutionTests {
             sourceDirectory: nil
         )
         if case .image(_, let url) = segments[0] {
-            #expect(url.absoluteString.contains("/files/images/fig.png"))
+            #expect(url.absoluteString.contains("/raw/images/fig.png"))
             #expect(!url.absoluteString.contains("docs"))
         }
     }
@@ -1172,29 +1172,118 @@ struct AssistantMarkdownInlineImageRenderingTests {
     }
 }
 
+// MARK: - Remote markdown image policy
+
+@Suite("Remote markdown image policy")
+struct RemoteMarkdownImagePolicyTests {
+
+    @Test func allowsPublicHTTPSHosts() throws {
+        let url = try #require(URL(string: "https://images.example.com/photo.png"))
+        #expect(RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote)
+    }
+
+    @Test func blocksPlainHTTPHosts() throws {
+        let url = try #require(URL(string: "http://images.example.com/photo.png"))
+        #expect(RemoteMarkdownImagePolicy.decision(for: url) == .blockedRemote)
+    }
+
+    @Test(arguments: [
+        "https://localhost/photo.png",
+        "https://router.local/photo.png",
+        "https://192.168.1.1/photo.png",
+        "https://10.0.0.2/photo.png",
+        "https://172.16.0.9/photo.png",
+        "https://[::1]/photo.png",
+        "https://[fe80::1]/photo.png",
+        "https://[fc00::1]/photo.png",
+    ])
+    func blocksLocalNetworkTargets(rawURL: String) throws {
+        let url = try #require(URL(string: rawURL))
+        #expect(RemoteMarkdownImagePolicy.decision(for: url) == .blockedRemote)
+    }
+
+    @Test func resolvedDecisionBlocksHostnamesThatResolveToLoopback() async throws {
+        let url = try #require(URL(string: "https://avatar.example.com/photo.png"))
+
+        #expect(RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote)
+
+        let resolved = await RemoteMarkdownImagePolicy.resolvedDecision(for: url) { _ in
+            ["127.0.0.1"]
+        }
+
+        #expect(resolved == .blockedRemote)
+    }
+
+    @Test func resolvedDecisionAllowsPublicResolvedAddresses() async throws {
+        let url = try #require(URL(string: "https://avatar.example.com/photo.png"))
+
+        let resolved = await RemoteMarkdownImagePolicy.resolvedDecision(for: url) { _ in
+            ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]
+        }
+
+        #expect(resolved == .loadableRemote)
+    }
+
+    @Test func resolvedDecisionFailsClosedWhenResolutionErrors() async throws {
+        enum StubError: Error { case failed }
+
+        let url = try #require(URL(string: "https://avatar.example.com/photo.png"))
+        let resolved = await RemoteMarkdownImagePolicy.resolvedDecision(for: url) { _ in
+            throw StubError.failed
+        }
+
+        #expect(resolved == .blockedRemote)
+    }
+}
+
 // MARK: - NativeMarkdownImageView loading
 
 @Suite("NativeMarkdownImageView online loading")
 @MainActor
 struct NativeMarkdownImageViewTests {
 
-    @Test func loadsHTTPSImageFromURL() async throws {
+    @Test func remoteHTTPSImageRequiresTapBeforeLoading() async throws {
         let view = NativeMarkdownImageView()
-        let url = URL(string: "https://avatars.githubusercontent.com/u/1?v=4")!
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        var fetchCount = 0
+        view.fetchRemoteImage = { url in
+            fetchCount += 1
+            #expect(url.absoluteString == "https://example.com/image.png")
+            return imageData
+        }
+
+        let url = try #require(URL(string: "https://example.com/image.png"))
         view.apply(url: url, alt: "Test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
 
-        // Wait for async load (up to 10 seconds)
-        var loaded = false
-        for _ in 0..<100 {
-            try await Task.sleep(for: .milliseconds(100))
-            // Check if imageView has an image by inspecting subviews
-            if let imageView = view.subviews.first(where: { $0 is UIImageView }) as? UIImageView,
-               imageView.image != nil, !imageView.isHidden {
-                loaded = true
-                break
-            }
+        #expect(fetchCount == 0, "Remote markdown images should not auto-fetch before user action")
+        let loadButton = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first)
+        #expect(!loadButton.isHidden)
+        loadButton.sendActions(for: .touchUpInside)
+
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            timelineAllImageViews(in: view).contains { !$0.isHidden && $0.image != nil }
         }
-        #expect(loaded, "NativeMarkdownImageView should load and display the image from https URL")
+        #expect(loaded, "NativeMarkdownImageView should load and display the remote image after explicit tap")
+        #expect(fetchCount == 1)
+    }
+
+    @Test func blockedRemoteURLShowsBlockedPlaceholderWithoutFetching() throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+        view.fetchRemoteImage = { _ in
+            Issue.record("Blocked remote URLs must not fetch")
+            return Data()
+        }
+
+        let url = try #require(URL(string: "http://192.168.1.1/router.png"))
+        view.apply(url: url, alt: "Router", fetchWorkspaceFile: nil, fetchSessionFile: nil)
+
+        let labels = timelineAllViews(in: view).compactMap { $0 as? UILabel }
+        #expect(labels.contains { $0.text?.contains("remote image blocked") == true && !$0.isHidden })
     }
 
     @Test func showsLoadingPlaceholderHeight() {
@@ -1334,6 +1423,16 @@ struct NativeMarkdownImageViewTests {
 
         let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: body)
         #expect(imageView != nil, "Full-screen markdown should resolve absolute session image paths the same way assistant messages do")
+    }
+
+    private static func makeRedGreenImage() -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 10))
+        return renderer.image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 10, height: 10))
+            UIColor.green.setFill()
+            context.fill(CGRect(x: 10, y: 0, width: 10, height: 10))
+        }
     }
 }
 

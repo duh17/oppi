@@ -37,6 +37,13 @@ struct APIClientTests {
         return (data, response)
     }
 
+    private struct UploadCreateRequestBody: Decodable {
+        let name: String
+        let mimeType: String
+        let sizeBytes: Int
+        let purpose: String
+    }
+
     private func requestBodyData(_ request: URLRequest) -> Data {
         if let body = request.httpBody {
             return body
@@ -128,6 +135,41 @@ struct APIClientTests {
         #expect(summaries[0].status == .busy)
     }
 
+    @Test func listGlobalActiveSessionGroupsUsesGroupedEndpoint() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/sessions")
+            #expect(request.url?.query == "status=active&groupBy=workspace")
+            return self.mockResponse(json: """
+            {
+              "status":"active",
+              "groupBy":"workspace",
+              "serverNow":3000,
+              "workspaces":[
+                {
+                  "workspace":{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
+                  "workspaceId":"w1",
+                  "pendingAttentionCount":1,
+                  "latestActivity":2000,
+                  "sessions":[
+                    {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":2000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"pendingPermissionCount":1,"pendingAskCount":0}
+                  ]
+                }
+              ]
+            }
+            """)
+        }
+
+        let response = try await client.listGlobalActiveSessionGroups()
+        #expect(response.status == "active")
+        #expect(response.groupBy == "workspace")
+        #expect(response.workspaces.map(\.workspaceId) == ["w1"])
+        #expect(response.workspaces[0].sessions[0].summary.id == "s1")
+        #expect(response.workspaces[0].sessions[0].pendingPermissionCount == 1)
+    }
+
     @Test func listSessionsFromWorkspacesUsesAggregatedEndpoint() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -151,26 +193,88 @@ struct APIClientTests {
         #expect(sessions[0].currentTurnStartedAt == Date(timeIntervalSince1970: 1.5))
     }
 
-    @Test func getWorkspaceSessionListBucketRequestsStoppedScope() async throws {
+    @Test func getWorkspaceSessionListUsesResourceEndpoints() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/workspaces/w1/home")
+            switch request.url?.path {
+            case "/workspaces/w1/sessions":
+                let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+                #expect(query["status"] == "active,stopped")
+                #expect(query["sinceMs"] == "1000")
+                #expect(query["untilMs"] == "2000")
+                return self.mockResponse(json: """
+                {
+                  "workspaceId":"w1",
+                  "sinceMs":1000,
+                  "untilMs":2000,
+                  "serverNow":3000,
+                  "active":[
+                    {"id":"active","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1500,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}
+                  ],
+                  "stopped":[
+                    {"id":"stopped","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":1400,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0},
+                    {"id":"/tmp/local.jsonl","source":"tui","status":"stopped","workspaceId":"w1","path":"/tmp/local.jsonl","piSessionId":"pi-1","cwd":"/work","messageCount":3,"createdAt":0,"lastModified":1300,"lastActivity":1300,"tokens":{"input":0,"output":0},"cost":0}
+                  ]
+                }
+                """)
+
+            case "/workspaces/w1/session-buckets":
+                let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+                #expect(query["status"] == "stopped")
+                #expect(query["beforeMs"] == "1000")
+                return self.mockResponse(json: """
+                {"workspaceId":"w1","status":"stopped","beforeMs":1000,"serverNow":3000,"buckets":[{"bucketId":"day:2026-05-10","bucketKind":"day","startMs":0,"endMs":86400000,"itemCount":1,"managedStoppedCount":1,"importableLocalCount":0}]}
+                """)
+
+            case "/workspaces/w1/attention":
+                return self.mockResponse(json: """
+                {"workspaceId":"w1","serverNow":3000,"attention":{"permissions":[],"asks":[]}}
+                """)
+
+            default:
+                Issue.record("Unexpected path: \(request.url?.path ?? "nil")")
+                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
+            }
+        }
+
+        let response = try await client.getWorkspaceSessionList(
+            workspace: Workspace(id: "w1", name: "Dev", skills: [], createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0)),
+            since: Date(timeIntervalSince1970: 1),
+            until: Date(timeIntervalSince1970: 2)
+        )
+
+        #expect(response.workspace.id == "w1")
+        #expect(response.serverNow == 3000)
+        #expect(response.sessionSummaries.map(\.id) == ["active", "stopped"])
+        #expect(response.importableSessions.map(\.path) == ["/tmp/local.jsonl"])
+        #expect(response.archiveBuckets.map(\.id) == ["day:2026-05-10"])
+    }
+
+    @Test func getWorkspaceSessionListBucketRequestsStoppedSessionCollection() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions")
             let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+            #expect(query["status"] == "stopped")
             #expect(query["sinceMs"] == "1000")
             #expect(query["untilMs"] == "2000")
-            #expect(query["scope"] == "stopped")
             return self.mockResponse(json: """
             {
               "workspaceId":"w1",
               "sinceMs":1000,
               "untilMs":2000,
-              "sessions":[
-                {"id":"s1","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":1500,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}
-              ],
-              "importableSessions":[]
+              "serverNow":3000,
+              "stopped":[
+                {"id":"s1","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":1500,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0},
+                {"id":"/tmp/local.jsonl","source":"tui","status":"stopped","workspaceId":"w1","path":"/tmp/local.jsonl","piSessionId":"pi-1","cwd":"/work","messageCount":3,"createdAt":0,"lastModified":1600,"lastActivity":1600,"tokens":{"input":0,"output":0},"cost":0}
+              ]
             }
             """)
         }
@@ -182,6 +286,55 @@ struct APIClientTests {
         )
 
         #expect(response.sessionSummaries.map(\.id) == ["s1"])
+        #expect(response.importableSessions.map(\.path) == ["/tmp/local.jsonl"])
+    }
+
+    @Test func sessionScopedAttachmentUploadUsesSessionRoutes() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/workspaces/w1/sessions/s1/attachments"):
+                let body = try JSONDecoder().decode(UploadCreateRequestBody.self, from: self.requestBodyData(request))
+                #expect(body.name == "note.txt")
+                #expect(body.mimeType == "text/plain")
+                #expect(body.sizeBytes == 5)
+                return self.mockResponse(status: 201, json: """
+                {"uploadId":"upl_123","attachmentId":"upl_123","contentUrl":"/workspaces/w1/sessions/s1/attachments/upl_123/content","maxFileBytes":1000,"expiresAt":2000}
+                """)
+
+            case ("PUT", "/workspaces/w1/sessions/s1/attachments/upl_123/content"):
+                #expect(request.value(forHTTPHeaderField: "Content-Type") == "text/plain")
+                #expect(self.requestBodyData(request) == Data("hello".utf8))
+                return self.mockResponse(json: """
+                {"attachment":{"type":"attachment","id":"upl_123","source":"upload","name":"note.txt","mimeType":"text/plain","sizeBytes":5,"sha256":"abc","kind":"text"}}
+                """)
+
+            default:
+                Issue.record("Unexpected request: \(request.httpMethod ?? "nil") \(request.url?.path ?? "nil")")
+                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
+            }
+        }
+
+        let upload = try await client.createSessionAttachmentUpload(
+            workspaceId: "w1",
+            sessionId: "s1",
+            name: "note.txt",
+            mimeType: "text/plain",
+            sizeBytes: 5
+        )
+        #expect(upload.uploadId == "upl_123")
+
+        let attachment = try await client.uploadSessionAttachmentContent(
+            workspaceId: "w1",
+            sessionId: "s1",
+            attachmentId: upload.uploadId,
+            data: Data("hello".utf8),
+            contentType: "text/plain"
+        )
+        #expect(attachment.id == "upl_123")
+        #expect(attachment.source == .upload)
     }
 
     @Test func createSession() async throws {
@@ -807,6 +960,22 @@ struct APIClientTests {
 
     // MARK: - Files + Query Paths
 
+    @Test func gitStatusUsesResourceRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/workspaces/w1/git/status")
+            return self.mockResponse(json: """
+            {"isGitRepo":true,"branch":"main","headSha":"abc123","ahead":0,"behind":0,"dirtyCount":0,"untrackedCount":0,"stagedCount":0,"files":[],"totalFiles":0,"addedLines":0,"removedLines":0,"stashCount":0,"lastCommitMessage":null,"lastCommitDate":null,"recentCommits":[]}
+            """)
+        }
+
+        let status = try await client.getGitStatus(workspaceId: "w1")
+        #expect(status.branch == "main")
+    }
+
     @Test func getSkillFileUsesQueryString() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -825,17 +994,18 @@ struct APIClientTests {
         #expect(content == "ok")
     }
 
-    @Test func getSessionFileUsesQueryString() async throws {
+    @Test func getSessionFileUsesSessionRawRoute() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
-            let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
 
-            #expect(request.url?.path == "/workspaces/w1/sessions/s1/files")
-            #expect(pathQuery == "/tmp/main.swift")
-            #expect(request.url?.absoluteString.contains("%3Fpath=") == false)
+            #expect(
+                components?.percentEncodedPath ==
+                    "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmain.swift"
+            )
+            #expect(components?.percentEncodedQuery == nil)
 
             let body = "print(\"hello\")".data(using: .utf8)!
             let response = HTTPURLResponse(
@@ -857,8 +1027,8 @@ struct APIClientTests {
 
         let workspacePath = "folder one/plus+?hash#percent%&/日本語 image.png"
         let directoryPath = "folder one/日本語 #?/"
-        let expectedFilePath = "/workspaces/w1/files/folder%20one/plus%2B%3Fhash%23percent%25%26/%E6%97%A5%E6%9C%AC%E8%AA%9E%20image.png"
-        let expectedDirectoryPath = "/workspaces/w1/files/folder%20one/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F/"
+        let expectedRawPath = "/workspaces/w1/raw/folder%20one%2Fplus%2B%3Fhash%23percent%25%26%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20image.png"
+        let expectedDirectoryPath = "/workspaces/w1/contents/folder%20one/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F/"
         var step = 0
 
         MockURLProtocol.handler = { request in
@@ -866,11 +1036,11 @@ struct APIClientTests {
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             switch step {
             case 1:
-                #expect(components?.percentEncodedPath == expectedFilePath)
+                #expect(components?.percentEncodedPath == expectedRawPath)
                 #expect(components?.queryItems?.isEmpty ?? true)
             case 2:
-                #expect(components?.percentEncodedPath == expectedFilePath)
-                #expect(components?.queryItems?.first(where: { $0.name == "mode" })?.value == "browse")
+                #expect(components?.percentEncodedPath == expectedRawPath)
+                #expect(components?.queryItems?.isEmpty ?? true)
             case 3:
                 #expect(components?.percentEncodedPath == expectedDirectoryPath)
                 #expect(components?.queryItems?.isEmpty ?? true)
@@ -896,10 +1066,9 @@ struct APIClientTests {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         #expect(
             components?.percentEncodedPath ==
-                "/workspaces/w1/files/clips/space%20%2B%3F%23%25%26/%E6%97%A5%E6%9C%AC%E8%AA%9E%20sample.mov"
+                "/workspaces/w1/raw/clips%2Fspace%20%2B%3F%23%25%26%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20sample.mov"
         )
         let items = components?.queryItems ?? []
-        #expect(items.contains(where: { $0.name == "mode" && $0.value == "browse" }))
         #expect(items.contains(where: { $0.name == "token" && $0.value == "sk_test" }))
     }
 
@@ -915,15 +1084,18 @@ struct APIClientTests {
             step += 1
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
-            let encodedQuery = components?.percentEncodedQuery ?? ""
-            #expect(encodedQuery.contains("%2B"))
-            #expect(encodedQuery.contains("%26"))
-            #expect(encodedQuery.contains("%3D"))
-            #expect(encodedQuery.contains("+") == false)
             if step == 1 {
-                #expect(components?.percentEncodedPath == "/workspaces/w1/sessions/s1/touched-file")
-                #expect(pathQuery == specialPath)
+                #expect(
+                    components?.percentEncodedPath ==
+                        "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fspace%20%2B%3F%23%25%26=%2F%E6%97%A5%E6%9C%AC%E8%AA%9E.swift"
+                )
+                #expect(components?.percentEncodedQuery == nil)
             } else if step == 2 {
+                let encodedQuery = components?.percentEncodedQuery ?? ""
+                #expect(encodedQuery.contains("%2B"))
+                #expect(encodedQuery.contains("%26"))
+                #expect(encodedQuery.contains("%3D"))
+                #expect(encodedQuery.contains("+") == false)
                 #expect(components?.percentEncodedPath == "/skills/fetch/file")
                 #expect(pathQuery == specialSkillPath)
             } else {
@@ -935,6 +1107,38 @@ struct APIClientTests {
         _ = try await client.browseSessionTouchedFile(workspaceId: "w1", sessionId: "s1", path: specialPath)
         let content = try await client.getSkillFile(name: "fetch", path: specialSkillPath)
         #expect(content == "ok")
+        #expect(step == 2)
+    }
+
+    @Test func sessionChangesAndDiffUseResourceShapedRoutes() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        var step = 0
+        MockURLProtocol.handler = { request in
+            step += 1
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            if step == 1 {
+                #expect(request.httpMethod == "GET")
+                #expect(components?.percentEncodedPath == "/workspaces/w1/sessions/s1/changes")
+                return self.mockResponse(json: """
+                {"workspaceId":"w1","sessionId":"s1","files":[{"path":"Sources/App.swift"}],"changedFileCount":1,"changedFilesOverflow":0}
+                """)
+            }
+
+            #expect(request.httpMethod == "GET")
+            #expect(components?.percentEncodedPath == "/workspaces/w1/sessions/s1/diff")
+            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "Sources/App.swift")
+            return self.mockResponse(json: """
+            {"workspaceId":"w1","path":"Sources/App.swift","baselineText":"old","currentText":"new","addedLines":1,"removedLines":1,"hunks":[]}
+            """)
+        }
+
+        let changes = try await client.listSessionChanges(workspaceId: "w1", sessionId: "s1")
+        #expect(changes.files.map(\.path) == ["Sources/App.swift"])
+
+        let diff = try await client.getSessionDiff(workspaceId: "w1", sessionId: "s1", path: "Sources/App.swift")
+        #expect(diff.path == "Sources/App.swift")
         #expect(step == 2)
     }
 

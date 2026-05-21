@@ -20,6 +20,7 @@ import {
   UploadStoreError,
   createUploadRecord,
   garbageCollectUploadStore,
+  resolveUploadAttachment,
   writeUploadContent,
 } from "./local-upload-store.js";
 
@@ -85,6 +86,64 @@ describe("local upload store", () => {
     expect(completed.detectedMimeType).toBe("image/png");
     expect(completed.sizeBytes).toBe(body.length);
     expect(completed.expiresAt).toBeGreaterThan(completed.completedAt ?? 0);
+  });
+
+  it("binds uploads to their owning session when provided", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-store-"));
+    const config: UploadStoreConfigResolved = {
+      rootPath: root,
+      maxFileBytes: 1024 * 1024,
+      maxTurnBytes: 2 * 1024 * 1024,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+    const body = Buffer.from("hello", "utf8");
+
+    const record = await createUploadRecord({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      name: "note.txt",
+      mimeType: "text/plain",
+      sizeBytes: body.length,
+      purpose: "chat_attachment",
+    });
+
+    await expect(
+      writeUploadContent({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-2",
+        uploadId: record.id,
+        req: makeRequest(body),
+      }),
+    ).rejects.toMatchObject({ status: 404, message: "Upload not found" });
+
+    const completed = await writeUploadContent({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      uploadId: record.id,
+      req: makeRequest(body),
+    });
+
+    await expect(
+      resolveUploadAttachment({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-2",
+        ref: {
+          type: "attachment",
+          id: completed.id,
+          source: "upload",
+          name: completed.safeName,
+          mimeType: completed.mimeType,
+          sizeBytes: completed.sizeBytes ?? 0,
+          sha256: completed.sha256,
+        },
+      }),
+    ).rejects.toMatchObject({ status: 404, message: "Upload not found" });
   });
 
   it("rejects declared MIME types outside the configured allowlist", async () => {

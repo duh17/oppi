@@ -57,3 +57,17 @@ struct FileIndexResponse: Decodable, Sendable, Equatable {
     let paths: [String]
     let truncated: Bool
 }
+
+struct SessionChangedFile: Decodable, Sendable, Equatable, Identifiable {
+    let path: String
+
+    var id: String { path }
+}
+
+struct SessionChangesResponse: Decodable, Sendable, Equatable {
+    let workspaceId: String
+    let sessionId: String
+    let files: [SessionChangedFile]
+    let changedFileCount: Int
+    let changedFilesOverflow: Int
+}

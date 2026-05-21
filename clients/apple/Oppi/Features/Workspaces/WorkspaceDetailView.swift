@@ -1094,7 +1094,7 @@ struct WorkspaceDetailView: View {
             let startedAt = Date()
             let range = hotStoppedRange(now: startedAt)
             let response = try await api.getWorkspaceSessionList(
-                workspaceId: workspace.id,
+                workspace: workspace,
                 since: range.since,
                 until: range.until
             )

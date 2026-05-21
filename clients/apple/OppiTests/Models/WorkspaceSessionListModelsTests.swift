@@ -73,13 +73,28 @@ struct WorkspaceSessionListModelsTests {
         #expect(response.archiveBuckets[0].latestActivity?.timeIntervalSince1970 == 1778452656.439)
     }
 
-    @Test func decodesWorkspaceSessionListBucketResponse() throws {
+    @Test func decodesWorkspaceSessionCollectionResponseWithTuiRows() throws {
         let json = """
         {
           "workspaceId": "w1",
           "sinceMs": 1778396400000,
           "untilMs": 1778482800000,
-          "sessions": [
+          "serverNow": 1778482800000,
+          "active": [
+            {
+              "id": "s-active",
+              "workspaceId": "w1",
+              "status": "ready",
+              "createdAt": 1700000000000,
+              "lastActivity": 1700001000000,
+              "messageCount": 0,
+              "tokens": {"input": 0, "output": 0},
+              "cost": 0,
+              "pendingPermissionCount": 2,
+              "pendingAskCount": 0
+            }
+          ],
+          "stopped": [
             {
               "id": "s-old",
               "workspaceId": "w1",
@@ -89,18 +104,39 @@ struct WorkspaceSessionListModelsTests {
               "messageCount": 0,
               "tokens": {"input": 0, "output": 0},
               "cost": 0
+            },
+            {
+              "id": "/tmp/local.jsonl",
+              "source": "tui",
+              "status": "stopped",
+              "workspaceId": "w1",
+              "path": "/tmp/local.jsonl",
+              "piSessionId": "pi-1",
+              "cwd": "/Users/chenda/workspace/oppi",
+              "name": "Local Session",
+              "messageCount": 3,
+              "createdAt": 1700001000000,
+              "lastModified": 1700002000000,
+              "lastActivity": 1700002000000,
+              "tokens": {"input": 0, "output": 0},
+              "cost": 0
             }
-          ],
-          "importableSessions": []
+          ]
         }
         """
 
         let response = try JSONDecoder().decode(
-            APIClient.WorkspaceSessionListBucketResponse.self,
+            APIClient.WorkspaceSessionCollectionResponse.self,
             from: Data(json.utf8)
         )
 
         #expect(response.workspaceId == "w1")
-        #expect(response.sessionSummaries.map(\.id) == ["s-old"])
+        #expect(response.sessionSummaries.map(\.id) == ["s-active", "s-old"])
+        #expect(response.importableSessions.map(\.path) == ["/tmp/local.jsonl"])
+        if case .session(let row) = response.active[0] {
+            #expect(row.pendingPermissionCount == 2)
+        } else {
+            Issue.record("Expected managed session row")
+        }
     }
 }

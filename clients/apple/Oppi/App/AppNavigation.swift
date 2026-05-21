@@ -14,7 +14,7 @@ enum AppLaunchPhase: Sendable {
 /// Navigation state for the app.
 @MainActor @Observable
 final class AppNavigation {
-    var selectedTab: AppTab = .workspaces
+    var selectedTab: AppTab = .sessions
     var showOnboarding: Bool = true
     var showWhatsNew: Bool = false
 
@@ -107,6 +107,7 @@ struct QuickSessionNav {
 }
 
 enum AppTab: Hashable {
+    case sessions
     case workspaces
     case server
     case settings

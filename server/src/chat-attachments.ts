@@ -144,6 +144,7 @@ export async function materializeChatAttachments(
       const record = await resolveUploadAttachment({
         config: options.uploadStore,
         workspaceId: options.workspaceId,
+        sessionId: options.sessionId,
         ref,
       });
       const sizeBytes = record.sizeBytes ?? record.declaredSizeBytes;

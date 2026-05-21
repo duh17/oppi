@@ -8,19 +8,28 @@ import { describe, expect, it } from "vitest";
 
 const ROUTES = {
   sessionsRecent: /^\/sessions\/recent$/,
-  wsHome: /^\/workspaces\/([^/]+)\/home$/,
-  wsSessionsCreate: /^\/workspaces\/([^/]+)\/sessions$/,
+  wsSessions: /^\/workspaces\/([^/]+)\/sessions$/,
+  wsSessionBuckets: /^\/workspaces\/([^/]+)\/session-buckets$/,
   wsAttention: /^\/workspaces\/([^/]+)\/attention$/,
   wsSessionStop: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/,
   wsSessionResume: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
   wsSessionFork: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/,
   wsSessionToolOutput: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
-  wsSessionFiles: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/,
-  wsSessionOverallDiff: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
+  wsSessionAttachments: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/attachments$/,
+  wsSessionAttachmentContent:
+    /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/attachments\/([^/]+)\/content$/,
+  wsSessionChanges: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/changes$/,
+  wsSessionRaw: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/raw\/(.+)$/,
+  wsSessionDiff: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/diff$/,
   wsSessionEvents: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
-  wsReviewDiff: /^\/workspaces\/([^/]+)\/review\/diff$/,
+  wsContents: /^\/workspaces\/([^/]+)\/contents(?:\/(.*))?$/,
+  wsRaw: /^\/workspaces\/([^/]+)\/raw\/(.+)$/,
+  wsPaths: /^\/workspaces\/([^/]+)\/paths$/,
+  wsGitStatus: /^\/workspaces\/([^/]+)\/git\/status$/,
+  wsGitChanges: /^\/workspaces\/([^/]+)\/git\/changes$/,
+  wsGitDiff: /^\/workspaces\/([^/]+)\/git\/diff$/,
   wsReviewCommentsSent: /^\/workspaces\/([^/]+)\/review\/comments\/sent$/,
   wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
@@ -39,14 +48,14 @@ describe("Workspace-scoped API routes", () => {
     expect("/sessions/recent".match(ROUTES.sessionsRecent)).toBeTruthy();
   });
 
-  it("matches GET /workspaces/:wid/home", () => {
-    const m = "/workspaces/ws-abc/home".match(ROUTES.wsHome);
+  it("matches /workspaces/:wid/sessions", () => {
+    const m = "/workspaces/ws-abc/sessions".match(ROUTES.wsSessions);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-abc");
   });
 
-  it("matches POST /workspaces/:wid/sessions", () => {
-    const m = "/workspaces/ws-abc/sessions".match(ROUTES.wsSessionsCreate);
+  it("matches /workspaces/:wid/session-buckets", () => {
+    const m = "/workspaces/ws-abc/session-buckets".match(ROUTES.wsSessionBuckets);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-abc");
   });
@@ -88,18 +97,39 @@ describe("Workspace-scoped API routes", () => {
     expect(m![3]).toBe("tc_abc123");
   });
 
-  it("matches GET /workspaces/:wid/sessions/:sid/files", () => {
-    const m = "/workspaces/ws-1/sessions/s1/files".match(ROUTES.wsSessionFiles);
+  it("matches /workspaces/:wid/sessions/:sid/attachments", () => {
+    const m = "/workspaces/ws-1/sessions/s1/attachments".match(ROUTES.wsSessionAttachments);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
     expect(m![2]).toBe("s1");
   });
 
-  it("matches GET /workspaces/:wid/sessions/:sid/overall-diff", () => {
-    const m = "/workspaces/ws-1/sessions/s1/overall-diff".match(ROUTES.wsSessionOverallDiff);
+  it("matches /workspaces/:wid/sessions/:sid/attachments/:aid/content", () => {
+    const m = "/workspaces/ws-1/sessions/s1/attachments/upl_123/content".match(
+      ROUTES.wsSessionAttachmentContent,
+    );
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
     expect(m![2]).toBe("s1");
+    expect(m![3]).toBe("upl_123");
+  });
+
+  it("matches resource-shaped session file routes", () => {
+    const changes = "/workspaces/ws-1/sessions/s1/changes".match(ROUTES.wsSessionChanges);
+    expect(changes).toBeTruthy();
+    expect(changes![1]).toBe("ws-1");
+    expect(changes![2]).toBe("s1");
+
+    const raw = "/workspaces/ws-1/sessions/s1/raw/src/App.swift".match(ROUTES.wsSessionRaw);
+    expect(raw).toBeTruthy();
+    expect(raw![1]).toBe("ws-1");
+    expect(raw![2]).toBe("s1");
+    expect(raw![3]).toBe("src/App.swift");
+
+    const diff = "/workspaces/ws-1/sessions/s1/diff".match(ROUTES.wsSessionDiff);
+    expect(diff).toBeTruthy();
+    expect(diff![1]).toBe("ws-1");
+    expect(diff![2]).toBe("s1");
   });
 
   it("matches GET /workspaces/:wid/sessions/:sid/events", () => {
@@ -123,10 +153,26 @@ describe("Workspace-scoped API routes", () => {
     expect(m![2]).toBe("s1");
   });
 
-  it("matches GET /workspaces/:wid/review/diff", () => {
-    const m = "/workspaces/ws-1/review/diff".match(ROUTES.wsReviewDiff);
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("ws-1");
+  it("matches resource-shaped workspace file routes", () => {
+    const contents = "/workspaces/ws-1/contents/src".match(ROUTES.wsContents);
+    expect(contents).toBeTruthy();
+    expect(contents![1]).toBe("ws-1");
+    expect(contents![2]).toBe("src");
+
+    const raw = "/workspaces/ws-1/raw/src/App.swift".match(ROUTES.wsRaw);
+    expect(raw).toBeTruthy();
+    expect(raw![1]).toBe("ws-1");
+    expect(raw![2]).toBe("src/App.swift");
+
+    const paths = "/workspaces/ws-1/paths".match(ROUTES.wsPaths);
+    expect(paths).toBeTruthy();
+    expect(paths![1]).toBe("ws-1");
+  });
+
+  it("matches resource-shaped workspace git routes", () => {
+    expect("/workspaces/ws-1/git/status".match(ROUTES.wsGitStatus)?.[1]).toBe("ws-1");
+    expect("/workspaces/ws-1/git/changes".match(ROUTES.wsGitChanges)?.[1]).toBe("ws-1");
+    expect("/workspaces/ws-1/git/diff".match(ROUTES.wsGitDiff)?.[1]).toBe("ws-1");
   });
 
   it("matches POST /workspaces/:wid/review/comments/sent", () => {

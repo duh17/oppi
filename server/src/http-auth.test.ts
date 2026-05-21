@@ -8,9 +8,9 @@ describe("isQueryTokenAllowed", () => {
     return isQueryTokenAllowed(method, url.pathname, url);
   };
 
-  it("allows GET workspace browse file routes", () => {
-    expect(allowed("GET", "/workspaces/ws-1/files/video%20clip.mp4?mode=browse")).toBe(true);
-    expect(allowed("get", "/workspaces/ws-1/files/nested/slide deck.pdf?mode=browse")).toBe(true);
+  it("allows GET workspace raw file routes", () => {
+    expect(allowed("GET", "/workspaces/ws-1/raw/video%20clip.mp4?token=secret")).toBe(true);
+    expect(allowed("get", "/workspaces/ws-1/raw/nested/slide deck.pdf?token=secret")).toBe(true);
   });
 
   it("allows GET session attachment routes", () => {
@@ -20,21 +20,23 @@ describe("isQueryTokenAllowed", () => {
   });
 
   it("rejects non-GET methods", () => {
-    expect(allowed("POST", "/workspaces/ws-1/files/image.png?mode=browse")).toBe(false);
+    expect(allowed("POST", "/workspaces/ws-1/raw/image.png?token=secret")).toBe(false);
     expect(
       allowed("DELETE", "/workspaces/ws-1/sessions/sess-1/attachments/att_123?token=secret"),
     ).toBe(false);
   });
 
-  it("rejects workspace file routes without browse mode", () => {
+  it("rejects legacy workspace file routes", () => {
     expect(allowed("GET", "/workspaces/ws-1/files/image.png")).toBe(false);
-    expect(allowed("GET", "/workspaces/ws-1/files/image.png?mode=raw")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/files/image.png?mode=browse")).toBe(false);
   });
 
   it("rejects workspace directory listing and index routes", () => {
-    expect(allowed("GET", "/workspaces/ws-1/files/?mode=browse")).toBe(false);
-    expect(allowed("GET", "/workspaces/ws-1/files/folder/?mode=browse")).toBe(false);
-    expect(allowed("GET", "/workspaces/ws-1/files/folder%2F?mode=browse")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/raw/folder/?token=secret")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/raw/folder%2F?token=secret")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/contents")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/contents/folder/")).toBe(false);
+    expect(allowed("GET", "/workspaces/ws-1/paths")).toBe(false);
     expect(allowed("GET", "/workspaces/ws-1/file-index")).toBe(false);
   });
 

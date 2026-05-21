@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Displays content of a session-touched file that may live outside the workspace.
 ///
-/// Loads file content via the session touched-file API and renders using
+/// Loads file content via the session raw API and renders using
 /// `FileContentView` — the same renderer used by the file browser.
 /// HTML files default to rendered preview via `HTMLFileView` in document mode.
 struct SessionTouchedFileContentView: View {

@@ -1237,15 +1237,17 @@ struct ChatView: View {
                 payload = (data, mimeType, pending.displayName)
             }
 
-            let upload = try await api.createUpload(
+            let upload = try await api.createSessionAttachmentUpload(
                 workspaceId: workspaceId,
+                sessionId: sessionId,
                 name: payload.name,
                 mimeType: payload.mimeType,
                 sizeBytes: payload.data.count
             )
-            let attachment = try await api.uploadAttachmentContent(
+            let attachment = try await api.uploadSessionAttachmentContent(
                 workspaceId: workspaceId,
-                uploadId: upload.uploadId,
+                sessionId: sessionId,
+                attachmentId: upload.uploadId,
                 data: payload.data,
                 contentType: payload.mimeType
             )

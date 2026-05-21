@@ -174,6 +174,7 @@ struct OnboardingView: View {
                 // Signal WorkspaceHomeView to auto-present create flow
                 // after workspaces load (if the server has none).
                 navigation.shouldGuideWorkspaceCreation = true
+                navigation.selectedTab = .workspaces
                 navigation.showOnboarding = false
             case .addServer:
                 dismiss()

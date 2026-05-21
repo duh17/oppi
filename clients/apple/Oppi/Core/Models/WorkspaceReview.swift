@@ -25,9 +25,9 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     let addedLines: Int
     let removedLines: Int
     let hunks: [WorkspaceReviewDiffHunk]
-    /// Number of trace mutations (session overall-diff only).
+    /// Number of trace mutations (session diff only).
     let revisionCount: Int?
-    /// Cache key for client-side caching (session overall-diff only).
+    /// Cache key for client-side caching (session diff only).
     let cacheKey: String?
 
     // periphery:ignore

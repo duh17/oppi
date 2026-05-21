@@ -487,58 +487,6 @@ export function createWorkspaceFileRoutes(
   ctx: RouteContext,
   helpers: RouteHelpers,
 ): RouteDispatcher {
-  async function handleGetFile(
-    wsId: string,
-    requestedPath: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const ext = extname(requestedPath).toLowerCase();
-    if (!ALLOWED_EXTENSIONS.has(ext)) {
-      helpers.error(res, 403, "File type not allowed");
-      return;
-    }
-
-    const workspaceRoot = resolveSdkSessionCwd(workspace);
-    const realFile = await resolveWorkspaceFilePath(workspaceRoot, requestedPath);
-
-    if (!realFile) {
-      helpers.error(res, 404, "File not found");
-      return;
-    }
-
-    let fileStat: Stats;
-    try {
-      fileStat = await stat(realFile);
-    } catch {
-      helpers.error(res, 404, "File not found");
-      return;
-    }
-
-    if (!fileStat.isFile()) {
-      helpers.error(res, 404, "Not a file");
-      return;
-    }
-
-    if (fileStat.size > MAX_IMAGE_FILE_SIZE) {
-      helpers.error(res, 413, "File too large (max 50MB)");
-      return;
-    }
-
-    const contentType = IMAGE_CONTENT_TYPES[ext] ?? "application/octet-stream";
-    res.writeHead(200, {
-      "Content-Type": contentType,
-      "Content-Length": fileStat.size.toString(),
-      "Cache-Control": "private, max-age=60",
-    });
-    createReadStream(realFile).pipe(res as NodeJS.WritableStream);
-  }
-
   async function handleBrowseFile(
     wsId: string,
     requestedPath: string,
@@ -640,39 +588,43 @@ export function createWorkspaceFileRoutes(
     helpers.json(res, response);
   }
 
-  return async ({ method, path, url, res }) => {
-    // GET /workspaces/:id/file-index — flat path list for client-side fuzzy search
-    const indexMatch = path.match(/^\/workspaces\/([^/]+)\/file-index$/);
-    if (indexMatch && method === "GET") {
-      await handleFileIndex(indexMatch[1], res);
+  return async ({ method, path, res }) => {
+    // GET /workspaces/:id/paths — flat path list for client-side fuzzy search.
+    const pathsMatch = path.match(/^\/workspaces\/([^/]+)\/paths$/);
+    if (pathsMatch && method === "GET") {
+      await handleFileIndex(pathsMatch[1], res);
       return true;
     }
 
-    if (path.match(/^\/workspaces\/([^/]+)\/files$/) && method === "GET") {
-      helpers.error(res, 400, "Missing trailing slash for directory listing");
+    // GET /workspaces/:id/contents[/path] — directory contents for file browser.
+    const contentsRootMatch = path.match(/^\/workspaces\/([^/]+)\/contents$/);
+    if (contentsRootMatch && method === "GET") {
+      await handleListDirectory(contentsRootMatch[1], "", res);
       return true;
     }
 
-    const match = path.match(/^\/workspaces\/([^/]+)\/files\/(.*)$/);
-    if (match && method === "GET") {
-      const wsId = match[1];
-      const requestedPath = decodeWorkspaceRoutePath(match[2]);
+    const contentsMatch = path.match(/^\/workspaces\/([^/]+)\/contents\/(.*)$/);
+    if (contentsMatch && method === "GET") {
+      const requestedPath = decodeWorkspaceRoutePath(contentsMatch[2]);
       if (requestedPath === null) {
         helpers.error(res, 400, "Invalid file path encoding");
         return true;
       }
 
-      if (requestedPath === "" || requestedPath.endsWith("/")) {
-        await handleListDirectory(wsId, requestedPath, res);
+      await handleListDirectory(contentsMatch[1], requestedPath, res);
+      return true;
+    }
+
+    // GET /workspaces/:id/raw/:path — raw bytes for previews/media.
+    const rawMatch = path.match(/^\/workspaces\/([^/]+)\/raw\/(.+)$/);
+    if (rawMatch && method === "GET") {
+      const requestedPath = decodeWorkspaceRoutePath(rawMatch[2]);
+      if (requestedPath === null) {
+        helpers.error(res, 400, "Invalid file path encoding");
         return true;
       }
 
-      const mode = url.searchParams.get("mode");
-      if (mode === "browse") {
-        await handleBrowseFile(wsId, requestedPath, res);
-      } else {
-        await handleGetFile(wsId, requestedPath, res);
-      }
+      await handleBrowseFile(rawMatch[1], requestedPath, res);
       return true;
     }
 

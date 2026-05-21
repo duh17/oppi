@@ -7,7 +7,7 @@ typealias WorkspaceReviewMockURLProtocol = TestURLProtocol
 @Suite("Workspace review API")
 struct WorkspaceReviewAPITests {
 
-    @Test func getWorkspaceReviewDiffUsesWorkspaceScopedEndpoint() async throws {
+    @Test func getWorkspaceReviewDiffUsesGitDiffEndpoint() async throws {
         let client = makeClient()
         defer { WorkspaceReviewMockURLProtocol.handler = nil }
 
@@ -16,7 +16,7 @@ struct WorkspaceReviewAPITests {
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let path = components?.queryItems?.first(where: { $0.name == "path" })?.value
 
-            #expect(url.path == "/workspaces/w1/review/diff")
+            #expect(url.path == "/workspaces/w1/git/diff")
             #expect(path == "Sources/App.swift")
 
             return self.mockResponse(json: """

@@ -62,9 +62,9 @@ export interface WorkspaceReviewDiffResponse {
   addedLines: number;
   removedLines: number;
   hunks: WorkspaceReviewDiffHunk[];
-  /** Number of trace mutations (session overall-diff only). */
+  /** Number of trace mutations (session diff only). */
   revisionCount?: number;
-  /** Cache key for client-side caching (session overall-diff only). */
+  /** Cache key for client-side caching (session diff only). */
   cacheKey?: string;
 }
 

@@ -96,7 +96,7 @@ struct WorkspaceReviewFileDetailView: View {
         }
         .navigationTitle(file.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: workspaceId + "|" + file.path) {
+        .task(id: workspaceId + "|" + (selectedSessionId ?? "") + "|" + file.path) {
             await loadDiff()
         }
         .task(id: workspaceId) {
@@ -369,11 +369,28 @@ struct WorkspaceReviewFileDetailView: View {
         defer { isLoading = false }
 
         do {
-            diff = try await api.getWorkspaceReviewDiff(workspaceId: workspaceId, path: file.path)
+            diff = try await loadBestAvailableDiff(api: api)
             error = nil
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func loadBestAvailableDiff(api: APIClient) async throws -> WorkspaceReviewDiffResponse {
+        if let selectedSessionId {
+            do {
+                return try await api.getSessionDiff(
+                    workspaceId: workspaceId,
+                    sessionId: selectedSessionId,
+                    path: file.path
+                )
+            } catch {
+                // Older sessions may lack trace mutations for this path; fall back to the
+                // Git work-tree diff so the review surface still opens.
+            }
+        }
+
+        return try await api.getWorkspaceReviewDiff(workspaceId: workspaceId, path: file.path)
     }
 }
 

@@ -6,7 +6,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "File
 /// Shared workspace file index for local fuzzy search.
 ///
 /// Used by both `@file` autocomplete in the composer and the file browser.
-/// Loads the index once per workspace from the `/file-index` API, caches it
+/// Loads the index once per workspace from the `/paths` API, caches it
 /// indefinitely. Invalidation is event-driven: when `git_status` arrives
 /// (after file-mutating tool calls), the index is marked dirty and refreshed
 /// on next access.

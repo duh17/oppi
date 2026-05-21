@@ -1,4 +1,4 @@
-const WORKSPACE_BROWSE_ROUTE = /^\/workspaces\/[^/]+\/files\/(.+)$/;
+const WORKSPACE_RAW_ROUTE = /^\/workspaces\/[^/]+\/raw\/(.+)$/;
 const SESSION_ATTACHMENT_ROUTE = /^\/workspaces\/[^/]+\/sessions\/[^/]+\/attachments\/[^/]+$/;
 
 function decodePathSuffix(value: string): string | null {
@@ -9,7 +9,7 @@ function decodePathSuffix(value: string): string | null {
   }
 }
 
-export function isQueryTokenAllowed(method: string, path: string, url: URL): boolean {
+export function isQueryTokenAllowed(method: string, path: string, _url: URL): boolean {
   if (method.toUpperCase() !== "GET") {
     return false;
   }
@@ -18,15 +18,11 @@ export function isQueryTokenAllowed(method: string, path: string, url: URL): boo
     return true;
   }
 
-  const workspaceMatch = path.match(WORKSPACE_BROWSE_ROUTE);
+  const workspaceMatch = path.match(WORKSPACE_RAW_ROUTE);
   if (!workspaceMatch) {
     return false;
   }
 
   const requestedPath = decodePathSuffix(workspaceMatch[1]);
-  if (!requestedPath || requestedPath.endsWith("/")) {
-    return false;
-  }
-
-  return url.searchParams.get("mode") === "browse";
+  return !!requestedPath && !requestedPath.endsWith("/");
 }

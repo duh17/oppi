@@ -598,16 +598,16 @@ describe("workspace-scoped session route ownership", () => {
       url: "https://localhost/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1?full=true",
     },
     {
-      name: "session file",
+      name: "session raw file",
       method: "GET",
-      path: "/workspaces/ws-1/sessions/foreign-session/files",
-      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/files?path=file.txt",
+      path: "/workspaces/ws-1/sessions/foreign-session/raw/file.txt",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/raw/file.txt",
     },
     {
-      name: "overall diff",
+      name: "session diff",
       method: "GET",
-      path: "/workspaces/ws-1/sessions/foreign-session/overall-diff",
-      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/overall-diff?path=file.txt",
+      path: "/workspaces/ws-1/sessions/foreign-session/diff",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/diff?path=file.txt",
     },
   ] as const;
 

@@ -86,7 +86,7 @@ describe("file transport security parity", () => {
     }
   });
 
-  it("blocks sensitive files consistently across browse, session file, and touched file routes", async () => {
+  it("blocks sensitive files consistently across workspace raw and session raw routes", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-"));
     writeFileSync(join(root, ".env"), "SECRET=yes\n", "utf8");
 
@@ -99,37 +99,30 @@ describe("file transport security parity", () => {
     const ctx = makeContext(workspace, session);
 
     const workspaceRoutes = createWorkspaceFileRoutes(ctx, helpers);
-    const handledBrowse = await workspaceRoutes({
+    const handledRaw = await workspaceRoutes({
       method: "GET",
-      path: "/workspaces/ws-1/files/.env",
-      url: new URL("https://localhost/workspaces/ws-1/files/.env?mode=browse"),
+      path: "/workspaces/ws-1/raw/.env",
+      url: new URL("https://localhost/workspaces/ws-1/raw/.env"),
       req: new PassThrough() as unknown as IncomingMessage,
       res: new MockWritableResponse() as unknown as ServerResponse,
     });
 
     const sessionHandlers = createSessionFileHandlers(ctx, helpers);
-    await sessionHandlers.handleGetSessionFile(
+    await sessionHandlers.handleGetSessionRaw(
       "ws-1",
       "sess-1",
-      new URL("https://localhost/workspaces/ws-1/sessions/sess-1/files?path=.env"),
-      new MockWritableResponse() as unknown as ServerResponse,
-    );
-    await sessionHandlers.handleGetTouchedFile(
-      "ws-1",
-      "sess-1",
-      new URL("https://localhost/workspaces/ws-1/sessions/sess-1/touched-file?path=.env"),
+      ".env",
       new MockWritableResponse() as unknown as ServerResponse,
     );
 
-    expect(handledBrowse).toBe(true);
+    expect(handledRaw).toBe(true);
     expect(errors).toEqual([
-      { status: 403, message: "Access denied: sensitive file" },
       { status: 403, message: "Access denied: sensitive file" },
       { status: 403, message: "Access denied: sensitive file" },
     ]);
   });
 
-  it("decodes percent-encoded workspace file route paths before filesystem resolution", async () => {
+  it("decodes percent-encoded workspace raw route paths before filesystem resolution", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-encoded-"));
     mkdirSync(join(root, "folder one", "plus+?hash#percent%&"), { recursive: true });
     writeFileSync(
@@ -143,14 +136,14 @@ describe("file transport security parity", () => {
     const errors: Array<{ status: number; message: string }> = [];
     const route = createWorkspaceFileRoutes(makeContext(workspace, session), makeHelpers(errors));
     const rawPath =
-      "/workspaces/ws-1/files/folder%20one/plus%2B%3Fhash%23percent%25%26/%E6%97%A5%E6%9C%AC%E8%AA%9E%20notes.txt";
+      "/workspaces/ws-1/raw/folder%20one/plus%2B%3Fhash%23percent%25%26/%E6%97%A5%E6%9C%AC%E8%AA%9E%20notes.txt";
     const res = new MockWritableResponse();
     const finished = once(res, "finish");
 
     const handled = await route({
       method: "GET",
       path: rawPath,
-      url: new URL(`https://localhost${rawPath}?mode=browse`),
+      url: new URL(`https://localhost${rawPath}`),
       req: new PassThrough() as unknown as IncomingMessage,
       res: res as unknown as ServerResponse,
     });
@@ -162,7 +155,7 @@ describe("file transport security parity", () => {
     expect(res.body.toString("utf8")).toBe("encoded path works\n");
   });
 
-  it("keeps normal non-sensitive session file reads and touched-file previews working", async () => {
+  it("keeps normal non-sensitive session raw previews working", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-ok-"));
     mkdirSync(join(root, "notes"), { recursive: true });
     writeFileSync(join(root, "notes", "hello world.txt"), "hi from oppi\n", "utf8");
@@ -178,38 +171,22 @@ describe("file transport security parity", () => {
     const helpers = makeHelpers(errors);
     const handlers = createSessionFileHandlers(makeContext(workspace, session), helpers);
 
-    const sessionRes = new MockWritableResponse();
-    const sessionFinished = once(sessionRes, "finish");
-    await handlers.handleGetSessionFile(
+    const rawRes = new MockWritableResponse();
+    const rawFinished = once(rawRes, "finish");
+    await handlers.handleGetSessionRaw(
       "ws-1",
       "sess-1",
-      new URL(
-        "https://localhost/workspaces/ws-1/sessions/sess-1/files?path=notes%2Fhello%20world.txt",
-      ),
-      sessionRes as unknown as ServerResponse,
+      "notes/hello world.txt",
+      rawRes as unknown as ServerResponse,
     );
-    await sessionFinished;
-
-    const touchedRes = new MockWritableResponse();
-    const touchedFinished = once(touchedRes, "finish");
-    await handlers.handleGetTouchedFile(
-      "ws-1",
-      "sess-1",
-      new URL(
-        "https://localhost/workspaces/ws-1/sessions/sess-1/touched-file?path=notes%2Fhello%20world.txt",
-      ),
-      touchedRes as unknown as ServerResponse,
-    );
-    await touchedFinished;
+    await rawFinished;
 
     expect(errors).toEqual([]);
-    expect(sessionRes.statusCode).toBe(200);
-    expect(sessionRes.body.toString("utf8")).toBe("hi from oppi\n");
-    expect(touchedRes.statusCode).toBe(200);
-    expect(touchedRes.body.toString("utf8")).toBe("hi from oppi\n");
+    expect(rawRes.statusCode).toBe(200);
+    expect(rawRes.body.toString("utf8")).toBe("hi from oppi\n");
   });
 
-  it("blocks touched-file reads outside the workspace even when changeStats contains an absolute path", async () => {
+  it("blocks session raw reads outside the workspace even when changeStats contains an absolute path", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-outside-"));
     const outsideFile = join(outsideRoot, "outside.txt");
@@ -229,12 +206,10 @@ describe("file transport security parity", () => {
         makeHelpers(errors),
       );
 
-      await handlers.handleGetTouchedFile(
+      await handlers.handleGetSessionRaw(
         "ws-1",
         "sess-1",
-        new URL(
-          `https://localhost/workspaces/ws-1/sessions/sess-1/touched-file?path=${encodeURIComponent(outsideFile)}`,
-        ),
+        outsideFile,
         new MockWritableResponse() as unknown as ServerResponse,
       );
 

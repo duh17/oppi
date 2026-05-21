@@ -29,7 +29,13 @@ import {
   type LocalSessionCatalogSnapshot,
 } from "../local-sessions.js";
 import { buildPermissionMessage } from "../gate.js";
-import { type ChatAttachmentRef, type LocalSession, type Session } from "../types.js";
+import {
+  type ChatAttachmentRef,
+  type LocalSession,
+  type Session,
+  type SessionSummary,
+  type Workspace,
+} from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
@@ -40,6 +46,7 @@ import {
   streamSessionAttachment,
 } from "../session-attachments.js";
 import { createSessionFileHandlers } from "./session-files.js";
+import { decodeWorkspaceRoutePath } from "./workspace-files.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import type { WorkspaceStoppedTimeBucketSnapshot } from "../storage/session-dao.js";
 
@@ -276,6 +283,42 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     latestActivity?: number;
   };
 
+  type SessionStatusFilter = "active" | "stopped";
+
+  type PendingAttentionCounts = {
+    permissions: Map<string, number>;
+    asks: Map<string, number>;
+  };
+
+  type ManagedSessionListRow = SessionSummary & {
+    pendingPermissionCount: number;
+    pendingAskCount: number;
+  };
+
+  type TuiSessionListRow = {
+    id: string;
+    source: "tui";
+    status: "stopped";
+    workspaceId: string;
+    workspaceName?: string;
+    name?: string;
+    createdAt: number;
+    lastActivity: number;
+    lastModified: number;
+    model?: string;
+    messageCount: number;
+    tokens: Session["tokens"];
+    cost: number;
+    firstMessage?: string;
+    piSessionId: string;
+    path: string;
+    cwd: string;
+    pendingPermissionCount: 0;
+    pendingAskCount: 0;
+  };
+
+  type SessionListRow = ManagedSessionListRow | TuiSessionListRow;
+
   function parseRequiredTimeRange(url: URL): { sinceMs: number; untilMs: number } | undefined {
     const sinceMs = Number.parseInt(url.searchParams.get("sinceMs") ?? "", 10);
     const untilMs = Number.parseInt(url.searchParams.get("untilMs") ?? "", 10);
@@ -283,6 +326,52 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return undefined;
     }
     return { sinceMs, untilMs };
+  }
+
+  function parseOptionalTimeRange(url: URL): {
+    timeRange?: { sinceMs: number; untilMs: number };
+    error?: string;
+  } {
+    const hasSince = url.searchParams.has("sinceMs");
+    const hasUntil = url.searchParams.has("untilMs");
+    if (!hasSince && !hasUntil) {
+      return {};
+    }
+
+    const timeRange = parseRequiredTimeRange(url);
+    if (!timeRange || !hasSince || !hasUntil) {
+      return { error: "sinceMs and untilMs must form a valid range when provided" };
+    }
+
+    return { timeRange };
+  }
+
+  function parseSessionStatusFilters(url: URL): {
+    statuses?: Set<SessionStatusFilter>;
+    error?: string;
+  } {
+    const raw = url.searchParams.get("status")?.trim();
+    if (!raw) {
+      return { error: "status is required" };
+    }
+
+    const statuses = new Set<SessionStatusFilter>();
+    for (const part of raw.split(",")) {
+      const status = part.trim();
+      if (!status) {
+        continue;
+      }
+      if (status !== "active" && status !== "stopped") {
+        return { error: "status must include only 'active' and/or 'stopped'" };
+      }
+      statuses.add(status);
+    }
+
+    if (statuses.size === 0) {
+      return { error: "status is required" };
+    }
+
+    return { statuses };
   }
 
   function localBucketForTimestamp(
@@ -417,6 +506,158 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return sessions.map((session) => buildSessionSummary(ctx.ensureSessionContextWindow(session)));
   }
 
+  function isActiveListSession(session: Session): boolean {
+    return session.status !== "stopped";
+  }
+
+  function incrementCount(map: Map<string, number>, key: string): void {
+    map.set(key, (map.get(key) ?? 0) + 1);
+  }
+
+  function collectPendingAttentionCounts(serverNow: number): PendingAttentionCounts {
+    const permissions = new Map<string, number>();
+    for (const pending of ctx.gate.getPendingForUser()) {
+      if (pending.expires === true && pending.timeoutAt <= serverNow) {
+        continue;
+      }
+      incrementCount(permissions, pending.sessionId);
+    }
+
+    const asks = new Map<string, number>();
+    for (const sessionId of ctx.sessions.getActiveSessionIds()) {
+      const message = ctx.sessions.getPendingAskMessage(sessionId);
+      if (
+        message?.type === "extension_ui_request" &&
+        message.method === "ask" &&
+        message.questions
+      ) {
+        incrementCount(asks, sessionId);
+      }
+    }
+
+    return { permissions, asks };
+  }
+
+  function buildManagedSessionListRows(
+    sessions: Session[],
+    attention: PendingAttentionCounts,
+  ): ManagedSessionListRow[] {
+    return sessions.map((session) => {
+      const summary = buildSessionSummary(ctx.ensureSessionContextWindow(session));
+      return {
+        ...summary,
+        pendingPermissionCount: attention.permissions.get(summary.id) ?? 0,
+        pendingAskCount: attention.asks.get(summary.id) ?? 0,
+      };
+    });
+  }
+
+  function buildTuiSessionListRows(
+    workspace: Workspace,
+    sessions: LocalSession[],
+  ): TuiSessionListRow[] {
+    return sessions.map((session) => ({
+      id: session.path,
+      source: "tui",
+      status: "stopped",
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      name: session.name,
+      createdAt: session.createdAt,
+      lastActivity: session.lastModified,
+      lastModified: session.lastModified,
+      model: session.model,
+      messageCount: session.messageCount,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      firstMessage: session.firstMessage,
+      piSessionId: session.piSessionId,
+      path: session.path,
+      cwd: session.cwd,
+      pendingPermissionCount: 0,
+      pendingAskCount: 0,
+    }));
+  }
+
+  function sessionListUrgencyScore(session: SessionListRow): number {
+    if (session.pendingPermissionCount > 0) return 30;
+    if (session.pendingAskCount > 0) return 20;
+    switch (session.status) {
+      case "error":
+        return 15;
+      case "busy":
+      case "starting":
+      case "stopping":
+        return 10;
+      case "ready":
+        return 5;
+      case "stopped":
+        return 0;
+    }
+  }
+
+  function compareActiveSessionListRows(a: SessionListRow, b: SessionListRow): number {
+    const urgency = sessionListUrgencyScore(b) - sessionListUrgencyScore(a);
+    if (urgency !== 0) {
+      return urgency;
+    }
+    if (b.lastActivity !== a.lastActivity) {
+      return b.lastActivity - a.lastActivity;
+    }
+    return a.id.localeCompare(b.id);
+  }
+
+  function compareStoppedSessionListRows(a: SessionListRow, b: SessionListRow): number {
+    if (b.lastActivity !== a.lastActivity) {
+      return b.lastActivity - a.lastActivity;
+    }
+    return a.id.localeCompare(b.id);
+  }
+
+  function listWorkspaceActiveSessionRows(
+    workspaceId: string,
+    attention: PendingAttentionCounts,
+  ): ManagedSessionListRow[] {
+    const sessions = mergeActiveWorkspaceSessions(
+      ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId),
+      workspaceId,
+      {},
+    ).filter(isActiveListSession);
+    return buildManagedSessionListRows(sessions, attention).sort(compareActiveSessionListRows);
+  }
+
+  function listWorkspaceStoppedSessionRows(
+    workspace: Workspace,
+    timeRange: { sinceMs: number; untilMs: number },
+    attention: PendingAttentionCounts,
+  ): SessionListRow[] {
+    const managed = ctx.storage
+      .listStoppedWorkspaceTimeRangeSessionSnapshots(
+        workspace.id,
+        timeRange.sinceMs,
+        timeRange.untilMs,
+      )
+      .filter(
+        (session) =>
+          session.status === "stopped" &&
+          session.lastActivity >= timeRange.sinceMs &&
+          session.lastActivity < timeRange.untilMs,
+      );
+    const managedRows = buildManagedSessionListRows(managed, attention);
+
+    const importableSnapshot = listWorkspaceImportableSessions(workspace);
+    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
+    const importableSplit = splitImportableSessionsByRange(
+      importableSnapshot.sessions,
+      timeRange.sinceMs,
+      timeRange.untilMs,
+    );
+    return [
+      ...managedRows,
+      ...buildTuiSessionListRows(workspace, importableSplit.visibleSessions),
+    ].sort(compareStoppedSessionListRows);
+  }
+
   function handleListRecentWorkspaceSessionSummaries(
     req: IncomingMessage,
     res: ServerResponse,
@@ -444,7 +685,124 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.compressedJson(req, res, { sessions });
   }
 
-  async function handleWorkspaceSessionList(
+  function handleGlobalSessionList(req: IncomingMessage, res: ServerResponse): void {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const parsedStatus = parseSessionStatusFilters(url);
+    if (!parsedStatus.statuses) {
+      helpers.error(res, 400, parsedStatus.error ?? "Invalid status filter");
+      return;
+    }
+
+    if (parsedStatus.statuses.size !== 1 || !parsedStatus.statuses.has("active")) {
+      helpers.error(res, 400, "global session list currently supports only status=active");
+      return;
+    }
+
+    if (url.searchParams.get("groupBy") !== "workspace") {
+      helpers.error(res, 400, "groupBy=workspace is required for global active sessions");
+      return;
+    }
+
+    if (url.searchParams.has("workspaceId")) {
+      helpers.error(
+        res,
+        400,
+        "workspaceId filter is not supported; use the workspace sessions endpoint",
+      );
+      return;
+    }
+
+    const serverNow = Date.now();
+    const attention = collectPendingAttentionCounts(serverNow);
+    const workspaces = ctx.storage
+      .listWorkspaces()
+      .map((workspace) => {
+        const sessions = listWorkspaceActiveSessionRows(workspace.id, attention);
+        const pendingAttentionCount = sessions.reduce(
+          (count, session) => count + session.pendingPermissionCount + session.pendingAskCount,
+          0,
+        );
+        const latestActivity = sessions.reduce(
+          (latest, session) => Math.max(latest, session.lastActivity),
+          0,
+        );
+        return {
+          workspace,
+          workspaceId: workspace.id,
+          sessions,
+          pendingAttentionCount,
+          latestActivity,
+        };
+      })
+      .filter((group) => group.sessions.length > 0)
+      .sort((a, b) => {
+        const aHasAttention = a.pendingAttentionCount > 0;
+        const bHasAttention = b.pendingAttentionCount > 0;
+        if (aHasAttention !== bHasAttention) {
+          return aHasAttention ? -1 : 1;
+        }
+        if (b.latestActivity !== a.latestActivity) {
+          return b.latestActivity - a.latestActivity;
+        }
+        return (
+          a.workspace.name.localeCompare(b.workspace.name) ||
+          a.workspace.id.localeCompare(b.workspace.id)
+        );
+      });
+
+    helpers.compressedJson(req, res, {
+      status: "active",
+      groupBy: "workspace",
+      serverNow,
+      workspaces,
+    });
+  }
+
+  function handleWorkspaceSessionBuckets(
+    workspaceId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): void {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (url.searchParams.get("status") !== "stopped") {
+      helpers.error(res, 400, "status must be 'stopped'");
+      return;
+    }
+
+    const beforeMs = Number.parseInt(url.searchParams.get("beforeMs") ?? "", 10);
+    if (!Number.isFinite(beforeMs)) {
+      helpers.error(res, 400, "beforeMs is required");
+      return;
+    }
+
+    const serverNow = Date.now();
+    const importableSnapshot = listWorkspaceImportableSessions(workspace);
+    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
+    const olderImportableSessions = importableSnapshot.sessions
+      .filter((session) => session.lastModified < beforeMs)
+      .sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
+    const buckets = mergeWorkspaceArchiveBuckets(
+      ctx.storage.listWorkspaceStoppedTimeBuckets(workspaceId, beforeMs, serverNow),
+      olderImportableSessions,
+      serverNow,
+    );
+
+    helpers.compressedJson(req, res, {
+      workspaceId,
+      status: "stopped",
+      beforeMs,
+      serverNow,
+      buckets,
+    });
+  }
+
+  async function handleWorkspaceSessionCollection(
     workspaceId: string,
     req: IncomingMessage,
     res: ServerResponse,
@@ -456,64 +814,55 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const url = new URL(req.url ?? "/", "http://localhost");
-    const timeRange = parseRequiredTimeRange(url);
-    if (!timeRange) {
-      helpers.error(res, 400, "sinceMs and untilMs are required and must form a valid range");
+    const parsedStatus = parseSessionStatusFilters(url);
+    if (!parsedStatus.statuses) {
+      helpers.error(res, 400, parsedStatus.error ?? "Invalid status filter");
       return;
     }
 
-    const scope = url.searchParams.get("scope");
-    if (scope !== null && scope !== "stopped") {
-      helpers.error(res, 400, "scope must be 'stopped' when provided");
+    const parsedTimeRange = parseOptionalTimeRange(url);
+    if (parsedTimeRange.error) {
+      helpers.error(res, 400, parsedTimeRange.error);
+      return;
+    }
+
+    if (parsedStatus.statuses.has("stopped") && !parsedTimeRange.timeRange) {
+      helpers.error(res, 400, "sinceMs and untilMs are required when status includes stopped");
       return;
     }
 
     const serverNow = Date.now();
-    const stoppedOnly = scope === "stopped";
-    const projectedSessions = stoppedOnly
-      ? ctx.storage.listStoppedWorkspaceTimeRangeSessionSnapshots(
-          workspaceId,
-          timeRange.sinceMs,
-          timeRange.untilMs,
-        )
-      : mergeActiveWorkspaceSessions(
-          ctx.storage.listWorkspaceTimeRangeSessionSnapshots(
-            workspaceId,
-            timeRange.sinceMs,
-            timeRange.untilMs,
-          ),
-          workspaceId,
-          {
-            cutoffMs: timeRange.sinceMs,
-            untilMs: timeRange.untilMs,
-          },
-        );
-    const sessions = summarizeWorkspaceListSessions(projectedSessions);
-
-    const importableSnapshot = listWorkspaceImportableSessions(workspace);
-    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
-    const importableSplit = splitImportableSessionsByRange(
-      importableSnapshot.sessions,
-      timeRange.sinceMs,
-      timeRange.untilMs,
-    );
-    const archiveBuckets = mergeWorkspaceArchiveBuckets(
-      ctx.storage.listWorkspaceStoppedTimeBuckets(workspaceId, timeRange.sinceMs, serverNow),
-      importableSplit.olderSessions,
-      serverNow,
-    );
-
-    helpers.compressedJson(req, res, {
-      workspace,
+    const attention = collectPendingAttentionCounts(serverNow);
+    const response: {
+      workspaceId: string;
+      sinceMs?: number;
+      untilMs?: number;
+      serverNow: number;
+      active?: SessionListRow[];
+      stopped?: SessionListRow[];
+    } = {
       workspaceId,
-      sinceMs: timeRange.sinceMs,
-      untilMs: timeRange.untilMs,
       serverNow,
-      sessions,
-      attention: workspaceAttentionSnapshot(workspaceId, serverNow),
-      importableSessions: importableSplit.visibleSessions,
-      archiveBuckets,
-    });
+    };
+
+    if (parsedTimeRange.timeRange) {
+      response.sinceMs = parsedTimeRange.timeRange.sinceMs;
+      response.untilMs = parsedTimeRange.timeRange.untilMs;
+    }
+
+    if (parsedStatus.statuses.has("active")) {
+      response.active = listWorkspaceActiveSessionRows(workspaceId, attention);
+    }
+
+    if (parsedStatus.statuses.has("stopped") && parsedTimeRange.timeRange) {
+      response.stopped = listWorkspaceStoppedSessionRows(
+        workspace,
+        parsedTimeRange.timeRange,
+        attention,
+      );
+    }
+
+    helpers.compressedJson(req, res, response);
   }
 
   function requireWorkspaceSession(
@@ -1327,6 +1676,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
+    if (path === "/sessions" && method === "GET") {
+      handleGlobalSessionList(req, res);
+      return true;
+    }
+
     // ── Workspace-scoped session routes (v2 API) ──
 
     const wsAttentionMatch = path.match(/^\/workspaces\/([^/]+)\/attention$/);
@@ -1335,13 +1689,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    const wsHomeMatch = path.match(/^\/workspaces\/([^/]+)\/home$/);
-    if (wsHomeMatch && method === "GET") {
-      await handleWorkspaceSessionList(wsHomeMatch[1], req, res);
+    const wsSessionBucketsMatch = path.match(/^\/workspaces\/([^/]+)\/session-buckets$/);
+    if (wsSessionBucketsMatch && method === "GET") {
+      handleWorkspaceSessionBuckets(wsSessionBucketsMatch[1], req, res);
       return true;
     }
 
     const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
+    if (wsSessionsMatch && method === "GET") {
+      await handleWorkspaceSessionCollection(wsSessionsMatch[1], req, res);
+      return true;
+    }
     if (wsSessionsMatch && method === "POST") {
       await handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
       return true;
@@ -1402,38 +1760,36 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    const touchedFileMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/touched-file$/);
-    if (touchedFileMatch && method === "GET") {
-      await sessionFileHandlers.handleGetTouchedFile(
-        touchedFileMatch[1],
-        touchedFileMatch[2],
-        url,
+    const wsSessionChangesMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/changes$/);
+    if (wsSessionChangesMatch && method === "GET") {
+      await sessionFileHandlers.handleListSessionChanges(
+        wsSessionChangesMatch[1],
+        wsSessionChangesMatch[2],
         res,
       );
       return true;
     }
 
-    const wsSessionFilesMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/);
-    if (wsSessionFilesMatch && method === "GET") {
-      await sessionFileHandlers.handleGetSessionFile(
-        wsSessionFilesMatch[1],
-        wsSessionFilesMatch[2],
-        url,
+    const wsSessionRawMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/raw\/(.+)$/);
+    if (wsSessionRawMatch && method === "GET") {
+      const requestedPath = decodeWorkspaceRoutePath(wsSessionRawMatch[3]);
+      if (requestedPath === null) {
+        helpers.error(res, 400, "Invalid file path encoding");
+        return true;
+      }
+
+      await sessionFileHandlers.handleGetSessionRaw(
+        wsSessionRawMatch[1],
+        wsSessionRawMatch[2],
+        requestedPath,
         res,
       );
       return true;
     }
 
-    const wsSessionOverallDiffMatch = path.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
-    );
-    if (wsSessionOverallDiffMatch && method === "GET") {
-      await handleGetSessionOverallDiff(
-        wsSessionOverallDiffMatch[1],
-        wsSessionOverallDiffMatch[2],
-        url,
-        res,
-      );
+    const wsSessionDiffMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/diff$/);
+    if (wsSessionDiffMatch && method === "GET") {
+      await handleGetSessionOverallDiff(wsSessionDiffMatch[1], wsSessionDiffMatch[2], url, res);
       return true;
     }
 

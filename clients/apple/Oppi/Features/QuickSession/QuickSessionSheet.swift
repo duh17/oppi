@@ -3,6 +3,30 @@ import SwiftUI
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSession")
 
+private struct QuickSessionActiveSessionRow: Identifiable, Equatable {
+    var id: String { session.id }
+    let session: Session
+    let pendingPermissionCount: Int
+    let pendingAskCount: Int
+}
+
+private struct QuickSessionActiveWorkspaceGroup: Identifiable, Equatable {
+    var id: String { "\(serverId):\(workspace.id)" }
+    let workspace: Workspace
+    let serverId: String
+    let sessions: [QuickSessionActiveSessionRow]
+
+    var pendingAttentionCount: Int {
+        sessions.reduce(0) { total, row in
+            total + row.pendingPermissionCount + row.pendingAskCount
+        }
+    }
+
+    var latestActivity: Date {
+        sessions.map(\.session.lastActivity).max() ?? .distantPast
+    }
+}
+
 /// Compact sheet for starting a new agent session.
 ///
 /// Presented by the Action Button / Control Center / Spotlight via
@@ -34,6 +58,7 @@ struct QuickSessionSheet: View {
     @State private var showExpandedComposer = false
     @State private var isCreating = false
     @State private var error: String?
+    @State private var apiActiveSessionGroups: [QuickSessionActiveWorkspaceGroup]?
     @State private var voiceInputManager: VoiceInputManager?
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
@@ -57,11 +82,15 @@ struct QuickSessionSheet: View {
 
     /// Active sessions across all servers, grouped by workspace.
     ///
-    /// "Active" = busy, starting, stopping, ready, or error.
-    /// Stopped sessions are excluded.
-    private var activeSessionsByWorkspace: [(workspace: Workspace, serverId: String, sessions: [Session])] {
-        var groups: [(workspace: Workspace, serverId: String, sessions: [Session])] = []
-        var seen: Set<String> = []
+    /// Prefer the resource-shaped global API loaded when the sheet appears.
+    /// Fall back to local store projections while the request is in flight or
+    /// if the server is offline.
+    private var activeSessionGroups: [QuickSessionActiveWorkspaceGroup] {
+        apiActiveSessionGroups ?? fallbackActiveSessionGroups
+    }
+
+    private var fallbackActiveSessionGroups: [QuickSessionActiveWorkspaceGroup] {
+        var groups: [QuickSessionActiveWorkspaceGroup] = []
 
         for (serverId, conn) in coordinator.connections {
             let sessions = conn.sessionStore.listProjectionSessions.filter { session in
@@ -73,9 +102,6 @@ struct QuickSessionSheet: View {
 
             let byWorkspace = Dictionary(grouping: sessions) { $0.workspaceId ?? "" }
             for (wsId, wsSessions) in byWorkspace {
-                guard !seen.contains(wsId) else { continue }
-                seen.insert(wsId)
-
                 guard let ws = conn.workspaceStore.workspaces.first(where: { $0.id == wsId }) else {
                     continue
                 }
@@ -85,40 +111,33 @@ struct QuickSessionSheet: View {
                     hasPermission: { !conn.permissionStore.pending(for: $0).isEmpty },
                     hasAsk: { conn.askRequestStore.hasPending(for: $0) }
                 )
+                let rows = sorted.map { session in
+                    QuickSessionActiveSessionRow(
+                        session: session,
+                        pendingPermissionCount: conn.permissionStore.pending(for: session.id).count,
+                        pendingAskCount: conn.askRequestStore.hasPending(for: session.id) ? 1 : 0
+                    )
+                }
 
-                groups.append((workspace: ws, serverId: serverId, sessions: sorted))
+                groups.append(QuickSessionActiveWorkspaceGroup(
+                    workspace: ws,
+                    serverId: serverId,
+                    sessions: rows
+                ))
             }
         }
 
-        return groups.sorted { lhs, rhs in
-            let lhsMax = lhs.sessions.map { session in
-                coordinator.connections[lhs.serverId].map { sessionUrgencyScore(session, connection: $0) } ?? 0
-            }.max() ?? 0
-            let rhsMax = rhs.sessions.map { session in
-                coordinator.connections[rhs.serverId].map { sessionUrgencyScore(session, connection: $0) } ?? 0
-            }.max() ?? 0
-            if lhsMax != rhsMax { return lhsMax > rhsMax }
-            return lhs.workspace.name < rhs.workspace.name
-        }
-    }
-
-    /// Urgency score for sorting — higher = more urgent.
-    private func sessionUrgencyScore(_ session: Session, connection conn: ServerConnection) -> Int {
-        quickSessionUrgencyScore(
-            status: session.status,
-            hasPermission: !conn.permissionStore.pending(for: session.id).isEmpty,
-            hasAsk: conn.askRequestStore.hasPending(for: session.id)
-        )
+        return quickSessionSortWorkspaceGroups(groups)
     }
 
     /// Whether there are active sessions to display.
     var hasActiveSessions: Bool {
-        !activeSessionsByWorkspace.isEmpty
+        !activeSessionGroups.isEmpty
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if !activeSessionsByWorkspace.isEmpty {
+            if !activeSessionGroups.isEmpty {
                 activeSessionsList
                 Divider()
                     .padding(.horizontal, 16)
@@ -208,7 +227,7 @@ struct QuickSessionSheet: View {
     private var activeSessionsList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
-                ForEach(activeSessionsByWorkspace, id: \.workspace.id) { group in
+                ForEach(activeSessionGroups) { group in
                     workspaceSessionSection(
                         workspace: group.workspace,
                         serverId: group.serverId,
@@ -226,7 +245,7 @@ struct QuickSessionSheet: View {
     private func workspaceSessionSection(
         workspace: Workspace,
         serverId: String,
-        sessions: [Session]
+        sessions: [QuickSessionActiveSessionRow]
     ) -> some View {
         HStack(spacing: 6) {
             if let icon = workspace.icon {
@@ -255,11 +274,11 @@ struct QuickSessionSheet: View {
         .padding(.bottom, 6)
 
         let conn = coordinator.connections[serverId]
-        ForEach(sessions) { session in
+        ForEach(sessions) { row in
             Button {
-                navigateToSession(session, serverId: serverId, workspace: workspace)
+                navigateToSession(row.session, serverId: serverId, workspace: workspace)
             } label: {
-                activeSessionRow(for: session, connection: conn)
+                activeSessionRow(for: row, connection: conn)
             }
             .buttonStyle(.plain)
             .padding(.vertical, 4)
@@ -267,10 +286,11 @@ struct QuickSessionSheet: View {
     }
 
     /// Build a SessionRow with activity data from the owning connection.
-    private func activeSessionRow(for session: Session, connection conn: ServerConnection?) -> some View {
+    private func activeSessionRow(for row: QuickSessionActiveSessionRow, connection conn: ServerConnection?) -> some View {
+        let session = row.session
         let permissions = conn?.permissionStore.pending(for: session.id) ?? []
-        let pendingCount = permissions.count
-        let askPending = conn?.askRequestStore.hasPending(for: session.id) == true ? 1 : 0
+        let pendingCount = max(permissions.count, row.pendingPermissionCount)
+        let askPending = max(conn?.askRequestStore.hasPending(for: session.id) == true ? 1 : 0, row.pendingAskCount)
         let activity = conn?.activityStore.lastActivity(for: session.id)
         let ask = conn?.askRequestStore.pending(for: session.id)
 
@@ -375,6 +395,8 @@ struct QuickSessionSheet: View {
     // MARK: - Actions
 
     private func setupInitialState() async {
+        await refreshActiveSessionGroups()
+
         // Select workspace: last used > explicit default > first available.
         let all = allServerWorkspaces
         if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
@@ -406,6 +428,43 @@ struct QuickSessionSheet: View {
         // Ensure model cache is fresh
         if let api = coordinator.activeConnection.apiClient {
             await chatState.refreshModelCache(api: api)
+        }
+    }
+
+    private func refreshActiveSessionGroups() async {
+        var groups: [QuickSessionActiveWorkspaceGroup] = []
+        var loadedFromAnyServer = false
+
+        for (serverId, conn) in coordinator.connections {
+            guard let api = conn.apiClient else { continue }
+            do {
+                let response = try await api.listGlobalActiveSessionGroups()
+                loadedFromAnyServer = true
+                let summaries = response.workspaces.flatMap { group in
+                    group.sessions.map(\.summary)
+                }
+                conn.sessionStore.upsertManySummaries(summaries)
+
+                for group in response.workspaces where !group.sessions.isEmpty {
+                    groups.append(QuickSessionActiveWorkspaceGroup(
+                        workspace: group.workspace,
+                        serverId: serverId,
+                        sessions: group.sessions.map { row in
+                            QuickSessionActiveSessionRow(
+                                session: row.summary.session,
+                                pendingPermissionCount: row.pendingPermissionCount,
+                                pendingAskCount: row.pendingAskCount
+                            )
+                        }
+                    ))
+                }
+            } catch {
+                logger.debug("Failed to refresh quick active sessions for server \(serverId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        if loadedFromAnyServer {
+            apiActiveSessionGroups = quickSessionSortWorkspaceGroups(groups)
         }
     }
 
@@ -557,5 +616,19 @@ func quickSessionSorted(
         )
         if lhsScore != rhsScore { return lhsScore > rhsScore }
         return lhs.lastActivity > rhs.lastActivity
+    }
+}
+
+fileprivate func quickSessionSortWorkspaceGroups(
+    _ groups: [QuickSessionActiveWorkspaceGroup]
+) -> [QuickSessionActiveWorkspaceGroup] {
+    groups.sorted { lhs, rhs in
+        let lhsHasAttention = lhs.pendingAttentionCount > 0
+        let rhsHasAttention = rhs.pendingAttentionCount > 0
+        if lhsHasAttention != rhsHasAttention { return lhsHasAttention }
+        if lhs.latestActivity != rhs.latestActivity { return lhs.latestActivity > rhs.latestActivity }
+        let nameCompare = lhs.workspace.name.localizedCaseInsensitiveCompare(rhs.workspace.name)
+        if nameCompare != .orderedSame { return nameCompare == .orderedAscending }
+        return lhs.id < rhs.id
     }
 }

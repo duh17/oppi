@@ -55,6 +55,9 @@ struct ContentView: View {
                     OnboardingView()
                 } else {
                     TabView(selection: $nav.selectedTab) {
+                        SwiftUI.Tab("Sessions", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.sessions) {
+                            SessionsHomeView()
+                        }
                         SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
                             NavigationStack(path: $nav.workspacePath) {
                                 WorkspaceHomeView()

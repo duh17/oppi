@@ -80,7 +80,7 @@ function workspaceRootDir(baseDir: string, session: Session): string {
   return join(baseDir, session.workspaceId!, "workspace");
 }
 
-describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
+describe("GET /workspaces/:wid/sessions/:id/diff", () => {
   it("returns baseline/current text and net stats for edit revisions", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oppi-server-overall-diff-"));
     const session = makeSession("s1");
@@ -129,8 +129,7 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       const ctx = {
         storage: {
-          getSession: (sessionId: string) =>
-            sessionId === session.id ? session : undefined,
+          getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
           getWorkspace: () => makeWorkspace(baseDir, session),
           getDataDir: () => baseDir,
         },
@@ -141,8 +140,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/sessions/s1/overall-diff",
-        new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
+        "/workspaces/w1/sessions/s1/diff",
+        new URL("http://localhost/workspaces/w1/sessions/s1/diff?path=file.txt"),
         {} as never,
         res as never,
       );
@@ -161,7 +160,12 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
           oldCount: number;
           newStart: number;
           newCount: number;
-          lines: Array<{ kind: string; text: string; oldLine: number | null; newLine: number | null }>;
+          lines: Array<{
+            kind: string;
+            text: string;
+            oldLine: number | null;
+            newLine: number | null;
+          }>;
         }>;
         cacheKey: string;
       };
@@ -175,8 +179,20 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
       expect(body.removedLines).toBe(1);
       expect(body.hunks).toHaveLength(1);
       expect(body.hunks[0].lines).toEqual([
-        { kind: "removed", text: "A", oldLine: 1, newLine: null, spans: [{ start: 0, end: 1, kind: "changed" }] },
-        { kind: "added", text: "B", oldLine: null, newLine: 1, spans: [{ start: 0, end: 1, kind: "changed" }] },
+        {
+          kind: "removed",
+          text: "A",
+          oldLine: 1,
+          newLine: null,
+          spans: [{ start: 0, end: 1, kind: "changed" }],
+        },
+        {
+          kind: "added",
+          text: "B",
+          oldLine: null,
+          newLine: 1,
+          spans: [{ start: 0, end: 1, kind: "changed" }],
+        },
       ]);
       expect(body.cacheKey).toContain("s1:file.txt:");
     } finally {
@@ -206,8 +222,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/sessions/s1/overall-diff",
-        new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
+        "/workspaces/w1/sessions/s1/diff",
+        new URL("http://localhost/workspaces/w1/sessions/s1/diff?path=file.txt"),
         {} as never,
         res as never,
       );
@@ -236,8 +252,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/sessions/s1/overall-diff",
-        new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff"),
+        "/workspaces/w1/sessions/s1/diff",
+        new URL("http://localhost/workspaces/w1/sessions/s1/diff"),
         {} as never,
         res as never,
       );
@@ -297,8 +313,7 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       const ctx = {
         storage: {
-          getSession: (sessionId: string) =>
-            sessionId === session.id ? session : undefined,
+          getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
           getWorkspace: () => makeWorkspace(baseDir, session),
           getDataDir: () => baseDir,
         },
@@ -309,8 +324,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/sessions/s1/overall-diff",
-        new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
+        "/workspaces/w1/sessions/s1/diff",
+        new URL("http://localhost/workspaces/w1/sessions/s1/diff?path=file.txt"),
         {} as never,
         res as never,
       );
@@ -375,8 +390,7 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       const ctx = {
         storage: {
-          getSession: (sessionId: string) =>
-            sessionId === session.id ? session : undefined,
+          getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
           getWorkspace: () => makeWorkspace(baseDir, session),
           getDataDir: () => baseDir,
         },
@@ -387,14 +401,18 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/sessions/s1/overall-diff",
-        new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
+        "/workspaces/w1/sessions/s1/diff",
+        new URL("http://localhost/workspaces/w1/sessions/s1/diff?path=file.txt"),
         {} as never,
         res as never,
       );
 
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as { path: string; baselineText: string; currentText: string };
+      const body = JSON.parse(res.body) as {
+        path: string;
+        baselineText: string;
+        currentText: string;
+      };
       expect(body.path).toBe("file.txt");
       expect(body.baselineText).toBe("A");
       expect(body.currentText).toBe("B");

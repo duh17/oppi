@@ -82,6 +82,9 @@ interface MockRouteContext {
     getActiveSession: ReturnType<typeof vi.fn>;
     getPendingAskMessage: ReturnType<typeof vi.fn>;
   };
+  gate: {
+    getPendingForUser: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteContext {
@@ -116,12 +119,14 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     getPendingAskMessage: vi.fn(),
   };
 
+  const gate = {
+    getPendingForUser: vi.fn().mockReturnValue([]),
+  };
+
   const ctx = {
     storage,
     sessions,
-    gate: {
-      getPendingForUser: vi.fn().mockReturnValue([]),
-    },
+    gate,
     skillRegistry: {},
     userSkillStore: {},
     userEventStore: { recordEvent: vi.fn() },
@@ -155,7 +160,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     },
   };
 
-  return { ctx, helpers, responses, errors, storage, sessions };
+  return { ctx, helpers, responses, errors, storage, sessions, gate };
 }
 
 async function dispatch(mock: MockRouteContext, path: string, url: string): Promise<boolean> {
@@ -172,7 +177,7 @@ async function dispatch(mock: MockRouteContext, path: string, url: string): Prom
   });
 }
 
-describe("workspace home session routes", () => {
+describe("workspace session list routes", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-13T12:00:00Z"));
@@ -183,140 +188,7 @@ describe("workspace home session routes", () => {
     vi.useRealTimers();
   });
 
-  it("requires an explicit time range for workspace home", async () => {
-    const mock = createMockContext();
-
-    const handled = await dispatch(
-      mock,
-      "/workspaces/ws-1/home",
-      "https://localhost/workspaces/ws-1/home",
-    );
-
-    expect(handled).toBe(true);
-    expect(mock.responses).toHaveLength(0);
-    expect(mock.errors).toEqual([
-      {
-        status: 400,
-        message: "sinceMs and untilMs are required and must form a valid range",
-      },
-    ]);
-  });
-
-  it("rejects unknown workspace home scopes", async () => {
-    const mock = createMockContext();
-
-    const handled = await dispatch(
-      mock,
-      "/workspaces/ws-1/home",
-      "https://localhost/workspaces/ws-1/home?sinceMs=0&untilMs=1000&scope=archive",
-    );
-
-    expect(handled).toBe(true);
-    expect(mock.responses).toHaveLength(0);
-    expect(mock.errors).toEqual([
-      {
-        status: 400,
-        message: "scope must be 'stopped' when provided",
-      },
-    ]);
-  });
-
-  it("returns recent rows plus merged archive buckets", async () => {
-    const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
-    const sinceMs = Date.parse("2026-05-12T00:00:00Z");
-    const untilMs = Date.parse("2026-05-13T12:00:00Z");
-
-    mock.storage.listWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
-      makeSession({
-        id: "recent-managed",
-        status: "ready",
-        lastActivity: untilMs - 1_000,
-        piSessionFile: "/Users/chenda/.pi/agent/sessions/recent-managed.jsonl",
-        warnings: ["local warning"],
-      }),
-    ]);
-    mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([
-      {
-        bucketId: "day:2026-05-10",
-        bucketKind: "day",
-        startMs: Date.parse("2026-05-10T00:00:00Z"),
-        endMs: Date.parse("2026-05-11T00:00:00Z"),
-        itemCount: 2,
-        latestActivity: Date.parse("2026-05-10T18:00:00Z"),
-      },
-    ]);
-    localSessionState.snapshot = {
-      lastScannedAt: Date.now(),
-      sessions: [
-        makeLocalSession({
-          path: "/tmp/recent.jsonl",
-          piSessionId: "recent-local",
-          lastModified: Date.parse("2026-05-12T18:00:00Z"),
-        }),
-        makeLocalSession({
-          path: "/tmp/day-bucket.jsonl",
-          piSessionId: "day-local",
-          lastModified: Date.parse("2026-05-10T18:00:00Z"),
-        }),
-        makeLocalSession({
-          path: "/tmp/month-bucket.jsonl",
-          piSessionId: "month-local",
-          lastModified: Date.parse("2026-03-01T18:00:00Z"),
-        }),
-      ],
-    };
-
-    const handled = await dispatch(
-      mock,
-      "/workspaces/ws-1/home",
-      `https://localhost/workspaces/ws-1/home?sinceMs=${sinceMs}&untilMs=${untilMs}`,
-    );
-
-    expect(handled).toBe(true);
-    expect(mock.errors).toHaveLength(0);
-    expect(mock.responses).toHaveLength(1);
-
-    const response = mock.responses[0]?.data as {
-      sessions: Session[];
-      importableSessions: LocalSession[];
-      archiveBuckets: Array<{
-        bucketId: string;
-        itemCount: number;
-        managedStoppedCount: number;
-        importableLocalCount: number;
-      }>;
-    };
-
-    expect(response.sessions.map((session) => session.id)).toEqual(["recent-managed"]);
-    expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
-    expect(response.sessions[0]).not.toHaveProperty("warnings");
-    expect(response.importableSessions.map((session) => session.piSessionId)).toEqual([
-      "recent-local",
-    ]);
-    expect(
-      response.archiveBuckets.map((bucket) => ({
-        bucketId: bucket.bucketId,
-        itemCount: bucket.itemCount,
-        managedStoppedCount: bucket.managedStoppedCount,
-        importableLocalCount: bucket.importableLocalCount,
-      })),
-    ).toEqual([
-      {
-        bucketId: "day:2026-05-10",
-        itemCount: 3,
-        managedStoppedCount: 2,
-        importableLocalCount: 1,
-      },
-      {
-        bucketId: "month:2026-03",
-        itemCount: 1,
-        managedStoppedCount: 0,
-        importableLocalCount: 1,
-      },
-    ]);
-  });
-
-  it("does not expose workspace session list through GET /workspaces/:id/sessions", async () => {
+  it("requires explicit status for workspace session collections", async () => {
     const mock = createMockContext();
 
     const handled = await dispatch(
@@ -325,9 +197,265 @@ describe("workspace home session routes", () => {
       "https://localhost/workspaces/ws-1/sessions?recentDays=3",
     );
 
-    expect(handled).toBe(false);
-    expect(mock.errors).toHaveLength(0);
+    expect(handled).toBe(true);
     expect(mock.responses).toHaveLength(0);
+    expect(mock.errors).toEqual([{ status: 400, message: "status is required" }]);
+  });
+
+  it("rejects unknown workspace session collection status values", async () => {
+    const mock = createMockContext();
+
+    const handled = await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      "https://localhost/workspaces/ws-1/sessions?status=all",
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.responses).toHaveLength(0);
+    expect(mock.errors).toEqual([
+      { status: 400, message: "status must include only 'active' and/or 'stopped'" },
+    ]);
+  });
+
+  it("requires a time range when workspace session status includes stopped", async () => {
+    const mock = createMockContext();
+
+    const handled = await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      "https://localhost/workspaces/ws-1/sessions?status=active,stopped",
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.responses).toHaveLength(0);
+    expect(mock.errors).toEqual([
+      { status: 400, message: "sinceMs and untilMs are required when status includes stopped" },
+    ]);
+  });
+
+  it("returns sectioned active and stopped workspace session rows", async () => {
+    const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
+    const sinceMs = Date.parse("2026-05-13T00:00:00Z");
+    const untilMs = Date.parse("2026-05-14T00:00:00Z");
+
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
+      makeSession({
+        id: "old-ready",
+        status: "ready",
+        lastActivity: sinceMs - 86_400_000,
+      }),
+      makeSession({
+        id: "stored-stopped-old",
+        status: "stopped",
+        lastActivity: sinceMs - 1_000,
+      }),
+    ]);
+    mock.sessions.getActiveSessionIds.mockReturnValue(["live-busy"]);
+    mock.sessions.getActiveSession.mockImplementation((sessionId: string) =>
+      sessionId === "live-busy"
+        ? makeSession({ id: "live-busy", status: "busy", lastActivity: sinceMs + 5_000 })
+        : undefined,
+    );
+    mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
+      makeSession({ id: "stopped-today", status: "stopped", lastActivity: sinceMs + 10_000 }),
+      makeSession({ id: "active-leak", status: "busy", lastActivity: sinceMs + 20_000 }),
+      makeSession({ id: "stopped-outside", status: "stopped", lastActivity: untilMs + 1_000 }),
+    ]);
+    localSessionState.snapshot = {
+      lastScannedAt: Date.now(),
+      sessions: [
+        makeLocalSession({
+          path: "/tmp/tui-today.jsonl",
+          piSessionId: "tui-today",
+          lastModified: sinceMs + 15_000,
+        }),
+        makeLocalSession({
+          path: "/tmp/tui-old.jsonl",
+          piSessionId: "tui-old",
+          lastModified: sinceMs - 10_000,
+        }),
+      ],
+    };
+
+    const handled = await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      `https://localhost/workspaces/ws-1/sessions?status=active,stopped&sinceMs=${sinceMs}&untilMs=${untilMs}`,
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.errors).toHaveLength(0);
+
+    const response = mock.responses[0]?.data as {
+      workspaceId: string;
+      sinceMs: number;
+      untilMs: number;
+      active: Array<Record<string, unknown>>;
+      stopped: Array<Record<string, unknown>>;
+    };
+
+    expect(response.workspaceId).toBe("ws-1");
+    expect(response.sinceMs).toBe(sinceMs);
+    expect(response.untilMs).toBe(untilMs);
+    expect(response.active.map((session) => session.id)).toEqual(["live-busy", "old-ready"]);
+    expect(response.stopped.map((session) => session.id)).toEqual([
+      "/tmp/tui-today.jsonl",
+      "stopped-today",
+    ]);
+    expect(response.stopped[0]).toMatchObject({
+      source: "tui",
+      piSessionId: "tui-today",
+      path: "/tmp/tui-today.jsonl",
+      status: "stopped",
+    });
+    expect(response.stopped.map((session) => session.id)).not.toContain("active-leak");
+    expect(response.stopped.map((session) => session.id)).not.toContain("stopped-outside");
+  });
+
+  it("returns stopped session bucket summaries from the bucket resource", async () => {
+    const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
+    const beforeMs = Date.parse("2026-05-13T00:00:00Z");
+
+    mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([
+      {
+        bucketId: "day:2026-05-12",
+        bucketKind: "day",
+        startMs: Date.parse("2026-05-12T00:00:00Z"),
+        endMs: Date.parse("2026-05-13T00:00:00Z"),
+        itemCount: 1,
+        latestActivity: Date.parse("2026-05-12T18:00:00Z"),
+      },
+    ]);
+    localSessionState.snapshot = {
+      lastScannedAt: Date.now(),
+      sessions: [
+        makeLocalSession({
+          path: "/tmp/tui-old.jsonl",
+          piSessionId: "tui-old",
+          lastModified: Date.parse("2026-05-12T19:00:00Z"),
+        }),
+        makeLocalSession({
+          path: "/tmp/tui-visible.jsonl",
+          piSessionId: "tui-visible",
+          lastModified: beforeMs + 1_000,
+        }),
+      ],
+    };
+
+    const handled = await dispatch(
+      mock,
+      "/workspaces/ws-1/session-buckets",
+      `https://localhost/workspaces/ws-1/session-buckets?status=stopped&beforeMs=${beforeMs}`,
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.errors).toHaveLength(0);
+    expect(mock.storage.listWorkspaceStoppedTimeBuckets).toHaveBeenCalledWith(
+      "ws-1",
+      beforeMs,
+      Date.now(),
+    );
+
+    const response = mock.responses[0]?.data as {
+      workspaceId: string;
+      status: string;
+      beforeMs: number;
+      buckets: Array<{
+        bucketId: string;
+        itemCount: number;
+        managedStoppedCount: number;
+        importableLocalCount: number;
+      }>;
+    };
+
+    expect(response.workspaceId).toBe("ws-1");
+    expect(response.status).toBe("stopped");
+    expect(response.beforeMs).toBe(beforeMs);
+    expect(response.buckets).toEqual([
+      expect.objectContaining({
+        bucketId: "day:2026-05-12",
+        itemCount: 2,
+        managedStoppedCount: 1,
+        importableLocalCount: 1,
+      }),
+    ]);
+  });
+
+  it("returns global active sessions grouped by non-empty workspace", async () => {
+    const workspaceOne = makeWorkspace({ id: "ws-1", name: "Oppi" });
+    const workspaceTwo = makeWorkspace({ id: "ws-2", name: "Webtools" });
+    const mock = createMockContext(workspaceOne);
+    const now = Date.parse("2026-05-13T12:00:00Z");
+
+    mock.storage.listWorkspaces.mockReturnValue([workspaceOne, workspaceTwo]);
+    mock.storage.listAllWorkspaceSessionSnapshots.mockImplementation((workspaceId: string) => {
+      if (workspaceId === "ws-1") {
+        return [
+          makeSession({
+            id: "ws-1-ready",
+            workspaceId: "ws-1",
+            workspaceName: "Oppi",
+            status: "ready",
+            lastActivity: now,
+          }),
+        ];
+      }
+      return [
+        makeSession({
+          id: "ws-2-needs-you",
+          workspaceId: "ws-2",
+          workspaceName: "Webtools",
+          status: "ready",
+          lastActivity: now - 60_000,
+        }),
+      ];
+    });
+    mock.gate.getPendingForUser.mockReturnValue([
+      {
+        id: "approval-1",
+        sessionId: "ws-2-needs-you",
+        workspaceId: "ws-2",
+        tool: "bash",
+        input: {},
+        toolCallId: "tool-1",
+        displaySummary: "Run command",
+        reason: "Needs approval",
+        createdAt: now,
+        timeoutAt: now + 60_000,
+        expires: true,
+        resolve: vi.fn(),
+      },
+    ]);
+
+    const handled = await dispatch(
+      mock,
+      "/sessions",
+      "https://localhost/sessions?status=active&groupBy=workspace",
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.errors).toHaveLength(0);
+
+    const response = mock.responses[0]?.data as {
+      status: string;
+      groupBy: string;
+      workspaces: Array<{
+        workspaceId: string;
+        sessions: Array<Record<string, unknown>>;
+        pendingAttentionCount: number;
+      }>;
+    };
+
+    expect(response.status).toBe("active");
+    expect(response.groupBy).toBe("workspace");
+    expect(response.workspaces.map((group) => group.workspaceId)).toEqual(["ws-2", "ws-1"]);
+    expect(response.workspaces[0]?.pendingAttentionCount).toBe(1);
+    expect(response.workspaces[0]?.sessions[0]).toMatchObject({
+      id: "ws-2-needs-you",
+      pendingPermissionCount: 1,
+      pendingAskCount: 0,
+    });
   });
 
   it("returns aggregated recent workspace session summaries as thin summaries", async () => {
@@ -415,8 +543,8 @@ describe("workspace home session routes", () => {
 
     const handled = await dispatch(
       mock,
-      "/workspaces/ws-1/home",
-      `https://localhost/workspaces/ws-1/home?sinceMs=${sinceMs}&untilMs=${untilMs}&scope=stopped`,
+      "/workspaces/ws-1/sessions",
+      `https://localhost/workspaces/ws-1/sessions?status=stopped&sinceMs=${sinceMs}&untilMs=${untilMs}`,
     );
 
     expect(handled).toBe(true);
@@ -432,16 +560,19 @@ describe("workspace home session routes", () => {
       workspaceId: string;
       sinceMs: number;
       untilMs: number;
-      sessions: Session[];
-      importableSessions: LocalSession[];
+      stopped: Array<Record<string, unknown>>;
     };
 
     expect(response.workspaceId).toBe("ws-1");
     expect(response.sinceMs).toBe(sinceMs);
     expect(response.untilMs).toBe(untilMs);
-    expect(response.sessions.map((session) => session.id)).toEqual(["stopped-in-bucket"]);
-    expect(response.importableSessions.map((session) => session.piSessionId)).toEqual([
-      "local-in-bucket",
+    expect(response.stopped.map((session) => session.id)).toEqual([
+      "/tmp/in-bucket.jsonl",
+      "stopped-in-bucket",
     ]);
+    expect(response.stopped[0]).toMatchObject({
+      source: "tui",
+      piSessionId: "local-in-bucket",
+    });
   });
 });

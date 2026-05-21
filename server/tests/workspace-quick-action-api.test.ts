@@ -104,7 +104,7 @@ function makeQuickActionContext(
   } as unknown as RouteContext;
 }
 
-describe("GET /workspaces/:wid/review/diff", () => {
+describe("GET /workspaces/:wid/git/diff", () => {
   it("returns baseline/current text and word-level spans", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-diff-"));
 
@@ -137,8 +137,8 @@ describe("GET /workspaces/:wid/review/diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/review/diff",
-        new URL("http://localhost/workspaces/w1/review/diff?path=review.swift"),
+        "/workspaces/w1/git/diff",
+        new URL("http://localhost/workspaces/w1/git/diff?path=review.swift"),
         {} as never,
         res as never,
       );
@@ -190,8 +190,8 @@ describe("GET /workspaces/:wid/review/diff", () => {
 
       await routes.dispatch(
         "GET",
-        "/workspaces/w1/review/diff",
-        new URL("http://localhost/workspaces/w1/review/diff?path=missing.swift"),
+        "/workspaces/w1/git/diff",
+        new URL("http://localhost/workspaces/w1/git/diff?path=missing.swift"),
         {} as never,
         res as never,
       );

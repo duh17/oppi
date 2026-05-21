@@ -294,19 +294,23 @@ describe("workspaces API", () => {
     expect(getRes.status).toBe(404);
   });
 
-  it("GET /workspaces/:id/home returns sessions for workspace", async () => {
+  it("GET /workspaces/:id/sessions returns sectioned workspace sessions", async () => {
     const createRes = await post("/workspaces", { name: "sessions-test", skills: [] });
     const { workspace } = await createRes.json();
 
-    const res = await get(`/workspaces/${workspace.id}/home?sinceMs=0&untilMs=${Date.now()}`);
+    const res = await get(
+      `/workspaces/${workspace.id}/sessions?status=active,stopped&sinceMs=0&untilMs=${Date.now()}`,
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.workspace.id).toBe(workspace.id);
-    expect(body.sessions).toBeInstanceOf(Array);
-    expect(body.sessions.length).toBe(0);
+    expect(body.workspaceId).toBe(workspace.id);
+    expect(body.active).toBeInstanceOf(Array);
+    expect(body.stopped).toBeInstanceOf(Array);
+    expect(body.active.length).toBe(0);
+    expect(body.stopped.length).toBe(0);
   });
 
-  it("GET /workspaces/:id/home scope=stopped excludes active sessions", async () => {
+  it("GET /workspaces/:id/sessions status=stopped excludes active sessions", async () => {
     const createRes = await post("/workspaces", { name: "stopped-scope-test", skills: [] });
     const { workspace } = await createRes.json();
     const now = Date.now();
@@ -337,11 +341,11 @@ describe("workspaces API", () => {
     });
 
     const res = await get(
-      `/workspaces/${workspace.id}/home?sinceMs=${sinceMs}&untilMs=${untilMs}&scope=stopped`,
+      `/workspaces/${workspace.id}/sessions?status=stopped&sinceMs=${sinceMs}&untilMs=${untilMs}`,
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.sessions.map((session: { id: string }) => session.id)).toEqual([
+    expect(body.stopped.map((session: { id: string }) => session.id)).toEqual([
       `${workspace.id}-stopped-in-bucket`,
     ]);
   });
@@ -422,16 +426,16 @@ describe("workspace file serving", () => {
   });
 
   it("serves an image file with correct content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/files/chart.png`);
+    const res = await get(`/workspaces/${wsId}/raw/chart.png`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+    expect(res.headers.get("cache-control")).toBe("private, no-cache");
     const body = await res.arrayBuffer();
     expect(body.byteLength).toBeGreaterThan(0);
   });
 
   it("serves files in subdirectories", async () => {
-    const res = await get(`/workspaces/${wsId}/files/output/figure.jpg`);
+    const res = await get(`/workspaces/${wsId}/raw/output/figure.jpg`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/jpeg");
     const body = await res.arrayBuffer();
@@ -439,32 +443,31 @@ describe("workspace file serving", () => {
   });
 
   it("returns byte-identical content", async () => {
-    const res = await get(`/workspaces/${wsId}/files/output/figure.jpg`);
+    const res = await get(`/workspaces/${wsId}/raw/output/figure.jpg`);
     const buf = Buffer.from(await res.arrayBuffer());
     expect(buf).toEqual(Buffer.alloc(16, 0xab));
   });
 
-  it("rejects non-image file extensions", async () => {
-    const res = await get(`/workspaces/${wsId}/files/secrets.env`);
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toContain("not allowed");
+  it("serves non-image file extensions through raw", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/secrets.env`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("SECRET=bad");
   });
 
   it("returns 404 for nonexistent files", async () => {
-    const res = await get(`/workspaces/${wsId}/files/missing.png`);
+    const res = await get(`/workspaces/${wsId}/raw/missing.png`);
     expect(res.status).toBe(404);
   });
 
   it("returns 404 for nonexistent workspace", async () => {
-    const res = await get("/workspaces/BOGUS/files/chart.png");
+    const res = await get("/workspaces/BOGUS/raw/chart.png");
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toContain("not found");
   });
 
   it("blocks path traversal", async () => {
-    const res = await get(`/workspaces/${wsId}/files/../../../etc/passwd`);
+    const res = await get(`/workspaces/${wsId}/raw/../../../etc/passwd`);
     expect(res.status).toBe(404);
   });
 
@@ -473,7 +476,7 @@ describe("workspace file serving", () => {
     writeFileSync(outsideFile, "escaped");
     symlinkSync(outsideFile, join(wsRoot, "escape.png"));
     try {
-      const res = await get(`/workspaces/${wsId}/files/escape.png`);
+      const res = await get(`/workspaces/${wsId}/raw/escape.png`);
       expect(res.status).toBe(404);
     } finally {
       rmSync(outsideFile, { force: true });
@@ -481,25 +484,23 @@ describe("workspace file serving", () => {
   });
 
   it("rejects requests without auth", async () => {
-    const res = await get(`/workspaces/${wsId}/files/chart.png`, false);
+    const res = await get(`/workspaces/${wsId}/raw/chart.png`, false);
     expect(res.status).toBe(401);
   });
 
-  it("supports query-param token auth only for browse-mode file reads", async () => {
-    const withoutBrowse = await fetch(
-      `${baseUrl}/workspaces/${wsId}/files/chart.png?token=${token}`,
-    );
-    expect(withoutBrowse.status).toBe(401);
-
-    const res = await fetch(
+  it("supports query-param token auth only for raw file reads", async () => {
+    const legacyBrowse = await fetch(
       `${baseUrl}/workspaces/${wsId}/files/chart.png?mode=browse&token=${token}`,
     );
+    expect(legacyBrowse.status).toBe(401);
+
+    const res = await fetch(`${baseUrl}/workspaces/${wsId}/raw/chart.png?token=${token}`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
   });
 });
 
-// ── Workspace File Browser (browse mode, directory listing, search) ──
+// ── Workspace File Browser (raw files, directory listing, search) ──
 
 describe("workspace file browser", () => {
   let wsId: string;
@@ -536,10 +537,10 @@ describe("workspace file browser", () => {
     rmSync(wsRoot, { recursive: true, force: true });
   });
 
-  // ── Browse mode ──
+  // ── Raw files ──
 
-  it("browse mode serves text files with correct content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/files/README.md?mode=browse`);
+  it("raw route serves text files with correct content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/README.md`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     expect(res.headers.get("cache-control")).toBe("private, no-cache");
@@ -547,55 +548,67 @@ describe("workspace file browser", () => {
     expect(body).toBe("# Hello world");
   });
 
-  it("browse mode serves .ts files as text/plain", async () => {
-    const res = await get(`/workspaces/${wsId}/files/src/index.ts?mode=browse`);
+  it("raw route serves .ts files as text/plain", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/src/index.ts`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 
-  it("browse mode serves .json with application/json content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/files/package.json?mode=browse`);
+  it("raw route serves .json with application/json content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/package.json`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
   });
 
-  it("browse mode serves images with image content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/files/chart.png?mode=browse`);
+  it("raw route serves images with image content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/chart.png`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
   });
 
-  it("browse mode blocks .env files", async () => {
-    const res = await get(`/workspaces/${wsId}/files/.env?mode=browse`);
+  it("raw route blocks .env files", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/.env`);
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toContain("sensitive");
   });
 
-  it("browse mode blocks private keys", async () => {
-    const res = await get(`/workspaces/${wsId}/files/id_rsa?mode=browse`);
+  it("raw route blocks private keys", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/id_rsa`);
     expect(res.status).toBe(403);
   });
 
-  it("browse mode blocks .git directory contents", async () => {
-    const res = await get(`/workspaces/${wsId}/files/.git/HEAD?mode=browse`);
+  it("raw route blocks .git directory contents", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/.git/HEAD`);
     expect(res.status).toBe(403);
   });
 
-  it("browse mode returns 404 for nonexistent files", async () => {
-    const res = await get(`/workspaces/${wsId}/files/missing.ts?mode=browse`);
+  it("raw route returns 404 for nonexistent files", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/missing.ts`);
     expect(res.status).toBe(404);
   });
 
-  it("browse mode blocks path traversal", async () => {
-    const res = await get(`/workspaces/${wsId}/files/../../../etc/passwd?mode=browse`);
+  it("raw route blocks path traversal", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/../../../etc/passwd`);
     expect(res.status).toBe(404);
+  });
+
+  it("raw route serves workspace file bytes", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/README.md`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    await expect(res.text()).resolves.toBe("# Hello world");
+  });
+
+  it("raw route blocks sensitive files", async () => {
+    const res = await get(`/workspaces/${wsId}/raw/.env`);
+    expect(res.status).toBe(403);
   });
 
   // ── Directory listing ──
 
-  it("lists workspace root directory with trailing slash", async () => {
-    const res = await get(`/workspaces/${wsId}/files/`);
+  it("lists workspace root directory", async () => {
+    const res = await get(`/workspaces/${wsId}/contents`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.path).toBeTruthy();
@@ -611,7 +624,16 @@ describe("workspace file browser", () => {
   });
 
   it("lists subdirectory entries", async () => {
-    const res = await get(`/workspaces/${wsId}/files/src/`);
+    const res = await get(`/workspaces/${wsId}/contents/src`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const names = body.entries.map((e: { name: string }) => e.name);
+    expect(names).toContain("index.ts");
+    expect(names).toContain("components");
+  });
+
+  it("contents route lists workspace directories", async () => {
+    const res = await get(`/workspaces/${wsId}/contents/src`);
     expect(res.status).toBe(200);
     const body = await res.json();
     const names = body.entries.map((e: { name: string }) => e.name);
@@ -620,7 +642,7 @@ describe("workspace file browser", () => {
   });
 
   it("directory entries have correct shape", async () => {
-    const res = await get(`/workspaces/${wsId}/files/`);
+    const res = await get(`/workspaces/${wsId}/contents`);
     const body = await res.json();
     const readme = body.entries.find((e: { name: string }) => e.name === "README.md");
     expect(readme).toBeDefined();
@@ -630,19 +652,19 @@ describe("workspace file browser", () => {
   });
 
   it("returns 404 for nonexistent directory", async () => {
-    const res = await get(`/workspaces/${wsId}/files/nonexistent/`);
+    const res = await get(`/workspaces/${wsId}/contents/nonexistent`);
     expect(res.status).toBe(404);
   });
 
   it("directory listing blocks path traversal", async () => {
-    const res = await get(`/workspaces/${wsId}/files/../`);
+    const res = await get(`/workspaces/${wsId}/contents/../`);
     expect(res.status).toBe(404);
   });
 
   // ── File index ──
 
-  it("returns file index for client-side search", async () => {
-    const res = await get(`/workspaces/${wsId}/file-index`);
+  it("paths route returns file index for client-side search", async () => {
+    const res = await get(`/workspaces/${wsId}/paths`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.paths).toBeInstanceOf(Array);
@@ -650,13 +672,8 @@ describe("workspace file browser", () => {
     expect(body.paths).toContain("src/components/Button.tsx");
   });
 
-  it("returns 400 for bare /files without trailing slash", async () => {
-    const res = await get(`/workspaces/${wsId}/files`);
-    expect(res.status).toBe(400);
-  });
-
-  it("file index returns 404 for nonexistent workspace", async () => {
-    const res = await get("/workspaces/BOGUS/file-index");
+  it("paths route returns 404 for nonexistent workspace", async () => {
+    const res = await get("/workspaces/BOGUS/paths");
     expect(res.status).toBe(404);
   });
 
@@ -664,9 +681,9 @@ describe("workspace file browser", () => {
 
   it("all new endpoints require auth", async () => {
     const endpoints = [
-      `/workspaces/${wsId}/files/`,
-      `/workspaces/${wsId}/files/README.md?mode=browse`,
-      `/workspaces/${wsId}/file-index`,
+      `/workspaces/${wsId}/contents`,
+      `/workspaces/${wsId}/raw/README.md`,
+      `/workspaces/${wsId}/paths`,
     ];
     for (const endpoint of endpoints) {
       const res = await get(endpoint, false);
@@ -789,13 +806,14 @@ describe("sessions API", () => {
       ).toBe(false);
 
       const sessionListRes = await get(
-        `/workspaces/${workspace.id}/home?sinceMs=0&untilMs=${Date.now() + 1_000}`,
+        `/workspaces/${workspace.id}/sessions?status=stopped&sinceMs=0&untilMs=${Date.now() + 1_000}`,
       );
       expect(sessionListRes.status).toBe(200);
       const sessionList = await sessionListRes.json();
       expect(
-        sessionList.importableSessions.some(
-          (session: { path?: string }) => session.path === jsonlPath,
+        sessionList.stopped.some(
+          (session: { source?: string; path?: string }) =>
+            session.source === "tui" && session.path === jsonlPath,
         ),
       ).toBe(false);
     } finally {
@@ -1367,9 +1385,11 @@ describe("error handling", () => {
     expect(res.status).toBe(404);
   });
 
-  it("does not expose the retired bulk GET /sessions endpoint", async () => {
+  it("requires explicit filters for GET /sessions", async () => {
     const res = await get("/sessions");
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("status is required");
   });
 
   it("GET /sessions/search returns empty results for unmatched query", async () => {
