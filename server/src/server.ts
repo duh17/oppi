@@ -478,7 +478,6 @@ export class Server {
       gate: this.gate,
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
-      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
     });
 
     // Dictation pipeline. Session audio streams create one DictationManager per WebSocket.

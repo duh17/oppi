@@ -162,8 +162,6 @@ export type ClientMessage = // ── Prompting ──
         redactionPolicy?: ShareSessionRedactionPolicy;
         requestId?: string;
       }
-    // ── File suggestions ──
-    | { type: "get_file_suggestions"; query: string; requestId?: string }
     // ── Permission gate ──
     | {
         type: "permission_response";

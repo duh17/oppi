@@ -73,9 +73,6 @@ enum ClientMessage: Sendable {
         requestId: String? = nil
     )
 
-    // ── File suggestions ──
-    case getFileSuggestions(query: String, requestId: String? = nil)
-
     // ── Permission gate ──
     case permissionResponse(
         id: String,
@@ -405,12 +402,6 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(redactionPolicy?.normalized, forKey: .redactionPolicy)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        // ── File suggestions ──
-        case .getFileSuggestions(let query, let reqId):
-            try c.encode("get_file_suggestions", forKey: .type)
-            try c.encode(query, forKey: .query)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         // ── Permission gate ──
         case .permissionResponse(let id, let action, let scope, let expiresInMs, let reqId):
             try c.encode("permission_response", forKey: .type)
@@ -443,7 +434,7 @@ extension ClientMessage: Encodable {
         case type, message, attachments, images, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
-        case customInstructions, entryId, sessionPath, command, query, filterMode
+        case customInstructions, entryId, sessionPath, filterMode
         case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp
     }
@@ -488,7 +479,6 @@ extension ClientMessage {
         case .abortBash: return "abort_bash"
         case .getCommands: return "get_commands"
         case .shareSession: return "share_session"
-        case .getFileSuggestions: return "get_file_suggestions"
         case .permissionResponse: return "permission_response"
         case .extensionUIResponse: return "extension_ui_response"
         case .dictationStart: return "dictation_start"

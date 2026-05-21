@@ -1,9 +1,5 @@
-import { resolve } from "node:path";
-
-import { getFileSuggestions } from "./file-suggestions.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
@@ -12,7 +8,6 @@ import type {
   MessageQueueState,
   ServerMessage,
   Session,
-  Workspace,
 } from "./types.js";
 
 const log = createLogger({ base: { component: "ws_message_handler" } });
@@ -106,7 +101,6 @@ export interface WsMessageHandlerDeps {
   sessions: WsSessionCommands;
   gate: WsGateDecisions;
   ensureSessionContextWindow: (session: Session) => Session;
-  resolveWorkspaceForSession?: (session: Session) => Workspace | undefined;
 }
 
 export interface WsCommandMeta {
@@ -208,12 +202,6 @@ export class WsMessageHandler {
         if (!ok) {
           send({ type: "error", error: `UI request not found: ${msg.id}` });
         }
-        return;
-      }
-
-      // ── File suggestions (server-handled, no pi round-trip) ──
-      case "get_file_suggestions": {
-        this.handleFileSuggestions(session, msg.query, msg.requestId, send, meta);
         return;
       }
 
@@ -569,68 +557,6 @@ export class WsMessageHandler {
         return;
       }
       throw err;
-    }
-  }
-
-  private handleFileSuggestions(
-    session: Session,
-    query: string,
-    requestId: string | undefined,
-    send: (msg: ServerMessage) => void,
-    meta: WsCommandMeta,
-  ): void {
-    const command = "get_file_suggestions";
-
-    // requestId is optional in protocol: still return command_result even when
-    // absent so older/broken clients receive a typed response shape.
-    const sendResult = (
-      payload: Omit<Extract<ServerMessage, { type: "command_result" }>, "type">,
-    ): void => {
-      send({ type: "command_result", ...payload });
-    };
-
-    const workspace = this.deps.resolveWorkspaceForSession?.(session);
-    if (!workspace) {
-      log.warn("ws.file_suggestions.failed", {
-        connId: meta.connId,
-        sessionId: session.id,
-        requestId,
-        error: "workspace_unavailable",
-      });
-      sendResult({ command, requestId, success: false, error: "workspace_unavailable" });
-      return;
-    }
-
-    try {
-      const workspaceRoot = resolveSdkSessionCwd(workspace);
-      const additionalRoots = (workspace.allowedPaths ?? [])
-        .filter((entry) => entry.access === "read" || entry.access === "readwrite")
-        .map((entry) => {
-          const trimmed = entry.path.trim();
-          if (trimmed.startsWith("/") || trimmed.startsWith("~")) {
-            return trimmed;
-          }
-          return resolve(workspaceRoot, trimmed);
-        });
-
-      const result = getFileSuggestions(workspaceRoot, query, additionalRoots);
-      sendResult({ command, requestId, success: true, data: result });
-
-      log.debug("ws.file_suggestions.completed", {
-        connId: meta.connId,
-        sessionId: session.id,
-        requestId,
-        matches: result.items.length,
-      });
-    } catch (err: unknown) {
-      const error = safeErrorMessage(err);
-      log.warn("ws.file_suggestions.failed", {
-        connId: meta.connId,
-        sessionId: session.id,
-        requestId,
-        error,
-      });
-      sendResult({ command, requestId, success: false, error });
     }
   }
 }
