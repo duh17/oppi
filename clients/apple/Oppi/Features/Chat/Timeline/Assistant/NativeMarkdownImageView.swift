@@ -1,3 +1,5 @@
+import Darwin
+import Network
 import OSLog
 import SwiftUI
 import UIKit
@@ -7,11 +9,13 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Mark
 
 /// UIKit view that loads and displays an image referenced in markdown.
 ///
-/// Supports both workspace-relative paths (loaded via the workspace file API)
-/// and absolute http/https URLs (loaded via URLSession).
+/// Supports workspace/session paths loaded through Oppi's file APIs, plus
+/// explicit tap-to-load for public HTTPS markdown image URLs.
 ///
-/// Lifecycle: apply(url:alt:fetchWorkspaceFile:) triggers an async load. States:
+/// Lifecycle: apply(url:alt:fetchWorkspaceFile:) triggers an async load for
+/// trusted Oppi file URLs. Direct remote URLs first show a prompt. States:
 /// - loading: spinner + alt text label
+/// - remote prompt: alt text + Load remote image button
 /// - loaded: image view (tap to fullscreen)
 /// - failed: muted placeholder label (alt text when available, otherwise `[image]`)
 @MainActor
@@ -23,6 +27,9 @@ final class NativeMarkdownImageView: UIView {
     private let altLabel = UILabel()
     private let imageView = UIImageView()
     private let errorLabel = UILabel()
+    private let remotePromptStack = UIStackView()
+    private let remotePromptLabel = UILabel()
+    private let remoteLoadButton = UIButton(type: .system)
 
     /// Web view for rendering SVG and animated images that UIImage doesn't support.
     /// Created lazily on first SVG load to avoid WKWebView overhead for
@@ -34,10 +41,23 @@ final class NativeMarkdownImageView: UIView {
     private var svgPreviewData: Data?
 
     private var currentURL: URL?
+    private var pendingRemoteLoad: PendingImageLoad?
     private var loadTask: Task<Void, Never>?
 
     typealias FetchWorkspaceFile = (_ workspaceID: String, _ path: String) async throws -> Data
     typealias FetchSessionFile = (_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data
+    typealias FetchRemoteImage = (_ url: URL) async throws -> Data
+
+    var fetchRemoteImage: FetchRemoteImage = { url in
+        try await RemoteMarkdownImageFetcher.fetch(url)
+    }
+
+    private struct PendingImageLoad {
+        let url: URL
+        let alt: String
+        let fetchWorkspaceFile: FetchWorkspaceFile?
+        let fetchSessionFile: FetchSessionFile?
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -83,10 +103,32 @@ final class NativeMarkdownImageView: UIView {
         errorLabel.numberOfLines = 2
         errorLabel.isHidden = true
 
+        remotePromptStack.translatesAutoresizingMaskIntoConstraints = false
+        remotePromptStack.axis = .vertical
+        remotePromptStack.alignment = .center
+        remotePromptStack.spacing = 8
+        remotePromptStack.isHidden = true
+
+        remotePromptLabel.translatesAutoresizingMaskIntoConstraints = false
+        remotePromptLabel.font = .preferredFont(forTextStyle: .caption1)
+        remotePromptLabel.textAlignment = .center
+        remotePromptLabel.numberOfLines = 2
+
+        var buttonConfig = UIButton.Configuration.bordered()
+        buttonConfig.title = "Load remote image"
+        buttonConfig.image = UIImage(systemName: "arrow.down.circle")
+        buttonConfig.imagePadding = 6
+        remoteLoadButton.configuration = buttonConfig
+        remoteLoadButton.addTarget(self, action: #selector(handleRemoteLoadTap), for: .touchUpInside)
+
+        remotePromptStack.addArrangedSubview(remotePromptLabel)
+        remotePromptStack.addArrangedSubview(remoteLoadButton)
+
         addSubview(imageView)
         addSubview(spinner)
         addSubview(altLabel)
         addSubview(errorLabel)
+        addSubview(remotePromptStack)
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         imageView.addGestureRecognizer(tapGesture)
@@ -120,6 +162,12 @@ final class NativeMarkdownImageView: UIView {
             errorLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             errorLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+
+            // Remote images require an explicit tap before network fetch.
+            remotePromptStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            remotePromptStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            remotePromptStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+            remotePromptStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
         ])
     }
 
@@ -167,16 +215,51 @@ final class NativeMarkdownImageView: UIView {
             showExportPlaceholder(alt: alt)
 
         case .live:
-            showLoadingState(alt: alt)
-            loadTask = Task { [weak self] in
-                await self?.loadImage(
+            switch RemoteMarkdownImagePolicy.decision(for: url) {
+            case .internalImageURL, .unsupported:
+                startImageLoad(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, fetchSessionFile: fetchSessionFile)
+            case .loadableRemote:
+                pendingRemoteLoad = PendingImageLoad(
                     url: url,
                     alt: alt,
                     fetchWorkspaceFile: fetchWorkspaceFile,
                     fetchSessionFile: fetchSessionFile
                 )
+                showRemoteLoadPrompt(alt: alt)
+            case .blockedRemote:
+                pendingRemoteLoad = nil
+                showBlockedRemoteState(alt: alt)
             }
         }
+    }
+
+    private func startImageLoad(
+        url: URL,
+        alt: String,
+        fetchWorkspaceFile: FetchWorkspaceFile?,
+        fetchSessionFile: FetchSessionFile?
+    ) {
+        pendingRemoteLoad = nil
+        showLoadingState(alt: alt)
+        loadTask = Task { [weak self] in
+            await self?.loadImage(
+                url: url,
+                alt: alt,
+                fetchWorkspaceFile: fetchWorkspaceFile,
+                fetchSessionFile: fetchSessionFile
+            )
+        }
+    }
+
+    @objc private func handleRemoteLoadTap() {
+        guard let pending = pendingRemoteLoad else { return }
+        loadTask?.cancel()
+        startImageLoad(
+            url: pending.url,
+            alt: pending.alt,
+            fetchWorkspaceFile: pending.fetchWorkspaceFile,
+            fetchSessionFile: pending.fetchSessionFile
+        )
     }
 
     private func loadImage(
@@ -236,22 +319,23 @@ final class NativeMarkdownImageView: UIView {
             }
         }
 
-        // Fall back to direct URL fetch (http/https).
-        guard let scheme = url.scheme, scheme == "http" || scheme == "https" else {
+        // Fall back to direct remote fetch only after the user explicitly taps
+        // the remote-image prompt. Direct remote loads use a constrained,
+        // ephemeral session and reject unsafe targets.
+        switch RemoteMarkdownImagePolicy.decision(for: url) {
+        case .loadableRemote:
+            break
+        case .blockedRemote:
+            showBlockedRemoteState(alt: alt)
+            return
+        case .internalImageURL, .unsupported:
             showErrorState(alt: alt)
             return
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let data = try await fetchRemoteImage(url)
             guard !Task.isCancelled else { return }
-
-            // Validate HTTP response.
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200 ..< 300).contains(httpResponse.statusCode) {
-                showErrorState(alt: alt)
-                return
-            }
 
             if let image = await Self.decodeRasterImage(data: data) {
                 Self.imageCache.setObject(image, forKey: url as NSURL)
@@ -269,6 +353,7 @@ final class NativeMarkdownImageView: UIView {
             showErrorState(alt: alt)
         } catch {
             guard !Task.isCancelled else { return }
+            logger.error("Remote image load failed: \(error.localizedDescription) host=\(url.host(percentEncoded: false) ?? "unknown")")
             showErrorState(alt: alt)
         }
     }
@@ -289,6 +374,10 @@ final class NativeMarkdownImageView: UIView {
         return "[\(alt)]"
     }
 
+    private func hideRemotePrompt() {
+        remotePromptStack.isHidden = true
+    }
+
     /// Export mode: show alt text in a styled box. No spinner, no async load.
     /// If the image was previously viewed, the cache check above already
     /// handled it. This path is for uncached images only.
@@ -306,8 +395,31 @@ final class NativeMarkdownImageView: UIView {
         altLabel.isHidden = false
         imageView.isHidden = true
         errorLabel.isHidden = true
+        hideRemotePrompt()
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
+    }
+
+    private func showRemoteLoadPrompt(alt: String) {
+        let palette = ThemeRuntimeState.currentPalette()
+        let normalizedAlt = normalizedAltText(alt)
+        backgroundColor = UIColor(palette.bgHighlight)
+        remotePromptLabel.textColor = UIColor(palette.comment)
+        remotePromptLabel.text = normalizedAlt.map { "Remote image: \($0)" } ?? "Remote image"
+        heightConstraint?.constant = Self.loadingPlaceholderHeight
+        isHidden = false
+
+        spinner.stopAnimating()
+        altLabel.isHidden = true
+        imageView.isHidden = true
+        errorLabel.isHidden = true
+        svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
+        remotePromptStack.isHidden = false
+
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
+        invalidateTimelineLayout()
     }
 
     private func showLoadingState(alt: String) {
@@ -326,6 +438,7 @@ final class NativeMarkdownImageView: UIView {
         altLabel.isHidden = normalizedAlt == nil
         imageView.isHidden = true
         errorLabel.isHidden = true
+        hideRemotePrompt()
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
     }
@@ -334,6 +447,7 @@ final class NativeMarkdownImageView: UIView {
         spinner.stopAnimating()
         altLabel.isHidden = true
         errorLabel.isHidden = true
+        hideRemotePrompt()
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
 
@@ -368,6 +482,7 @@ final class NativeMarkdownImageView: UIView {
         spinner.stopAnimating()
         altLabel.isHidden = true
         errorLabel.isHidden = true
+        hideRemotePrompt()
         imageView.isHidden = true
 
         let aspectRatio = MediaMimeType.extractSVGViewBoxAspectRatio(data)
@@ -508,15 +623,30 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func showErrorState(alt: String) {
+        showMessageState(text: bracketedFallbackText(for: alt))
+    }
+
+    private func showBlockedRemoteState(alt: String) {
+        let text: String
+        if let alt = normalizedAltText(alt) {
+            text = "[\(alt) — remote image blocked]"
+        } else {
+            text = "[remote image blocked]"
+        }
+        showMessageState(text: text)
+    }
+
+    private func showMessageState(text: String) {
         spinner.stopAnimating()
         altLabel.isHidden = true
         imageView.isHidden = true
+        hideRemotePrompt()
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
 
         let palette = ThemeRuntimeState.currentPalette()
         errorLabel.textColor = UIColor(palette.comment)
-        errorLabel.text = bracketedFallbackText(for: alt)
+        errorLabel.text = text
         errorLabel.isHidden = false
         heightConstraint?.constant = Self.loadingPlaceholderHeight
         backgroundColor = UIColor(palette.bgHighlight)
@@ -552,6 +682,317 @@ final class NativeMarkdownImageView: UIView {
             responder = current.next
         }
         return nil
+    }
+}
+
+enum RemoteMarkdownImagePolicy {
+    enum Decision: Equatable {
+        case internalImageURL
+        case loadableRemote
+        case blockedRemote
+        case unsupported
+    }
+
+    typealias ResolveHost = @Sendable (_ host: String) async throws -> [String]
+
+    static func decision(for url: URL) -> Decision {
+        if SessionFileURL.parse(url) != nil || WorkspaceFileURL.parse(url) != nil {
+            return .internalImageURL
+        }
+
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            return .unsupported
+        }
+
+        guard scheme == "https" else {
+            return .blockedRemote
+        }
+
+        guard let host = normalizedHost(for: url), isPublicNetworkHost(host) else {
+            return .blockedRemote
+        }
+
+        return .loadableRemote
+    }
+
+    static func resolvedDecision(
+        for url: URL,
+        resolveHost: ResolveHost = RemoteMarkdownImageHostResolver.resolve
+    ) async -> Decision {
+        let initialDecision = decision(for: url)
+        guard initialDecision == .loadableRemote,
+              let host = normalizedHost(for: url) else {
+            return initialDecision
+        }
+
+        do {
+            let addresses = try await resolveHost(host)
+            guard !addresses.isEmpty else { return .blockedRemote }
+            return addresses.allSatisfy(isResolvedPublicAddress) ? .loadableRemote : .blockedRemote
+        } catch {
+            return .blockedRemote
+        }
+    }
+
+    private static func normalizedHost(for url: URL) -> String? {
+        guard var host = url.host(percentEncoded: false)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !host.isEmpty else {
+            return nil
+        }
+        host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        host = host.lowercased()
+        if host.hasSuffix(".") {
+            host.removeLast()
+        }
+        return host.isEmpty ? nil : host
+    }
+
+    private static func isResolvedPublicAddress(_ address: String) -> Bool {
+        if let ipv4 = IPv4Address(address) {
+            return !isBlockedIPv4(Array(ipv4.rawValue))
+        }
+
+        if let ipv6 = IPv6Address(address) {
+            return !isBlockedIPv6(Array(ipv6.rawValue))
+        }
+
+        return false
+    }
+
+    private static func isPublicNetworkHost(_ host: String) -> Bool {
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {
+            return false
+        }
+
+        if let ipv4 = IPv4Address(host) {
+            return !isBlockedIPv4(Array(ipv4.rawValue))
+        }
+
+        if let ipv6 = IPv6Address(host) {
+            return !isBlockedIPv6(Array(ipv6.rawValue))
+        }
+
+        // Unqualified names are commonly local-network hosts. Requiring a dot
+        // keeps direct remote markdown images on public DNS names unless the
+        // URL is one of Oppi's workspace/session file API URLs handled above.
+        return host.contains(".")
+    }
+
+    private static func isBlockedIPv4(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 4 else { return true }
+        switch bytes[0] {
+        case 0, 10, 127:
+            return true
+        case 100:
+            return (bytes[1] & 0b1100_0000) == 0b0100_0000 // 100.64.0.0/10
+        case 169:
+            return bytes[1] == 254 // link-local
+        case 172:
+            return (16 ... 31).contains(bytes[1])
+        case 192:
+            return bytes[1] == 168
+        case 198:
+            return bytes[1] == 18 || bytes[1] == 19 // benchmarking
+        case 224 ... 255:
+            return true // multicast and reserved ranges
+        default:
+            return false
+        }
+    }
+
+    private static func isBlockedIPv6(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 16 else { return true }
+        if bytes.allSatisfy({ $0 == 0 }) { return true } // unspecified
+        if bytes.prefix(15).allSatisfy({ $0 == 0 }) && bytes[15] == 1 { return true } // loopback
+        if bytes[0] == 0xfe && (bytes[1] & 0b1100_0000) == 0b1000_0000 { return true } // fe80::/10
+        if (bytes[0] & 0b1111_1110) == 0b1111_1100 { return true } // fc00::/7
+        if bytes[0] == 0xff { return true } // multicast
+        if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x0d, bytes[3] == 0xb8 { return true } // docs
+
+        let isIPv4Mapped = bytes.prefix(10).allSatisfy { $0 == 0 }
+            && bytes[10] == 0xff
+            && bytes[11] == 0xff
+        if isIPv4Mapped {
+            return isBlockedIPv4(Array(bytes[12 ... 15]))
+        }
+
+        return false
+    }
+}
+
+private enum RemoteMarkdownImageLoadError: LocalizedError {
+    case invalidResponse
+    case httpStatus(Int)
+    case invalidContentType(String?)
+    case contentTooLarge(Int64)
+    case blockedResolvedHost(String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            return "Remote image response was invalid."
+        case .httpStatus(let status):
+            return "Remote image request failed with HTTP \(status)."
+        case .invalidContentType(let contentType):
+            return "Remote image content type is not allowed: \(contentType ?? "unknown")."
+        case .contentTooLarge(let size):
+            return "Remote image is too large: \(size) bytes."
+        case .blockedResolvedHost(let host):
+            return "Remote image resolved to a blocked address: \(host ?? "unknown")."
+        }
+    }
+}
+
+private enum RemoteMarkdownImageHostResolutionError: Error {
+    case getaddrinfoFailed(Int32)
+}
+
+private enum RemoteMarkdownImageHostResolver {
+    static func resolve(_ host: String) async throws -> [String] {
+        try await Task.detached(priority: .userInitiated) {
+            var hints = addrinfo(
+                ai_flags: AI_ADDRCONFIG,
+                ai_family: AF_UNSPEC,
+                ai_socktype: SOCK_STREAM,
+                ai_protocol: IPPROTO_TCP,
+                ai_addrlen: 0,
+                ai_canonname: nil,
+                ai_addr: nil,
+                ai_next: nil
+            )
+            var infoPointer: UnsafeMutablePointer<addrinfo>?
+            let result = getaddrinfo(host, nil, &hints, &infoPointer)
+            guard result == 0, let first = infoPointer else {
+                throw RemoteMarkdownImageHostResolutionError.getaddrinfoFailed(result)
+            }
+            defer { freeaddrinfo(first) }
+
+            var addresses: Set<String> = []
+            var cursor: UnsafeMutablePointer<addrinfo>? = first
+            while let current = cursor {
+                var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                let err = getnameinfo(
+                    current.pointee.ai_addr,
+                    current.pointee.ai_addrlen,
+                    &hostBuffer,
+                    socklen_t(hostBuffer.count),
+                    nil,
+                    0,
+                    NI_NUMERICHOST
+                )
+                if err == 0 {
+                    addresses.insert(String(cString: hostBuffer))
+                }
+                cursor = current.pointee.ai_next
+            }
+            return Array(addresses)
+        }.value
+    }
+}
+
+private final class RemoteMarkdownImageRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    private let resolveHost: RemoteMarkdownImagePolicy.ResolveHost
+
+    init(resolveHost: @escaping RemoteMarkdownImagePolicy.ResolveHost) {
+        self.resolveHost = resolveHost
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        guard let url = request.url else {
+            completionHandler(nil)
+            return
+        }
+
+        Task {
+            let decision = await RemoteMarkdownImagePolicy.resolvedDecision(for: url, resolveHost: resolveHost)
+            completionHandler(decision == .loadableRemote ? request : nil)
+        }
+    }
+}
+
+private enum RemoteMarkdownImageFetcher {
+    private static let maxBytes = 8 * 1_024 * 1_024
+
+    static func fetch(
+        _ url: URL,
+        resolveHost: @escaping RemoteMarkdownImagePolicy.ResolveHost = RemoteMarkdownImageHostResolver.resolve
+    ) async throws -> Data {
+        guard await RemoteMarkdownImagePolicy.resolvedDecision(for: url, resolveHost: resolveHost) == .loadableRemote else {
+            throw RemoteMarkdownImageLoadError.blockedResolvedHost(url.host(percentEncoded: false))
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue(
+            "image/avif,image/webp,image/png,image/jpeg,image/gif,image/svg+xml;q=0.9,*/*;q=0.1",
+            forHTTPHeaderField: "Accept"
+        )
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForResource = 20
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        configuration.waitsForConnectivity = false
+
+        let delegate = RemoteMarkdownImageRedirectDelegate(resolveHost: resolveHost)
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+
+        let (bytes, response) = try await session.bytes(for: request)
+        try validate(response: response)
+
+        var data = Data()
+        let expectedLength = response.expectedContentLength
+        if expectedLength > 0 {
+            data.reserveCapacity(min(Int(expectedLength), maxBytes))
+        }
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > maxBytes {
+                throw RemoteMarkdownImageLoadError.contentTooLarge(Int64(data.count))
+            }
+        }
+        return data
+    }
+
+    private static func validate(response: URLResponse) throws {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RemoteMarkdownImageLoadError.invalidResponse
+        }
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw RemoteMarkdownImageLoadError.httpStatus(httpResponse.statusCode)
+        }
+        let expectedLength = response.expectedContentLength
+        if expectedLength > Int64(maxBytes) {
+            throw RemoteMarkdownImageLoadError.contentTooLarge(expectedLength)
+        }
+        guard isAllowedContentType(response.mimeType) else {
+            throw RemoteMarkdownImageLoadError.invalidContentType(response.mimeType)
+        }
+    }
+
+    private static func isAllowedContentType(_ mimeType: String?) -> Bool {
+        guard let mimeType = mimeType?.lowercased(), !mimeType.isEmpty else {
+            return false
+        }
+        return mimeType == "image/png"
+            || mimeType == "image/jpeg"
+            || mimeType == "image/jpg"
+            || mimeType == "image/gif"
+            || mimeType == "image/webp"
+            || mimeType == "image/svg+xml"
+            || mimeType == "image/avif"
     }
 }
 

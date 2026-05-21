@@ -63,6 +63,48 @@ final class HTMLContentTracker {
     }
 }
 
+// MARK: - HTML Security
+
+enum HTMLContentSecurity {
+    static let contentSecurityPolicy = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src data: blob:; media-src data: blob:; font-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'"
+
+    static func makeConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        return configuration
+    }
+
+    static func injectContentSecurityPolicy(into html: String) -> String {
+        let metaTag = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(contentSecurityPolicy)\">"
+
+        if let headRange = html.range(of: "<head\\b[^>]*>", options: [.regularExpression, .caseInsensitive]) {
+            var secured = html
+            secured.insert(contentsOf: metaTag, at: headRange.upperBound)
+            return secured
+        }
+
+        if let htmlRange = html.range(of: "<html\\b[^>]*>", options: [.regularExpression, .caseInsensitive]) {
+            var secured = html
+            secured.insert(contentsOf: "<head>\(metaTag)</head>", at: htmlRange.upperBound)
+            return secured
+        }
+
+        return "<head>\(metaTag)</head>\(html)"
+    }
+
+    static func allowsEmbeddedNavigation(to url: URL?) -> Bool {
+        guard let scheme = url?.scheme?.lowercased() else { return true }
+        return scheme == "about" || scheme == "data" || scheme == "blob"
+    }
+
+    static func isHTTPURL(_ url: URL?) -> Bool {
+        guard let scheme = url?.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+}
+
 // MARK: - HTMLRenderView
 
 /// Single canonical UIView for rendering HTML strings via WKWebView.
@@ -80,11 +122,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
     private let contentTracker = HTMLContentTracker()
 
     init(htmlString: String, piActionHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = nil, piActionStore: PiQuickActionStore? = nil) {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        config.mediaTypesRequiringUserActionForPlayback = .all
-
-        let wv = PiWKWebView(frame: .zero, configuration: config)
+        let wv = PiWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
         wv.isInspectable = false
         wv.allowsBackForwardNavigationGestures = false
         wv.scrollView.contentInsetAdjustmentBehavior = .always
@@ -109,7 +147,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
         ])
 
         // Queue for loading — will fire when view is ready
-        contentTracker.setContent(htmlString)
+        contentTracker.setContent(HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString))
     }
 
     @available(*, unavailable)
@@ -135,7 +173,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
 
     /// Load new HTML content. Loads immediately if ready, otherwise deferred.
     func load(_ htmlString: String) {
-        if let html = contentTracker.setContent(htmlString) {
+        if let html = contentTracker.setContent(HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString)) {
             webView.loadHTMLString(html, baseURL: nil)
         }
     }
@@ -162,12 +200,13 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        if navigationAction.navigationType == .other {
+        if HTMLContentSecurity.allowsEmbeddedNavigation(to: navigationAction.request.url) {
             decisionHandler(.allow)
             return
         }
-        if let url = navigationAction.request.url,
-           url.scheme == "http" || url.scheme == "https" {
+        if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
+           navigationAction.navigationType != .other,
+           let url = navigationAction.request.url {
             UIApplication.shared.open(url)
         }
         decisionHandler(.cancel)
@@ -179,8 +218,8 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if let url = navigationAction.request.url,
-           url.scheme == "http" || url.scheme == "https" {
+        if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
+           let url = navigationAction.request.url {
             UIApplication.shared.open(url)
         }
         return nil

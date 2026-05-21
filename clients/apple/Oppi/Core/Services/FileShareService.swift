@@ -894,17 +894,14 @@ enum FileShareService {
 
     /// Render HTML to PDF using an offscreen WKWebView.
     ///
-    /// Creates a temporary web view, loads the HTML, waits for all resources
-    /// (CDN scripts, fonts, images) to load and JavaScript to execute, then
-    /// uses `WKWebView.pdf(configuration:)` for a native PDF export with
+    /// Creates a temporary web view, loads the HTML through Oppi's locked-down
+    /// HTML preview policy, waits for inline resources and JavaScript to settle,
+    /// then uses `WKWebView.pdf(configuration:)` for a native PDF export with
     /// selectable text and proper layout. Canvas elements are rasterized to
     /// static images in a library-agnostic pass before PDF capture.
     private static func renderHTMLToPDF(_ source: String) async -> Data {
         let layoutWidth = textLayoutWidth
-        let config = WKWebViewConfiguration()
-        // Ephemeral data store — no persistent cookies/cache from export renders.
-        // CDN fetches still work, just without disk cache (fine for one-shot export).
-        config.websiteDataStore = .nonPersistent()
+        let config = HTMLContentSecurity.makeConfiguration()
 
         let webView = WKWebView(
             frame: CGRect(x: 0, y: 0, width: layoutWidth, height: 1),
@@ -917,13 +914,13 @@ enum FileShareService {
             let delegate = PDFNavigationDelegate(continuation: continuation)
             webView.navigationDelegate = delegate
             objc_setAssociatedObject(webView, &PDFNavigationDelegate.associatedKey, delegate, .OBJC_ASSOCIATION_RETAIN)
-            webView.loadHTMLString(source, baseURL: nil)
+            webView.loadHTMLString(HTMLContentSecurity.injectContentSecurityPolicy(into: source), baseURL: nil)
         }
 
         guard loaded else { return Data() }
 
-        // Wait for external resources (scripts, fonts, images) to load
-        // and JavaScript to execute.
+        // Wait for inline resources (images, fonts) to settle and any
+        // embedded JavaScript to execute.
         await waitForContentReady(webView: webView)
 
         // Library-agnostic canvas freeze pass:
@@ -990,7 +987,7 @@ enum FileShareService {
         }
     }
 
-    /// Poll the web view until document and external resources have loaded.
+    /// Poll the web view until the document and inline resources have loaded.
     /// Waits up to 5 seconds for document completion, web fonts, and inline
     /// images to settle. An optional `window.__oppiReadyForCapture` hook can
     /// return false to delay capture.
@@ -1212,6 +1209,23 @@ private final class PDFNavigationDelegate: NSObject, WKNavigationDelegate {
 
     init(continuation: CheckedContinuation<Bool, Never>) {
         self.continuation = continuation
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(HTMLContentSecurity.allowsEmbeddedNavigation(to: navigationAction.request.url) ? .allow : .cancel)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        nil
     }
 
     // swiftlint:disable no_force_unwrap_production
