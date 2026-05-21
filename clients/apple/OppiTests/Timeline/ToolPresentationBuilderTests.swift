@@ -1738,6 +1738,102 @@ struct ToolPresentationBuilderTests {
         #expect(config.copyOutputText == "Generated image")
     }
 
+    @Test("ask collapsed row uses question mark icon and question count")
+    func askCollapsedUsesQuestionPresentation() {
+        let args: [String: JSONValue] = [
+            "questions": .array([
+                .object([
+                    "id": .string("scope"),
+                    "question": .string("Which scope should I use?"),
+                    "options": .array([
+                        .object(["value": .string("small"), "label": .string("Small")])
+                    ])
+                ]),
+                .object([
+                    "id": .string("details"),
+                    "question": .string("Which details should be preserved?")
+                ])
+            ]),
+            "allowCustom": .bool(true),
+        ]
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "ask-1", tool: "ask",
+            argsSummary: "allowCustom: true, questions: [2 items]",
+            outputPreview: "",
+            isError: false, isDone: false,
+            context: emptyContext(args: args)
+        )
+
+        #expect(config.title == "2 questions")
+        #expect(config.toolNamePrefix == "ask")
+        #expect(ToolCallFormatting.sfSymbolName(for: config.toolNamePrefix ?? "") == "questionmark")
+    }
+
+    @Test("ask collapsed row ignores server segment question text")
+    func askCollapsedIgnoresServerSegmentQuestionText() {
+        let args: [String: JSONValue] = [
+            "questions": .array([
+                .object(["id": .string("scope"), "question": .string("Which scope should I use?")]),
+                .object(["id": .string("details"), "question": .string("Which details should be preserved?")])
+            ])
+        ]
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "ask-1", tool: "ask",
+            argsSummary: "questions: [2 items]",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: .init(
+                args: args,
+                expandedItemIDs: [],
+                fullOutput: "",
+                isLoadingOutput: false,
+                callSegments: [
+                    StyledSegment(text: "ask ", style: .bold),
+                    StyledSegment(text: "2 questions · Which scope should I use?", style: .muted),
+                ]
+            )
+        )
+
+        #expect(config.title == "2 questions")
+        #expect(config.segmentAttributedTitle == nil)
+    }
+
+    @Test("ask expanded row does not duplicate user answer receipt")
+    func askExpandedDoesNotDuplicateUserAnswerReceipt() {
+        let questions: JSONValue = .array([
+            .object([
+                "id": .string("scope"),
+                "question": .string("Which scope should I use?"),
+                "options": .array([
+                    .object(["value": .string("small"), "label": .string("Small patch")]),
+                    .object(["value": .string("full"), "label": .string("Full refactor")]),
+                ])
+            ])
+        ])
+        let details: JSONValue = .object([
+            "questions": questions,
+            "answers": .object(["scope": .string("full")]),
+            "allIgnored": .bool(false),
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "ask-1", tool: "ask",
+            argsSummary: "allowCustom: true, questions: [1 items]",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["questions": questions],
+                details: details,
+                expanded: ["ask-1"]
+            )
+        )
+
+        #expect(config.expandedContent == nil)
+        #expect(config.copyOutputText == nil)
+    }
+
     @Test("non-read tool has no collapsed image preview")
     func bashNoImagePreview() {
         let config = ToolPresentationBuilder.build(

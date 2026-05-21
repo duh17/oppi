@@ -62,30 +62,51 @@ describe("MobileRendererRegistry", () => {
 describe("ask renderer", () => {
   const reg = new MobileRendererRegistry();
 
-  it("renderCall shows question text", () => {
+  it("renderCall shows ask prefix and question count", () => {
     const segs = reg.renderCall("ask", {
-      questions: [{ id: "install", question: "Where should I install it?" }],
+      questions: [
+        { id: "install", question: "Where should I install it?" },
+        { id: "scope", question: "Which scope?" },
+      ],
     });
-    expect(textOf(segs)).toBe("Where should I install it?");
-    expect(styleOf(segs, 0)).toBe("muted");
+    expect(textOf(segs)).toBe("ask 2 questions");
+    expect(styleOf(segs, 0)).toBe("bold");
+    expect(styleOf(segs, 1)).toBe("muted");
   });
 
-  it("renderResult uses question text and joins multi-select answers", () => {
-    const segs = reg.renderResult("ask", {
-      questions: [{ id: "targets", question: "Which targets?" }],
-      answers: { targets: ["ios", "mac"] },
-      allIgnored: false,
-    }, false);
-    expect(textOf(segs)).toBe("✓ Which targets?: ios, mac");
+  it("renderResult uses question text and joins multi-select answer labels", () => {
+    const segs = reg.renderResult(
+      "ask",
+      {
+        questions: [
+          {
+            id: "targets",
+            question: "Which targets?",
+            options: [
+              { value: "ios", label: "iOS app" },
+              { value: "mac", label: "Mac app" },
+            ],
+          },
+        ],
+        answers: { targets: ["ios", "mac"] },
+        allIgnored: false,
+      },
+      false,
+    );
+    expect(textOf(segs)).toBe("✓ Which targets?: iOS app, Mac app");
     expect(styleOf(segs, 0)).toBe("success");
   });
 
   it("renderResult falls back to id when question text is missing", () => {
-    const segs = reg.renderResult("ask", {
-      questions: [{ id: "targets" }],
-      answers: { targets: "ios" },
-      allIgnored: false,
-    }, false);
+    const segs = reg.renderResult(
+      "ask",
+      {
+        questions: [{ id: "targets" }],
+        answers: { targets: "ios" },
+        allIgnored: false,
+      },
+      false,
+    );
     expect(textOf(segs)).toBe("✓ targets: ios");
   });
 });

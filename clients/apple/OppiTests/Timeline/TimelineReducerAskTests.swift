@@ -22,7 +22,7 @@ struct TimelineReducerAskTests {
             ]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Pick a color\nblue\n\n> Pick a size\nlarge")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Pick a color\n**A:** blue\n\n**Q:** Pick a size\n**A:** large")
     }
 
     @Test("formatAskAnswers with skipped question")
@@ -35,7 +35,7 @@ struct TimelineReducerAskTests {
             "answers": .object(["color": .string("red")]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Pick a color\nred\n\n> Pick a size\n(skipped)")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Pick a color\n**A:** red\n\n**Q:** Pick a size\n**A:** (skipped)")
     }
 
     @Test("formatAskAnswers single question keeps full question and answer")
@@ -47,7 +47,7 @@ struct TimelineReducerAskTests {
             "answers": .object(["threads": .string("47618223")]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Which threads?\n47618223")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Which threads?\n**A:** 47618223")
     }
 
     @Test("formatAskAnswers single question multi-select keeps full question and answer")
@@ -59,7 +59,7 @@ struct TimelineReducerAskTests {
             "answers": .object(["threads": .array([.string("123"), .string("456")])]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Which threads?\n123, 456")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Which threads?\n**A:** 123, 456")
     }
 
     @Test("formatAskAnswers falls back to id when question text missing")
@@ -75,7 +75,7 @@ struct TimelineReducerAskTests {
             ]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "> color\nblue\n\n> size\nlarge")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** color\n**A:** blue\n\n**Q:** size\n**A:** large")
     }
 
     @Test("formatAskAnswers with allIgnored returns empty")
@@ -101,7 +101,26 @@ struct TimelineReducerAskTests {
             ]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Which tools?\nruff, mypy\n\n> Scope?\nfull")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Which tools?\n**A:** ruff, mypy\n\n**Q:** Scope?\n**A:** full")
+    }
+
+    @Test("formatAskAnswers maps option values to labels")
+    func formatAskAnswersMapsOptionValuesToLabels() {
+        let details: JSONValue = .object([
+            "questions": .array([
+                .object([
+                    "id": .string("approach"),
+                    "question": .string("Which approach?"),
+                    "options": .array([
+                        .object(["value": .string("full_rewrite"), "label": .string("Full rewrite")]),
+                        .object(["value": .string("small_patch"), "label": .string("Small patch")]),
+                    ])
+                ])
+            ]),
+            "answers": .object(["approach": .string("full_rewrite")]),
+            "allIgnored": .bool(false),
+        ])
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Which approach?\n- [x] Full rewrite\n- [ ] Small patch")
     }
 
     @Test("formatAskAnswers with nil details returns empty")
@@ -148,7 +167,8 @@ struct TimelineReducerAskTests {
                 foundText = text
             }
         }
-        #expect(foundText == "> Which approach?\nfull_rewrite")
+        #expect(foundText == "**Q:** Which approach?\n**A:** full_rewrite")
+        #expect(reducer.toolDetailsStore.details(for: "ask-evt-1") != nil)
     }
 
     @Test("ask toolEnd clears any leaked output from tool row")

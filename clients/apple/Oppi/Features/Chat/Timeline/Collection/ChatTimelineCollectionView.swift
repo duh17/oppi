@@ -863,6 +863,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             switch item {
             case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
+                if ToolCallFormatting.normalized(tool) == "ask" {
+                    return
+                }
+
                 if presentReadImagePreviewInsteadOfExpanding(
                     itemID: itemID,
                     item: item,

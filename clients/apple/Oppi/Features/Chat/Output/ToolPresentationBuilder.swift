@@ -145,7 +145,7 @@ enum ToolPresentationBuilder {
         // Expanded bash rows render a dedicated command panel, so we suppress
         // segment title commands there to avoid duplicate command text.
         let segmentAttributedTitle: NSAttributedString?
-        if isVoicePresentationResult || isBuiltInFileTool || (isExpanded && normalizedTool == "bash") {
+        if isVoicePresentationResult || isBuiltInFileTool || normalizedTool == "ask" || (isExpanded && normalizedTool == "bash") {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {
             let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
@@ -165,6 +165,9 @@ enum ToolPresentationBuilder {
             segmentAttributedTrailing = nil
         }
 
+        let segmentToolNamePrefix = SegmentRenderer.toolNamePrefix(from: context.callSegments ?? [])
+        let segmentToolNameColor = SegmentRenderer.toolNameColor(from: context.callSegments ?? [])
+
         return ToolTimelineRowConfiguration(
             itemID: itemID,
             title: title,
@@ -176,10 +179,10 @@ enum ToolPresentationBuilder {
             trailing: segmentAttributedTrailing != nil ? nil : trailing,
             titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
             toolNamePrefix: segmentAttributedTitle != nil
-                ? SegmentRenderer.toolNamePrefix(from: context.callSegments ?? [])
+                ? (segmentToolNamePrefix ?? collapsed.toolNamePrefix)
                 : collapsed.toolNamePrefix,
             toolNameColor: segmentAttributedTitle != nil
-                ? (SegmentRenderer.toolNameColor(from: context.callSegments ?? []) ?? collapsed.toolNameColor)
+                ? (segmentToolNameColor ?? collapsed.toolNameColor)
                 : collapsed.toolNameColor,
             editAdded: collapsed.editAdded,
             editRemoved: collapsed.editRemoved,
@@ -280,6 +283,16 @@ enum ToolPresentationBuilder {
                 }
             }
 
+        case "ask":
+            result.title = ToolCallFormatting.askCollapsedTitle(
+                args: args,
+                details: details,
+                argsSummary: argsSummary
+            )
+            result.toolNamePrefix = "ask"
+            result.toolNameColor = UIColor(Color.themeCyan)
+            result.titleLineBreakMode = .byTruncatingTail
+
         default:
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
@@ -350,6 +363,11 @@ enum ToolPresentationBuilder {
         var content: ToolExpandedContent?
 
         switch normalizedTool {
+        case "ask":
+            // Ask answers are rendered as user messages in the transcript.
+            // Keep the tool row collapsed to avoid duplicating the same Q/A receipt.
+            break
+
         case "bash":
             let command = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
             copyCommand = command.isEmpty ? nil : command
@@ -486,7 +504,7 @@ enum ToolPresentationBuilder {
             }
         }
 
-        if content == nil, !isDone {
+        if content == nil, !isDone, normalizedTool != "ask" {
             content = .status(message: pendingStatusMessage(normalizedTool: normalizedTool))
         }
 
@@ -502,7 +520,7 @@ enum ToolPresentationBuilder {
     /// Tools whose icon replaces the textual tool name in collapsed title rendering.
     private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
         switch prefix {
-        case "$", "read", "write", "edit", "voice_speak", "voice_create": true
+        case "$", "read", "write", "edit", "ask", "voice_speak", "voice_create": true
         default: false
         }
     }

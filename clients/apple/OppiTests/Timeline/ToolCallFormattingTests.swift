@@ -345,4 +345,53 @@ struct ToolCallFormattingTests {
         #expect(ToolCallFormatting.formatBytes(1048576) == "1.0 MB")
         #expect(ToolCallFormatting.formatBytes(5242880) == "5.0 MB")
     }
+
+    // MARK: - Ask Formatting
+
+    @Test func askSymbolUsesQuestionMark() {
+        #expect(ToolCallFormatting.sfSymbolName(for: "ask") == "questionmark")
+    }
+
+    @Test func askCollapsedTitleUsesQuestionCountOnly() {
+        let args: [String: JSONValue] = [
+            "questions": .array([
+                .object([
+                    "id": .string("scope"),
+                    "question": .string("Which scope should I use?")
+                ]),
+                .object([
+                    "id": .string("details"),
+                    "question": .string("Which details should be preserved?")
+                ])
+            ])
+        ]
+
+        #expect(ToolCallFormatting.askCollapsedTitle(args: args, details: nil, argsSummary: "") == "2 questions")
+    }
+
+    @Test func askAnswerSummaryRendersOptionsWithSelectedLabelChecked() {
+        let details: JSONValue = .object([
+            "questions": .array([
+                .object([
+                    "id": .string("scope"),
+                    "question": .string("Which scope should I use?"),
+                    "options": .array([
+                        .object([
+                            "value": .string("minimal_patch"),
+                            "label": .string("Minimal patch"),
+                            "description": .string("Smallest safe change")
+                        ]),
+                        .object([
+                            "value": .string("full_refactor"),
+                            "label": .string("Full refactor")
+                        ]),
+                    ])
+                ])
+            ]),
+            "answers": .object(["scope": .string("minimal_patch")]),
+            "allIgnored": .bool(false),
+        ])
+
+        #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Which scope should I use?\n- [x] Minimal patch — Smallest safe change\n- [ ] Full refactor")
+    }
 }

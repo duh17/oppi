@@ -478,6 +478,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             // Ask tool result — convert to user message, skip tool row update.
             if askToolEventIDs.contains(matchId) {
+                if let details = event.details {
+                    toolDetailsStore.set(details, for: matchId)
+                }
                 let text = Self.formatAskAnswers(details: event.details)
                 if !text.isEmpty {
                     let ts = FastISO8601Parser.parse(event.timestamp, fallback: Self.sharedTraceDateFormatter)
@@ -982,6 +985,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             // Freeze elapsed time and mark tool row done (with empty output).
             if let startedAt = toolStartTimes[toolEventId] {
                 toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
+            }
+            if let details {
+                toolDetailsStore.set(details, for: toolEventId)
             }
             // Clear any leaked output so the tool row doesn't show raw text.
             toolOutputStore.clear(itemIDs: [toolEventId])
@@ -1534,48 +1540,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Format ask tool details into a user-readable answer summary.
     ///
     /// Input: `{ questions: [...], answers: { id: value }, allIgnored: bool }`
-    /// Output: `"> Which approach?\nFull rewrite\n\n> Scope?\n(skipped)"` or empty if all ignored.
+    /// Output: compact Q/A markdown, or empty if all ignored.
     static func formatAskAnswers(details: JSONValue?) -> String {
-        guard case .object(let payload) = details else { return "" }
-
-        if case .bool(true) = payload["allIgnored"] {
-            return ""
-        }
-
-        guard case .object(let answers) = payload["answers"] else { return "" }
-        guard case .array(let questions) = payload["questions"] else {
-            // No questions array — fall back to answers keys.
-            return answers.keys.sorted().compactMap { key in
-                guard let value = answers[key] else { return nil }
-                return "\(key) → \(value.displayString)"
-            }.joined(separator: "\n")
-        }
-
-        var seenQuestionIDs = Set<String>()
-        var lines: [String] = []
-
-        for q in questions {
-            guard case .object(let qObj) = q,
-                  case .string(let qId) = qObj["id"] else { continue }
-
-            seenQuestionIDs.insert(qId)
-
-            let label: String
-            if case .string(let questionText) = qObj["question"] {
-                label = questionText
-            } else {
-                label = qId
-            }
-
-            let answerText = answers[qId]?.displayString ?? "(skipped)"
-            lines.append("> \(label)\n\(answerText)")
-        }
-
-        for key in answers.keys.sorted() where !seenQuestionIDs.contains(key) {
-            guard let value = answers[key] else { continue }
-            lines.append("> \(key)\n\(value.displayString)")
-        }
-
-        return lines.joined(separator: "\n\n")
+        ToolCallFormatting.askAnswerSummary(details: details)
     }
 }

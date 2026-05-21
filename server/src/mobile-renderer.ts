@@ -368,19 +368,44 @@ const log_experiment: MobileToolRenderer = {
   },
 };
 
+function askQuestionLabel(question: Record<string, unknown> | undefined): string {
+  const id = str(question?.id);
+  return firstLine(str(question?.question) || id, 120);
+}
+
+function askAnswerValueLabel(question: Record<string, unknown> | undefined, value: string): string {
+  const options = Array.isArray(question?.options)
+    ? (question.options as Array<Record<string, unknown>>)
+    : [];
+  const matched = options.find(
+    (option) => str(option.value) === value || str(option.label) === value,
+  );
+  return str(matched?.label) || value;
+}
+
+function askAnswerLabel(question: Record<string, unknown> | undefined, answer: unknown): string {
+  if (Array.isArray(answer)) {
+    return answer.map((value) => askAnswerValueLabel(question, str(value))).join(", ");
+  }
+  return askAnswerValueLabel(question, str(answer));
+}
+
 const ask: MobileToolRenderer = {
   renderCall(args) {
     const qs = Array.isArray(args.questions)
       ? (args.questions as Array<Record<string, unknown>>)
       : [];
-    const segs: StyledSegment[] = [];
+    const segs: StyledSegment[] = [{ text: "ask ", style: "bold" }];
 
-    for (let i = 0; i < qs.length; i++) {
-      const q = qs[i];
-      const qText = firstLine(str(q?.question), 80);
-      segs.push({ text: qText, style: "muted" });
-      if (i < qs.length - 1) segs.push({ text: "\n", style: "dim" });
+    if (qs.length === 0) {
+      segs.push({ text: "question", style: "muted" });
+      return segs;
     }
+
+    segs.push({
+      text: qs.length === 1 ? "1 question" : `${qs.length} questions`,
+      style: "muted",
+    });
     return segs;
   },
   renderResult(details: unknown, isError) {
@@ -399,13 +424,13 @@ const ask: MobileToolRenderer = {
     const segs: StyledSegment[] = [];
     for (const q of questions) {
       const qId = str(q?.id);
-      const label = firstLine(str(q?.question) || qId, 120);
+      const label = askQuestionLabel(q);
       const a = answers[qId];
       if (a === undefined) {
         segs.push({ text: label, style: "dim" }, { text: ": skipped\n", style: "dim" });
         continue;
       }
-      const display = Array.isArray(a) ? (a as string[]).join(", ") : str(a);
+      const display = askAnswerLabel(q, a);
       segs.push(
         { text: "\u2713 ", style: "success" },
         { text: label, style: "muted" },
