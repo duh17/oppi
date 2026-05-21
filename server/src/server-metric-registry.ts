@@ -146,10 +146,20 @@ export const SERVER_METRIC_REGISTRY = {
     unit: "count",
     description: "Permission requests that timed out waiting for user response.",
   },
+  "server.gate_auto_review": {
+    unit: "count",
+    description:
+      "Auto permission reviews. Tagged by model, outcome, status, risk_level, and prompt_hash.",
+  },
   "server.gate_auto_review_ms": {
     unit: "ms",
     description:
-      "Auto permission review duration. Tagged by model, status (allow/ask/error/timeout), tokens.",
+      "Auto permission review duration. Tagged by model, outcome, status, risk_level, and prompt_hash.",
+  },
+  "server.gate_auto_review_tokens": {
+    unit: "count",
+    description:
+      "Auto permission review token usage. Tagged by model, outcome, status, risk_level, and prompt_hash.",
   },
 
   // ── P2: Capacity / Throughput ──

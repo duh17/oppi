@@ -3,8 +3,8 @@
  *
  * Storage: ~/.config/oppi/audit.jsonl
  *
- * Every gate decision is recorded: auto-allowed, auto-denied,
- * user-approved, timed out, extension lost. Queryable from the
+ * Every gate decision is recorded: policy-allowed, auto-reviewed,
+ * user-approved/user-denied, timed out, extension lost. Queryable from the
  * phone for review and debugging.
  */
 
@@ -22,6 +22,18 @@ export interface UserChoice {
   expiresAt?: number;
 }
 
+export interface AutoReviewAuditDetails {
+  outcome: "allow" | "ask";
+  status: string;
+  reason: string;
+  model?: string;
+  riskLevel?: string;
+  confidence?: number;
+  durationMs?: number;
+  tokens?: number;
+  promptHash?: string;
+}
+
 export interface AuditEntry {
   id: string;
   timestamp: number;
@@ -31,13 +43,20 @@ export interface AuditEntry {
   // What was requested
   tool: string;
   displaySummary: string;
+  /** Permission request id when this decision came from a pending approval flow. */
+  requestId?: string;
+  /** Tool call id for correlating auto-allowed decisions without a pending request. */
+  toolCallId?: string;
 
   // What happened
-  decision: "allow" | "deny";
+  decision: "allow" | "ask" | "deny";
   resolvedBy: "policy" | "auto_review" | "user" | "timeout" | "extension_lost";
   layer: string;
   ruleId?: string;
   ruleSummary?: string;
+
+  // Model review details (if an Auto policy was evaluated)
+  autoReview?: AutoReviewAuditDetails;
 
   // User's choice (if resolvedBy = "user")
   userChoice?: UserChoice;
@@ -104,39 +123,37 @@ export class AuditLog {
 
     if (!existsSync(this.path)) return [];
 
-    let entries: AuditEntry[];
+    let lines: string[];
     try {
       const content = readFileSync(this.path, "utf-8");
-      entries = content
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((line) => {
-          try {
-            return JSON.parse(line) as AuditEntry;
-          } catch {
-            return null;
-          }
-        })
-        .filter((e): e is AuditEntry => e !== null);
+      lines = content.split("\n");
     } catch {
       return [];
     }
 
-    // Filter
-    if (opts.workspaceId) {
-      entries = entries.filter((e) => e.workspaceId === opts.workspaceId);
-    }
-    if (opts.sessionId) {
-      entries = entries.filter((e) => e.sessionId === opts.sessionId);
-    }
-    if (opts.before) {
-      const before = opts.before;
-      entries = entries.filter((e) => e.timestamp < before);
+    // The file is append-only chronological. Walk from the tail so recent
+    // queries avoid parsing the whole rotated log in the common case.
+    const results: AuditEntry[] = [];
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i]?.trim();
+      if (!line) continue;
+
+      let entry: AuditEntry;
+      try {
+        entry = JSON.parse(line) as AuditEntry;
+      } catch {
+        continue;
+      }
+
+      if (opts.workspaceId && entry.workspaceId !== opts.workspaceId) continue;
+      if (opts.sessionId && entry.sessionId !== opts.sessionId) continue;
+      if (opts.before && entry.timestamp >= opts.before) continue;
+
+      results.push(entry);
+      if (results.length >= limit) break;
     }
 
-    // Reverse chronological, limited
-    entries.reverse();
-    return entries.slice(0, limit);
+    return results;
   }
 
   /**

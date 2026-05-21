@@ -321,9 +321,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     if (path === "/server/auto-permission" && method === "GET") {
       const config = ctx.storage.getConfig();
-      const current = config.autoPermission ?? { enabled: false };
+      const current = config.autoPermission ?? {};
       helpers.json(res, {
-        enabled: current.enabled,
         model: current.model,
         prompt: current.prompt ?? DEFAULT_AUTO_PERMISSION_REVIEW_PROMPT,
         timeoutMs: current.timeoutMs,
@@ -333,15 +332,13 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     if (path === "/server/auto-permission" && method === "PUT") {
       const body = await helpers.parseBody<{
-        enabled?: boolean;
         model?: string | null;
         prompt?: string | null;
         timeoutMs?: number | null;
         maxTokens?: number | null;
       }>(req);
-      const current = ctx.storage.getConfig().autoPermission ?? { enabled: false };
+      const current = ctx.storage.getConfig().autoPermission ?? {};
       const updated = {
-        enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
         model:
           typeof body.model === "string" && body.model.trim().length > 0
             ? body.model.trim()

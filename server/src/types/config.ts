@@ -115,11 +115,10 @@ export interface ServerConfig {
   };
 
   /**
-   * Auto permission review configuration. When enabled, policy decisions of
-   * "auto" call a model that can only allow or ask the human.
+   * Auto permission review configuration. Policy decisions of "auto" call a
+   * model that can only allow or ask the human.
    */
   autoPermission?: {
-    enabled: boolean;
     model?: string; // "provider/model-id"
     prompt?: string;
     timeoutMs?: number;

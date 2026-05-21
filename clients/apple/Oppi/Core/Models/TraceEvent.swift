@@ -27,6 +27,47 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
 
     // Thinking
     let thinking: String?
+
+    // Synthetic Oppi-only events merged from policy audit history.
+    let permission: PermissionTracePayload?
+
+    init(
+        id: String,
+        type: TraceEventType,
+        timestamp: String,
+        text: String? = nil,
+        tool: String? = nil,
+        args: [String: JSONValue]? = nil,
+        output: String? = nil,
+        toolCallId: String? = nil,
+        toolName: String? = nil,
+        isError: Bool? = nil,
+        details: JSONValue? = nil,
+        thinking: String? = nil,
+        permission: PermissionTracePayload? = nil
+    ) {
+        self.id = id
+        self.type = type
+        self.timestamp = timestamp
+        self.text = text
+        self.tool = tool
+        self.args = args
+        self.output = output
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+        self.isError = isError
+        self.details = details
+        self.thinking = thinking
+        self.permission = permission
+    }
+}
+
+struct PermissionTracePayload: Codable, Equatable, Sendable {
+    let outcome: PermissionOutcome
+    let auditId: String
+    let resolvedBy: String
+    let decision: String
+    let reason: String?
 }
 
 enum TraceEventType: String, Codable, Sendable {
@@ -37,4 +78,5 @@ enum TraceEventType: String, Codable, Sendable {
     case thinking
     case system
     case compaction
+    case permission
 }

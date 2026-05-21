@@ -130,6 +130,7 @@ describe("SessionBroadcaster", () => {
       "permission_expired",
       "permission_cancelled",
       "permission_resolved",
+      "permission_auto_reviewed",
       "stop_requested",
       "stop_confirmed",
       "stop_failed",

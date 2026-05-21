@@ -309,6 +309,24 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       id: "perm-004",
       action: "allow",
     },
+    permission_auto_reviewed: {
+      type: "permission_auto_reviewed",
+      id: "audit-001",
+      timestamp: 1739750521000,
+      sessionId: "test-session-1",
+      workspaceId: "ws-1",
+      tool: "bash",
+      displaySummary: "git status",
+      outcome: "allow",
+      status: "allow",
+      reason: "read-only workspace inspection",
+      model: "openai-codex/gpt-5.4-mini",
+      riskLevel: "low",
+      confidence: 0.95,
+      durationMs: 1200,
+      tokens: 128,
+      promptHash: "0123456789abcdef",
+    },
 
     // Extension UI
     extension_ui_request: {
@@ -453,6 +471,7 @@ describe("protocol snapshots", () => {
       "permission_expired",
       "permission_cancelled",
       "permission_resolved",
+      "permission_auto_reviewed",
       "extension_ui_request",
       "extension_ui_notification",
       "git_status",

@@ -851,7 +851,6 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
   "autoTitle.model": { type: "string", desc: "Auto-title model" },
   autoPermission: { type: "json", desc: "Auto permission review config JSON object" },
-  "autoPermission.enabled": { type: "boolean", desc: "Enable automatic permission review" },
   "autoPermission.model": { type: "string", desc: "Auto permission review model" },
   "autoPermission.prompt": { type: "string", desc: "Auto permission review prompt" },
   "autoPermission.timeoutMs": { type: "number", desc: "Auto permission review timeout (ms)" },

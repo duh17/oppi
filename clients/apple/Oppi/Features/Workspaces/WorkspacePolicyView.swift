@@ -10,7 +10,6 @@ struct WorkspacePolicyView: View {
 
     @State private var fallbackDecision: PolicyFallbackDecision = .allow
     @State private var isUpdatingFallback = false
-    @State private var autoReviewEnabled = false
     @State private var autoReviewModel = ""
     @State private var autoReviewPrompt = ""
     @State private var autoReviewTimeoutMs: Int?
@@ -59,8 +58,6 @@ struct WorkspacePolicyView: View {
             }
 
             Section {
-                Toggle("Enable Auto Review", isOn: $autoReviewEnabled)
-
                 if groupedModels.isEmpty {
                     LabeledContent("Model") {
                         Text("No compatible models")
@@ -104,11 +101,11 @@ struct WorkspacePolicyView: View {
                         Text("Save Auto Review")
                     }
                 }
-                .disabled(!hasAutoReviewChanges || isSavingAutoReview || (autoReviewEnabled && autoReviewModel.isEmpty))
+                .disabled(!hasAutoReviewChanges || isSavingAutoReview || autoReviewModel.isEmpty)
             } header: {
                 Text("Auto Review")
             } footer: {
-                Text("Use Auto for commands that should get a fast model review before interrupting you. Risky, unclear, or unconfigured reviews fall back to Ask.")
+                Text("Auto is active whenever Default Fallback or a remembered rule is set to Auto. Risky, unclear, or unconfigured reviews fall back to Ask.")
             }
 
             Section("Remembered Rules") {
@@ -148,13 +145,20 @@ struct WorkspacePolicyView: View {
                             HStack(spacing: 8) {
                                 policyChip(
                                     entry.decision.capitalized,
-                                    color: entry.decision == "deny" ? .themeRed : .themeGreen
+                                    color: policyDecisionColor(entry.decision)
                                 )
                                 policyChip(entry.resolvedBy.replacingOccurrences(of: "_", with: " "), color: .themeBlue)
                                 Spacer()
                                 Text(entry.timestamp, style: .relative)
                                     .font(.caption2)
                                     .foregroundStyle(.themeComment)
+                            }
+
+                            if let detail = policyAuditDetail(entry) {
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.themeComment)
+                                    .lineLimit(2)
                             }
                         }
                         .padding(.vertical, 2)
@@ -220,7 +224,6 @@ struct WorkspacePolicyView: View {
 
     private var currentAutoReviewConfig: APIClient.AutoPermissionConfig {
         APIClient.AutoPermissionConfig(
-            enabled: autoReviewEnabled,
             model: autoReviewModel.isEmpty ? nil : autoReviewModel,
             prompt: autoReviewPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : autoReviewPrompt,
             timeoutMs: autoReviewTimeoutMs,
@@ -230,8 +233,7 @@ struct WorkspacePolicyView: View {
 
     private var hasAutoReviewChanges: Bool {
         guard let saved = autoReviewSavedSnapshot else { return false }
-        return saved.enabled != currentAutoReviewConfig.enabled ||
-        saved.model != currentAutoReviewConfig.model ||
+        return saved.model != currentAutoReviewConfig.model ||
         saved.prompt != currentAutoReviewConfig.prompt ||
         saved.timeoutMs != currentAutoReviewConfig.timeoutMs ||
         saved.maxTokens != currentAutoReviewConfig.maxTokens
@@ -261,6 +263,22 @@ struct WorkspacePolicyView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private func policyAuditDetail(_ entry: PolicyAuditEntry) -> String? {
+        if let review = entry.autoReview {
+            var parts = [review.reason]
+            if let model = review.model, !model.isEmpty {
+                parts.append(model)
+            }
+            if let risk = review.riskLevel, !risk.isEmpty {
+                parts.append("risk: \(risk)")
+            }
+            return parts.filter { !$0.isEmpty }.joined(separator: " • ")
+        }
+
+        guard let ruleSummary = entry.ruleSummary, !ruleSummary.isEmpty else { return nil }
+        return ruleSummary
     }
 
     private func policyDecisionColor(_ decision: String) -> Color {
@@ -330,13 +348,11 @@ struct WorkspacePolicyView: View {
     }
 
     private func applyAutoReviewConfig(_ config: APIClient.AutoPermissionConfig) {
-        autoReviewEnabled = config.enabled
         autoReviewModel = config.model ?? AutoTitleModelCatalog.firstCompatibleModelID(from: models) ?? ""
         autoReviewPrompt = config.prompt ?? ""
         autoReviewTimeoutMs = config.timeoutMs
         autoReviewMaxTokens = config.maxTokens
         autoReviewSavedSnapshot = APIClient.AutoPermissionConfig(
-            enabled: config.enabled,
             model: config.model,
             prompt: config.prompt,
             timeoutMs: config.timeoutMs,

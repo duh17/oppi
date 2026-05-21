@@ -542,6 +542,10 @@ export class SessionManager extends EventEmitter {
     return this.broadcaster.subscribe(this.sessionKey(sessionId), callback);
   }
 
+  broadcastSessionMessage(sessionId: string, message: ServerMessage): number {
+    return this.broadcaster.broadcast(this.sessionKey(sessionId), message);
+  }
+
   private broadcast(key: string, message: ServerMessage): void {
     this.broadcaster.broadcast(key, message);
   }

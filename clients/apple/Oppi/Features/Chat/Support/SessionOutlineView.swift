@@ -945,12 +945,7 @@ struct SessionOutlineView: View {
             return req.displaySummary
 
         case .permissionResolved(_, let outcome, let tool, _):
-            let label = switch outcome {
-            case .allowed: "Allowed"
-            case .denied: "Denied"
-            case .expired: "Expired"
-            case .cancelled: "Cancelled"
-            }
+            let label = permissionOutcomeLabel(outcome)
             return "\(label): \(tool)"
 
         case .systemEvent(_, let msg):
@@ -958,6 +953,17 @@ struct SessionOutlineView: View {
 
         case .error(_, let msg):
             return msg
+        }
+    }
+
+    private func permissionOutcomeLabel(_ outcome: PermissionOutcome) -> String {
+        switch outcome {
+        case .allowed: "Allowed"
+        case .autoAllowed: "Auto-approved"
+        case .autoAsked: "Auto-asked"
+        case .denied: "Denied"
+        case .expired: "Expired"
+        case .cancelled: "Cancelled"
         }
     }
 

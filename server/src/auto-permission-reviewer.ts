@@ -5,6 +5,8 @@
  * defer to the human by returning ask. It never denies.
  */
 
+import { createHash } from "node:crypto";
+
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
@@ -13,7 +15,6 @@ import type { GateRequest } from "./policy.js";
 import { createLogger } from "./logger.js";
 
 export interface AutoPermissionConfig {
-  enabled: boolean;
   model?: string;
   prompt?: string;
   timeoutMs?: number;
@@ -32,13 +33,15 @@ export interface AutoPermissionReviewMetrics {
   durationMs: number;
   model: string;
   status: AutoPermissionReviewStatus;
+  outcome: "allow" | "ask";
+  riskLevel?: string;
   tokens: number;
+  promptHash?: string;
 }
 
 export type AutoPermissionReviewStatus =
   | "allow"
   | "ask"
-  | "disabled"
   | "not_configured"
   | "model_not_found"
   | "timeout"
@@ -51,6 +54,10 @@ export interface AutoPermissionReviewResult {
   reason: string;
   riskLevel?: "low" | "medium" | "high" | "critical" | "unknown";
   confidence?: number;
+  model?: string;
+  durationMs?: number;
+  tokens?: number;
+  promptHash?: string;
 }
 
 interface ParsedReviewDecision {
@@ -166,6 +173,10 @@ function buildPrompt(config: AutoPermissionConfig): string {
   return prompt.startsWith("/no_think") ? prompt : `/no_think\n${prompt}`;
 }
 
+function hashPrompt(prompt: string): string {
+  return createHash("sha256").update(prompt).digest("hex").slice(0, 16);
+}
+
 function buildUserPayload(input: AutoPermissionReviewInput): string {
   return `/no_think\n${JSON.stringify({
     task: "Decide whether this exact planned tool call may run automatically or must ask the human.",
@@ -197,32 +208,54 @@ export class AutoPermissionReviewer {
   }
 
   async review(input: AutoPermissionReviewInput): Promise<AutoPermissionReviewResult> {
+    const startMs = Date.now();
     const config = this.deps.getConfig();
-    if (!config.enabled) {
-      return { outcome: "ask", status: "disabled", reason: "Auto review is disabled" };
-    }
+    const modelId = config.model?.trim() || "";
+    const prompt = buildPrompt(config);
+    const promptHash = hashPrompt(prompt);
 
-    if (!config.model || config.model.trim().length === 0) {
-      return {
+    const finish = (
+      result: Omit<AutoPermissionReviewResult, "durationMs" | "model" | "promptHash" | "tokens">,
+      tokens = 0,
+    ): AutoPermissionReviewResult => {
+      const durationMs = Date.now() - startMs;
+      const full: AutoPermissionReviewResult = {
+        ...result,
+        durationMs,
+        model: modelId,
+        promptHash,
+        tokens,
+      };
+      this.deps.onMetrics?.({
+        durationMs,
+        model: modelId,
+        status: result.status,
+        outcome: result.outcome,
+        riskLevel: result.riskLevel,
+        tokens,
+        promptHash,
+      });
+      return full;
+    };
+
+    if (!modelId) {
+      return finish({
         outcome: "ask",
         status: "not_configured",
         reason: "Auto review model is not configured",
-      };
+      });
     }
 
-    const model = this.resolveModel(config.model.trim());
+    const model = this.resolveModel(modelId);
     if (!model) {
-      log.warn("auto_permission.model_not_found", { model: config.model });
-      return {
+      log.warn("auto_permission.model_not_found", { model: modelId });
+      return finish({
         outcome: "ask",
         status: "model_not_found",
         reason: "Auto review model was not found",
-      };
+      });
     }
 
-    const startMs = Date.now();
-    let status: AutoPermissionReviewStatus = "error";
-    let tokens = 0;
     const abortController = new AbortController();
     const timeoutMs =
       typeof config.timeoutMs === "number" &&
@@ -239,7 +272,7 @@ export class AutoPermissionReviewer {
       const response = await completeSimple(
         model,
         {
-          systemPrompt: buildPrompt(config),
+          systemPrompt: prompt,
           messages: [{ role: "user", content: buildUserPayload(input), timestamp: Date.now() }],
         },
         {
@@ -258,7 +291,7 @@ export class AutoPermissionReviewer {
       );
 
       clearTimeout(timeout);
-      tokens =
+      const tokens =
         (response.usage?.input ?? 0) +
         (response.usage?.output ?? 0) +
         (response.usage?.cacheRead ?? 0);
@@ -270,42 +303,42 @@ export class AutoPermissionReviewer {
 
       const parsed = parseAutoPermissionDecision(text);
       if (!parsed) {
-        status = "parse_error";
-        return {
-          outcome: "ask",
-          status,
-          reason: "Auto review returned invalid JSON, asking human",
-        };
+        return finish(
+          {
+            outcome: "ask",
+            status: "parse_error",
+            reason: "Auto review returned invalid JSON, asking human",
+          },
+          tokens,
+        );
       }
 
-      status = parsed.outcome;
-      return {
-        outcome: parsed.outcome,
-        status,
-        reason: parsed.rationale || `Auto review chose ${parsed.outcome}`,
-        riskLevel: parsed.riskLevel,
-        confidence: parsed.confidence,
-      };
+      return finish(
+        {
+          outcome: parsed.outcome,
+          status: parsed.outcome,
+          reason: parsed.rationale || `Auto review chose ${parsed.outcome}`,
+          riskLevel: parsed.riskLevel,
+          confidence: parsed.confidence,
+        },
+        tokens,
+      );
     } catch (err: unknown) {
       clearTimeout(timeout);
       if (abortController.signal.aborted) {
-        status = "timeout";
-        log.warn("auto_permission.timed_out", { model: config.model, timeoutMs });
-        return { outcome: "ask", status, reason: "Auto review timed out" };
+        log.warn("auto_permission.timed_out", { model: modelId, timeoutMs });
+        return finish({ outcome: "ask", status: "timeout", reason: "Auto review timed out" });
       }
 
-      status = "error";
       const message = err instanceof Error ? err.message : String(err);
-      log.warn("auto_permission.failed", { model: config.model, error: message });
-      return { outcome: "ask", status, reason: "Auto review failed, asking human" };
+      log.warn("auto_permission.failed", { model: modelId, error: message });
+      return finish({
+        outcome: "ask",
+        status: "error",
+        reason: "Auto review failed, asking human",
+      });
     } finally {
       clearTimeout(timeout);
-      this.deps.onMetrics?.({
-        durationMs: Date.now() - startMs,
-        model: config.model || "",
-        status,
-        tokens,
-      });
     }
   }
 

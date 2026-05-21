@@ -419,7 +419,6 @@ actor APIClient {
 
     /// Server-side auto permission review configuration.
     struct AutoPermissionConfig: Codable, Sendable {
-        var enabled: Bool
         var model: String?
         var prompt: String?
         var timeoutMs: Int?

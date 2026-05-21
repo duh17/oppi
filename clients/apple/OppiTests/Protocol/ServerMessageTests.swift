@@ -392,6 +392,27 @@ struct ServerMessageTests {
         #expect(action == .allow)
     }
 
+    @Test func decodesPermissionAutoReviewed() throws {
+        let json = #"{"type":"permission_auto_reviewed","id":"audit1","timestamp":1739750521000,"sessionId":"s1","workspaceId":"w1","tool":"bash","displaySummary":"git status","outcome":"ask","status":"ask","reason":"network risk","model":"qwen/local","riskLevel":"high","confidence":0.91,"durationMs":1200,"tokens":128,"promptHash":"0123456789abcdef"}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .permissionAutoReviewed(let item, let workspaceId) = msg else {
+            Issue.record("Expected .permissionAutoReviewed")
+            return
+        }
+        #expect(item.id == "audit1")
+        #expect(workspaceId == "w1")
+        #expect(item.tool == "bash")
+        #expect(item.displaySummary == "git status")
+        #expect(item.outcome == .ask)
+        #expect(item.reason == "network risk")
+        #expect(item.model == "qwen/local")
+        #expect(item.riskLevel == "high")
+        #expect(item.confidence == 0.91)
+        #expect(item.durationMs == 1200)
+        #expect(item.tokens == 128)
+        #expect(item.promptHash == "0123456789abcdef")
+    }
+
     // MARK: - Error
 
     @Test func decodesError() throws {

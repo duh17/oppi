@@ -714,13 +714,7 @@ function normalizeConfig(
   // Auto-permission reviewer configuration
   if ("autoPermission" in obj && isRecord(obj.autoPermission)) {
     const ap = obj.autoPermission;
-    const allowedAutoPermissionKeys = new Set([
-      "enabled",
-      "model",
-      "prompt",
-      "timeoutMs",
-      "maxTokens",
-    ]);
+    const allowedAutoPermissionKeys = new Set(["model", "prompt", "timeoutMs", "maxTokens"]);
 
     if (strictUnknown) {
       for (const key of Object.keys(ap)) {
@@ -730,9 +724,7 @@ function normalizeConfig(
       }
     }
 
-    const autoPermission: NonNullable<ServerConfig["autoPermission"]> = {
-      enabled: typeof ap.enabled === "boolean" ? ap.enabled : false,
-    };
+    const autoPermission: NonNullable<ServerConfig["autoPermission"]> = {};
     if (typeof ap.model === "string" && ap.model.trim().length > 0) {
       autoPermission.model = ap.model.trim();
     }

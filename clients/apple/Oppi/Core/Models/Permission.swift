@@ -168,9 +168,102 @@ enum PermissionApprovalPolicy {
 /// Client-side resolved state for display. Richer than `PermissionAction`
 /// because it includes states the server communicates via separate events
 /// (expiry, cancellation) rather than as action values.
-enum PermissionOutcome: String, Sendable, Equatable {
+enum PermissionOutcome: String, Codable, Sendable, Equatable {
     case allowed
+    case autoAllowed
+    case autoAsked
     case denied
     case expired
     case cancelled
+}
+
+enum AutoReviewOutcome: String, Codable, Sendable, Equatable {
+    case allow
+    case ask
+
+    var permissionOutcome: PermissionOutcome {
+        switch self {
+        case .allow: .autoAllowed
+        case .ask: .autoAsked
+        }
+    }
+}
+
+struct AutoReviewTimelineItem: Identifiable, Codable, Sendable, Equatable {
+    let id: String
+    let timestamp: Date
+    let tool: String
+    let displaySummary: String
+    let outcome: AutoReviewOutcome
+    let status: String
+    let reason: String
+    let model: String?
+    let riskLevel: String?
+    let confidence: Double?
+    let durationMs: Int?
+    let tokens: Int?
+    let promptHash: String?
+
+    var permissionOutcome: PermissionOutcome { outcome.permissionOutcome }
+
+    var timelineSummary: String {
+        [displaySummary, reason]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " — ")
+    }
+
+    init(
+        id: String,
+        timestamp: Date,
+        tool: String,
+        displaySummary: String,
+        outcome: AutoReviewOutcome,
+        status: String,
+        reason: String,
+        model: String? = nil,
+        riskLevel: String? = nil,
+        confidence: Double? = nil,
+        durationMs: Int? = nil,
+        tokens: Int? = nil,
+        promptHash: String? = nil
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.tool = tool
+        self.displaySummary = displaySummary
+        self.outcome = outcome
+        self.status = status
+        self.reason = reason
+        self.model = model
+        self.riskLevel = riskLevel
+        self.confidence = confidence
+        self.durationMs = durationMs
+        self.tokens = tokens
+        self.promptHash = promptHash
+    }
+
+    init?(auditEntry: PolicyAuditEntry) {
+        guard auditEntry.resolvedBy == "auto_review",
+              let review = auditEntry.autoReview,
+              let outcome = AutoReviewOutcome(rawValue: review.outcome) else {
+            return nil
+        }
+
+        self.init(
+            id: auditEntry.id,
+            timestamp: auditEntry.timestamp,
+            tool: auditEntry.tool,
+            displaySummary: auditEntry.displaySummary,
+            outcome: outcome,
+            status: review.status,
+            reason: review.reason,
+            model: review.model,
+            riskLevel: review.riskLevel,
+            confidence: review.confidence,
+            durationMs: review.durationMs,
+            tokens: review.tokens,
+            promptHash: review.promptHash
+        )
+    }
 }

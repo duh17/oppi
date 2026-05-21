@@ -698,6 +698,7 @@ final class ServerConnection {
              .permissionExpired,
              .permissionCancelled,
              .permissionResolved,
+             .permissionAutoReviewed,
              .agentStart,
              .agentEnd,
              .toolStart,

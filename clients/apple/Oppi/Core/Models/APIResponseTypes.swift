@@ -222,6 +222,18 @@ struct PolicyAuditUserChoice: Decodable, Sendable {
     }
 }
 
+struct PolicyAuditAutoReview: Decodable, Sendable {
+    let outcome: String
+    let status: String
+    let reason: String
+    let model: String?
+    let riskLevel: String?
+    let confidence: Double?
+    let durationMs: Int?
+    let tokens: Int?
+    let promptHash: String?
+}
+
 struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
     let id: String
     let timestamp: Date
@@ -234,11 +246,12 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
     let layer: String
     let ruleId: String?
     let ruleSummary: String?
+    let autoReview: PolicyAuditAutoReview?
     let userChoice: PolicyAuditUserChoice?
 
     enum CodingKeys: String, CodingKey {
         case id, timestamp, sessionId, workspaceId, tool, displaySummary
-        case decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
+        case decision, resolvedBy, layer, ruleId, ruleSummary, autoReview, userChoice
     }
 
     init(from decoder: Decoder) throws {
@@ -255,6 +268,7 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
         layer = try c.decode(String.self, forKey: .layer)
         ruleId = try c.decodeIfPresent(String.self, forKey: .ruleId)
         ruleSummary = try c.decodeIfPresent(String.self, forKey: .ruleSummary)
+        autoReview = try c.decodeIfPresent(PolicyAuditAutoReview.self, forKey: .autoReview)
         userChoice = try c.decodeIfPresent(PolicyAuditUserChoice.self, forKey: .userChoice)
     }
 }

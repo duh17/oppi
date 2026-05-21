@@ -139,6 +139,10 @@ final class PermissionTimelineRowContentView: UIView, UIContentView, TimelineRow
         switch outcome {
         case .allowed:
             return Style(icon: "checkmark.shield.fill", label: "Allowed", color: UIColor(palette.green))
+        case .autoAllowed:
+            return Style(icon: "shield.fill", label: "Auto-approved", color: UIColor(palette.blue))
+        case .autoAsked:
+            return Style(icon: "hand.raised.fill", label: "Auto-asked", color: UIColor(palette.orange))
         case .denied:
             return Style(icon: "xmark.shield.fill", label: "Denied", color: UIColor(palette.red))
         case .expired:

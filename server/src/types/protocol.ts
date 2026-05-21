@@ -342,6 +342,24 @@ export type ServerMessage = // ── Connection ──
     | { type: "permission_expired"; id: string; reason: string }
     | { type: "permission_cancelled"; id: string }
     | { type: "permission_resolved"; id: string; action: "allow" | "deny" }
+    | {
+        type: "permission_auto_reviewed";
+        id: string;
+        timestamp: number;
+        sessionId: string;
+        workspaceId: string;
+        tool: string;
+        displaySummary: string;
+        outcome: "allow" | "ask";
+        status: string;
+        reason: string;
+        model?: string;
+        riskLevel?: string;
+        confidence?: number;
+        durationMs?: number;
+        tokens?: number;
+        promptHash?: string;
+      }
     // ── Extension UI forwarding ──
     | {
         type: "extension_ui_request";

@@ -10,6 +10,7 @@ import {
   readSessionTraceFromFile,
   readSessionTraceFromFiles,
   findToolOutput,
+  mergePermissionAuditEvents,
   type TraceViewMode,
 } from "../trace.js";
 import {
@@ -1617,7 +1618,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const latestSession = ctx.storage.getSession(sessionId) || hydratedSession;
     const hydratedLatest = ctx.ensureSessionContextWindow(latestSession);
-    helpers.compressedJson(req, res, { session: hydratedLatest, trace: trace || [] });
+    const auditEntries = ctx.gate.auditLog.query({
+      sessionId,
+      workspaceId,
+      limit: 500,
+    });
+    const timelineTrace = mergePermissionAuditEvents(trace || [], auditEntries);
+    helpers.compressedJson(req, res, { session: hydratedLatest, trace: timelineTrace });
   }
 
   async function handleDeleteSession(

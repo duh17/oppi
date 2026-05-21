@@ -40,7 +40,12 @@ import {
   policyRulesFromDeclarativeConfig,
   policyRuntimeConfig,
 } from "./policy.js";
-import { GateServer, buildPermissionMessage, type PendingDecision } from "./gate.js";
+import {
+  GateServer,
+  buildPermissionMessage,
+  type AutoReviewDecisionEvent,
+  type PendingDecision,
+} from "./gate.js";
 import { RuleStore } from "./rules.js";
 import { AuditLog } from "./audit.js";
 
@@ -456,14 +461,21 @@ export class Server {
     );
 
     const autoPermissionReviewer = new AutoPermissionReviewer({
-      getConfig: () => this.storage.getConfig().autoPermission ?? { enabled: false },
+      getConfig: () => this.storage.getConfig().autoPermission ?? {},
       modelRegistry: this.modelRegistry,
       onMetrics: (metrics) => {
-        this.opsMetrics.record("server.gate_auto_review_ms", metrics.durationMs, {
-          model: metrics.model,
+        const tags = {
+          model: metrics.model || "unconfigured",
+          outcome: metrics.outcome,
           status: metrics.status,
-          tokens: String(metrics.tokens),
-        });
+          ...(metrics.riskLevel ? { risk_level: metrics.riskLevel } : {}),
+          ...(metrics.promptHash ? { prompt_hash: metrics.promptHash } : {}),
+        };
+        this.opsMetrics.record("server.gate_auto_review", 1, tags);
+        this.opsMetrics.record("server.gate_auto_review_ms", metrics.durationMs, tags);
+        if (metrics.tokens > 0) {
+          this.opsMetrics.record("server.gate_auto_review_tokens", metrics.tokens, tags);
+        }
       },
     });
 
@@ -755,6 +767,38 @@ export class Server {
         });
       },
     );
+
+    this.gate.on("auto_reviewed", (decision: AutoReviewDecisionEvent) => {
+      const message: ServerMessage = {
+        type: "permission_auto_reviewed",
+        id: decision.id,
+        timestamp: decision.timestamp,
+        sessionId: decision.sessionId,
+        workspaceId: decision.workspaceId,
+        tool: decision.tool,
+        displaySummary: decision.displaySummary,
+        outcome: decision.outcome,
+        status: decision.status,
+        reason: decision.reason,
+        model: decision.model,
+        riskLevel: decision.riskLevel,
+        confidence: decision.confidence,
+        durationMs: decision.durationMs,
+        tokens: decision.tokens,
+        promptHash: decision.promptHash,
+      };
+      const boundDeliveries = this.sessions.broadcastSessionMessage(decision.sessionId, message);
+      this.broadcastToUser(message, {
+        forcePushFallback: boundDeliveries === 0,
+        recordEvent: false,
+      });
+      this.liveActivity.queueUpdate({
+        sessionId: decision.sessionId,
+        lastEvent:
+          decision.outcome === "allow" ? "Permission auto-approved" : "Permission auto-asked",
+        priority: 5,
+      });
+    });
   }
 
   private createTransportServer(config: ServerConfig): {
@@ -1056,9 +1100,16 @@ export class Server {
 
   // ─── User Connection Tracking ───
 
-  private broadcastToUser(msg: ServerMessage, options?: { forcePushFallback?: boolean }): void {
+  private broadcastToUser(
+    msg: ServerMessage,
+    options?: { forcePushFallback?: boolean; recordEvent?: boolean },
+  ): void {
     const outbound = msg;
-    if (msg.sessionId && this.userEventStore.isNotificationLevelMessage(msg)) {
+    if (
+      options?.recordEvent !== false &&
+      msg.sessionId &&
+      this.userEventStore.isNotificationLevelMessage(msg)
+    ) {
       this.userEventStore.recordEvent(msg.sessionId, msg);
     }
 

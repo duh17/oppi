@@ -90,6 +90,7 @@ enum ServerMessage: Sendable, Equatable {
     case permissionExpired(id: String, reason: String)
     case permissionCancelled(id: String)
     case permissionResolved(id: String, action: PermissionAction)
+    case permissionAutoReviewed(AutoReviewTimelineItem, workspaceId: String?)
 
     // Extension UI
     case extensionUIRequest(ExtensionUIRequest)
@@ -219,8 +220,10 @@ extension ServerMessage: Decodable {
         case stage, clientTurnId, duplicate
         // error
         case error, code, fatal
-        // permission_request / permission_resolved
-        case id, sessionId, input, displaySummary, timeoutAt, expires, action
+        // permission_request / permission_resolved / permission_auto_reviewed
+        case id, sessionId, input, displaySummary, timeoutAt, expires, action, timestamp
+        // permission_auto_reviewed
+        case outcome, status, model, riskLevel, confidence, durationMs, tokens, promptHash
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // ask extension (extension_ui_request with method: "ask")
@@ -236,7 +239,7 @@ extension ServerMessage: Decodable {
         // retry
         case attempt, maxAttempts, delayMs, errorMessage, finalError
         // git_status
-        case workspaceId, status
+        case workspaceId
         // dictation
         case sttProvider, sttModel
         case text, snap, committedText, activeText
@@ -442,6 +445,30 @@ extension ServerMessage: Decodable {
             let id = try c.decode(String.self, forKey: .id)
             let action = try c.decode(PermissionAction.self, forKey: .action)
             self = .permissionResolved(id: id, action: action)
+
+        case "permission_auto_reviewed", "permission_auto_approved":
+            let id = try c.decode(String.self, forKey: .id)
+            let workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+            let timestampMs = try c.decodeIfPresent(Double.self, forKey: .timestamp) ?? Date().timeIntervalSince1970 * 1000
+            let outcome = try c.decodeIfPresent(AutoReviewOutcome.self, forKey: .outcome) ?? .allow
+            let status = try c.decodeIfPresent(String.self, forKey: .status) ?? outcome.rawValue
+            let reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? "Auto review chose \(outcome.rawValue)"
+            let item = AutoReviewTimelineItem(
+                id: id,
+                timestamp: Date(timeIntervalSince1970: timestampMs / 1000),
+                tool: try c.decode(String.self, forKey: .tool),
+                displaySummary: try c.decode(String.self, forKey: .displaySummary),
+                outcome: outcome,
+                status: status,
+                reason: reason,
+                model: try c.decodeIfPresent(String.self, forKey: .model),
+                riskLevel: try c.decodeIfPresent(String.self, forKey: .riskLevel),
+                confidence: try c.decodeIfPresent(Double.self, forKey: .confidence),
+                durationMs: try c.decodeIfPresent(Int.self, forKey: .durationMs),
+                tokens: try c.decodeIfPresent(Int.self, forKey: .tokens),
+                promptHash: try c.decodeIfPresent(String.self, forKey: .promptHash)
+            )
+            self = .permissionAutoReviewed(item, workspaceId: workspaceId)
 
         case "extension_ui_request":
             let askQuestions = try c.decodeIfPresent([AskQuestion].self, forKey: .questions)
@@ -657,6 +684,7 @@ extension ServerMessage {
         case .permissionExpired: "permissionExpired"
         case .permissionCancelled: "permissionCancelled"
         case .permissionResolved: "permissionResolved"
+        case .permissionAutoReviewed: "permissionAutoReviewed"
         case .extensionUIRequest: "extensionUIRequest"
         case .extensionUINotification: "extensionUINotification"
         case .gitStatus: "gitStatus"

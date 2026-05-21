@@ -346,7 +346,7 @@ struct ProtocolSnapshotTests {
             "turn_ack", "command_result",
             "compaction_start", "compaction_end",
             "retry_start", "retry_end",
-            "permission_request", "permission_expired", "permission_cancelled", "permission_resolved",
+            "permission_request", "permission_expired", "permission_cancelled", "permission_resolved", "permission_auto_reviewed",
             "extension_ui_request", "extension_ui_notification", "git_status",
             "dictation_ready", "dictation_result", "dictation_final", "dictation_error",
         ]

@@ -533,6 +533,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 message: message
             ), appendOnly: appendOnly)
             return nil
+
+        case .permission:
+            guard let payload = event.permission else { return nil }
+            let summary = [event.text, payload.reason]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " — ")
+            insertItem(.permissionResolved(
+                id: event.id,
+                outcome: payload.outcome,
+                tool: event.tool ?? "tool",
+                summary: summary.isEmpty ? "Permission decision" : summary
+            ), appendOnly: appendOnly)
+            return nil
         }
     }
 

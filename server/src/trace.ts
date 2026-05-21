@@ -19,6 +19,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
+import type { AuditEntry, AutoReviewAuditDetails } from "./audit.js";
 import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
@@ -43,9 +44,34 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 // ─── Trace Event Types ───
 
+export type PermissionTraceOutcome =
+  | "allowed"
+  | "autoAllowed"
+  | "autoAsked"
+  | "denied"
+  | "expired"
+  | "cancelled";
+
+export interface PermissionTraceDetails {
+  outcome: PermissionTraceOutcome;
+  auditId: string;
+  resolvedBy: AuditEntry["resolvedBy"];
+  decision: AuditEntry["decision"];
+  reason?: string;
+  autoReview?: AutoReviewAuditDetails;
+}
+
 export interface TraceEvent {
   id: string;
-  type: "user" | "assistant" | "toolCall" | "toolResult" | "thinking" | "system" | "compaction";
+  type:
+    | "user"
+    | "assistant"
+    | "toolCall"
+    | "toolResult"
+    | "thinking"
+    | "system"
+    | "compaction"
+    | "permission";
   timestamp: string;
   /** For user/assistant/system: the text content */
   text?: string;
@@ -65,6 +91,8 @@ export interface TraceEvent {
   details?: unknown;
   /** For thinking: thinking content */
   thinking?: string;
+  /** Synthetic permission decision merged from the Oppi audit log. */
+  permission?: PermissionTraceDetails;
 }
 
 // ─── Raw JSONL Entry (matches pi's session file format) ───
@@ -460,6 +488,108 @@ function parseEntries(content: string): SessionEntry[] {
 export function parseJsonl(content: string, options: TraceReadOptions = {}): TraceEvent[] {
   const entries = parseEntries(content);
   return buildSessionContext(entries, options);
+}
+
+function permissionTimelineId(entry: AuditEntry): string {
+  return entry.requestId ?? entry.id;
+}
+
+function permissionOutcomeForAudit(entry: AuditEntry): PermissionTraceOutcome | null {
+  switch (entry.resolvedBy) {
+    case "auto_review":
+      if (entry.autoReview?.outcome === "allow") return "autoAllowed";
+      if (entry.autoReview?.outcome === "ask") return "autoAsked";
+      return null;
+    case "user":
+      if (entry.decision === "allow") return "allowed";
+      if (entry.decision === "deny") return "denied";
+      return null;
+    case "timeout":
+      return "expired";
+    case "extension_lost":
+      return "cancelled";
+    case "policy":
+      return null;
+  }
+}
+
+function auditEntryToPermissionTraceEvent(entry: AuditEntry): TraceEvent | null {
+  const outcome = permissionOutcomeForAudit(entry);
+  if (!outcome) return null;
+
+  const reason = entry.autoReview?.reason || entry.ruleSummary;
+  return {
+    id: permissionTimelineId(entry),
+    type: "permission",
+    timestamp: new Date(entry.timestamp).toISOString(),
+    tool: entry.tool,
+    text: entry.displaySummary,
+    permission: {
+      outcome,
+      auditId: entry.id,
+      resolvedBy: entry.resolvedBy,
+      decision: entry.decision,
+      ...(reason ? { reason } : {}),
+      ...(entry.autoReview ? { autoReview: entry.autoReview } : {}),
+    },
+  };
+}
+
+/**
+ * Merge low-frequency Oppi permission audit decisions into pi trace events.
+ *
+ * The audit log is already bounded/rotated by AuditLog. This function keeps the
+ * client on the single getWorkspaceSession path: the server does one stable sort
+ * of matching audit rows, then a one-pass timestamp merge with the trace.
+ */
+export function mergePermissionAuditEvents(
+  trace: TraceEvent[],
+  auditEntries: AuditEntry[],
+): TraceEvent[] {
+  if (auditEntries.length === 0) return trace;
+
+  const existingIds = new Set(trace.map((event) => event.id));
+  const latestByTimelineId = new Map<string, AuditEntry>();
+  for (const entry of auditEntries) {
+    const id = permissionTimelineId(entry);
+    if (!latestByTimelineId.has(id)) {
+      latestByTimelineId.set(id, entry);
+    }
+  }
+
+  const permissionEvents = Array.from(latestByTimelineId.values())
+    .map(auditEntryToPermissionTraceEvent)
+    .filter((event): event is TraceEvent => event !== null && !existingIds.has(event.id))
+    .map((event) => ({ event, timestampMs: Date.parse(event.timestamp) }))
+    .sort((lhs, rhs) => {
+      const delta = lhs.timestampMs - rhs.timestampMs;
+      return delta === 0 ? lhs.event.id.localeCompare(rhs.event.id) : delta;
+    });
+
+  if (permissionEvents.length === 0) return trace;
+  if (trace.length === 0) return permissionEvents.map((entry) => entry.event);
+
+  const merged: TraceEvent[] = [];
+  let auditIndex = 0;
+  for (const event of trace) {
+    const eventMs = Date.parse(event.timestamp);
+    let permissionEvent = permissionEvents[auditIndex];
+    while (permissionEvent && permissionEvent.timestampMs <= eventMs) {
+      merged.push(permissionEvent.event);
+      auditIndex += 1;
+      permissionEvent = permissionEvents[auditIndex];
+    }
+    merged.push(event);
+  }
+
+  let permissionEvent = permissionEvents[auditIndex];
+  while (permissionEvent) {
+    merged.push(permissionEvent.event);
+    auditIndex += 1;
+    permissionEvent = permissionEvents[auditIndex];
+  }
+
+  return merged;
 }
 
 // ─── JSONL File Readers ───

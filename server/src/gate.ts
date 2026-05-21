@@ -13,8 +13,11 @@ import type { PolicyEngine } from "./policy.js";
 import { parseBashCommand, splitBashCommandChain, type GateRequest } from "./policy.js";
 import { normalizeApprovalChoice } from "./policy-approval.js";
 import type { RuleInput, RuleStore } from "./rules.js";
-import type { AuditLog } from "./audit.js";
-import type { AutoPermissionReviewer } from "./auto-permission-reviewer.js";
+import type { AuditEntry, AuditLog, AutoReviewAuditDetails } from "./audit.js";
+import type {
+  AutoPermissionReviewer,
+  AutoPermissionReviewResult,
+} from "./auto-permission-reviewer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -41,7 +44,26 @@ export interface PendingDecision {
   createdAt: number;
   timeoutAt: number;
   expires?: boolean;
+  autoReview?: AutoReviewAuditDetails;
   resolve: (response: GateResponse) => void;
+}
+
+export interface AutoReviewDecisionEvent {
+  id: string;
+  timestamp: number;
+  sessionId: string;
+  workspaceId: string;
+  tool: string;
+  displaySummary: string;
+  outcome: "allow" | "ask";
+  status: string;
+  reason: string;
+  model?: string;
+  riskLevel?: string;
+  confidence?: number;
+  durationMs?: number;
+  tokens?: number;
+  promptHash?: string;
 }
 
 interface GateResponse {
@@ -71,6 +93,43 @@ function primaryBashExecutable(command: string): string | undefined {
       (parsed) => !CHAIN_HELPER_EXECUTABLES.has(executableName(parsed.executable)),
     ) || parsedSegments[0];
   return primary ? executableName(primary.executable) : undefined;
+}
+
+function autoReviewAuditDetails(review: AutoPermissionReviewResult): AutoReviewAuditDetails {
+  return {
+    outcome: review.outcome,
+    status: review.status,
+    reason: review.reason,
+    ...(review.model ? { model: review.model } : {}),
+    ...(review.riskLevel ? { riskLevel: review.riskLevel } : {}),
+    ...(review.confidence !== undefined ? { confidence: review.confidence } : {}),
+    ...(review.durationMs !== undefined ? { durationMs: review.durationMs } : {}),
+    ...(review.tokens !== undefined ? { tokens: review.tokens } : {}),
+    ...(review.promptHash ? { promptHash: review.promptHash } : {}),
+  };
+}
+
+function autoReviewEventFromAudit(
+  auditEntry: AuditEntry,
+  review: AutoReviewAuditDetails,
+): AutoReviewDecisionEvent {
+  return {
+    id: auditEntry.requestId ?? auditEntry.id,
+    timestamp: auditEntry.timestamp,
+    sessionId: auditEntry.sessionId,
+    workspaceId: auditEntry.workspaceId,
+    tool: auditEntry.tool,
+    displaySummary: auditEntry.displaySummary,
+    outcome: review.outcome,
+    status: review.status,
+    reason: review.reason,
+    ...(review.model ? { model: review.model } : {}),
+    ...(review.riskLevel ? { riskLevel: review.riskLevel } : {}),
+    ...(review.confidence !== undefined ? { confidence: review.confidence } : {}),
+    ...(review.durationMs !== undefined ? { durationMs: review.durationMs } : {}),
+    ...(review.tokens !== undefined ? { tokens: review.tokens } : {}),
+    ...(review.promptHash ? { promptHash: review.promptHash } : {}),
+  };
 }
 
 // ─── Gate Server ───
@@ -171,6 +230,24 @@ export class GateServer extends EventEmitter {
     });
   }
 
+  private recordAudit(entry: Omit<AuditEntry, "id" | "timestamp">): AuditEntry {
+    const recorded = this.auditLog.record(entry);
+    log.info("gate.policy_decision", {
+      auditId: recorded.id,
+      requestId: recorded.requestId,
+      sessionId: recorded.sessionId,
+      workspaceId: recorded.workspaceId,
+      tool: recorded.tool,
+      decision: recorded.decision,
+      resolvedBy: recorded.resolvedBy,
+      layer: recorded.layer,
+      displaySummary: recorded.displaySummary,
+      ruleId: recorded.ruleId,
+      ruleSummary: recorded.ruleSummary,
+    });
+    return recorded;
+  }
+
   /**
    * Resolve a pending permission decision (called when phone responds).
    *
@@ -229,14 +306,17 @@ export class GateServer extends EventEmitter {
     }
 
     // Record audit entry
-    this.auditLog.record({
+    this.recordAudit({
       sessionId: pending.sessionId,
       workspaceId: pending.workspaceId,
       tool: pending.tool,
       displaySummary: pending.displaySummary,
+      requestId: pending.id,
+      toolCallId: pending.toolCallId,
       decision: action,
       resolvedBy: "user",
       layer: "user_response",
+      ...(pending.autoReview ? { autoReview: pending.autoReview } : {}),
       userChoice: {
         action,
         scope: normalizedScope,
@@ -408,7 +488,7 @@ export class GateServer extends EventEmitter {
     const displaySummary = policy.formatDisplaySummary(req);
 
     if (decision.action === "allow") {
-      this.auditLog.record({
+      this.recordAudit({
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
         tool: req.tool,
@@ -430,7 +510,7 @@ export class GateServer extends EventEmitter {
     }
 
     if (decision.action === "deny") {
-      this.auditLog.record({
+      this.recordAudit({
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
         tool: req.tool,
@@ -452,6 +532,8 @@ export class GateServer extends EventEmitter {
     }
 
     let pendingReason = decision.reason;
+    let pendingAutoReview: AutoReviewAuditDetails | undefined;
+    const requestId = generateId(12);
 
     if (decision.action === "auto") {
       const autoReview = this.autoPermissionReviewer
@@ -468,8 +550,27 @@ export class GateServer extends EventEmitter {
             reason: AUTO_REVIEW_UNAVAILABLE,
           };
 
+      const autoReviewDetails = autoReviewAuditDetails(autoReview);
+      pendingAutoReview = autoReviewDetails;
+
+      log.info("gate.auto_review_decision", {
+        sessionId: guard.sessionId,
+        workspaceId: guard.workspaceId,
+        tool: req.tool,
+        displaySummary,
+        outcome: autoReview.outcome,
+        status: autoReview.status,
+        model: autoReview.model,
+        riskLevel: autoReview.riskLevel,
+        confidence: autoReview.confidence,
+        durationMs: autoReview.durationMs,
+        tokens: autoReview.tokens,
+        promptHash: autoReview.promptHash,
+        reason: autoReview.reason,
+      });
+
       if (autoReview.outcome === "allow") {
-        this.auditLog.record({
+        const auditEntry = this.recordAudit({
           sessionId: guard.sessionId,
           workspaceId: guard.workspaceId,
           tool: req.tool,
@@ -479,12 +580,16 @@ export class GateServer extends EventEmitter {
           layer: "auto_review",
           ruleId: decision.ruleId,
           ruleSummary: autoReview.reason || decision.ruleLabel,
+          requestId,
+          toolCallId: req.toolCallId,
+          autoReview: autoReviewDetails,
         });
         this.emit("tool_allowed", {
           sessionId: guard.sessionId,
           ...req,
           decision: { ...decision, action: "allow" as const, reason: autoReview.reason },
         });
+        this.emit("auto_reviewed", autoReviewEventFromAudit(auditEntry, autoReviewDetails));
         if (this.metrics) {
           try {
             this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
@@ -494,6 +599,22 @@ export class GateServer extends EventEmitter {
         return { action: "allow" };
       }
 
+      this.recordAudit({
+        sessionId: guard.sessionId,
+        workspaceId: guard.workspaceId,
+        tool: req.tool,
+        displaySummary,
+        decision: "ask",
+        resolvedBy: "auto_review",
+        layer: "auto_review",
+        ruleId: decision.ruleId,
+        ruleSummary: autoReview.reason || decision.ruleLabel,
+        requestId,
+        toolCallId: req.toolCallId,
+        autoReview: autoReviewDetails,
+      });
+      // The following permission_request carries the auto-review reason; avoid
+      // adding a separate live timeline row for ask decisions.
       pendingReason = autoReview.reason || decision.reason;
     }
 
@@ -506,8 +627,6 @@ export class GateServer extends EventEmitter {
         });
       } catch {}
     }
-    const requestId = generateId(12);
-
     const response = await new Promise<GateResponse>((resolve) => {
       const createdAt = Date.now();
       const expires = this.approvalTimeoutMs > 0;
@@ -527,6 +646,7 @@ export class GateServer extends EventEmitter {
         createdAt,
         timeoutAt,
         expires,
+        ...(pendingAutoReview ? { autoReview: pendingAutoReview } : {}),
         resolve,
       };
 
@@ -535,14 +655,17 @@ export class GateServer extends EventEmitter {
       if (this.approvalTimeoutMs > 0) {
         const timeout = setTimeout(() => {
           if (this.pending.has(requestId)) {
-            this.auditLog.record({
+            this.recordAudit({
               sessionId: guard.sessionId,
               workspaceId: guard.workspaceId,
               tool: req.tool,
               displaySummary,
+              requestId,
+              toolCallId: req.toolCallId,
               decision: "deny",
               resolvedBy: "timeout",
               layer: "timeout",
+              ...(pendingAutoReview ? { autoReview: pendingAutoReview } : {}),
             });
             if (this.metrics) {
               try {

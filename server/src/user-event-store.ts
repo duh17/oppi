@@ -17,6 +17,7 @@ export class UserEventStore {
       case "permission_expired":
       case "permission_cancelled":
       case "permission_resolved":
+      case "permission_auto_reviewed":
       case "extension_ui_request":
       case "agent_start":
       case "agent_end":

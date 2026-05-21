@@ -8,6 +8,7 @@ private struct SessionsHomeRoute: Hashable {
 private struct SessionsHomeSessionRow: Identifiable, Equatable {
     var id: String { "\(serverId):\(session.id)" }
     let serverId: String
+    let serverLabel: String?
     let workspaceId: String?
     let session: Session
     let pendingPermissionCount: Int
@@ -237,8 +238,10 @@ struct SessionsHomeView: View {
                 return nil
             }
 
+            let apiRow = apiRowsByKey["\(serverId):\(session.id)"]
             return SessionsHomeSessionRow(
                 serverId: serverId,
+                serverLabel: apiRow?.serverLabel,
                 workspaceId: session.workspaceId,
                 session: session,
                 pendingPermissionCount: attention.permissionCount,
@@ -363,7 +366,7 @@ struct SessionsHomeView: View {
                             .textCase(.uppercase)
 
                         if coordinator.connections.count > 1 {
-                            Text(serverLabel(for: row.serverId))
+                            Text(serverLabel(for: row))
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(.themeComment.opacity(0.1), in: Capsule())
@@ -555,6 +558,8 @@ struct SessionsHomeView: View {
                 continue
             }
 
+            let runtimeServerLabel = await fetchRuntimeServerLabel(api: api)
+
             do {
                 let response = try await api.listGlobalActiveSessionGroups()
                 sawSuccess = true
@@ -569,6 +574,7 @@ struct SessionsHomeView: View {
                         sessions: group.sessions.map { row in
                             SessionsHomeSessionRow(
                                 serverId: serverId,
+                                serverLabel: runtimeServerLabel,
                                 workspaceId: group.workspace.id,
                                 session: row.summary.session,
                                 pendingPermissionCount: row.pendingPermissionCount,
@@ -592,6 +598,7 @@ struct SessionsHomeView: View {
                     .map { summary in
                         SessionsHomeSessionRow(
                             serverId: serverId,
+                            serverLabel: runtimeServerLabel,
                             workspaceId: summary.workspaceId ?? summary.session.workspaceId,
                             session: summary.session,
                             pendingPermissionCount: 0,
@@ -632,6 +639,7 @@ struct SessionsHomeView: View {
             ).map { session in
                 SessionsHomeSessionRow(
                     serverId: serverId,
+                    serverLabel: nil,
                     workspaceId: workspace.id,
                     session: session,
                     pendingPermissionCount: conn.permissionStore.pending(for: session.id).count,
@@ -652,6 +660,7 @@ struct SessionsHomeView: View {
             .map { session in
                 SessionsHomeSessionRow(
                     serverId: serverId,
+                    serverLabel: nil,
                     workspaceId: session.workspaceId,
                     session: session,
                     pendingPermissionCount: 0,
@@ -686,7 +695,21 @@ struct SessionsHomeView: View {
             .prefix(50))
     }
 
-    private func serverLabel(for serverId: String) -> String {
-        coordinator.serverStore.server(for: serverId)?.name ?? String(serverId.prefix(8))
+    private func fetchRuntimeServerLabel(api: APIClient) async -> String? {
+        do {
+            let info = try await api.serverInfo()
+            return SessionsHomeServerLabel.runtimeLabel(from: info.hostname)
+                ?? SessionsHomeServerLabel.runtimeLabel(from: info.name)
+        } catch {
+            return nil
+        }
+    }
+
+    private func serverLabel(for row: SessionsHomeSessionRow) -> String {
+        SessionsHomeServerLabel.displayLabel(
+            runtimeLabel: row.serverLabel,
+            pairedLabel: coordinator.serverStore.server(for: row.serverId)?.name,
+            fallbackServerId: row.serverId
+        )
     }
 }

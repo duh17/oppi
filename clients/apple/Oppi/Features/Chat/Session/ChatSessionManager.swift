@@ -870,6 +870,14 @@ final class ChatSessionManager {
                 )
             }
 
+        case .permissionAutoReviewed(let item, _):
+            reducer.resolvePermission(
+                id: item.id,
+                outcome: item.permissionOutcome,
+                tool: item.tool,
+                summary: item.timelineSummary
+            )
+
         case .permissionRequest(let perm):
             coalescer.receive(.permissionRequest(perm))
 

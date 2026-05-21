@@ -44,6 +44,7 @@ export class SessionBroadcaster {
     "permission_expired",
     "permission_cancelled",
     "permission_resolved",
+    "permission_auto_reviewed",
     "stop_requested",
     "stop_confirmed",
     "stop_failed",
@@ -102,13 +103,12 @@ export class SessionBroadcaster {
     };
   }
 
-  broadcast(key: string, message: ServerMessage): void {
+  broadcast(key: string, message: ServerMessage): number {
     if (SessionBroadcaster.DURABLE_MESSAGE_TYPES.has(message.type)) {
-      this.broadcastDurable(key, message);
-      return;
+      return this.broadcastDurable(key, message);
     }
 
-    this.broadcastEphemeral(key, message);
+    return this.broadcastEphemeral(key, message);
   }
 
   markSessionDirty(key: string): void {
@@ -143,10 +143,10 @@ export class SessionBroadcaster {
     this.deps.saveSession(session);
   }
 
-  private broadcastDurable(key: string, message: ServerMessage): void {
+  private broadcastDurable(key: string, message: ServerMessage): number {
     const active = this.deps.getActiveSession(key);
     if (!active) {
-      return;
+      return 0;
     }
 
     active.seq += 1;
@@ -180,12 +180,13 @@ export class SessionBroadcaster {
         });
       }
     }
+    return active.subscribers.size;
   }
 
-  private broadcastEphemeral(key: string, message: ServerMessage): void {
+  private broadcastEphemeral(key: string, message: ServerMessage): number {
     const active = this.deps.getActiveSession(key);
     if (!active) {
-      return;
+      return 0;
     }
 
     // Only emit low-frequency ephemeral events to global observers.
@@ -215,5 +216,6 @@ export class SessionBroadcaster {
         });
       }
     }
+    return active.subscribers.size;
   }
 }
