@@ -201,8 +201,6 @@ describe("api route registry", () => {
 
     expect(byOperationId.get("getWorkspaceAttention")?.surface).toBe("internal");
     expect(byOperationId.get("getWorkspaceAttention")?.nativeClientUses).toBeUndefined();
-    expect(byOperationId.get("listPendingPermissions")?.surface).toBe("internal");
-    expect(byOperationId.get("listPendingPermissions")?.nativeClientUses).toBeUndefined();
     expect(byOperationId.get("respondToPermission")?.nativeClientUses).toContain("supervision");
   });
 

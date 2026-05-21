@@ -1158,17 +1158,6 @@ describe("policy API", () => {
   });
 });
 
-// ── Permissions ──
-
-describe("permissions API", () => {
-  it("GET /permissions/pending returns pending list", async () => {
-    const res = await get("/permissions/pending");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.pending).toBeInstanceOf(Array);
-  });
-});
-
 // ── Extensions ──
 
 describe("extensions API", () => {

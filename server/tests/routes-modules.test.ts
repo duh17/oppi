@@ -116,32 +116,6 @@ describe("routes modules", () => {
   });
 
   describe("streaming module", () => {
-    it("validates /permissions/pending filters", async () => {
-      const ctx = {
-        gate: {
-          getPendingForUser: vi.fn(() => []),
-        },
-        storage: {
-          getSession: vi.fn(() => undefined),
-        },
-      } as unknown as RouteContext;
-
-      const dispatch = createStreamingRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
-
-      const handled = await dispatch({
-        method: "GET",
-        path: "/permissions/pending",
-        url: new URL("http://localhost/permissions/pending?sessionId=missing"),
-        req: {} as never,
-        res: res as never,
-      });
-
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(404);
-      expect(JSON.parse(res.body)).toEqual({ error: "Session not found" });
-    });
-
     it("returns false for unrelated routes", async () => {
       const dispatch = createStreamingRoutes({} as RouteContext, createRouteHelpers());
 

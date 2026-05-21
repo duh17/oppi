@@ -34,7 +34,6 @@ const ROUTES = {
   wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
   wsQuickActionSession: /^\/workspaces\/([^/]+)\/quick-actions\/session$/,
-  permissionsPending: /^\/permissions\/pending$/,
   policyRules: /^\/policy\/rules$/,
   policyRuleDetail: /^\/policy\/rules\/([^/]+)$/,
   policyAudit: /^\/policy\/audit$/,
@@ -197,10 +196,6 @@ describe("Workspace-scoped API routes", () => {
     const m = "/workspaces/ws-1/quick-actions/session".match(ROUTES.wsQuickActionSession);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
-  });
-
-  it("matches pending permissions snapshot route", () => {
-    expect("/permissions/pending".match(ROUTES.permissionsPending)).toBeTruthy();
   });
 
   it("matches policy rules route", () => {

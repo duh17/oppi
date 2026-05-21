@@ -700,13 +700,6 @@ const rawApiRouteSpecs = [
   },
 
   {
-    method: "GET",
-    path: "/permissions/pending",
-    operationId: "listPendingPermissions",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
     method: "POST",
     path: "/permissions/{requestId}/respond",
     operationId: "respondToPermission",
