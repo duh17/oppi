@@ -429,7 +429,9 @@ struct WorkspaceContextBar: View {
             ChatView(
                 sessionId: dest.id,
                 initialInputText: dest.inputText,
-                initialPendingFiles: dest.filePaths.map { PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile) }
+                initialPendingFiles: dest.filePaths.map {
+                    PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)
+                }
             )
         }
     }
@@ -958,7 +960,9 @@ struct WorkspaceContextBar: View {
             collapseBar()
             onReviewInCurrentSession(
                 response.visiblePrompt,
-                response.filePaths.map { PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile) }
+                response.filePaths.map {
+                    PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: option.title)
+                }
             )
         } catch {
             launchError = error.localizedDescription
@@ -993,7 +997,8 @@ struct WorkspaceContextBar: View {
             navigateToQuickAction = QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
-                filePaths: response.filePaths
+                filePaths: response.filePaths,
+                fileDisplayPrefix: option.title
             )
         } catch {
             launchError = error.localizedDescription

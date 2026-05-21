@@ -106,7 +106,9 @@ struct WorkspaceReviewFileDetailView: View {
             ChatView(
                 sessionId: dest.id,
                 initialInputText: dest.inputText,
-                initialPendingFiles: dest.filePaths.map { PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile) }
+                initialPendingFiles: dest.filePaths.map {
+                    PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)
+                }
             )
         }
         .overlay {
@@ -337,7 +339,8 @@ struct WorkspaceReviewFileDetailView: View {
             navigateToQuickAction = QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
-                filePaths: response.filePaths
+                filePaths: response.filePaths,
+                fileDisplayPrefix: option.title
             )
         } catch {
             launchError = error.localizedDescription

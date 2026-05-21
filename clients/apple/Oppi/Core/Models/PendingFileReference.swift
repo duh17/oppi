@@ -400,15 +400,19 @@ struct PendingFileReference: Identifiable, Sendable, Equatable {
     let path: String
     let isDirectory: Bool
     let kind: PendingFileReferenceKind
+    let displayPrefix: String?
 
     init(
         path: String,
         isDirectory: Bool,
-        kind: PendingFileReferenceKind = .workspaceFile
+        kind: PendingFileReferenceKind = .workspaceFile,
+        displayPrefix: String? = nil
     ) {
         self.path = path
         self.isDirectory = isDirectory
         self.kind = kind
+        let trimmedPrefix = displayPrefix?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.displayPrefix = trimmedPrefix?.isEmpty == false ? trimmedPrefix : nil
     }
 
     var id: String { path }

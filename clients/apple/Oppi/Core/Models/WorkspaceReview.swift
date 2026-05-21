@@ -95,6 +95,7 @@ struct QuickActionSessionNavDestination: Identifiable, Hashable {
     let id: String
     let inputText: String
     let filePaths: [String]
+    let fileDisplayPrefix: String
 }
 
 // MARK: - Review Comments

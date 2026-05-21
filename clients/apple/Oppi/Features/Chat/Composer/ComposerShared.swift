@@ -273,6 +273,9 @@ struct ComposerFilePill: View {
     }
 
     private var labelPrefix: String {
+        if let displayPrefix = file.displayPrefix {
+            return displayPrefix
+        }
         switch file.kind {
         case .reviewFile:
             return "Review"
