@@ -430,6 +430,7 @@ extension NativeFullScreenDiffBody: UITextViewDelegate {
 final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     // ~4ms at measured 26 MB/s throughput, safely within 16ms frame budget
     private static let maxSynchronousANSIBytes = 128 * 1024
+    private static let maxEstimatedOutputWidth: CGFloat = 120_000
 
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
@@ -443,6 +444,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
     private var renderedSnapshot: TerminalTraceStream.Snapshot?
+    private var outputWrapped: Bool
+    private var renderedOutputText = ""
+    private var stackWidthConstraint: NSLayoutConstraint?
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
         scrollView: scrollView,
@@ -460,12 +464,14 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         command: String?,
         stream: TerminalTraceStream?,
         palette: ThemePalette,
+        outputWrapped: Bool = false,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.palette = palette
         self.stream = stream
+        self.outputWrapped = outputWrapped
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
@@ -499,6 +505,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateWrappingLayout()
         tailFollowCoordinator.onLayoutPass()
         ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: commandView)
         ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: outputView)
@@ -509,6 +516,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
+        scrollView.isDirectionalLockEnabled = true
         scrollView.showsVerticalScrollIndicator = true
         scrollView.delegate = self
 
@@ -537,12 +545,19 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         outputView.font = FullScreenCodeTypography.codeFont
         outputView.textColor = UIColor(palette.fg)
         outputView.delegate = self
+        applyOutputWrapMode()
 
         addSubview(scrollView)
         scrollView.addSubview(stack)
 
         stack.addArrangedSubview(commandView)
         stack.addArrangedSubview(outputView)
+
+        let stackWidth = stack.widthAnchor.constraint(
+            equalTo: scrollView.frameLayoutGuide.widthAnchor,
+            constant: -20
+        )
+        stackWidthConstraint = stackWidth
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -554,7 +569,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -10),
             stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
             stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -20),
+            stackWidth,
         ])
     }
 
@@ -594,13 +609,18 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             outputView.attributedText = ANSIParser.attributedString(
                 from: content, baseForeground: .themeFg
             )
+            renderedOutputText = outputView.attributedText?.string ?? ""
             applyReviewCommentAnnotations(to: outputView)
+            updateWrappingLayout()
             return
         }
 
         outputView.attributedText = nil
-        outputView.text = ANSIParser.strip(content)
+        let stripped = ANSIParser.strip(content)
+        outputView.text = stripped
+        renderedOutputText = stripped
         applyReviewCommentAnnotations(to: outputView)
+        updateWrappingLayout()
 
         // Large streaming payloads stay in plain mode while streaming to avoid
         // launching expensive full-text ANSI parses on every chunk.
@@ -619,10 +639,65 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.outputView.attributedText = wrapper.value
+                self?.renderedOutputText = wrapper.value.string
                 self?.applyReviewCommentAnnotations(to: self?.outputView)
+                self?.updateWrappingLayout()
                 self?.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             }
         }
+    }
+
+    func setOutputWrapped(_ wrapped: Bool) {
+        guard outputWrapped != wrapped else { return }
+        outputWrapped = wrapped
+        applyOutputWrapMode()
+        setNeedsLayout()
+        layoutIfNeeded()
+    }
+
+    private func applyOutputWrapMode() {
+        outputView.textContainer.lineBreakMode = outputWrapped ? .byCharWrapping : .byClipping
+        scrollView.alwaysBounceHorizontal = !outputWrapped
+        scrollView.showsHorizontalScrollIndicator = !outputWrapped
+        if outputWrapped {
+            scrollView.contentOffset.x = -scrollView.adjustedContentInset.left
+        }
+        updateWrappingLayout()
+    }
+
+    private func updateWrappingLayout() {
+        let viewportWidth = max(1, scrollView.bounds.width)
+        let minimumWidth = max(0, viewportWidth - 20)
+        let targetWidth = outputWrapped
+            ? minimumWidth
+            : max(minimumWidth, estimatedUnwrappedOutputWidth())
+        stackWidthConstraint?.constant = targetWidth - viewportWidth
+    }
+
+    private func estimatedUnwrappedOutputWidth() -> CGFloat {
+        let columns = Self.widestLineColumnCount(in: renderedOutputText)
+        let sampleWidth = ("M" as NSString).size(
+            withAttributes: [.font: FullScreenCodeTypography.codeFont]
+        ).width
+        let textWidth = CGFloat(columns) * max(1, sampleWidth)
+        let insetWidth = outputView.textContainerInset.left + outputView.textContainerInset.right + 12
+        return min(Self.maxEstimatedOutputWidth, ceil(textWidth + insetWidth))
+    }
+
+    private static func widestLineColumnCount(in text: String) -> Int {
+        var widest = 0
+        var current = 0
+        for character in text {
+            if character == "\n" {
+                widest = max(widest, current)
+                current = 0
+            } else if character == "\t" {
+                current += 4
+            } else {
+                current += 1
+            }
+        }
+        return max(widest, current)
     }
 
     private func applyReviewCommentAnnotations(to textView: UITextView?) {

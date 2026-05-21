@@ -27,13 +27,16 @@ final class FullScreenCodeViewController: UIViewController {
         let bodyContent: FullScreenCodeContent
         let copyText: String
         let sourceToggleTitle: String?
+        let terminalWrapToggleTitle: String?
     }
 
     private struct NavigationPresentation: Equatable {
         let sourceToggleTitle: String?
+        let showsTerminalWrapToggle: Bool
 
         init(_ presentation: Presentation) {
             sourceToggleTitle = presentation.sourceToggleTitle
+            showsTerminalWrapToggle = presentation.terminalWrapToggleTitle != nil
         }
     }
 
@@ -56,7 +59,9 @@ final class FullScreenCodeViewController: UIViewController {
     private let selectedTextActionContext: SelectedTextActionContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var showSource = false
+    private var terminalOutputWrapped = false
     private var copyButton: UIBarButtonItem?
+    private var terminalWrapButton: UIBarButtonItem?
     private weak var contentHostController: UIViewController?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
@@ -241,6 +246,8 @@ final class FullScreenCodeViewController: UIViewController {
         // See FullScreenViewerChrome.
 
         var rightItems: [UIBarButtonItem] = []
+        terminalWrapButton = nil
+
         let copy = UIBarButtonItem(
             image: UIImage(systemName: "doc.on.doc"),
             style: .plain,
@@ -258,6 +265,19 @@ final class FullScreenCodeViewController: UIViewController {
                     tintColor: UIColor(palette.fgDim)
                 )
             )
+        }
+
+        if let toggleTitle = presentation.terminalWrapToggleTitle {
+            let toggle = UIBarButtonItem(
+                title: toggleTitle,
+                style: .plain,
+                target: self,
+                action: #selector(toggleTerminalOutputWrap)
+            )
+            toggle.tintColor = UIColor(palette.blue)
+            terminalWrapButton = toggle
+            updateTerminalWrapButton()
+            rightItems.append(toggle)
         }
 
         if let toggleTitle = presentation.sourceToggleTitle {
@@ -279,7 +299,8 @@ final class FullScreenCodeViewController: UIViewController {
         return Presentation(
             bodyContent: bodyContent(for: semanticContent),
             copyText: copyText(for: semanticContent),
-            sourceToggleTitle: sourceToggleTitle(for: semanticContent)
+            sourceToggleTitle: sourceToggleTitle(for: semanticContent),
+            terminalWrapToggleTitle: terminalWrapToggleTitle(for: semanticContent)
         )
     }
 
@@ -375,6 +396,7 @@ final class FullScreenCodeViewController: UIViewController {
                 command: command,
                 stream: stream,
                 palette: palette,
+                outputWrapped: terminalOutputWrapped,
                 selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
@@ -659,6 +681,11 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
+    private func terminalWrapToggleTitle(for content: FullScreenCodeContent) -> String? {
+        guard case .terminal = content else { return nil }
+        return terminalOutputWrapped ? String(localized: "Unwrap") : String(localized: "Wrap")
+    }
+
     // MARK: - HTML Diff Helpers
 
     private static func isHTMLFilePath(_ filePath: String?) -> Bool {
@@ -684,6 +711,29 @@ final class FullScreenCodeViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.copyButton?.image = UIImage(systemName: "doc.on.doc")
         }
+    }
+
+    @objc private func toggleTerminalOutputWrap() {
+        guard case .terminal = currentSemanticContent() else { return }
+        terminalOutputWrapped.toggle()
+        updateTerminalWrapButton()
+
+        if let terminalBody = installedBodyView as? NativeFullScreenTerminalBody {
+            terminalBody.setOutputWrapped(terminalOutputWrapped)
+        } else if let viewController = contentHostController {
+            let palette = ThemeRuntimeState.currentThemeID().palette
+            let presentation = makePresentation()
+            installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+        }
+    }
+
+    private func updateTerminalWrapButton() {
+        guard let terminalWrapButton else { return }
+        let title = terminalOutputWrapped ? String(localized: "Unwrap") : String(localized: "Wrap")
+        terminalWrapButton.title = title
+        terminalWrapButton.accessibilityLabel = terminalOutputWrapped
+            ? String(localized: "Unwrap output")
+            : String(localized: "Wrap output")
     }
 
     private func copyText(for content: FullScreenCodeContent) -> String {

@@ -168,6 +168,71 @@ struct FullScreenSelectedTextTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func terminalBodyDefaultsToUnwrappedOutputAndCanToggleWrapping() throws {
+        let longLine = String(repeating: "abcdefghij", count: 40)
+        let body = NativeFullScreenTerminalBody(
+            content: longLine,
+            command: nil,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            selectedTextPiRouter: nil,
+            selectedTextSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let outputView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0) == longLine
+        })
+        let outerScrollView = try #require(timelineAllScrollViews(in: body).first { !($0 is UITextView) })
+
+        #expect(outputView.textContainer.lineBreakMode == .byClipping)
+        #expect(outerScrollView.showsHorizontalScrollIndicator)
+
+        body.setOutputWrapped(true)
+        host.layoutIfNeeded()
+        #expect(outputView.textContainer.lineBreakMode == .byCharWrapping)
+        #expect(!outerScrollView.showsHorizontalScrollIndicator)
+
+        body.setOutputWrapped(false)
+        host.layoutIfNeeded()
+        #expect(outputView.textContainer.lineBreakMode == .byClipping)
+        #expect(outerScrollView.showsHorizontalScrollIndicator)
+    }
+
+    @Test func terminalFullScreenWrapButtonTogglesOutputMode() throws {
+        let longLine = String(repeating: "0123456789", count: 40)
+        let controller = makeController(
+            content: .terminal(content: longLine, command: "printf", stream: nil)
+        )
+        let navigationController = try #require(controller.children.first as? UINavigationController)
+        let contentController = try #require(navigationController.topViewController)
+        let wrapButton = try #require(contentController.navigationItem.rightBarButtonItems?.first {
+            $0.title == "Wrap"
+        })
+        let outputView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0) == longLine
+        })
+
+        #expect(outputView.textContainer.lineBreakMode == .byClipping)
+
+        let action = try #require(wrapButton.action)
+        let target = try #require(wrapButton.target)
+        #expect(UIApplication.shared.sendAction(action, to: target, from: wrapButton, for: nil))
+        controller.view.layoutIfNeeded()
+
+        #expect(wrapButton.title == "Unwrap")
+        #expect(outputView.textContainer.lineBreakMode == .byCharWrapping)
+    }
+
     @Test func sourceBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .plainText(content: "raw source", filePath: "Notes.txt")
