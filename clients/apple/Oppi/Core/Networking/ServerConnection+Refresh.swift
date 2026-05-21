@@ -94,10 +94,12 @@ extension ServerConnection {
         let task = Task { @MainActor [weak self, apiClient] in
             guard let self else { return }
             let requestStartedAt = Date()
+            let cache = self._cacheForTesting ?? TimelineCache.shared
             defer { self.sessionListRefreshTask = nil }
 
             if self.sessionStore.sessions.isEmpty,
-               let cached = await TimelineCache.shared.loadSessionList() {
+               let serverId = self.currentServerId,
+               let cached = await cache.loadSessionList(serverId: serverId) {
                 self.sessionStore.applyServerSnapshot(cached)
                 self.syncAllWorkspaceSummariesFromLocalState()
                 self.syncLiveActivityPermissions()
@@ -118,7 +120,11 @@ extension ServerConnection {
                 self.sessionStore.markSyncSucceeded()
                 self.syncLiveActivityPermissions()
                 let cachedSessions = self.sessionStore.sessions
-                Task.detached { await TimelineCache.shared.saveSessionList(cachedSessions) }
+                let serverId = self.currentServerId
+                Task.detached {
+                    guard let serverId else { return }
+                    await cache.saveSessionList(cachedSessions, serverId: serverId)
+                }
 
                 self.recordRefreshBreadcrumb(
                     "session_list.end",

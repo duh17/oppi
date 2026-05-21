@@ -51,6 +51,29 @@ struct TimelineCacheTests {
         #expect(drop == nil)
     }
 
+    @Test func sessionListNamespacingIsolatesServers() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        let studioSessions = [makeTestSession(id: "studio-session", workspaceId: "w-studio")]
+        let miniSessions = [makeTestSession(id: "mini-session", workspaceId: "w-mini")]
+
+        await cache.saveSessionList(studioSessions, serverId: "sha256:studio")
+        await cache.saveSessionList(miniSessions, serverId: "sha256:mini")
+
+        let loadedStudio = await cache.loadSessionList(serverId: "sha256:studio")
+        let loadedMini = await cache.loadSessionList(serverId: "sha256:mini")
+        let loadedGlobal = await cache.loadSessionList()
+
+        #expect(loadedStudio?.map(\.id) == ["studio-session"])
+        #expect(loadedMini?.map(\.id) == ["mini-session"])
+        #expect(loadedGlobal == nil)
+    }
+
     private func makeTraceEvent(id: String) -> TraceEvent {
         TraceEvent(
             id: id,

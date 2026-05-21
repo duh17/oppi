@@ -24,8 +24,8 @@ struct TimelineCacheMetrics: Sendable {
 
 /// Local disk cache for server responses.
 ///
-/// Stores session traces, session list, workspaces, and skills under
-/// `Library/Application Support/` for durable read continuity.
+/// Stores session traces, server-scoped session lists, workspaces, and skills
+/// under `Library/Application Support/` for durable read continuity.
 ///
 /// All disk I/O runs on the actor's serial executor, off the main thread.
 /// Decode failures return nil (cache miss), never crash.
@@ -113,12 +113,26 @@ actor TimelineCache {
 
     // MARK: - Session List
 
+    /// Legacy single-server session-list cache.
     func loadSessionList() -> [Session]? {
         load([Session].self, from: "session-list.json")
     }
 
+    /// Legacy single-server session-list cache.
     func saveSessionList(_ sessions: [Session]) {
         save(sessions, to: "session-list.json")
+    }
+
+    /// Load the recent session projection for a specific server.
+    func loadSessionList(serverId: String) -> [Session]? {
+        ensureServerDir(serverId)
+        return load([Session].self, from: serverPath(serverId, "session-list.json"))
+    }
+
+    /// Save the recent session projection for a specific server.
+    func saveSessionList(_ sessions: [Session], serverId: String) {
+        ensureServerDir(serverId)
+        save(sessions, to: serverPath(serverId, "session-list.json"))
     }
 
     // MARK: - Workspaces

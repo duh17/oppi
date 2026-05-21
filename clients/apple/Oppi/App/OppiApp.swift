@@ -663,7 +663,11 @@ struct OppiApp: App {
 
         // 3. Show cached data immediately (before any network calls)
         let cache = TimelineCache.shared
-        if let cachedSessions = await cache.loadSessionList() {
+        if let cachedSessions = await loadLaunchSessionCache(
+            cache: cache,
+            serverId: server.id,
+            pairedServerCount: serverStore.servers.count
+        ) {
             usedCachedSessions = true
             connection.sessionStore.applyServerSnapshot(cachedSessions)
             connection.syncAllWorkspaceSummariesFromLocalState()
@@ -693,5 +697,23 @@ struct OppiApp: App {
             await PushRegistration.shared.requestAndRegister()
             await coordinator.registerPushWithAllServers()
         }
+    }
+
+    private func loadLaunchSessionCache(
+        cache: TimelineCache,
+        serverId: String,
+        pairedServerCount: Int
+    ) async -> [Session]? {
+        if let cached = await cache.loadSessionList(serverId: serverId) {
+            return cached
+        }
+
+        guard pairedServerCount == 1,
+              let legacyCached = await cache.loadSessionList() else {
+            return nil
+        }
+
+        await cache.saveSessionList(legacyCached, serverId: serverId)
+        return legacyCached
     }
 }

@@ -154,6 +154,9 @@ final class ServerConnection {
     /// Test seam: observe refresh breadcrumbs emitted by list refresh paths.
     var _onRefreshBreadcrumbForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
 
+    /// Test seam: override the cache actor used by list refresh paths.
+    var _cacheForTesting: TimelineCache?
+
     /// Test seam: observe view-driven session re-entry preparation.
     var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
 
