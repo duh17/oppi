@@ -110,8 +110,7 @@ function resolveRuntimeDir(): string | undefined {
  * Priority: sibling npm next to OPPI_RUNTIME_BIN (set by Mac app) → system npm.
  */
 function resolvePackageManager(): PackageManagerCommand | undefined {
-  const ignoreScripts = "--ignore-scripts";
-  const installArgs = ["install", "--omit=dev", ignoreScripts];
+  const installArgs = ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"];
 
   const runtimeBin = process.env.OPPI_RUNTIME_BIN;
   if (runtimeBin && existsSync(runtimeBin)) {
@@ -235,6 +234,36 @@ function replaceManifestDependencyName(
   }
 
   pinManifestDependencyVersion(runtimeDir, toPackageName, version);
+}
+
+function pinExistingManifestDependencyVersions(
+  runtimeDir: string,
+  packageNames: readonly string[],
+  version: string,
+): string[] {
+  const pkgPath = join(runtimeDir, "package.json");
+  const pkgJson = JSON.parse(readFileSync(pkgPath, "utf-8"));
+  const changed: string[] = [];
+
+  for (const field of ["dependencies", "optionalDependencies"] as const) {
+    const deps = pkgJson[field];
+    if (!deps || typeof deps !== "object") {
+      continue;
+    }
+
+    for (const packageName of packageNames) {
+      if (packageName in deps && deps[packageName] !== version) {
+        deps[packageName] = version;
+        changed.push(packageName);
+      }
+    }
+  }
+
+  if (changed.length > 0) {
+    writeFileSync(pkgPath, JSON.stringify(pkgJson, null, 2) + "\n");
+  }
+
+  return changed;
 }
 
 /**
@@ -400,6 +429,14 @@ export class RuntimeUpdateManager {
           if (pinned !== targetVersion) {
             pinManifestDependencyVersion(runtimeDir, this.packageName, targetVersion);
           }
+        }
+
+        if (this.packageName === DEFAULT_PI_CODING_AGENT_PACKAGE) {
+          pinExistingManifestDependencyVersions(
+            runtimeDir,
+            ["@earendil-works/pi-ai", "@earendil-works/pi-tui"],
+            targetVersion,
+          );
         }
       }
 

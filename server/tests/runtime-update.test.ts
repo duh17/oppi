@@ -380,6 +380,60 @@ describe("RuntimeUpdateManager", () => {
       }
     });
 
+    it("keeps direct pi companion packages aligned with the runtime package", async () => {
+      const { dir, cleanup } = makeFakeRuntimeDir({
+        deps: {
+          "@earendil-works/pi-coding-agent": "0.75.0",
+          "@earendil-works/pi-ai": "0.75.0",
+          "@earendil-works/pi-tui": "0.75.0",
+        },
+        installedVersions: {
+          "@earendil-works/pi-coding-agent": "0.75.0",
+          "@earendil-works/pi-ai": "0.75.0",
+          "@earendil-works/pi-tui": "0.75.0",
+        },
+      });
+
+      try {
+        pointResolverAt(dir);
+        global.fetch = vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ version: "0.75.4" }),
+        })) as typeof global.fetch;
+        mockInstallSuccess(() => {
+          for (const name of [
+            "@earendil-works/pi-coding-agent",
+            "@earendil-works/pi-ai",
+            "@earendil-works/pi-tui",
+          ]) {
+            writeFileSync(
+              join(dir, "node_modules", name, "package.json"),
+              JSON.stringify({ name, version: "0.75.4" }),
+            );
+          }
+        });
+
+        const manager = new RuntimeUpdateManager({ currentVersion: "0.75.0" });
+        const result = await manager.updateRuntime();
+        const pkgJson = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as {
+          dependencies: Record<string, string>;
+        };
+
+        expect(pkgJson.dependencies["@earendil-works/pi-coding-agent"]).toBe("0.75.4");
+        expect(pkgJson.dependencies["@earendil-works/pi-ai"]).toBe("0.75.4");
+        expect(pkgJson.dependencies["@earendil-works/pi-tui"]).toBe("0.75.4");
+        expect(result.updatedPackages).toEqual(
+          expect.arrayContaining([
+            { name: "@earendil-works/pi-coding-agent", from: "0.75.0", to: "0.75.4" },
+            { name: "@earendil-works/pi-ai", from: "0.75.0", to: "0.75.4" },
+            { name: "@earendil-works/pi-tui", from: "0.75.0", to: "0.75.4" },
+          ]),
+        );
+      } finally {
+        cleanup();
+      }
+    });
+
     it("migrates the runtime manifest from the legacy pi package name", async () => {
       const { dir, cleanup } = makeFakeRuntimeDir({
         deps: { "@mariozechner/pi-coding-agent": "0.62.0" },
@@ -615,13 +669,15 @@ describe("RuntimeUpdateManager", () => {
         expect(capturedArgs).toContain("install");
         expect(capturedArgs).toContain("--omit=dev");
         expect(capturedArgs).toContain("--ignore-scripts");
+        expect(capturedArgs).toContain("--no-audit");
+        expect(capturedArgs).toContain("--no-fund");
       } finally {
         rmSync(fakeBinDir, { recursive: true, force: true });
         cleanup();
       }
     });
 
-    it("always includes --ignore-scripts flag for safety", async () => {
+    it("always includes dependency hygiene flags for safety", async () => {
       const { dir, cleanup } = makeFakeRuntimeDir({
         deps: { "some-pkg": "^1.0.0" },
         installedVersions: { "some-pkg": "1.0.0" },
@@ -642,6 +698,8 @@ describe("RuntimeUpdateManager", () => {
         await manager.updateRuntime();
 
         expect(capturedArgs).toContain("--ignore-scripts");
+        expect(capturedArgs).toContain("--no-audit");
+        expect(capturedArgs).toContain("--no-fund");
       } finally {
         cleanup();
       }
