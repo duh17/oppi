@@ -24,6 +24,30 @@ typealias WorkspaceRefreshPollingPolicy = SessionListRefreshPollingPolicy
 ///
 /// Sessions are grouped into active (running/busy/ready) and stopped.
 /// Supports creating new sessions, resuming stopped ones, and stopping active ones.
+enum WorkspaceDetailLoadErrorPolicy {
+    static func shouldPresent(
+        error: any Error,
+        workspaceId: String,
+        hadVisibleData: Bool,
+        knownWorkspaceIds: Set<String>
+    ) -> Bool {
+        guard !hadVisibleData else { return false }
+
+        if error is CancellationError { return false }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+
+        if let apiError = error as? APIError,
+           case .server(let status, let message) = apiError,
+           status == 404,
+           message.localizedCaseInsensitiveContains("Workspace not found"),
+           knownWorkspaceIds.contains(workspaceId) {
+            return false
+        }
+
+        return true
+    }
+}
+
 enum SessionDeleteConfirmationPolicy {
     static let swipeButtonRole: ButtonRole? = nil
 
@@ -81,6 +105,10 @@ private struct SessionDeleteConfirmationModifier: ViewModifier {
 }
 
 struct WorkspaceDetailView: View {
+    #if DEBUG
+    nonisolated(unsafe) static var _onWorkspaceLoadErrorForTesting: ((String, String) -> Void)?
+    #endif
+
     let workspace: Workspace
 
     @Environment(\.apiClient) private var apiClient
@@ -115,6 +143,7 @@ struct WorkspaceDetailView: View {
     @State private var archiveLocalSessionsByBucketID: [String: [LocalSession]] = [:]
     @State private var loadingArchiveBucketIDs: Set<String> = []
     @State private var isRefreshingWorkspaceData = false
+    @State private var workspaceRefreshGeneration = 0
     @State private var hasPresentedWorkspaceOnce = false
     @State private var workspaceLoad: WorkspaceLoadMeasurement?
 
@@ -539,6 +568,9 @@ struct WorkspaceDetailView: View {
         }
         .onChange(of: isRefreshingWorkspaceData) { _, newValue in
             handleWorkspaceRefreshStateChange(newValue)
+        }
+        .onChange(of: workspace.id) { _, _ in
+            handleWorkspaceIdentityChanged()
         }
         .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
         .onChange(of: sessionSearchText) { _, newValue in
@@ -1025,8 +1057,14 @@ struct WorkspaceDetailView: View {
 
     private func refreshWorkspaceData() async {
         guard !isRefreshingWorkspaceData else { return }
+        let requestedWorkspaceId = workspace.id
+        let requestedGeneration = workspaceRefreshGeneration
         isRefreshingWorkspaceData = true
-        defer { isRefreshingWorkspaceData = false }
+        defer {
+            if requestedGeneration == workspaceRefreshGeneration {
+                isRefreshingWorkspaceData = false
+            }
+        }
 
         guard let api = apiClient else { return }
         let hadVisibleData = !workspaceSessions.isEmpty || !localSessions.isEmpty || !archiveBuckets.isEmpty
@@ -1039,8 +1077,11 @@ struct WorkspaceDetailView: View {
                 since: range.since,
                 until: range.until
             )
+            guard !Task.isCancelled,
+                  requestedGeneration == workspaceRefreshGeneration else { return }
+
             sessionStore.applyWorkspaceRecentSnapshot(
-                workspaceId: workspace.id,
+                workspaceId: requestedWorkspaceId,
                 summaries: response.sessionSummaries,
                 requestStartedAt: startedAt
             )
@@ -1049,16 +1090,44 @@ struct WorkspaceDetailView: View {
             localSessions = response.importableSessions
             connection.applyWorkspaceAttentionSnapshot(
                 APIClient.WorkspaceAttentionResponse(
-                    workspaceId: workspace.id,
+                    workspaceId: requestedWorkspaceId,
                     serverNow: response.serverNow,
                     attention: response.attention
                 )
             )
+            if error?.hasPrefix("Failed to load workspace:") == true {
+                error = nil
+            }
         } catch {
-            if !hadVisibleData {
-                self.error = "Failed to load workspace: \(error.localizedDescription)"
+            guard !Task.isCancelled,
+                  requestedGeneration == workspaceRefreshGeneration else { return }
+            let knownWorkspaceIds = Set(workspaceStore.workspaces.map(\.id))
+            if WorkspaceDetailLoadErrorPolicy.shouldPresent(
+                error: error,
+                workspaceId: requestedWorkspaceId,
+                hadVisibleData: hadVisibleData,
+                knownWorkspaceIds: knownWorkspaceIds
+            ) {
+                let message = "Failed to load workspace: \(error.localizedDescription)"
+                #if DEBUG
+                Self._onWorkspaceLoadErrorForTesting?(requestedWorkspaceId, message)
+                #endif
+                self.error = message
             }
         }
+    }
+
+    @MainActor
+    private func handleWorkspaceIdentityChanged() {
+        workspaceRefreshGeneration &+= 1
+        error = nil
+        localSessions = []
+        archiveBuckets = []
+        archiveStoppedSessionsByBucketID = [:]
+        archiveLocalSessionsByBucketID = [:]
+        loadingArchiveBucketIDs = []
+        isRefreshingWorkspaceData = false
+        workspaceLoad = nil
     }
 
     @MainActor

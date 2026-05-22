@@ -121,4 +121,26 @@ struct WorkspaceDetailSortTests {
     @Test func deleteSwipeActionOnlyOpensConfirmation() {
         #expect(SessionDeleteConfirmationPolicy.swipeButtonRole == nil)
     }
+
+    @Test func knownWorkspaceNotFoundDoesNotPresentBlockingLoadError() {
+        let shouldPresent = WorkspaceDetailLoadErrorPolicy.shouldPresent(
+            error: APIError.server(status: 404, message: "Workspace not found"),
+            workspaceId: "ws-known",
+            hadVisibleData: false,
+            knownWorkspaceIds: ["ws-known"]
+        )
+
+        #expect(!shouldPresent)
+    }
+
+    @Test func unknownWorkspaceNotFoundStillPresentsLoadError() {
+        let shouldPresent = WorkspaceDetailLoadErrorPolicy.shouldPresent(
+            error: APIError.server(status: 404, message: "Workspace not found"),
+            workspaceId: "ws-missing",
+            hadVisibleData: false,
+            knownWorkspaceIds: ["ws-known"]
+        )
+
+        #expect(shouldPresent)
+    }
 }

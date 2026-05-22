@@ -20,6 +20,49 @@ private struct WorkspaceCreateSheetContext: Identifiable {
     }
 }
 
+private struct WorkspaceScopedDestinationView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    let target: WorkspaceNavTarget
+
+    @State private var scopedConnection: ServerConnection?
+
+    private var resolvedConnection: ServerConnection? {
+        scopedConnection ?? coordinator.connection(for: target.serverId)
+    }
+
+    var body: some View {
+        Group {
+            if let connection = resolvedConnection {
+                WorkspaceDetailView(workspace: target.workspace)
+                    .environment(connection)
+                    .environment(\.apiClient, connection.apiClient)
+                    .environment(connection.chatState)
+                    .environment(connection.sessionStore)
+                    .environment(connection.workspaceStore)
+                    .environment(connection.permissionStore)
+                    .environment(connection.askRequestStore)
+                    .environment(connection.audioPlayer)
+                    .environment(connection.gitStatusStore)
+                    .environment(connection.fileIndexStore)
+                    .environment(connection.messageQueueStore)
+                    .environment(connection.activityStore)
+            } else {
+                ProgressView("Connecting…")
+            }
+        }
+        .onAppear(perform: activateTargetServer)
+        .task(id: target.serverId) {
+            activateTargetServer()
+        }
+    }
+
+    @MainActor
+    private func activateTargetServer() {
+        guard coordinator.switchToServer(target.serverId) else { return }
+        scopedConnection = coordinator.connection(for: target.serverId)
+    }
+}
+
 /// Tracks whether app launch metric has been recorded this process.
 /// Only fires once — on the first appearance of WorkspaceHomeView.
 nonisolated(unsafe) private var appLaunchMetricRecorded = false
@@ -58,10 +101,7 @@ struct WorkspaceHomeView: View {
         .themedListSurface()
         .navigationTitle("Workspaces")
         .navigationDestination(for: WorkspaceNavTarget.self) { target in
-            WorkspaceDetailView(workspace: target.workspace)
-                .onAppear {
-                    coordinator.switchToServer(target.serverId)
-                }
+            WorkspaceScopedDestinationView(target: target)
         }
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)

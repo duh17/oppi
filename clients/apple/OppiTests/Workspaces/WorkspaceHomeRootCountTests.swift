@@ -261,6 +261,7 @@ struct WorkspaceHomeRefreshTests {
     @Test func poppingBackToWorkspaceHomeRefreshes() async {
         let (coordinator, serverStore) = makeCoordinator()
         let navigation = AppNavigation()
+        navigation.selectedTab = .workspaces
         let counter = MessageCounter()
         coordinator._onRefreshAllServersForTesting = {
             Task { await counter.increment() }
