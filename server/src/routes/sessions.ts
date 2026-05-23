@@ -686,79 +686,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.compressedJson(req, res, { sessions });
   }
 
-  function handleGlobalSessionList(req: IncomingMessage, res: ServerResponse): void {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const parsedStatus = parseSessionStatusFilters(url);
-    if (!parsedStatus.statuses) {
-      helpers.error(res, 400, parsedStatus.error ?? "Invalid status filter");
-      return;
-    }
-
-    if (parsedStatus.statuses.size !== 1 || !parsedStatus.statuses.has("active")) {
-      helpers.error(res, 400, "global session list currently supports only status=active");
-      return;
-    }
-
-    if (url.searchParams.get("groupBy") !== "workspace") {
-      helpers.error(res, 400, "groupBy=workspace is required for global active sessions");
-      return;
-    }
-
-    if (url.searchParams.has("workspaceId")) {
-      helpers.error(
-        res,
-        400,
-        "workspaceId filter is not supported; use the workspace sessions endpoint",
-      );
-      return;
-    }
-
-    const serverNow = Date.now();
-    const attention = collectPendingAttentionCounts(serverNow);
-    const workspaces = ctx.storage
-      .listWorkspaces()
-      .map((workspace) => {
-        const sessions = listWorkspaceActiveSessionRows(workspace.id, attention);
-        const pendingAttentionCount = sessions.reduce(
-          (count, session) => count + session.pendingPermissionCount + session.pendingAskCount,
-          0,
-        );
-        const latestActivity = sessions.reduce(
-          (latest, session) => Math.max(latest, session.lastActivity),
-          0,
-        );
-        return {
-          workspace,
-          workspaceId: workspace.id,
-          sessions,
-          pendingAttentionCount,
-          latestActivity,
-        };
-      })
-      .filter((group) => group.sessions.length > 0)
-      .sort((a, b) => {
-        const aHasAttention = a.pendingAttentionCount > 0;
-        const bHasAttention = b.pendingAttentionCount > 0;
-        if (aHasAttention !== bHasAttention) {
-          return aHasAttention ? -1 : 1;
-        }
-        if (b.latestActivity !== a.latestActivity) {
-          return b.latestActivity - a.latestActivity;
-        }
-        return (
-          a.workspace.name.localeCompare(b.workspace.name) ||
-          a.workspace.id.localeCompare(b.workspace.id)
-        );
-      });
-
-    helpers.compressedJson(req, res, {
-      status: "active",
-      groupBy: "workspace",
-      serverNow,
-      workspaces,
-    });
-  }
-
   function handleWorkspaceSessionBuckets(
     workspaceId: string,
     req: IncomingMessage,
@@ -1691,11 +1618,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     if (path === "/sessions/recent" && method === "GET") {
       handleListRecentWorkspaceSessionSummaries(req, res);
-      return true;
-    }
-
-    if (path === "/sessions" && method === "GET") {
-      handleGlobalSessionList(req, res);
       return true;
     }
 

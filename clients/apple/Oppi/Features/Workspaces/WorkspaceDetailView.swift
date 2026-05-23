@@ -296,7 +296,7 @@ struct WorkspaceDetailView: View {
 
     /// Classify a root session into Your Turn / Working / Stopped.
     ///
-    /// Shared with the top-level Sessions page so attention, idle drafts,
+    /// Shared with workspace overview previews so attention, idle drafts,
     /// descendant work, and terminal states move through the same rules.
     private func classifySession(
         _ session: Session,

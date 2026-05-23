@@ -1374,11 +1374,9 @@ describe("error handling", () => {
     expect(res.status).toBe(404);
   });
 
-  it("requires explicit filters for GET /sessions", async () => {
+  it("returns 404 for removed GET /sessions list route", async () => {
     const res = await get("/sessions");
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("status is required");
+    expect(res.status).toBe(404);
   });
 
   it("GET /sessions/search returns empty results for unmatched query", async () => {

@@ -24,11 +24,7 @@ struct WorkspaceListView: View {
                     WorkspaceEditView(workspace: workspace)
                         .onAppear { coordinator.switchToServer(server) }
                 } label: {
-                    WorkspaceRowView(
-                        workspace: workspace,
-                        badgeIcon: server.resolvedBadgeIcon,
-                        badgeColor: server.resolvedBadgeColor
-                    )
+                    WorkspaceRowView(workspace: workspace)
                 }
                 .accessibilityIdentifier("server.workspace.\(workspace.id)")
             }
@@ -95,8 +91,6 @@ struct WorkspaceListView: View {
 
 private struct WorkspaceRowView: View {
     let workspace: Workspace
-    var badgeIcon: ServerBadgeIcon = .defaultValue
-    var badgeColor: ServerBadgeColor = .defaultValue
 
     var body: some View {
         HStack(spacing: 12) {
@@ -115,7 +109,6 @@ private struct WorkspaceRowView: View {
                             .padding(.vertical, 1)
                             .background(.themeOrange.opacity(0.15), in: Capsule())
                     }
-                    RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
                 }
 
                 if let description = workspace.description {

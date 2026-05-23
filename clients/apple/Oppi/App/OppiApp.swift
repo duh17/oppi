@@ -259,17 +259,16 @@ struct OppiApp: App {
         }
         let sessionId = rawId.removingPercentEncoding ?? rawId
 
-        // Find which server owns this session and switch to it.
+        // Find which server owns this session and open it directly from the workspace stack.
         for (serverId, conn) in coordinator.connections
             where conn.sessionStore.sessions.contains(where: { $0.id == sessionId }) {
-            coordinator.switchToServer(serverId)
-            conn.sessionStore.activeSessionId = sessionId
-            navigation.selectedTab = .workspaces
+            openWorkspaceSession(serverId: serverId, sessionId: sessionId, connection: conn)
             return true
         }
 
         // Session not found locally — just open the app to workspaces tab.
         navigation.selectedTab = .workspaces
+        navigation.workspacePath = NavigationPath()
         return true
     }
 
@@ -280,10 +279,12 @@ struct OppiApp: App {
         }
 
         if let location = pendingPermissionLocation(id: permissionId) {
-            coordinator.switchToServer(location.serverId)
-            location.connection.sessionStore.activeSessionId = location.sessionId
             location.connection.syncLiveActivityPermissions()
-            navigation.selectedTab = .workspaces
+            openWorkspaceSession(
+                serverId: location.serverId,
+                sessionId: location.sessionId,
+                connection: location.connection
+            )
             return true
         }
 
@@ -291,15 +292,32 @@ struct OppiApp: App {
         await coordinator.refreshAllServers()
 
         if let location = pendingPermissionLocation(id: permissionId) {
-            coordinator.switchToServer(location.serverId)
-            location.connection.sessionStore.activeSessionId = location.sessionId
             location.connection.syncLiveActivityPermissions()
-            navigation.selectedTab = .workspaces
+            openWorkspaceSession(
+                serverId: location.serverId,
+                sessionId: location.sessionId,
+                connection: location.connection
+            )
             return true
         }
 
         connection.extensionToast = "Permission request no longer pending"
         return true
+    }
+
+    @MainActor
+    private func openWorkspaceSession(
+        serverId: String,
+        sessionId: String,
+        connection: ServerConnection
+    ) {
+        coordinator.switchToServer(serverId)
+        connection.sessionStore.activeSessionId = sessionId
+        navigation.selectedTab = .workspaces
+        navigation.workspacePath = NavigationPath()
+        navigation.workspacePath.append(
+            WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId)
+        )
     }
 
     private func pendingPermissionLocation(id: String) -> PendingPermissionLocation? {
@@ -550,10 +568,15 @@ struct OppiApp: App {
             guard let coord, !sessionId.isEmpty else { return }
             Task { @MainActor in
                 if let found = coord.findSession(id: sessionId) {
-                    coord.switchToServer(found.serverId)
-                    found.connection.sessionStore.activeSessionId = sessionId
+                    openWorkspaceSession(
+                        serverId: found.serverId,
+                        sessionId: sessionId,
+                        connection: found.connection
+                    )
+                } else {
+                    navigation.selectedTab = .workspaces
+                    navigation.workspacePath = NavigationPath()
                 }
-                navigation.selectedTab = .workspaces
             }
         }
     }

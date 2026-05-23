@@ -977,21 +977,6 @@ actor APIClient {
         let buckets: [WorkspaceSessionArchiveBucket]
     }
 
-    struct GlobalActiveSessionGroupsResponse: Decodable, Sendable {
-        struct WorkspaceGroup: Decodable, Sendable {
-            let workspace: Workspace
-            let workspaceId: String
-            let sessions: [WorkspaceSessionManagedRow]
-            let pendingAttentionCount: Int
-            let latestActivity: Int64
-        }
-
-        let status: String
-        let groupBy: String
-        let serverNow: Int64
-        let workspaces: [WorkspaceGroup]
-    }
-
     struct WorkspaceSessionListResponse: Decodable, Sendable {
         let workspace: Workspace
         let serverNow: Int64
@@ -1079,11 +1064,6 @@ actor APIClient {
             sessionSummaries: sections.sessionSummaries,
             importableSessions: sections.importableSessions
         )
-    }
-
-    func listGlobalActiveSessionGroups() async throws -> GlobalActiveSessionGroupsResponse {
-        let data = try await get("/sessions?status=active&groupBy=workspace")
-        return try JSONDecoder().decode(GlobalActiveSessionGroupsResponse.self, from: data)
     }
 
     /// List recent session summaries across all workspaces with one server request.

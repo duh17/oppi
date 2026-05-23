@@ -245,19 +245,20 @@ struct RestorationStateTests {
 struct AppTabTests {
 
     @Test func rawStringRoundTrips() {
-        #expect(AppTab.sessions.rawString == "sessions")
         #expect(AppTab.workspaces.rawString == "workspaces")
+        #expect(AppTab.server.rawString == "server")
         #expect(AppTab.settings.rawString == "settings")
     }
 
     @Test func initFromRawString() {
-        #expect(AppTab(rawString: "sessions") == .sessions)
+        #expect(AppTab(rawString: "sessions") == .workspaces)
         #expect(AppTab(rawString: "workspaces") == .workspaces)
+        #expect(AppTab(rawString: "server") == .server)
         #expect(AppTab(rawString: "settings") == .settings)
     }
 
-    @Test func unknownRawStringDefaultsToSessions() {
-        #expect(AppTab(rawString: "unknown") == .sessions)
-        #expect(AppTab(rawString: "") == .sessions)
+    @Test func unknownRawStringDefaultsToWorkspaces() {
+        #expect(AppTab(rawString: "unknown") == .workspaces)
+        #expect(AppTab(rawString: "") == .workspaces)
     }
 }

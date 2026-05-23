@@ -18,7 +18,7 @@ private struct QuickSessionDictationContext {
 /// Presented by the Action Button / Control Center / Spotlight via
 /// `StartQuickSessionIntent`. The sheet stays focused on one task: pick a
 /// workspace, compose the first message, then create and navigate to the new
-/// session. Active and recent sessions live in `SessionsHomeView`.
+/// session. Active and recent sessions live under each workspace.
 ///
 /// **Flow**: Pick workspace → compose message → send → session created →
 /// navigate to ChatView.

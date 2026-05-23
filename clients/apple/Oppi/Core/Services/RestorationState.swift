@@ -12,7 +12,7 @@ struct RestorationState: Codable {
     let activeSessionId: String?
     /// Server fingerprint of the active server when backgrounded.
     let activeServerId: String?
-    let selectedTab: String  // "workspaces", "settings"
+    let selectedTab: String  // "workspaces", "server", "settings"
     let composerDraft: String?
     /// ID of the topmost visible chat item when the app was backgrounded.
     let scrollAnchorItemId: String?
@@ -70,7 +70,6 @@ struct RestorationState: Codable {
 extension AppTab {
     var rawString: String {
         switch self {
-        case .sessions: return "sessions"
         case .workspaces: return "workspaces"
         case .server: return "server"
         case .settings: return "settings"
@@ -86,7 +85,7 @@ extension AppTab {
         case "settings":
             self = .settings
         default:
-            self = .sessions
+            self = .workspaces
         }
     }
 }

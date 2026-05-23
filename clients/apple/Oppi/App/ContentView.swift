@@ -56,9 +56,6 @@ struct ContentView: View {
                     OnboardingView()
                 } else {
                     TabView(selection: $nav.selectedTab) {
-                        SwiftUI.Tab("Sessions", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.sessions) {
-                            SessionsHomeView()
-                        }
                         SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
                             NavigationStack(path: $nav.workspacePath) {
                                 WorkspaceHomeView()
@@ -140,14 +137,15 @@ struct ContentView: View {
                 navigation.pendingQuickSessionMessage = pending.autoSendMessage
                 navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
 
-                // Deep-link: push workspace + session in one path update.
-                // NavigationPath resolves step-by-step — WorkspaceDetailView
-                // renders first (registering its navigationDestination for
-                // String), then the session ID resolves to ChatView.
+                // Deep-link directly to the session from the workspace home stack.
                 navigation.selectedTab = .workspaces
                 navigation.workspacePath = NavigationPath()
-                navigation.workspacePath.append(pending.target)
-                navigation.workspacePath.append(pending.sessionId)
+                navigation.workspacePath.append(
+                    WorkspaceSessionNavTarget(
+                        serverId: pending.target.serverId,
+                        sessionId: pending.sessionId
+                    )
+                )
             }
         }, content: {
             QuickSessionSheet()
@@ -225,6 +223,27 @@ struct ContentView: View {
     }
 
     private func reviewCrossSessionPermissions() {
+        guard crossSessionPending.count == 1, let request = crossSessionPrimary else {
+            navigation.selectedTab = .workspaces
+            showCrossSessionPermissionSheet = true
+            return
+        }
+
+        openSessionForPermission(request)
+    }
+
+    private func openSessionForPermission(_ request: PermissionRequest) {
+        if let found = coordinator.findSession(id: request.sessionId) {
+            coordinator.switchToServer(found.serverId)
+            found.connection.sessionStore.activeSessionId = request.sessionId
+            navigation.selectedTab = .workspaces
+            navigation.workspacePath = NavigationPath()
+            navigation.workspacePath.append(
+                WorkspaceSessionNavTarget(serverId: found.serverId, sessionId: request.sessionId)
+            )
+            return
+        }
+
         navigation.selectedTab = .workspaces
         showCrossSessionPermissionSheet = true
     }
@@ -414,7 +433,7 @@ private struct CrossSessionPermissionBanner: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Cross-session permission request")
-        .accessibilityHint("Opens approval sheet")
+        .accessibilityHint(totalCount == 1 ? "Opens the session needing approval" : "Opens approval sheet")
     }
 }
 

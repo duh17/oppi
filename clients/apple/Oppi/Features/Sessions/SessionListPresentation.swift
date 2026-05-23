@@ -1,7 +1,6 @@
 import Foundation
 
-/// Shared active-session sectioning used by the top-level Sessions page and
-/// workspace-scoped session lists.
+/// Shared active-session sectioning used by workspace-scoped session lists.
 enum SessionListActiveSectionKind: Equatable {
     case yourTurn
     case working
@@ -49,52 +48,6 @@ struct SessionListRefreshPollingPolicy: Equatable {
         }
 
         return false
-    }
-}
-
-enum SessionsHomeServerLabel {
-    static func runtimeLabel(from value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
-            return nil
-        }
-
-        let base: String
-        if isIPv4Address(value) {
-            base = value
-        } else {
-            base = value.split(separator: ".").first.map(String.init) ?? value
-        }
-        let label = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty else { return nil }
-        return label.lowercased()
-    }
-
-    static func displayLabel(
-        runtimeLabel: String?,
-        pairedLabel: String?,
-        fallbackServerId: String
-    ) -> String {
-        if let runtimeLabel = runtimeLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !runtimeLabel.isEmpty {
-            return runtimeLabel
-        }
-        if let pairedLabel = pairedLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !pairedLabel.isEmpty {
-            return pairedLabel
-        }
-        return String(fallbackServerId.prefix(8))
-    }
-
-    private static func isIPv4Address(_ value: String) -> Bool {
-        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 4 else { return false }
-        return parts.allSatisfy { part in
-            guard !part.isEmpty, part.allSatisfy(\.isNumber), let octet = Int(part) else {
-                return false
-            }
-            return (0...255).contains(octet)
-        }
     }
 }
 

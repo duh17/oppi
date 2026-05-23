@@ -288,10 +288,10 @@ struct QuickSessionSortTests {
     }
 }
 
-// MARK: - Sessions Home Sections
+// MARK: - Workspace Session List Sections
 
 @Suite("Shared Session List Active Sections")
-struct SessionsHomeActiveSectionTests {
+struct SharedSessionListActiveSectionTests {
 
     @Test func permissionRoutesBusySessionToYourTurn() {
         let session = makeSession(id: "perm", status: .busy)

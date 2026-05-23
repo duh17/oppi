@@ -135,41 +135,6 @@ struct APIClientTests {
         #expect(summaries[0].status == .busy)
     }
 
-    @Test func listGlobalActiveSessionGroupsUsesGroupedEndpoint() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/sessions")
-            #expect(request.url?.query == "status=active&groupBy=workspace")
-            return self.mockResponse(json: """
-            {
-              "status":"active",
-              "groupBy":"workspace",
-              "serverNow":3000,
-              "workspaces":[
-                {
-                  "workspace":{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
-                  "workspaceId":"w1",
-                  "pendingAttentionCount":1,
-                  "latestActivity":2000,
-                  "sessions":[
-                    {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":2000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"pendingPermissionCount":1,"pendingAskCount":0}
-                  ]
-                }
-              ]
-            }
-            """)
-        }
-
-        let response = try await client.listGlobalActiveSessionGroups()
-        #expect(response.status == "active")
-        #expect(response.groupBy == "workspace")
-        #expect(response.workspaces.map(\.workspaceId) == ["w1"])
-        #expect(response.workspaces[0].sessions[0].summary.id == "s1")
-        #expect(response.workspaces[0].sessions[0].pendingPermissionCount == 1)
-    }
-
     @Test func listSessionsFromWorkspacesUsesAggregatedEndpoint() async throws {
         let client = makeClient()
         defer { cleanup() }

@@ -6,6 +6,12 @@ struct WorkspaceNavTarget: Hashable {
     let workspace: Workspace
 }
 
+/// Navigation target for opening a session directly from the workspace overview.
+struct WorkspaceSessionNavTarget: Hashable {
+    let serverId: String
+    let sessionId: String
+}
+
 private struct WorkspaceCreateSheetContext: Identifiable {
     let server: PairedServer
     let presentation: WorkspaceCreatePresentation
@@ -18,6 +24,14 @@ private struct WorkspaceCreateSheetContext: Identifiable {
             openWorkspaceAfterCreate ? "open" : "stay"
         ].joined(separator: "|")
     }
+}
+
+private struct WorkspaceHomePendingDeleteSession: Identifiable {
+    let serverId: String
+    let workspaceId: String
+    let session: Session
+
+    var id: String { "\(serverId):\(workspaceId):\(session.id)" }
 }
 
 private struct WorkspaceScopedDestinationView: View {
@@ -34,18 +48,7 @@ private struct WorkspaceScopedDestinationView: View {
         Group {
             if let connection = resolvedConnection {
                 WorkspaceDetailView(workspace: target.workspace)
-                    .environment(connection)
-                    .environment(\.apiClient, connection.apiClient)
-                    .environment(connection.chatState)
-                    .environment(connection.sessionStore)
-                    .environment(connection.workspaceStore)
-                    .environment(connection.permissionStore)
-                    .environment(connection.askRequestStore)
-                    .environment(connection.audioPlayer)
-                    .environment(connection.gitStatusStore)
-                    .environment(connection.fileIndexStore)
-                    .environment(connection.messageQueueStore)
-                    .environment(connection.activityStore)
+                    .withServerScopedEnvironment(connection)
             } else {
                 ProgressView("Connecting…")
             }
@@ -63,15 +66,89 @@ private struct WorkspaceScopedDestinationView: View {
     }
 }
 
+private struct WorkspaceSessionScopedDestinationView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    let target: WorkspaceSessionNavTarget
+
+    @State private var scopedConnection: ServerConnection?
+
+    private var resolvedConnection: ServerConnection? {
+        scopedConnection ?? coordinator.connection(for: target.serverId)
+    }
+
+    var body: some View {
+        Group {
+            if let connection = resolvedConnection {
+                ChatView(sessionId: target.sessionId)
+                    .withServerScopedEnvironment(connection)
+            } else {
+                ProgressView("Connecting…")
+            }
+        }
+        .onAppear(perform: activateTargetServer)
+        .task(id: target.serverId) {
+            activateTargetServer()
+        }
+    }
+
+    @MainActor
+    private func activateTargetServer() {
+        guard coordinator.switchToServer(target.serverId) else { return }
+        scopedConnection = coordinator.connection(for: target.serverId)
+    }
+}
+
+private extension View {
+    func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
+        self
+            .environment(connection)
+            .environment(\.apiClient, connection.apiClient)
+            .environment(connection.chatState)
+            .environment(connection.sessionStore)
+            .environment(connection.workspaceStore)
+            .environment(connection.permissionStore)
+            .environment(connection.askRequestStore)
+            .environment(connection.audioPlayer)
+            .environment(connection.gitStatusStore)
+            .environment(connection.fileIndexStore)
+            .environment(connection.messageQueueStore)
+            .environment(connection.activityStore)
+    }
+}
+
+private enum WorkspaceHomeSessionPreviewKind: String, Identifiable {
+    case yourTurn = "Your Turn"
+    case working = "Working"
+    case recent = "Recent"
+
+    var id: String { rawValue }
+}
+
+private struct WorkspaceHomeSessionPreview: Identifiable {
+    let kind: WorkspaceHomeSessionPreviewKind
+    let session: Session
+    let attention: SessionListAttentionCounts
+    let children: SessionRow.ChildSummary?
+    let modelSummaries: [SessionModelSummary]
+
+    var id: String { "\(kind.rawValue):\(session.id)" }
+}
+
+private struct WorkspaceHomeSessionPreviewGroup: Identifiable {
+    let kind: WorkspaceHomeSessionPreviewKind
+    let rows: [WorkspaceHomeSessionPreview]
+
+    var id: WorkspaceHomeSessionPreviewKind { kind }
+}
+
 /// Tracks whether app launch metric has been recorded this process.
 /// Only fires once — on the first appearance of WorkspaceHomeView.
 nonisolated(unsafe) private var appLaunchMetricRecorded = false
 
 /// Top-level workspace list — primary navigation tab.
 ///
-/// Shows workspaces grouped by server. Each server section has a tappable header
-/// with name and freshness state. Tapping a workspace connects to that server
-/// on demand and navigates to the workspace detail.
+/// Shows one server at a time, with a server switcher in the toolbar and
+/// expandable workspace rows that preview active or recent sessions.
 struct WorkspaceHomeView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
@@ -80,7 +157,10 @@ struct WorkspaceHomeView: View {
 
     @State private var createSheetContext: WorkspaceCreateSheetContext?
     @State private var pendingCreatedWorkspaceTarget: WorkspaceNavTarget?
-    @State private var collapsedServerIds: Set<String> = []
+    @State private var pendingDeleteSession: WorkspaceHomePendingDeleteSession?
+    @State private var error: String?
+    @State private var expandedWorkspaceKeys: Set<String> = []
+    @State private var collapsedWorkspaceKeys: Set<String> = []
     /// Guards against re-presenting the guided create after the user dismisses it.
     @State private var guidedCreateConsumed = false
     /// Tracks whether the initial task-driven refresh has already run for this view identity.
@@ -90,18 +170,38 @@ struct WorkspaceHomeView: View {
         serverStore.servers
     }
 
+    private var selectedServer: PairedServer? {
+        if let activeServerId = coordinator.activeServerId,
+           let server = servers.first(where: { $0.id == activeServerId }) {
+            return server
+        }
+        return servers.first
+    }
+
     var body: some View {
         List {
-            ForEach(servers) { server in
-                serverSection(for: server)
+            if let selectedServer {
+                serverSection(for: selectedServer)
             }
         }
         .accessibilityIdentifier("workspace.list")
         .listStyle(.insetGrouped)
         .themedListSurface()
         .navigationTitle("Workspaces")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if let selectedServer {
+                    serverSwitcher(selectedServer)
+                    newSessionButton()
+                }
+            }
+        }
         .navigationDestination(for: WorkspaceNavTarget.self) { target in
             WorkspaceScopedDestinationView(target: target)
+        }
+        .navigationDestination(for: WorkspaceSessionNavTarget.self) { target in
+            WorkspaceSessionScopedDestinationView(target: target)
         }
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)
@@ -118,6 +218,37 @@ struct WorkspaceHomeView: View {
                     )
                 }
             )
+        }
+        .confirmationDialog(
+            "Delete Session?",
+            isPresented: Binding(
+                get: { pendingDeleteSession != nil },
+                set: { if !$0 { pendingDeleteSession = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingDeleteSession {
+                Button("Delete Session", role: .destructive) {
+                    let context = pendingDeleteSession
+                    self.pendingDeleteSession = nil
+                    Task { await deletePreviewSession(context) }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteSession = nil
+            }
+        } message: {
+            if let pendingDeleteSession {
+                Text(SessionDeleteConfirmationPolicy.deleteMessage(for: pendingDeleteSession.session))
+            }
+        }
+        .alert("Error", isPresented: Binding(
+            get: { error != nil },
+            set: { if !$0 { error = nil } }
+        )) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: {
+            Text(error ?? "")
         }
         .refreshable {
             await refresh(force: true)
@@ -153,6 +284,73 @@ struct WorkspaceHomeView: View {
         }
     }
 
+    // MARK: - Toolbar
+
+    private func serverStatusPresentation(for server: PairedServer) -> WorkspaceServerStatusPresentation {
+        let serverConn = coordinator.connection(for: server.id)
+        let workspaceCatalog = workspacesForServer(server.id)
+        let rawFreshness = serverConn?.workspaceStore.freshnessState(forServer: server.id) ?? .offline
+        let rawFreshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: server.id) ?? "Offline"
+        return WorkspaceServerStatusPresentation.derive(
+            freshnessState: rawFreshness,
+            freshnessLabel: rawFreshnessLabel,
+            isTransportConnected: serverConn?.isConnected == true,
+            hasCachedCatalog: !workspaceCatalog.isEmpty
+        )
+    }
+
+    private func serverSwitcher(_ current: PairedServer) -> some View {
+        Menu {
+            ForEach(servers) { server in
+                Button {
+                    switchVisibleServer(to: server)
+                } label: {
+                    Label(
+                        server.name,
+                        systemImage: server.id == current.id ? "checkmark.circle.fill" : "server.rack"
+                    )
+                }
+            }
+
+            Divider()
+
+            Button {
+                presentCreateWorkspace(on: current)
+            } label: {
+                Label("Create Workspace", systemImage: "folder.badge.plus")
+            }
+
+            Button {
+                navigation.workspacePath.append(current)
+            } label: {
+                Label("Server Settings", systemImage: "slider.horizontal.3")
+            }
+        } label: {
+            ServerSwitcherPill(
+                server: current,
+                status: serverStatusPresentation(for: current)
+            )
+        }
+        .accessibilityLabel("Current server: \(current.name)")
+    }
+
+    private func newSessionButton() -> some View {
+        Button {
+            navigation.showQuickSession = true
+        } label: {
+            Image(systemName: "plus")
+        }
+        .accessibilityLabel("Start Quick Session")
+        .accessibilityIdentifier("workspace.quickSession.start")
+    }
+
+    private func switchVisibleServer(to server: PairedServer) {
+        guard coordinator.switchToServer(server) else { return }
+        Task { @MainActor in
+            await refresh(force: true)
+        }
+    }
+
     // MARK: - Server Section
 
     @ViewBuilder
@@ -160,92 +358,355 @@ struct WorkspaceHomeView: View {
         let serverId = server.id
         let serverConn = coordinator.connection(for: serverId)
         let workspaceCatalog = workspacesForServer(serverId)
-        let isCollapsed = collapsedServerIds.contains(serverId)
         let summaries = serverConn?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
-        let workspaces = isCollapsed ? workspaceCatalog : sortedWorkspaces(workspaceCatalog, summaries: summaries)
-        let rawFreshness = serverConn?.workspaceStore.freshnessState(forServer: serverId) ?? .offline
-        let rawFreshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: serverId) ?? "Offline"
-        let statusPresentation = WorkspaceServerStatusPresentation.derive(
-            freshnessState: rawFreshness,
-            freshnessLabel: rawFreshnessLabel,
-            isTransportConnected: serverConn?.isConnected == true,
-            hasCachedCatalog: !workspaceCatalog.isEmpty
-        )
-        let freshness = statusPresentation.state
-        let freshnessLabel = statusPresentation.label
-        let isUnreachable = statusPresentation.isUnreachable
+        let workspaces = sortedWorkspaces(workspaceCatalog, summaries: summaries)
+        let isUnreachable = serverStatusPresentation(for: server).isUnreachable
 
         Section {
-            if !isCollapsed {
-                if workspaces.isEmpty {
-                    Text(isUnreachable ? "Offline — cached workspaces unavailable" : "No workspaces")
-                        .font(.subheadline)
-                        .foregroundStyle(.themeComment)
-                        .listRowBackground(Color.themeBg)
-                } else {
-                    ForEach(workspaces) { workspace in
-                        let summary = summaryForWorkspace(workspace.id, in: summaries)
-                        NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
-                            WorkspaceHomeRow(
-                                workspace: workspace,
-                                activeCount: summary.activeCount,
-                                stoppedCount: summary.stoppedCount,
-                                hasAttention: summary.hasAttention,
-                                isUnreachable: isUnreachable,
-                                badgeIcon: server.resolvedBadgeIcon,
-                                badgeColor: server.resolvedBadgeColor
+            if workspaces.isEmpty {
+                Text(isUnreachable ? "Offline — cached workspaces unavailable" : "No workspaces")
+                    .font(.subheadline)
+                    .foregroundStyle(.themeComment)
+                    .listRowBackground(Color.themeBg)
+            } else {
+                ForEach(workspaces) { workspace in
+                    let summary = summaryForWorkspace(workspace.id, in: summaries)
+                    workspaceOverviewRows(
+                        server: server,
+                        connection: serverConn,
+                        workspace: workspace,
+                        summary: summary,
+                        isUnreachable: isUnreachable
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Workspace Overview Rows
+
+    @ViewBuilder
+    private func workspaceOverviewRows(
+        server: PairedServer,
+        connection: ServerConnection?,
+        workspace: Workspace,
+        summary: WorkspaceListSummary,
+        isUnreachable: Bool
+    ) -> some View {
+        let serverId = server.id
+        let key = workspaceKey(serverId: serverId, workspaceId: workspace.id)
+        let isExpanded = isWorkspaceExpanded(key: key, summary: summary)
+        let previewGroups = workspaceSessionPreviewGroups(workspaceId: workspace.id, connection: connection)
+
+        HStack(spacing: 8) {
+            Button {
+                toggleWorkspaceExpansion(key: key, summary: summary)
+            } label: {
+                WorkspaceHomeDisclosureIcon(
+                    workspace: workspace,
+                    isExpanded: isExpanded,
+                    hasAttention: summary.hasAttention,
+                    isUnreachable: isUnreachable
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspace.name)" : "Expand sessions for \(workspace.name)")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Shows or hides the workspace session preview")
+
+            Button {
+                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+            } label: {
+                WorkspaceHomeRow(
+                    workspace: workspace,
+                    activeCount: summary.activeCount,
+                    stoppedCount: summary.stoppedCount,
+                    hasAttention: summary.hasAttention,
+                    isUnreachable: isUnreachable
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(workspace.name)")
+        }
+        .listRowBackground(Color.themeBg)
+
+        if isExpanded {
+            if previewGroups.isEmpty {
+                WorkspaceHomePreviewEmptyRow()
+                    .listRowBackground(Color.themeBg)
+            } else {
+                let showGroupLabels = previewGroups.count > 1
+                ForEach(previewGroups) { group in
+                    if showGroupLabels {
+                        WorkspaceHomePreviewGroupHeader(kind: group.kind)
+                            .listRowBackground(Color.themeBg)
+                            .listRowSeparator(.hidden)
+                    }
+
+                    ForEach(group.rows) { preview in
+                        Button {
+                            navigation.workspacePath.append(
+                                WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.session.id)
+                            )
+                        } label: {
+                            WorkspaceHomeSessionPreviewRow(
+                                preview: preview,
+                                activitySummary: activitySummary(for: preview.session, attention: preview.attention, connection: connection)
                             )
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
-                        // Never disable read-only navigation — cached data
-                        // should always be browsable even when the server
-                        // is unreachable (e.g. phone on cellular after a run).
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            previewRowSwipeAction(
+                                session: preview.session,
+                                serverId: serverId,
+                                workspaceId: workspace.id,
+                                connection: connection
+                            )
+                        }
                     }
                 }
             }
-        } header: {
-            HStack(spacing: 8) {
-                Button {
-                    toggleServerExpansion(for: serverId)
-                } label: {
-                    ServerSectionHeader(
-                        server: server,
-                        freshnessState: freshness,
-                        freshnessLabel: freshnessLabel,
-                        isCollapsed: isCollapsed
-                    )
-                }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
+        }
+    }
 
-                NavigationLink(value: server) {
-                    Image(systemName: "chevron.right")
-                        .font(.appCaption)
-                        .foregroundStyle(.themeComment)
-                        .frame(width: 30, height: 30)
-                        .background(.themeComment.opacity(0.15), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Server settings for \(server.name)")
-                .accessibilityIdentifier("server.settings.\(serverId)")
+    @ViewBuilder
+    private func previewRowSwipeAction(
+        session: Session,
+        serverId: String,
+        workspaceId: String,
+        connection: ServerConnection?
+    ) -> some View {
+        if session.status == .stopped {
+            Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
+                pendingDeleteSession = WorkspaceHomePendingDeleteSession(
+                    serverId: serverId,
+                    workspaceId: workspaceId,
+                    session: session
+                )
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .tint(.themeRed)
+        } else {
+            Button {
+                Task { await stopPreviewSession(session, workspaceId: workspaceId, connection: connection) }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .tint(.themeOrange)
+        }
+    }
 
-                Button {
-                    presentCreateWorkspace(on: server)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.appButton)
-                        .foregroundStyle(.themeBlue)
-                        .frame(width: 32, height: 32)
-                        .background(.themeComment.opacity(0.18), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Create workspace on \(server.name)")
-                .accessibilityIdentifier("workspace.create.\(serverId)")
-                .disabled(isUnreachable)
-                .opacity(isUnreachable ? 0.5 : 1)
+    private func workspaceKey(serverId: String, workspaceId: String) -> String {
+        "\(serverId):\(workspaceId)"
+    }
+
+    private func isWorkspaceExpanded(key: String, summary: WorkspaceListSummary) -> Bool {
+        if expandedWorkspaceKeys.contains(key) { return true }
+        if collapsedWorkspaceKeys.contains(key) { return false }
+        return summary.hasAttention || summary.activeCount > 0
+    }
+
+    private func toggleWorkspaceExpansion(key: String, summary: WorkspaceListSummary) {
+        let isExpanded = isWorkspaceExpanded(key: key, summary: summary)
+        withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
+            if isExpanded {
+                expandedWorkspaceKeys.remove(key)
+                collapsedWorkspaceKeys.insert(key)
+            } else {
+                collapsedWorkspaceKeys.remove(key)
+                expandedWorkspaceKeys.insert(key)
             }
         }
+    }
+
+    private func workspaceSessionPreviewGroups(
+        workspaceId: String,
+        connection: ServerConnection?
+    ) -> [WorkspaceHomeSessionPreviewGroup] {
+        guard let connection else { return [] }
+        let workspaceSessions = connection.sessionStore.listProjectionSessions(workspaceId: workspaceId)
+        guard !workspaceSessions.isEmpty else { return [] }
+
+        let activeSessions = workspaceSessions.filter { $0.status != .stopped }
+        let activeRoots = SessionTreeHelper.rootSessions(from: activeSessions, allSessions: activeSessions)
+        let activeChildIndex = SessionTreeHelper.ChildIndex(sessions: activeSessions)
+        let allChildIndex = SessionTreeHelper.ChildIndex(sessions: workspaceSessions)
+        var attentionBySessionId: [String: SessionListAttentionCounts] = [:]
+        var yourTurn: [Session] = []
+        var working: [Session] = []
+
+        for session in activeRoots {
+            let descendants = activeChildIndex.allDescendants(of: session.id)
+            let attention = attentionCounts(
+                sessionId: session.id,
+                descendants: descendants,
+                connection: connection
+            )
+            attentionBySessionId[session.id] = attention
+
+            let hasWorkingDescendant = descendants.contains { descendant in
+                if descendant.isAwaitingFirstPrompt { return false }
+                switch descendant.status {
+                case .starting, .busy, .stopping: return true
+                case .ready, .stopped, .error: return false
+                }
+            }
+
+            switch SessionListPresentation.activeSectionKind(
+                for: session,
+                attention: attention,
+                hasWorkingDescendant: hasWorkingDescendant
+            ) {
+            case .yourTurn:
+                yourTurn.append(session)
+            case .working:
+                working.append(session)
+            case nil:
+                break
+            }
+        }
+
+        let maxPreviewRows = 5
+        var groups: [WorkspaceHomeSessionPreviewGroup] = []
+        let sortedYourTurn = SessionListPresentation.sortYourTurn(yourTurn) { sessionId in
+            attentionBySessionId[sessionId] ?? .none
+        }
+        let sortedWorking = SessionListPresentation.sortWorking(working)
+
+        let yourTurnRows = sortedYourTurn.prefix(3).map {
+            previewRow(
+                kind: .yourTurn,
+                session: $0,
+                attention: attentionBySessionId[$0.id] ?? .none,
+                childIndex: allChildIndex
+            )
+        }
+        if !yourTurnRows.isEmpty {
+            groups.append(WorkspaceHomeSessionPreviewGroup(kind: .yourTurn, rows: Array(yourTurnRows)))
+        }
+
+        let workingRows = sortedWorking.prefix(max(0, maxPreviewRows - yourTurnRows.count)).map {
+            previewRow(
+                kind: .working,
+                session: $0,
+                attention: attentionBySessionId[$0.id] ?? .none,
+                childIndex: allChildIndex
+            )
+        }
+        if !workingRows.isEmpty {
+            groups.append(WorkspaceHomeSessionPreviewGroup(kind: .working, rows: Array(workingRows)))
+        }
+
+        let activePreviewCount = yourTurnRows.count + workingRows.count
+        let remainingRecentSlots = max(0, maxPreviewRows - activePreviewCount)
+        if remainingRecentSlots > 0 {
+            let stoppedSessions = workspaceSessions.filter { $0.status == .stopped }
+            let recentStopped = SessionTreeHelper.rootSessions(from: stoppedSessions, allSessions: workspaceSessions)
+                .sorted { lhs, rhs in
+                    if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
+                    return lhs.id < rhs.id
+                }
+                .prefix(remainingRecentSlots)
+                .map {
+                    previewRow(
+                        kind: .recent,
+                        session: $0,
+                        attention: .none,
+                        childIndex: allChildIndex
+                    )
+                }
+            if !recentStopped.isEmpty {
+                groups.append(WorkspaceHomeSessionPreviewGroup(kind: .recent, rows: Array(recentStopped)))
+            }
+        }
+
+        return groups
+    }
+
+    private func previewRow(
+        kind: WorkspaceHomeSessionPreviewKind,
+        session: Session,
+        attention: SessionListAttentionCounts,
+        childIndex: SessionTreeHelper.ChildIndex
+    ) -> WorkspaceHomeSessionPreview {
+        let descendants = childIndex.allDescendants(of: session.id)
+        return WorkspaceHomeSessionPreview(
+            kind: kind,
+            session: session,
+            attention: attention,
+            children: childSummary(for: session, descendants: descendants),
+            modelSummaries: modelSummaries(for: session, descendants: descendants)
+        )
+    }
+
+    private func modelSummaries(for session: Session, descendants: [Session]) -> [SessionModelSummary] {
+        SessionModelSummaryBuilder.summaries(
+            primaryModel: session.model,
+            descendantModels: descendants.compactMap(\.model)
+        )
+    }
+
+    private func childSummary(
+        for session: Session,
+        descendants: [Session]
+    ) -> SessionRow.ChildSummary? {
+        guard !descendants.isEmpty else { return nil }
+
+        var counts = SessionTreeHelper.StatusCounts()
+        var totalCost = session.cost
+        var aggregateCompactionCount = max(0, session.changeStats?.compactionCount ?? 0)
+        var aggregateFilesChanged = max(0, session.changeStats?.filesChanged ?? 0)
+
+        for descendant in descendants {
+            counts.total += 1
+            switch descendant.status {
+            case .starting, .busy, .stopping: counts.working += 1
+            case .ready: counts.ready += 1
+            case .stopped: counts.stopped += 1
+            case .error: counts.error += 1
+            }
+            totalCost += descendant.cost
+            aggregateCompactionCount += max(0, descendant.changeStats?.compactionCount ?? 0)
+            aggregateFilesChanged += max(0, descendant.changeStats?.filesChanged ?? 0)
+        }
+
+        return .init(
+            childCount: descendants.count,
+            statusCounts: counts,
+            aggregateCost: totalCost,
+            aggregateCompactionCount: aggregateCompactionCount,
+            aggregateFilesChanged: aggregateFilesChanged
+        )
+    }
+
+    private func attentionCounts(
+        sessionId: String,
+        descendants: [Session],
+        connection: ServerConnection
+    ) -> SessionListAttentionCounts {
+        let ids = [sessionId] + descendants.map(\.id)
+        return SessionListAttentionCounts(
+            permissionCount: ids.reduce(0) { $0 + connection.permissionStore.pending(for: $1).count },
+            askCount: ids.reduce(0) { $0 + (connection.askRequestStore.hasPending(for: $1) ? 1 : 0) }
+        )
+    }
+
+    private func activitySummary(
+        for session: Session,
+        attention: SessionListAttentionCounts,
+        connection: ServerConnection?
+    ) -> String? {
+        guard let connection else { return nil }
+        return SessionActivitySummary.text(
+            session: session,
+            pendingCount: attention.permissionCount,
+            pendingPermissions: connection.permissionStore.pending(for: session.id),
+            pendingAsk: connection.askRequestStore.pending(for: session.id),
+            activity: connection.activityStore.lastActivity(for: session.id)
+        )
     }
 
     // MARK: - Data
@@ -274,7 +735,18 @@ struct WorkspaceHomeView: View {
             if (lhsSummary.activeCount > 0) != (rhsSummary.activeCount > 0) {
                 return lhsSummary.activeCount > 0
             }
-            return (lhsSummary.latestActivity ?? .distantPast) > (rhsSummary.latestActivity ?? .distantPast)
+
+            let lhsLatest = lhsSummary.latestActivity ?? .distantPast
+            let rhsLatest = rhsSummary.latestActivity ?? .distantPast
+            if lhsLatest != rhsLatest {
+                return lhsLatest > rhsLatest
+            }
+
+            let nameOrder = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if nameOrder != .orderedSame {
+                return nameOrder == .orderedAscending
+            }
+            return lhs.id < rhs.id
         }
     }
 
@@ -292,16 +764,6 @@ struct WorkspaceHomeView: View {
         )
     }
 
-    private func toggleServerExpansion(for serverId: String) {
-        withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
-            if collapsedServerIds.contains(serverId) {
-                collapsedServerIds.remove(serverId)
-            } else {
-                collapsedServerIds.insert(serverId)
-            }
-        }
-    }
-
     private func refresh(force: Bool) async {
         if !force {
             guard !hasPerformedInitialRefresh else { return }
@@ -317,6 +779,54 @@ struct WorkspaceHomeView: View {
         guard navigation.workspacePath.count == 0 else { return }
 
         Task { @MainActor in
+            await refresh(force: true)
+        }
+    }
+
+    // MARK: - Session Actions
+
+    private func stopPreviewSession(
+        _ session: Session,
+        workspaceId: String,
+        connection: ServerConnection?
+    ) async {
+        guard let connection, let api = connection.apiClient else {
+            error = "Stop failed: server is offline"
+            return
+        }
+
+        do {
+            let updated = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: session.id)
+            connection.sessionStore.upsert(updated)
+            await refresh(force: true)
+        } catch {
+            self.error = "Stop failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func deletePreviewSession(_ pending: WorkspaceHomePendingDeleteSession) async {
+        guard let connection = coordinator.connection(for: pending.serverId),
+              let api = connection.apiClient else {
+            error = "Delete failed: server is offline"
+            return
+        }
+
+        connection.sessionStore.remove(id: pending.session.id)
+        do {
+            try await api.deleteWorkspaceSession(
+                workspaceId: pending.workspaceId,
+                sessionId: pending.session.id
+            )
+            await refresh(force: true)
+        } catch let apiError as APIError {
+            if case .server(let status, _) = apiError, status == 404 {
+                await refresh(force: true)
+            } else {
+                self.error = "Delete failed: \(apiError.localizedDescription)"
+                await refresh(force: true)
+            }
+        } catch {
+            self.error = "Delete failed: \(error.localizedDescription)"
             await refresh(force: true)
         }
     }
@@ -351,7 +861,7 @@ struct WorkspaceHomeView: View {
             navigation.shouldGuideWorkspaceCreation = false
             return
         }
-        guard let server = servers.first else { return }
+        guard let server = selectedServer ?? servers.first else { return }
 
         guidedCreateConsumed = true
         navigation.shouldGuideWorkspaceCreation = false
@@ -369,7 +879,7 @@ struct WorkspaceHomeView: View {
         } description: {
             Text("A workspace tells Oppi which folder to work in. Create your first one from a project folder, a manual path, or a blank setup.")
         } actions: {
-            if let server = servers.first {
+            if let server = selectedServer ?? servers.first {
                 Button("Create First Workspace") {
                     presentCreateWorkspace(on: server)
                 }
@@ -379,39 +889,107 @@ struct WorkspaceHomeView: View {
     }
 }
 
-// MARK: - Server Section Header
+// MARK: - Server Switcher
 
-private struct ServerSectionHeader: View {
+private struct ServerSwitcherPill: View {
     let server: PairedServer
-    let freshnessState: FreshnessState
-    let freshnessLabel: String
-    let isCollapsed: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let status: WorkspaceServerStatusPresentation
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "chevron.right")
+        HStack(spacing: 6) {
+            RuntimeBadge(
+                compact: true,
+                icon: server.resolvedBadgeIcon,
+                badgeColor: server.resolvedBadgeColor
+            )
+
+            Text(server.name)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+
+            Image(systemName: "chevron.down")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.themeComment)
-                .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                .animation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion), value: isCollapsed)
-
-            HStack(spacing: 6) {
-                RuntimeBadge(
-                    compact: true,
-                    icon: server.resolvedBadgeIcon,
-                    badgeColor: server.resolvedBadgeColor
-                )
-                Text(server.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-            }
-
-            Spacer()
-
-            FreshnessChip(state: freshnessState, label: freshnessLabel)
         }
-        .padding(.vertical, 2)
+        .foregroundStyle(.themeFg)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.themeComment.opacity(0.14), in: Capsule())
+    }
+
+    private var statusColor: Color {
+        switch status.state {
+        case .live: return .themeGreen
+        case .syncing: return .themeBlue
+        case .stale: return .themeOrange
+        case .offline: return .themeRed
+        }
+    }
+}
+
+// MARK: - Workspace Tree Chrome
+
+private struct WorkspaceHomeDisclosureIcon: View {
+    let workspace: Workspace
+    let isExpanded: Bool
+    let hasAttention: Bool
+    let isUnreachable: Bool
+
+    var body: some View {
+        WorkspaceIcon(icon: workspace.icon, size: 28)
+            .frame(width: 44, height: 44)
+            .opacity(isUnreachable ? 0.55 : 1)
+            .scaleEffect(isExpanded ? 1.04 : 1)
+            .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Workspace Session Preview Rows
+
+private struct WorkspaceHomeSessionPreviewRow: View {
+    let preview: WorkspaceHomeSessionPreview
+    let activitySummary: String?
+
+    var body: some View {
+        SessionRow(
+            session: preview.session,
+            pendingCount: preview.attention.permissionCount,
+            pendingAskCount: preview.attention.askCount,
+            activitySummary: activitySummary,
+            children: preview.children,
+            modelSummaries: preview.modelSummaries
+        )
+        .padding(.leading, 34)
+        .padding(.vertical, 1)
+    }
+}
+
+private struct WorkspaceHomePreviewGroupHeader: View {
+    let kind: WorkspaceHomeSessionPreviewKind
+
+    var body: some View {
+        Text(kind.rawValue)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.themeComment)
+            .textCase(.uppercase)
+            .padding(.leading, 34)
+            .padding(.top, 2)
+            .padding(.bottom, 0)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+private struct WorkspaceHomePreviewEmptyRow: View {
+    var body: some View {
+        Text("No recent sessions")
+            .font(.caption)
+            .foregroundStyle(.themeComment)
+            .padding(.leading, 34)
+            .padding(.vertical, 4)
     }
 }
 
@@ -423,72 +1001,61 @@ private struct WorkspaceHomeRow: View {
     let stoppedCount: Int
     let hasAttention: Bool
     var isUnreachable: Bool = false
-    var badgeIcon: ServerBadgeIcon = .defaultValue
-    var badgeColor: ServerBadgeColor = .defaultValue
 
     var body: some View {
-        HStack(spacing: 12) {
-            WorkspaceIcon(icon: workspace.icon, size: 28)
-                .frame(width: 40, height: 40)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(workspace.name)
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(workspace.name)
-                        .font(.headline)
-                        .foregroundStyle(.themeFg)
-
-                    if workspace.runtime == .sandbox {
-                        Text("SANDBOX")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeOrange)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.themeOrange.opacity(0.15), in: Capsule())
-                    }
-
-                    if hasAttention {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.themeOrange)
-                            .font(.caption)
-                    }
+                if workspace.runtime == .sandbox {
+                    Text("SANDBOX")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeOrange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.themeOrange.opacity(0.15), in: Capsule())
                 }
 
-                HStack(spacing: 8) {
-                    RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
-
-                    if isUnreachable {
-                        Label("Offline", systemImage: "wifi.slash")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-
-                    if activeCount > 0 {
-                        Label("\(activeCount) active", systemImage: "circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(isUnreachable ? .themeComment : .themeGreen)
-                    }
-
-                    if stoppedCount > 0 {
-                        Label("\(stoppedCount) stopped", systemImage: "stop.circle")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-
-                    if !isUnreachable && activeCount == 0 && stoppedCount == 0 {
-                        Text("No sessions")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
+                if hasAttention {
+                    Text("Needs attention")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeOrange)
                 }
 
-                if let desc = workspace.description, !desc.isEmpty {
-                    Text(desc)
+                Spacer(minLength: 8)
+
+                if isUnreachable {
+                    Text("Offline")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
-                        .lineLimit(1)
+                } else if activeCount > 0 {
+                    Text("\(activeCount) active")
+                        .font(.caption)
+                        .foregroundStyle(.themeGreen)
+                } else if stoppedCount == 0 {
+                    Text("No sessions")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
+
+                if stoppedCount > 0 {
+                    Text("\(stoppedCount) stopped")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
                 }
             }
+
+            if let desc = workspace.description, !desc.isEmpty {
+                Text(desc)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(1)
+            }
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 5)
     }
 }
