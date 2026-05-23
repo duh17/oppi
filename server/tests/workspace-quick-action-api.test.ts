@@ -387,13 +387,14 @@ describe("workspace prompt-template quick actions", () => {
       let savedSession: Session | undefined;
       const startSession = vi.fn(async () => createdSession);
       const getActiveSession = vi.fn(() => createdSession);
+      const createSession = vi.fn(() => createdSession);
+      const workspace = { ...makeWorkspace(repoDir), defaultModel: "ds4/deepseek-v4-flash" };
 
       const ctx = makeQuickActionContext(repoDir, {
         storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+          getWorkspace: (workspaceId: string) => (workspaceId === "w1" ? workspace : undefined),
           getSession: () => undefined,
-          createSession: () => createdSession,
+          createSession,
           saveSession: (session: Session) => {
             savedSession = session;
           },
@@ -424,6 +425,7 @@ describe("workspace prompt-template quick actions", () => {
       expect(body.promptTemplateName).toBe("grill-me");
       expect(body.selectedPathCount).toBe(1);
       expect(body.session.id).toBe("new-session");
+      expect(createSession).toHaveBeenCalledWith(expect.any(String), "ds4/deepseek-v4-flash");
       expect(savedSession?.workspaceId).toBe("w1");
       expect(savedSession?.workspaceName).toBe("workspace");
       expect(startSession).toHaveBeenCalledWith(

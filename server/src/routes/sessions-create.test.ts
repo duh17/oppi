@@ -301,6 +301,21 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, undefined);
   });
 
+  it("inherits parent session model before workspace default", async () => {
+    const mock = createMockContext(makeWorkspace({ defaultModel: "ds4/deepseek-v4-flash" }));
+    mock.storage.getSession.mockReturnValue(
+      makeSession({
+        id: "parent-1",
+        workspaceId: "ws-1",
+        model: "openai-codex/gpt-5.5",
+      }),
+    );
+
+    await dispatchCreate(mock, { prompt: "hello", parentSessionId: "parent-1" });
+
+    expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "openai-codex/gpt-5.5");
+  });
+
   it("passes workspace to startSession", async () => {
     const ws = makeWorkspace({ id: "ws-42" });
     const mock = createMockContext(ws);

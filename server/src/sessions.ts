@@ -38,6 +38,7 @@ import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { type ExtensionUIResponse } from "./session-ui.js";
 import { createLogger } from "./logger.js";
+import { resolveInitialChatModel } from "./session-model-selection.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -703,8 +704,12 @@ export class SessionManager extends EventEmitter {
     await this.refreshSessionState(parentSessionId).catch(() => null);
     const latestParentSession = this.storage.getSession(parentSessionId) || parentSession;
 
-    const model = params.model || latestParentSession.model;
-    const session = this.storage.createSession(params.name, model);
+    const modelSelection = resolveInitialChatModel({
+      subagentModel: params.model,
+      sourceSessionModel: latestParentSession.model,
+      workspace,
+    });
+    const session = this.storage.createSession(params.name, modelSelection.model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
     session.parentSessionId = parentSessionId;
@@ -777,8 +782,12 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Workspace not found: ${originSession.workspaceId}`);
     }
 
-    const model = params.model || originSession.model;
-    const session = this.storage.createSession(params.name, model);
+    const modelSelection = resolveInitialChatModel({
+      subagentModel: params.model,
+      sourceSessionModel: originSession.model,
+      workspace,
+    });
+    const session = this.storage.createSession(params.name, modelSelection.model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
     // No parentSessionId — this session is independent

@@ -40,6 +40,7 @@ import {
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { resolveInitialChatModel } from "../session-model-selection.js";
 import { buildSessionSummary } from "../session-summary.js";
 import {
   deleteSessionAttachments,
@@ -840,14 +841,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
     }>(req);
-    const requestedModel =
-      typeof body.model === "string" && body.model.trim().length > 0
-        ? body.model.trim()
-        : undefined;
-    const workspaceDefaultModel =
-      typeof workspace.defaultModel === "string" && workspace.defaultModel.trim().length > 0
-        ? workspace.defaultModel.trim()
-        : undefined;
+    const requestedModel = body.model;
 
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
@@ -885,7 +879,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
       }
 
-      const session = ctx.storage.createSession(sessionName, requestedModel);
+      const modelSelection = resolveInitialChatModel({
+        requestModel: requestedModel,
+        // Imports should preserve the source trace model when the client does not
+        // explicitly override it. Leaving the model undefined lets Pi restore it
+        // from the imported JSONL/session state.
+        includeWorkspaceDefault: false,
+      });
+      const session = ctx.storage.createSession(sessionName, modelSelection.model);
 
       session.workspaceId = workspace.id;
       session.workspaceName = workspace.name;
@@ -904,8 +905,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     // ── Standard new session ──
     const parentSessionId = body.parentSessionId?.trim();
+    let parentSession: Session | undefined;
     if (parentSessionId) {
-      const parentSession = ctx.storage.getSession(parentSessionId);
+      parentSession = ctx.storage.getSession(parentSessionId);
       if (!parentSession) {
         helpers.error(res, 404, "Parent session not found");
         return;
@@ -916,7 +918,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       }
     }
 
-    const session = ctx.storage.createSession(body.name, requestedModel ?? workspaceDefaultModel);
+    const modelSelection = resolveInitialChatModel({
+      requestModel: requestedModel,
+      sourceSessionModel: parentSession?.model,
+      workspace,
+    });
+    const session = ctx.storage.createSession(body.name, modelSelection.model);
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
@@ -1126,7 +1133,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       requestedName && requestedName.length > 0 ? requestedName : `Fork: ${sourceName}`
     ).slice(0, 160);
 
-    const forkSession = ctx.storage.createSession(forkName);
+    const forkModelSelection = resolveInitialChatModel({
+      sourceSessionModel: latestSource.model,
+      workspace,
+    });
+    const forkSession = ctx.storage.createSession(forkName, forkModelSelection.model);
 
     // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
     // Do not map that to Oppi `parentSessionId`: in Oppi, parent/child session

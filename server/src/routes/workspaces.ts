@@ -20,6 +20,7 @@ import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
 import { ReviewCommentStoreError } from "../storage/review-comment-dao.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { resolveInitialChatModel } from "../session-model-selection.js";
 import { hostMountValidationError } from "../host.js";
 import type {
   MarkReviewCommentsSentRequest,
@@ -799,7 +800,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       promptTemplateName: body.promptTemplateName,
     });
 
-    const session = ctx.storage.createSession(launch.sessionName);
+    const modelSelection = resolveInitialChatModel({
+      sourceSessionModel: selectedSession?.model,
+      workspace,
+    });
+    const session = ctx.storage.createSession(launch.sessionName, modelSelection.model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
     ctx.storage.saveSession(session);
