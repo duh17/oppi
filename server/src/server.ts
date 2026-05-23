@@ -241,15 +241,23 @@ export function resolveBonjourLanHost(
 /**
  * Startup-only warnings for insecure server bind + transport posture.
  *
- * These warnings are intentionally advisory (non-blocking) so operators can
- * run permissive local/dev setups while still seeing risk posture at boot.
+ * These warnings are advisory. Startup validation separately blocks unsafe
+ * non-loopback HTTP unless the operator explicitly opts into that posture.
  */
+function allowInsecureNetworkHttp(config: ServerConfig): boolean {
+  return config.tls?.mode === "disabled" && config.tls.allowInsecureNetworkHttp === true;
+}
+
 export function validateStartupSecurityConfig(config: ServerConfig): string | null {
   const host = normalizeBindHost(config.host);
   const loopbackOnly = isLoopbackBindHost(host);
 
   if (!loopbackOnly && !config.token) {
     return `Cannot bind to ${config.host} without a token configured. Set token in config or use --host 127.0.0.1`;
+  }
+
+  if (!loopbackOnly && tlsSchemeForConfig(config) === "http" && !allowInsecureNetworkHttp(config)) {
+    return `Cannot bind to ${config.host} with TLS disabled. Use tls.mode=self-signed|tailscale|manual, bind to 127.0.0.1, or explicitly set tls.allowInsecureNetworkHttp=true.`;
   }
 
   return null;
@@ -268,7 +276,12 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   }
 
   if (!loopbackOnly && tlsSchemeForConfig(config) === "http") {
-    warnings.push(`TLS is disabled while binding to ${config.host}; traffic is unencrypted.`);
+    const suffix = allowInsecureNetworkHttp(config)
+      ? " tls.allowInsecureNetworkHttp=true permits this insecure network bind."
+      : " Startup will refuse this unless tls.allowInsecureNetworkHttp=true is set.";
+    warnings.push(
+      `TLS is disabled while binding to ${config.host}; traffic is unencrypted.${suffix}`,
+    );
   }
 
   return warnings;

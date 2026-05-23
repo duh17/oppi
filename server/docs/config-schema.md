@@ -85,12 +85,13 @@ If you need tools from custom paths (e.g. `mise`, `pyenv`, `nvm`), add their bin
 
 ### TLS
 
-| Setting        | Type   | Default         | Description                                                               |
-| -------------- | ------ | --------------- | ------------------------------------------------------------------------- |
-| `tls.mode`     | string | `"self-signed"` | Transport security mode. See modes below.                                 |
-| `tls.certPath` | string | -               | PEM certificate path. Required for `manual` mode.                         |
-| `tls.keyPath`  | string | -               | PEM private key path. Required for `manual` mode.                         |
-| `tls.caPath`   | string | -               | CA chain path. Used in `self-signed` mode for client certificate pinning. |
+| Setting                        | Type    | Default         | Description                                                                                           |
+| ------------------------------ | ------- | --------------- | ----------------------------------------------------------------------------------------------------- |
+| `tls.mode`                     | string  | `"self-signed"` | Transport security mode. See modes below.                                                             |
+| `tls.certPath`                 | string  | -               | PEM certificate path. Required for `manual` mode.                                                     |
+| `tls.keyPath`                  | string  | -               | PEM private key path. Required for `manual` mode.                                                     |
+| `tls.caPath`                   | string  | -               | CA chain path. Used in `self-signed` mode for client certificate pinning.                             |
+| `tls.allowInsecureNetworkHttp` | boolean | `false`         | Explicit escape hatch required to bind plain HTTP/WS to non-loopback interfaces with `mode=disabled`. |
 
 New configs default to `"self-signed"` so iOS pairing uses HTTPS/WSS out of the box.
 For legacy configs that still have `"disabled"`, first `oppi serve` auto-promotes
@@ -100,7 +101,7 @@ Modes:
 
 | Mode          | Behavior                                                                                                                        |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled`    | Plain HTTP/WS. No encryption.                                                                                                   |
+| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds still work.    |
 | `tailscale`   | Requests/renews certs via `tailscale cert`. Requires MagicDNS + HTTPS certs enabled in tailnet DNS + connected `tailscale` CLI. |
 | `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                 |
 | `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                   |
@@ -113,6 +114,9 @@ oppi config set tls '{"mode":"tailscale"}'
 
 # Self-signed (containers, dev)
 oppi config set tls '{"mode":"self-signed"}'
+
+# Plain network HTTP is an explicit escape hatch, not a default
+oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 ```
 
 ### Auto Title
@@ -178,16 +182,16 @@ Controls lifecycle of child sessions spawned via `spawn_agent`.
 
 Configures server-side dictation routing to an external STT backend.
 
-| Setting           | Type   | Default | Description                                                                                                                                                                 |
-| ----------------- | ------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting           | Type   | Default | Description                                                                                                                                                                                |
+| ----------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `asr.sttEndpoint` | string | -       | STT backend base URL. When set, server dictation is enabled on the session audio stream and audio is forwarded to the backend in real time. Oppi does not persist dictation audio locally. |
 
 ### Images
 
 Controls client-side preprocessing for image attachments before upload.
 
-| Setting             | Type    | Default | Description                                                                                                                                                                         |
-| ------------------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting             | Type    | Default | Description                                                                                                                                                                                              |
+| ------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `images.autoResize` | boolean | `false` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget. When `false`, clients upload original image bytes where possible. |
 
 ### Policy

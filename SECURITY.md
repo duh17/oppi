@@ -25,7 +25,7 @@ Rotate the token with `npx oppi token rotate`.
 
 TLS is configurable: self-signed (with certificate pinning in the iOS app), Tailscale (Let's Encrypt via `tailscale cert`), Cloudflare, manual cert, or disabled. Self-signed mode auto-generates cert material and embeds the CA fingerprint in the pairing payload.
 
-For local network use without TLS, the connection is unencrypted. Use TLS for any network you don't fully trust.
+Plain HTTP is allowed for loopback development. Binding HTTP to a non-loopback interface requires the explicit `tls.allowInsecureNetworkHttp=true` escape hatch because the connection is unencrypted. Use TLS for any network you don't fully trust.
 
 ## Privacy
 

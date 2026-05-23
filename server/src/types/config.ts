@@ -54,6 +54,11 @@ export interface TlsConfig {
   certPath?: string;
   keyPath?: string;
   caPath?: string;
+  /**
+   * Explicit escape hatch for binding an HTTP server to non-loopback interfaces.
+   * Defaults to false. Keep disabled unless the network path is otherwise protected.
+   */
+  allowInsecureNetworkHttp?: boolean;
 }
 
 export interface UploadStoreConfig {

@@ -364,20 +364,32 @@ struct UserCodableTests {
 @Suite("ServerCredentials")
 struct ServerCredentialsTests {
 
-    @Test func baseURLValid() {
+    @Test func baseURLDefaultsToHTTPS() {
         let creds = ServerCredentials(host: "192.168.1.10", port: 7749, token: "sk_test", name: "Test")
+        let url = creds.baseURL
+        #expect(url != nil)
+        #expect(url?.absoluteString == "https://192.168.1.10:7749")
+    }
+
+    @Test func baseURLWithHostnameDefaultsToHTTPS() {
+        let creds = ServerCredentials(host: "my-server.ts.net", port: 7749, token: "sk_test", name: "Test")
+        let url = creds.baseURL
+        #expect(url != nil)
+        #expect(url?.absoluteString == "https://my-server.ts.net:7749")
+    }
+
+    @Test func httpSchemeRequiresExplicitOptIn() {
+        let creds = ServerCredentials(
+            host: "192.168.1.10",
+            port: 7749,
+            token: "sk_test",
+            name: "Test",
+            scheme: .http
+        )
         let url = creds.baseURL
         #expect(url != nil)
         #expect(url?.absoluteString == "http://192.168.1.10:7749")
     }
-
-    @Test func baseURLWithHostname() {
-        let creds = ServerCredentials(host: "my-server.ts.net", port: 7749, token: "sk_test", name: "Test")
-        let url = creds.baseURL
-        #expect(url != nil)
-        #expect(url?.absoluteString == "http://my-server.ts.net:7749")
-    }
-
 
     @Test func httpsSchemeProducesHttpsAndWssURLs() {
         let creds = ServerCredentials(
@@ -509,7 +521,7 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds?.normalizedServerFingerprint == fingerprint)
     }
 
-    @Test func decodeInvitePayloadDefaultsSchemeToHttpWhenMissing() throws {
+    @Test func decodeInvitePayloadDefaultsSchemeToHttpsWhenMissing() throws {
         var payload = defaultPayloadV3()
         payload.scheme = nil
         payload.tlsCertFingerprint = nil
@@ -519,7 +531,7 @@ struct ServerCredentialsInviteSecurityTests {
         let json = try #require(String(data: data, encoding: .utf8))
 
         let creds = ServerCredentials.decodeInvitePayload(json)
-        #expect(creds?.resolvedScheme == .http)
+        #expect(creds?.resolvedScheme == .https)
     }
 
     @Test func decodeInviteURLRejectsUnsignedV3DeepLinkWithPins() throws {

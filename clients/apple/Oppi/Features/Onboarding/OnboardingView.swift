@@ -201,6 +201,7 @@ private struct ManualEntryView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var host = ""
     @State private var port = "7749"
+    @State private var scheme: ServerScheme = .https
     @State private var token = ""
     @State private var name = ""
 
@@ -208,6 +209,11 @@ private struct ManualEntryView: View {
         NavigationStack {
             Form {
                 Section("Server") {
+                    Picker("Scheme", selection: $scheme) {
+                        Text("HTTPS").tag(ServerScheme.https)
+                        Text("HTTP (insecure)").tag(ServerScheme.http)
+                    }
+                    .pickerStyle(.segmented)
                     TextField("Host (e.g. my-mac.local)", text: $host)
                         .textContentType(.URL)
                         .autocorrectionDisabled()
@@ -236,7 +242,8 @@ private struct ManualEntryView: View {
                             host: host,
                             port: Int(port) ?? 7749,
                             token: token,
-                            name: name
+                            name: name,
+                            scheme: scheme
                         )
                         onConnect(creds)
                     }

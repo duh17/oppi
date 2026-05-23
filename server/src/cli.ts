@@ -847,6 +847,10 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },
   "tls.keyPath": { type: "string", desc: "Manual TLS private key path" },
   "tls.caPath": { type: "string", desc: "Self-signed CA certificate path" },
+  "tls.allowInsecureNetworkHttp": {
+    type: "boolean",
+    desc: "Allow plain HTTP on non-loopback interfaces",
+  },
   autoTitle: { type: "json", desc: "Auto-title config JSON object" },
   "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
   "autoTitle.model": { type: "string", desc: "Auto-title model" },

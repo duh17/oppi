@@ -117,7 +117,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     }
 
     var resolvedScheme: ServerScheme {
-        scheme ?? .http
+        scheme ?? .https
     }
 
     /// Derive `ServerCredentials` for connection and API calls.

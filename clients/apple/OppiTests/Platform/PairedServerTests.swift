@@ -201,10 +201,24 @@ struct PairedServerTests {
         #expect(server1.token == server3.token)
     }
 
-    @Test("BaseURL derived correctly")
+    @Test("BaseURL defaults to HTTPS")
     func baseURL() {
         let creds = ServerCredentials(
             host: "192.168.1.50", port: 7749, token: "sk_t", name: "LAN",
+            serverFingerprint: "sha256:lan"
+        )
+        let server = PairedServer(from: creds)!
+        #expect(server.baseURL?.absoluteString == "https://192.168.1.50:7749")
+    }
+
+    @Test("HTTP BaseURL requires explicit scheme")
+    func httpBaseURL() {
+        let creds = ServerCredentials(
+            host: "192.168.1.50",
+            port: 7749,
+            token: "sk_t",
+            name: "LAN",
+            scheme: .http,
             serverFingerprint: "sha256:lan"
         )
         let server = PairedServer(from: creds)!

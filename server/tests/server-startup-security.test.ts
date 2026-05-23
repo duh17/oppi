@@ -24,10 +24,30 @@ describe("startup security validation", () => {
     expect(error).toBeNull();
   });
 
-  it("allows non-loopback bind with token", () => {
+  it("allows non-loopback bind with token and TLS", () => {
     const config = Storage.getDefaultConfig("/tmp/oppi-startup-security-token");
     config.host = "0.0.0.0";
     config.token = "sk_test_token";
+
+    const error = validateStartupSecurityConfig(config);
+    expect(error).toBeNull();
+  });
+
+  it("fails non-loopback HTTP unless explicitly allowed", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-startup-security-http");
+    config.host = "0.0.0.0";
+    config.token = "sk_test_token";
+    config.tls = { mode: "disabled" };
+
+    const error = validateStartupSecurityConfig(config);
+    expect(error).toContain("Cannot bind to 0.0.0.0 with TLS disabled");
+  });
+
+  it("allows non-loopback HTTP only with the explicit escape hatch", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-startup-security-http-explicit");
+    config.host = "0.0.0.0";
+    config.token = "sk_test_token";
+    config.tls = { mode: "disabled", allowInsecureNetworkHttp: true };
 
     const error = validateStartupSecurityConfig(config);
     expect(error).toBeNull();
@@ -46,6 +66,24 @@ describe("server.start hard bind guard", () => {
       await expect(server.start()).rejects.toThrow(
         "Cannot bind to 0.0.0.0 without a token configured",
       );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws before startup when non-loopback bind disables TLS without opt-in", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-startup-hard-http-"));
+
+    try {
+      const storage = new Storage(dataDir);
+      storage.updateConfig({
+        host: "0.0.0.0",
+        token: "sk_test_token",
+        tls: { mode: "disabled" },
+      });
+
+      const server = new Server(storage);
+      await expect(server.start()).rejects.toThrow("Cannot bind to 0.0.0.0 with TLS disabled");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

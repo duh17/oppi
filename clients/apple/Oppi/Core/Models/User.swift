@@ -46,7 +46,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         port: Int,
         token: String,
         name: String,
-        scheme: ServerScheme = .http,
+        scheme: ServerScheme = .https,
         pairingToken: String? = nil,
         serverFingerprint: String? = nil,
         tlsCertFingerprint: String? = nil
@@ -62,7 +62,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     }
 
     var resolvedScheme: ServerScheme {
-        scheme ?? .http
+        scheme ?? .https
     }
 
     /// Base URL for REST and WebSocket connections.
@@ -218,7 +218,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             return nil
         }
 
-        let inviteSchemeRaw = (v3.scheme?.lowercased() ?? ServerScheme.http.rawValue)
+        let inviteSchemeRaw = (v3.scheme?.lowercased() ?? ServerScheme.https.rawValue)
         guard let inviteScheme = ServerScheme(rawValue: inviteSchemeRaw) else {
             return nil
         }

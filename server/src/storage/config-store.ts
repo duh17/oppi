@@ -285,7 +285,7 @@ function normalizeConfig(
       return null;
     }
 
-    const allowed = new Set(["mode", "certPath", "keyPath", "caPath"]);
+    const allowed = new Set(["mode", "certPath", "keyPath", "caPath", "allowInsecureNetworkHttp"]);
     if (strictUnknown) {
       for (const key of Object.keys(value)) {
         if (!allowed.has(key)) {
@@ -329,6 +329,15 @@ function normalizeConfig(
     readOptionalString("certPath");
     readOptionalString("keyPath");
     readOptionalString("caPath");
+
+    if ("allowInsecureNetworkHttp" in value) {
+      if (typeof value.allowInsecureNetworkHttp !== "boolean") {
+        errors.push(`${path}.allowInsecureNetworkHttp: expected boolean`);
+        changed = true;
+      } else {
+        tls.allowInsecureNetworkHttp = value.allowInsecureNetworkHttp;
+      }
+    }
 
     if (tls.mode === "manual") {
       if (!tls.certPath) {

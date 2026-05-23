@@ -90,6 +90,20 @@ describe("Storage config validation", () => {
     expect(result.config?.tls?.mode).toBe("tailscale");
   });
 
+  it("accepts explicit insecure network HTTP escape hatch", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      tls: {
+        mode: "disabled",
+        allowInsecureNetworkHttp: true,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.tls?.allowInsecureNetworkHttp).toBe(true);
+  });
+
   it("requires certPath/keyPath for tls manual mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),

@@ -209,12 +209,12 @@ Pi provides the core runtime and extension model. Oppi builds on top of that wit
 
 Key config sections:
 
-| Section  | What it controls                                                        |
-| -------- | ----------------------------------------------------------------------- |
-| `tls`    | HTTPS mode: `self-signed`, `tailscale`, or `none`                       |
-| `asr`    | Dictation pipeline: STT backend endpoint                                |
-| `images` | Image attachment preprocessing before upload                            |
-| `policy` | Permission gate rules (allow/deny/ask per tool, guardrails, heuristics) |
+| Section  | What it controls                                                            |
+| -------- | --------------------------------------------------------------------------- |
+| `tls`    | HTTPS mode: `self-signed`, `tailscale`, `manual`, or explicit insecure HTTP |
+| `asr`    | Dictation pipeline: STT backend endpoint                                    |
+| `images` | Image attachment preprocessing before upload                                |
+| `policy` | Permission gate rules (allow/deny/ask per tool, guardrails, heuristics)     |
 
 Model routing and API keys are managed by pi (`pi auth`), not the oppi config.
 
