@@ -259,6 +259,30 @@ struct QuickSessionTests {
         #expect(AppPreferences.QuickSession.defaultWorkspaceId == nil)
     }
 
+    @Test func modelIdRoundTrip() {
+        AppPreferences.QuickSession.saveModelId("openai-codex/gpt-5.4")
+        #expect(AppPreferences.QuickSession.lastModelId == "openai-codex/gpt-5.4")
+
+        AppPreferences.QuickSession.saveModelId(nil)
+        #expect(AppPreferences.QuickSession.lastModelId == nil)
+    }
+
+    @Test func thinkingLevelRoundTrip() {
+        AppPreferences.QuickSession.saveThinkingLevel(.high)
+        #expect(AppPreferences.QuickSession.lastThinkingLevel == .high)
+
+        UserDefaults.standard.removeObject(
+            forKey: "\(AppIdentifiers.subsystem).quickSession.lastThinkingLevel"
+        )
+    }
+
+    @Test func thinkingLevelDefaultsToMedium() {
+        UserDefaults.standard.removeObject(
+            forKey: "\(AppIdentifiers.subsystem).quickSession.lastThinkingLevel"
+        )
+        #expect(AppPreferences.QuickSession.lastThinkingLevel == .medium)
+    }
+
     @Test func preferredWorkspacePrefersLastUsed() {
         AppPreferences.QuickSession.saveWorkspaceId("last-ws")
         AppPreferences.QuickSession.saveDefaultWorkspaceId("explicit-ws")

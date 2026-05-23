@@ -35,8 +35,8 @@ struct QuickSessionSheet: View {
     @State private var selectedWorkspace: Workspace?
     @State private var selectedWorkspaceSelectionSource = "unknown"
     @State private var selectedServerId: String?
-    @State private var selectedModelId: String?
-    @State private var thinkingLevel: ThinkingLevel = .medium
+    @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
+    @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     @State private var showModelPicker = false
     @State private var showExpandedComposer = false
     @State private var isCreating = false
@@ -62,59 +62,7 @@ struct QuickSessionSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
-
-            VStack(alignment: .leading, spacing: 8) {
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.themeRed)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.themeRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-
-                ChatInputBar(
-                    text: $text,
-                    textBeforeRecording: $composerTextBeforeRecording,
-                    pendingAttachments: $pendingAttachments,
-                    pendingRepoPointers: $pendingRepoPointers,
-                    isBusy: false,
-                    busyStreamingBehavior: $busyStreamingBehavior,
-                    isSending: isCreating,
-                    sendProgressText: nil,
-                    isStopping: false,
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-                    onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
-                    showForceStop: false,
-                    isForceStopInFlight: false,
-                    slashCommands: [],
-                    fileSuggestions: [],
-                    onFileSuggestionQuery: nil,
-                    onSend: handleSend,
-                    onStop: {},
-                    onForceStop: {},
-                    onExpand: { showExpandedComposer = true },
-                    externalFocusRequestID: composerFocusRequestID,
-                    appliesOuterPadding: false,
-                    alwaysShowActionRow: true,
-                    actionRow: {
-                        workspaceNavBarItem
-                        SessionToolbar(
-                            session: nil,
-                            modelOverride: effectiveModelId,
-                            thinkingLevel: thinkingLevel,
-                            onModelTap: { showModelPicker = true },
-                            onThinkingSelect: { level in
-                                thinkingLevel = level
-                            }
-                        )
-                    }
-                )
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 8)
+            composerContent
         }
         .frame(maxHeight: .infinity, alignment: .bottom)
         .background(.clear)
@@ -122,9 +70,7 @@ struct QuickSessionSheet: View {
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 currentModel: effectiveModelId,
-                onSelect: { model in
-                    selectedModelId = ModelSwitchPolicy.fullModelID(for: model)
-                }
+                onSelect: selectModel
             )
         }
         .fullScreenCover(isPresented: $showExpandedComposer) {
@@ -145,9 +91,7 @@ struct QuickSessionSheet: View {
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
                 onSend: handleSend,
                 onModelTap: { showModelPicker = true },
-                onThinkingSelect: { level in
-                    thinkingLevel = level
-                }
+                onThinkingSelect: selectThinkingLevel
             )
         }
         .task {
@@ -165,6 +109,70 @@ struct QuickSessionSheet: View {
             guard !showExpandedComposer else { return }
             Task { await cleanupServerDictationContext() }
         }
+    }
+
+    private var composerContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.themeRed)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.themeRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
+            ChatInputBar(
+                text: $text,
+                textBeforeRecording: $composerTextBeforeRecording,
+                pendingAttachments: $pendingAttachments,
+                pendingRepoPointers: $pendingRepoPointers,
+                isBusy: false,
+                busyStreamingBehavior: $busyStreamingBehavior,
+                isSending: isCreating,
+                sendProgressText: nil,
+                isStopping: false,
+                voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
+                showForceStop: false,
+                isForceStopInFlight: false,
+                slashCommands: [],
+                fileSuggestions: [],
+                onFileSuggestionQuery: nil,
+                onSend: handleSend,
+                onStop: {},
+                onForceStop: {},
+                onExpand: { showExpandedComposer = true },
+                externalFocusRequestID: composerFocusRequestID,
+                appliesOuterPadding: false,
+                actionRow: {
+                    workspaceNavBarItem
+                    SessionToolbar(
+                        session: nil,
+                        modelOverride: effectiveModelId,
+                        thinkingLevel: thinkingLevel,
+                        onModelTap: { showModelPicker = true },
+                        onThinkingSelect: selectThinkingLevel
+                    )
+                }
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+    }
+
+    private func selectModel(_ model: ModelInfo) {
+        let modelId = ModelSwitchPolicy.fullModelID(for: model)
+        selectedModelId = modelId
+        AppPreferences.QuickSession.saveModelId(modelId)
+        AppPreferences.RecentModels.record(modelId)
+    }
+
+    private func selectThinkingLevel(_ level: ThinkingLevel) {
+        thinkingLevel = level
+        AppPreferences.QuickSession.saveThinkingLevel(level)
     }
 
     // MARK: - Workspace Picker
@@ -299,7 +307,9 @@ struct QuickSessionSheet: View {
         // the server endpoint is bound to a workspace/session audio stream.
         guard manager.engineMode != .onDevice else { return }
         guard let workspace = selectedWorkspace else {
-            throw QuickSessionError.noWorkspace
+            let noWorkspace = QuickSessionError.noWorkspace
+            error = noWorkspace.errorDescription
+            throw noWorkspace
         }
 
         let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
@@ -307,16 +317,25 @@ struct QuickSessionSheet: View {
         await targetConnection.refreshStreamCapabilitiesIfNeeded()
         configureVoiceInputForSelectedServer(manager)
 
-        guard targetConnection.serverDictationAvailable else { return }
-        let context = try await ensureServerDictationContext(
-            workspace: workspace,
-            serverId: serverId,
-            connection: targetConnection
-        )
-        manager.setServerDictationTarget(ServerDictationTarget(
-            workspaceId: context.workspaceId,
-            sessionId: context.sessionId
-        ))
+        guard targetConnection.serverDictationTransportAvailable else {
+            let unavailable = VoiceInputError.serverAsrUnavailable
+            error = unavailable.errorDescription
+            throw unavailable
+        }
+        do {
+            let context = try await ensureServerDictationContext(
+                workspace: workspace,
+                serverId: serverId,
+                connection: targetConnection
+            )
+            manager.setServerDictationTarget(ServerDictationTarget(
+                workspaceId: context.workspaceId,
+                sessionId: context.sessionId
+            ))
+        } catch {
+            self.error = error.localizedDescription
+            throw error
+        }
     }
 
     private func selectedServerConnection() -> ServerConnection {
@@ -456,6 +475,8 @@ struct QuickSessionSheet: View {
 
                 // Save defaults for next time
                 AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
+                AppPreferences.QuickSession.saveModelId(modelId)
+                AppPreferences.QuickSession.saveThinkingLevel(thinking)
                 ChatSessionTelemetry.recordTimingMetric(
                     .quickSessionCreateMs,
                     durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),

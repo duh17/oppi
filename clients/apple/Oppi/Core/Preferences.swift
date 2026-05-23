@@ -298,6 +298,8 @@ enum AppPreferences {
 
         private static let lastWorkspaceIdKey = "\(prefix).lastWorkspaceId"
         private static let defaultWorkspaceIdKey = "\(prefix).defaultWorkspaceId"
+        private static let lastModelIdKey = "\(prefix).lastModelId"
+        private static let lastThinkingLevelKey = "\(prefix).lastThinkingLevel"
         private static let pendingDictationCleanupKey = "\(prefix).pendingDictationCleanup"
 
         struct PendingDictationCleanup: Codable, Sendable, Equatable {
@@ -352,6 +354,34 @@ enum AppPreferences {
 
         static func preferredWorkspaceId(in workspaces: [(id: String, name: String)]) -> String? {
             preferredWorkspaceSelection(in: workspaces)?.id
+        }
+
+        // MARK: Model and Thinking
+
+        static var lastModelId: String? {
+            UserDefaults.standard.string(forKey: lastModelIdKey)
+        }
+
+        static var lastThinkingLevel: ThinkingLevel {
+            guard let raw = UserDefaults.standard.string(forKey: lastThinkingLevelKey),
+                  let level = ThinkingLevel(rawValue: raw)
+            else {
+                return .medium
+            }
+            return level
+        }
+
+        static func saveModelId(_ id: String?) {
+            let normalized = id?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let normalized, !normalized.isEmpty {
+                UserDefaults.standard.set(normalized, forKey: lastModelIdKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastModelIdKey)
+            }
+        }
+
+        static func saveThinkingLevel(_ level: ThinkingLevel) {
+            UserDefaults.standard.set(level.rawValue, forKey: lastThinkingLevelKey)
         }
 
         // MARK: Pending Dictation Cleanup

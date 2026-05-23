@@ -27,6 +27,15 @@ final class ServerConnection {
     private var focusedSessionStreamURL: URL?
     private(set) var transportPath: ConnectionTransportPath = .paired
 
+    /// True when the server can accept session audio streams for dictation.
+    ///
+    /// `serverDictationAvailable` is normally learned from a focused session
+    /// stream bootstrap. Quick Session has no focused session yet, so it relies
+    /// on the `/server/info` session-audio capability instead.
+    var serverDictationTransportAvailable: Bool {
+        serverDictationAvailable || sessionAudioStreamAvailable
+    }
+
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
         if streamCapabilitiesRefreshFailed, streamCapabilitiesLoaded, missingRequiredSplitStreamCapabilities.isEmpty {
             return "ready:refreshFailed"

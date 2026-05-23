@@ -642,7 +642,7 @@ final class VoiceInputManager {
         guard serverCredentials != nil, serverConnection != nil else {
             throw VoiceInputError.serverNotConnected
         }
-        guard serverConnection?.serverDictationAvailable == true else {
+        guard serverConnection?.serverDictationTransportAvailable == true else {
             throw VoiceInputError.serverAsrUnavailable
         }
     }

@@ -53,6 +53,58 @@ struct ChatInputBarTests {
         #expect(!processingUnsuppressed)
     }
 
+    @Test("Voice input suppresses keyboard before async prepare work")
+    func voiceInputSuppressesKeyboardBeforePrepareWork() async {
+        enum PrepareError: Error {
+            case failed
+        }
+
+        let manager = VoiceInputManager()
+        var textBeforeRecording: String?
+        var suppressKeyboard = false
+        var focusRequestID = 0
+        var observedSuppressKeyboard = false
+        var observedTextBeforeRecording: String?
+        var observedFocusRequestID = 0
+        var didThrow = false
+
+        do {
+            _ = try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: nil,
+                source: "test",
+                baseText: "hello",
+                textBeforeRecording: Binding(
+                    get: { textBeforeRecording },
+                    set: { textBeforeRecording = $0 }
+                ),
+                suppressKeyboard: Binding(
+                    get: { suppressKeyboard },
+                    set: { suppressKeyboard = $0 }
+                ),
+                focusRequestID: Binding(
+                    get: { focusRequestID },
+                    set: { focusRequestID = $0 }
+                ),
+                prepare: {
+                    observedSuppressKeyboard = suppressKeyboard
+                    observedTextBeforeRecording = textBeforeRecording
+                    observedFocusRequestID = focusRequestID
+                    throw PrepareError.failed
+                }
+            )
+        } catch {
+            didThrow = true
+        }
+
+        #expect(didThrow)
+        #expect(observedSuppressKeyboard)
+        #expect(observedTextBeforeRecording == "hello ")
+        #expect(observedFocusRequestID == 1)
+        #expect(!suppressKeyboard)
+        #expect(textBeforeRecording == nil)
+    }
+
     @Test("ComposerShared prefers live transcript over stale stored text during dictation")
     func currentComposerTextPrefersLiveTranscript() {
         let displayText = ComposerShared.currentComposerText(

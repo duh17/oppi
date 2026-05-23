@@ -413,7 +413,6 @@ struct ExpandedComposerView: View {
                     )
                 case .idle:
                     do {
-                        try await onPrepareVoiceInput?(manager)
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,
@@ -421,7 +420,10 @@ struct ExpandedComposerView: View {
                             baseText: text,
                             textBeforeRecording: $textBeforeRecording,
                             suppressKeyboard: $suppressKeyboard,
-                            focusRequestID: $focusRequestID
+                            focusRequestID: $focusRequestID,
+                            prepare: {
+                                try await onPrepareVoiceInput?(manager)
+                            }
                         )
                     } catch {
                     }

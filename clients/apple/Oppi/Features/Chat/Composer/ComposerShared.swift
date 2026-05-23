@@ -197,7 +197,8 @@ enum ComposerShared {
         baseText: String,
         textBeforeRecording: Binding<String?>? = nil,
         suppressKeyboard: Binding<Bool>,
-        focusRequestID: Binding<Int>
+        focusRequestID: Binding<Int>,
+        prepare: (() async throws -> Void)? = nil
     ) async throws -> String {
         let prefix = dictationPrefix(for: baseText)
         textBeforeRecording?.wrappedValue = prefix
@@ -205,6 +206,7 @@ enum ComposerShared {
         focusRequestID.wrappedValue &+= 1
 
         do {
+            try await prepare?()
             try await manager.startRecording(
                 keyboardLanguage: keyboardLanguage,
                 source: source
