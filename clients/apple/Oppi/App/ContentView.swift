@@ -55,26 +55,12 @@ struct ContentView: View {
                 if navigation.showOnboarding {
                     OnboardingView()
                 } else {
-                    TabView(selection: $nav.selectedTab) {
-                        SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
-                            NavigationStack(path: $nav.workspacePath) {
-                                WorkspaceHomeView()
-                            }
-                        }
-                        SwiftUI.Tab("Server", systemImage: "server.rack", value: AppTab.server) {
-                            NavigationStack {
-                                ServerView()
-                            }
-                        }
-                        SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
-                            NavigationStack {
-                                SettingsView()
-                            }
-                        }
+                    NavigationStack(path: $nav.workspacePath) {
+                        WorkspaceHomeView()
                     }
-                    .tabBarMinimizeBehavior(.onScrollDown)
-                    .toolbarBackground(Color.themeBg, for: .tabBar)
-                    .ignoresSafeArea(.container, edges: .bottom)
+                    .task {
+                        routeLegacySelectedTab(navigation.selectedTab)
+                    }
                 }
             }
         }
@@ -150,7 +136,7 @@ struct ContentView: View {
         }, content: {
             QuickSessionSheet()
                 .presentationDetents(quickSessionDetents)
-                .presentationDragIndicator(.hidden)
+                .presentationDragIndicator(.visible)
                 .presentationBackgroundInteraction(
                     .enabled(upThrough: .height(quickSessionCompactDetentHeight))
                 )
@@ -158,6 +144,9 @@ struct ContentView: View {
         })
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             handleQuickSessionPresentationRequestChange(newValue)
+        }
+        .onChange(of: navigation.selectedTab) { _, newValue in
+            routeLegacySelectedTab(newValue)
         }
         .overlay(alignment: .topLeading) {
             e2eDiagnosticsOverlay
@@ -200,6 +189,24 @@ struct ContentView: View {
         let showingOnboarding = navigation.showOnboarding
         guard shouldPresent, !showingOnboarding else { return }
         navigation.showQuickSession = true
+    }
+
+    private func routeLegacySelectedTab(_ tab: AppTab) {
+        guard !navigation.showOnboarding else { return }
+        guard case .ready = navigation.launchPhase else { return }
+
+        switch tab {
+        case .workspaces:
+            break
+        case .server:
+            navigation.workspacePath = NavigationPath()
+            navigation.workspacePath.append(WorkspaceUtilityNavTarget.manageServers)
+            navigation.selectedTab = .workspaces
+        case .settings:
+            navigation.workspacePath = NavigationPath()
+            navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+            navigation.selectedTab = .workspaces
+        }
     }
 
     private func sessionLabel(for sessionId: String) -> String {

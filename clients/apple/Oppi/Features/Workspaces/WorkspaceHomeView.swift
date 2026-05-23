@@ -12,6 +12,14 @@ struct WorkspaceSessionNavTarget: Hashable {
     let sessionId: String
 }
 
+/// Utility destinations that live under the Workspaces navigation stack.
+/// These are intentionally not bottom-tab destinations; they are secondary
+/// management surfaces reached from the server/environment menu.
+enum WorkspaceUtilityNavTarget: Hashable {
+    case manageServers
+    case appSettings
+}
+
 private struct WorkspaceCreateSheetContext: Identifiable {
     let server: PairedServer
     let presentation: WorkspaceCreatePresentation
@@ -189,11 +197,12 @@ struct WorkspaceHomeView: View {
         .themedListSurface()
         .navigationTitle("Workspaces")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarVisibility(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if let selectedServer {
                     serverSwitcher(selectedServer)
-                    newSessionButton()
+                    quickSessionButton
                 }
             }
         }
@@ -205,6 +214,14 @@ struct WorkspaceHomeView: View {
         }
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)
+        }
+        .navigationDestination(for: WorkspaceUtilityNavTarget.self) { target in
+            switch target {
+            case .manageServers:
+                ServerView()
+            case .appSettings:
+                SettingsView()
+            }
         }
         .sheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
             WorkspaceCreateView(
@@ -307,7 +324,7 @@ struct WorkspaceHomeView: View {
                 } label: {
                     Label(
                         server.name,
-                        systemImage: server.id == current.id ? "checkmark.circle.fill" : "server.rack"
+                        systemImage: server.id == current.id ? "checkmark.circle.fill" : server.resolvedBadgeIcon.symbolName
                     )
                 }
             }
@@ -321,9 +338,15 @@ struct WorkspaceHomeView: View {
             }
 
             Button {
-                navigation.workspacePath.append(current)
+                navigation.workspacePath.append(WorkspaceUtilityNavTarget.manageServers)
             } label: {
-                Label("Server Settings", systemImage: "slider.horizontal.3")
+                Label("Manage Servers", systemImage: "server.rack")
+            }
+
+            Button {
+                navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+            } label: {
+                Label("App Settings", systemImage: "gear")
             }
         } label: {
             ServerSwitcherPill(
@@ -334,13 +357,14 @@ struct WorkspaceHomeView: View {
         .accessibilityLabel("Current server: \(current.name)")
     }
 
-    private func newSessionButton() -> some View {
+    private var quickSessionButton: some View {
         Button {
             navigation.showQuickSession = true
         } label: {
             Image(systemName: "plus")
         }
         .accessibilityLabel("Start Quick Session")
+        .accessibilityHint("Opens the quick session composer")
         .accessibilityIdentifier("workspace.quickSession.start")
     }
 
