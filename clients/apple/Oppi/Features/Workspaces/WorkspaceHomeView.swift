@@ -124,29 +124,13 @@ private extension View {
     }
 }
 
-private enum WorkspaceHomeSessionPreviewKind: String, Identifiable {
-    case yourTurn = "Your Turn"
-    case working = "Working"
-    case recent = "Recent"
-
-    var id: String { rawValue }
-}
-
 private struct WorkspaceHomeSessionPreview: Identifiable {
-    let kind: WorkspaceHomeSessionPreviewKind
     let session: Session
     let attention: SessionListAttentionCounts
     let children: SessionRow.ChildSummary?
     let modelSummaries: [SessionModelSummary]
 
-    var id: String { "\(kind.rawValue):\(session.id)" }
-}
-
-private struct WorkspaceHomeSessionPreviewGroup: Identifiable {
-    let kind: WorkspaceHomeSessionPreviewKind
-    let rows: [WorkspaceHomeSessionPreview]
-
-    var id: WorkspaceHomeSessionPreviewKind { kind }
+    var id: String { session.id }
 }
 
 /// Tracks whether app launch metric has been recorded this process.
@@ -420,75 +404,72 @@ struct WorkspaceHomeView: View {
         let serverId = server.id
         let key = workspaceKey(serverId: serverId, workspaceId: workspace.id)
         let isExpanded = isWorkspaceExpanded(key: key, summary: summary)
-        let previewGroups = workspaceSessionPreviewGroups(workspaceId: workspace.id, connection: connection)
+        let sessionPreviews = workspaceSessionPreviews(workspaceId: workspace.id, connection: connection)
+        let workspaceAccessibilityName = workspace.runtime == .sandbox ? "sandbox workspace \(workspace.name)" : workspace.name
 
-        HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             Button {
                 toggleWorkspaceExpansion(key: key, summary: summary)
-            } label: {
-                WorkspaceHomeDisclosureIcon(
-                    workspace: workspace,
-                    isExpanded: isExpanded,
-                    hasAttention: summary.hasAttention,
-                    isUnreachable: isUnreachable
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspace.name)" : "Expand sessions for \(workspace.name)")
-            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-            .accessibilityHint("Shows or hides the workspace session preview")
-
-            Button {
-                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
             } label: {
                 WorkspaceHomeRow(
                     workspace: workspace,
                     activeCount: summary.activeCount,
                     stoppedCount: summary.stoppedCount,
                     hasAttention: summary.hasAttention,
+                    isExpanded: isExpanded,
                     isUnreachable: isUnreachable
                 )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open \(workspace.name)")
+            .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspaceAccessibilityName)" : "Expand sessions for \(workspaceAccessibilityName)")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Shows or hides the workspace session preview")
+
+            Button {
+                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+            } label: {
+                WorkspaceHomeOpenButton()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(workspaceAccessibilityName)")
+            .accessibilityHint("Opens the workspace session list")
         }
+        .padding(.horizontal, 6)
+        .background {
+            if isExpanded {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.themeGreen.opacity(0.06))
+            }
+        }
+        .padding(.horizontal, -6)
         .listRowBackground(Color.themeBg)
 
         if isExpanded {
-            if previewGroups.isEmpty {
+            if sessionPreviews.isEmpty {
                 WorkspaceHomePreviewEmptyRow()
                     .listRowBackground(Color.themeBg)
             } else {
-                let showGroupLabels = previewGroups.count > 1
-                ForEach(previewGroups) { group in
-                    if showGroupLabels {
-                        WorkspaceHomePreviewGroupHeader(kind: group.kind)
-                            .listRowBackground(Color.themeBg)
-                            .listRowSeparator(.hidden)
+                ForEach(sessionPreviews) { preview in
+                    Button {
+                        navigation.workspacePath.append(
+                            WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.session.id)
+                        )
+                    } label: {
+                        WorkspaceHomeSessionPreviewRow(
+                            preview: preview,
+                            activitySummary: activitySummary(for: preview.session, attention: preview.attention, connection: connection)
+                        )
                     }
-
-                    ForEach(group.rows) { preview in
-                        Button {
-                            navigation.workspacePath.append(
-                                WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.session.id)
-                            )
-                        } label: {
-                            WorkspaceHomeSessionPreviewRow(
-                                preview: preview,
-                                activitySummary: activitySummary(for: preview.session, attention: preview.attention, connection: connection)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.themeBg)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            previewRowSwipeAction(
-                                session: preview.session,
-                                serverId: serverId,
-                                workspaceId: workspace.id,
-                                connection: connection
-                            )
-                        }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.themeBg)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        previewRowSwipeAction(
+                            session: preview.session,
+                            serverId: serverId,
+                            workspaceId: workspace.id,
+                            connection: connection
+                        )
                     }
                 }
             }
@@ -546,10 +527,10 @@ struct WorkspaceHomeView: View {
         }
     }
 
-    private func workspaceSessionPreviewGroups(
+    private func workspaceSessionPreviews(
         workspaceId: String,
         connection: ServerConnection?
-    ) -> [WorkspaceHomeSessionPreviewGroup] {
+    ) -> [WorkspaceHomeSessionPreview] {
         guard let connection else { return [] }
         let workspaceSessions = connection.sessionStore.listProjectionSessions(workspaceId: workspaceId)
         guard !workspaceSessions.isEmpty else { return [] }
@@ -594,7 +575,7 @@ struct WorkspaceHomeView: View {
         }
 
         let maxPreviewRows = 5
-        var groups: [WorkspaceHomeSessionPreviewGroup] = []
+        var previews: [WorkspaceHomeSessionPreview] = []
         let sortedYourTurn = SessionListPresentation.sortYourTurn(yourTurn) { sessionId in
             attentionBySessionId[sessionId] ?? .none
         }
@@ -602,30 +583,23 @@ struct WorkspaceHomeView: View {
 
         let yourTurnRows = sortedYourTurn.prefix(3).map {
             previewRow(
-                kind: .yourTurn,
                 session: $0,
                 attention: attentionBySessionId[$0.id] ?? .none,
                 childIndex: allChildIndex
             )
         }
-        if !yourTurnRows.isEmpty {
-            groups.append(WorkspaceHomeSessionPreviewGroup(kind: .yourTurn, rows: Array(yourTurnRows)))
-        }
+        previews.append(contentsOf: yourTurnRows)
 
-        let workingRows = sortedWorking.prefix(max(0, maxPreviewRows - yourTurnRows.count)).map {
+        let workingRows = sortedWorking.prefix(max(0, maxPreviewRows - previews.count)).map {
             previewRow(
-                kind: .working,
                 session: $0,
                 attention: attentionBySessionId[$0.id] ?? .none,
                 childIndex: allChildIndex
             )
         }
-        if !workingRows.isEmpty {
-            groups.append(WorkspaceHomeSessionPreviewGroup(kind: .working, rows: Array(workingRows)))
-        }
+        previews.append(contentsOf: workingRows)
 
-        let activePreviewCount = yourTurnRows.count + workingRows.count
-        let remainingRecentSlots = max(0, maxPreviewRows - activePreviewCount)
+        let remainingRecentSlots = max(0, maxPreviewRows - previews.count)
         if remainingRecentSlots > 0 {
             let stoppedSessions = workspaceSessions.filter { $0.status == .stopped }
             let recentStopped = SessionTreeHelper.rootSessions(from: stoppedSessions, allSessions: workspaceSessions)
@@ -636,29 +610,24 @@ struct WorkspaceHomeView: View {
                 .prefix(remainingRecentSlots)
                 .map {
                     previewRow(
-                        kind: .recent,
                         session: $0,
                         attention: .none,
                         childIndex: allChildIndex
                     )
                 }
-            if !recentStopped.isEmpty {
-                groups.append(WorkspaceHomeSessionPreviewGroup(kind: .recent, rows: Array(recentStopped)))
-            }
+            previews.append(contentsOf: recentStopped)
         }
 
-        return groups
+        return previews
     }
 
     private func previewRow(
-        kind: WorkspaceHomeSessionPreviewKind,
         session: Session,
         attention: SessionListAttentionCounts,
         childIndex: SessionTreeHelper.ChildIndex
     ) -> WorkspaceHomeSessionPreview {
         let descendants = childIndex.allDescendants(of: session.id)
         return WorkspaceHomeSessionPreview(
-            kind: kind,
             session: session,
             attention: attention,
             children: childSummary(for: session, descendants: descendants),
@@ -955,19 +924,17 @@ private struct ServerSwitcherPill: View {
     }
 }
 
-// MARK: - Workspace Tree Chrome
+// MARK: - Workspace Header Chrome
 
-private struct WorkspaceHomeDisclosureIcon: View {
-    let workspace: Workspace
-    let isExpanded: Bool
-    let hasAttention: Bool
-    let isUnreachable: Bool
-
+private struct WorkspaceHomeOpenButton: View {
     var body: some View {
-        WorkspaceIcon(icon: workspace.icon, size: 28)
-            .frame(width: 44, height: 44)
-            .opacity(isUnreachable ? 0.55 : 1)
-            .scaleEffect(isExpanded ? 1.04 : 1)
+        Text("Open")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.themeBlue)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(.themeBlue.opacity(0.10), in: Capsule())
+            .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
     }
 }
@@ -987,32 +954,15 @@ private struct WorkspaceHomeSessionPreviewRow: View {
             children: preview.children,
             modelSummaries: preview.modelSummaries
         )
-        .padding(.leading, 34)
         .padding(.vertical, 1)
-    }
-}
-
-private struct WorkspaceHomePreviewGroupHeader: View {
-    let kind: WorkspaceHomeSessionPreviewKind
-
-    var body: some View {
-        Text(kind.rawValue)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.themeComment)
-            .textCase(.uppercase)
-            .padding(.leading, 34)
-            .padding(.top, 2)
-            .padding(.bottom, 0)
-            .accessibilityAddTraits(.isHeader)
     }
 }
 
 private struct WorkspaceHomePreviewEmptyRow: View {
     var body: some View {
-        Text("No recent sessions")
+        Text("No sessions")
             .font(.caption)
             .foregroundStyle(.themeComment)
-            .padding(.leading, 34)
             .padding(.vertical, 4)
     }
 }
@@ -1024,62 +974,61 @@ private struct WorkspaceHomeRow: View {
     let activeCount: Int
     let stoppedCount: Int
     let hasAttention: Bool
+    let isExpanded: Bool
     var isUnreachable: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(workspace.name)
-                    .font(.headline)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
+        HStack(alignment: .center, spacing: 10) {
+            WorkspaceRuntimeIcon(workspace: workspace, size: 30, frameSize: 34)
+                .opacity(isUnreachable ? 0.55 : 1)
+                .scaleEffect(isExpanded ? 1.03 : 1)
 
-                if workspace.runtime == .sandbox {
-                    Text("SANDBOX")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeOrange)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.themeOrange.opacity(0.15), in: Capsule())
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(workspace.name)
+                        .font(.headline)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+
+                    if hasAttention {
+                        Text("Needs attention")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeOrange)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if isUnreachable {
+                        Text("Offline")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    } else if activeCount > 0 {
+                        Text("\(activeCount) active")
+                            .font(.caption)
+                            .foregroundStyle(.themeGreen)
+                    } else if stoppedCount == 0 {
+                        Text("No sessions")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
+
+                    if stoppedCount > 0 {
+                        Text("\(stoppedCount) stopped")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
                 }
 
-                if hasAttention {
-                    Text("Needs attention")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeOrange)
-                }
-
-                Spacer(minLength: 8)
-
-                if isUnreachable {
-                    Text("Offline")
+                if let desc = workspace.description, !desc.isEmpty {
+                    Text(desc)
                         .font(.caption)
                         .foregroundStyle(.themeComment)
-                } else if activeCount > 0 {
-                    Text("\(activeCount) active")
-                        .font(.caption)
-                        .foregroundStyle(.themeGreen)
-                } else if stoppedCount == 0 {
-                    Text("No sessions")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
                 }
-
-                if stoppedCount > 0 {
-                    Text("\(stoppedCount) stopped")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
-            }
-
-            if let desc = workspace.description, !desc.isEmpty {
-                Text(desc)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 5)
+        .padding(.vertical, 7)
     }
 }

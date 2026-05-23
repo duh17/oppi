@@ -32,6 +32,7 @@ struct ChatView: View {
     @Environment(PiQuickActionStore.self) private var piQuickActionStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
@@ -691,6 +692,7 @@ struct ChatView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Rename session")
+        .accessibilityValue(sessionDisplayName)
         .contextMenu {
             Button("Copy Session ID", systemImage: "doc.on.doc") {
                 copySessionID()
@@ -748,6 +750,13 @@ struct ChatView: View {
         .accessibilityHint("Long press to compact context")
     }
 
+    private var chatPrincipalTitleMaxWidth: CGFloat {
+        let screenWidth = UIScreen.main.bounds.width
+        let reservedChromeWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 178
+        let upperBound: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : 320
+        return max(132, min(upperBound, screenWidth - reservedChromeWidth))
+    }
+
     private var sessionTitleLabel: some View {
         VStack(spacing: 1) {
             if let parent = parentSession {
@@ -782,6 +791,8 @@ struct ChatView: View {
                     .fixedSize()
             }
         }
+        .frame(maxWidth: chatPrincipalTitleMaxWidth)
+        .clipped()
     }
 
     private var selectedTextPiRouter: SelectedTextPiActionRouter {

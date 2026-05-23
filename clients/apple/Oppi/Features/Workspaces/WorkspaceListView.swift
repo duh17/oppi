@@ -94,22 +94,11 @@ private struct WorkspaceRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            WorkspaceIcon(icon: workspace.icon, size: 24)
-                .frame(width: 36, height: 36)
+            WorkspaceRuntimeIcon(workspace: workspace, size: 24, frameSize: 36)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(workspace.name)
-                        .font(.headline)
-                    if workspace.runtime == .sandbox {
-                        Text("SANDBOX")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeOrange)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.themeOrange.opacity(0.15), in: Capsule())
-                    }
-                }
+                Text(workspace.name)
+                    .font(.headline)
 
                 if let description = workspace.description {
                     Text(description)

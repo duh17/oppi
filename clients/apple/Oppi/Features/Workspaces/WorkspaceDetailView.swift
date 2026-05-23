@@ -602,22 +602,13 @@ struct WorkspaceDetailView: View {
                 }
                 Button { showEditWorkspace = true } label: {
                     HStack(spacing: 6) {
-                        WorkspaceIcon(icon: currentWorkspace.icon, size: 16)
-                            .frame(width: 24, height: 24)
-                        if currentWorkspace.runtime == .sandbox {
-                            Text("SANDBOX")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.themeOrange)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.themeOrange.opacity(0.15), in: Capsule())
-                        }
+                        WorkspaceRuntimeIcon(workspace: currentWorkspace, size: 16, frameSize: 24)
                         Text("\(currentWorkspace.skills.count) skills")
                             .font(.caption2)
                     }
                     .foregroundStyle(.themeComment)
                 }
-                .accessibilityLabel("Edit Workspace")
+                .accessibilityLabel(currentWorkspace.runtime == .sandbox ? "Edit Sandbox Workspace" : "Edit Workspace")
                 .accessibilityIdentifier("workspace.edit.open")
                 Spacer()
                 Button { showWorkspacePolicy = true } label: {

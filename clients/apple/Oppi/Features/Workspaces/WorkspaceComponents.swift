@@ -30,6 +30,40 @@ struct WorkspaceIcon: View {
     }
 }
 
+struct WorkspaceRuntimeIcon: View {
+    let workspace: Workspace
+    let size: CGFloat
+    let frameSize: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            WorkspaceIcon(icon: workspace.icon, size: size)
+                .frame(width: frameSize, height: frameSize)
+
+            if workspace.runtime == .sandbox {
+                WorkspaceSandboxMark(size: max(11, frameSize * 0.34))
+                    .offset(x: frameSize * 0.05, y: frameSize * 0.05)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(workspace.runtime == .sandbox ? "Sandbox workspace" : "Workspace")
+    }
+}
+
+struct WorkspaceSandboxMark: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(systemName: "lock.fill")
+            .font(.system(size: size * 0.52, weight: .bold))
+            .foregroundStyle(.themeBg)
+            .frame(width: size, height: size)
+            .background(Circle().fill(.themeOrange))
+            .overlay(Circle().stroke(Color.themeBg, lineWidth: 1))
+            .accessibilityLabel("Sandbox")
+    }
+}
+
 // MARK: - WorkspaceSelectionButton
 
 struct WorkspaceSelectionButton: View {
