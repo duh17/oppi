@@ -35,7 +35,7 @@ struct QuickSessionSheet: View {
     @State private var selectedWorkspace: Workspace?
     @State private var selectedWorkspaceSelectionSource = "unknown"
     @State private var selectedServerId: String?
-    @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
+    @State private var selectedModelId: String?
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     @State private var showModelPicker = false
     @State private var showExpandedComposer = false
@@ -53,8 +53,9 @@ struct QuickSessionSheet: View {
         }
     }
 
-    /// Effective model: explicit selection wins, then the workspace default.
-    /// If nil, Pi settings choose the model when the session starts.
+    /// Display model: explicit selection wins, then the workspace default.
+    /// Session creation only sends explicit selections; server-side resolution
+    /// applies workspace defaults and Pi settings centrally.
     private var effectiveModelId: String? {
         selectedModelId ?? selectedWorkspace?.defaultModel
     }
@@ -285,8 +286,8 @@ struct QuickSessionSheet: View {
         // Auto-focus the text input
         composerFocusRequestID += 1
 
-        // Ensure model cache is fresh
-        if let api = coordinator.activeConnection.apiClient {
+        // Ensure model cache is fresh for the selected server.
+        if let api = selectedServerConnection().apiClient {
             await chatState.refreshModelCache(api: api)
         }
     }
@@ -433,7 +434,7 @@ struct QuickSessionSheet: View {
             to: trimmed,
             files: pendingRepoPointers
         )
-        let modelId = effectiveModelId
+        let modelId = selectedModelId
         let thinking = thinkingLevel
 
         isCreating = true
@@ -473,7 +474,9 @@ struct QuickSessionSheet: View {
                 // server and may differ for cross-server quick sessions).
                 targetConnection.sessionStore.upsert(session)
 
-                // Save defaults for next time
+                // Save the workspace and thinking defaults. Model persists only
+                // when explicitly selected; nil clears old client-side overrides
+                // so the server can apply workspace/Pi defaults centrally.
                 AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
                 AppPreferences.QuickSession.saveModelId(modelId)
                 AppPreferences.QuickSession.saveThinkingLevel(thinking)
