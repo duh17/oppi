@@ -832,8 +832,6 @@ type SettableConfigPath = {
 const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   port: { type: "number", desc: "Server port" },
   host: { type: "string", desc: "Bind address" },
-  defaultModel: { type: "string", desc: "Default model for new sessions" },
-  thinkingLevelByModel: { type: "json", desc: "Per-model thinking levels JSON object" },
   maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },

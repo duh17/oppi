@@ -24,21 +24,19 @@ Settings are listed in the order they appear in the config file. Auth state is d
 
 ### Model
 
-| Setting                | Type     | Default                        | Description                                                                                                                                                                                                                               |
-| ---------------------- | -------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `defaultModel`         | string   | `"openai-codex/gpt-5.3-codex"` | Model used for new sessions when client doesn't specify one. Format: `"provider/model-id"`.                                                                                                                                               |
-| `thinkingLevelByModel` | object   | `{}`                           | Per-model thinking level preferences. Synced from the iOS model picker — values are `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`.                                                                                       |
-| `modelAllowlist`       | string[] | -                              | When set, only these models plus custom provider models from `~/.pi/agent/models.json` appear in the picker. Format: `["provider/model-id"]`. **Note: defined in types but not yet wired into config parsing — currently has no effect.** |
+Oppi does not define a top-level server default chat model. New chat sessions use the shared model-selection behavior documented in [`model-selection.md`](./model-selection.md): explicit model, inherited/source model, workspace `defaultModel`, then Pi settings.
+
+Configure the machine-wide fallback in Pi settings, for example `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "defaultModel": "anthropic/claude-sonnet-4-6",
-  "thinkingLevelByModel": {
-    "anthropic/claude-sonnet-4-6": "high",
-    "anthropic/claude-opus-4-6": "xhigh"
-  }
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "xhigh"
 }
 ```
+
+Workspace defaults are stored on each workspace as `defaultModel` in canonical `"provider/model-id"` form.
 
 ### Session Lifecycle
 
@@ -124,7 +122,7 @@ oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 | Setting             | Type    | Default | Description                                                                                                                                       |
 | ------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `autoTitle.enabled` | boolean | `false` | When `true`, auto-generates a 3-5 word task title from the first user message. Uses a standalone LLM call (no pi system prompt, no tool context). |
-| `autoTitle.model`   | string  | -       | Model to use for title generation. Format: `"provider/model-id"`. When omitted, uses `defaultModel`. A cheap/fast local model works well here.    |
+| `autoTitle.model`   | string  | -       | Model to use for title generation. Format: `"provider/model-id"`. When omitted, server-side auto-title generation is disabled. A cheap/fast local model works well here.    |
 
 ```json
 {
@@ -275,11 +273,6 @@ oppi token rotate
   "port": 7749,
   "host": "0.0.0.0",
   "dataDir": "/Users/you/.config/oppi",
-  "defaultModel": "anthropic/claude-sonnet-4-6",
-  "thinkingLevelByModel": {
-    "anthropic/claude-sonnet-4-6": "high",
-    "anthropic/claude-opus-4-6": "xhigh"
-  },
   "sessionIdleTimeoutMs": 600000,
   "workspaceIdleTimeoutMs": 1800000,
   "maxSessionsPerWorkspace": 20,
