@@ -9,10 +9,11 @@ const STREAM_URL = `${BASE}/v1/audio/transcriptions/stream`;
 interface FetchCall {
   url: string;
   method: string;
+  bodyLength?: number;
 }
 
 /** Response factory — returns a fresh Response each invocation. */
-type ResponseFactory = () => Response;
+type ResponseFactory = () => Response | Promise<Response>;
 
 function jsonResponse(body: unknown, status = 200): ResponseFactory {
   return () =>
@@ -37,7 +38,11 @@ function createMockFetch(
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? "GET";
-    calls.push({ url, method });
+    const bodyLength =
+      init?.body instanceof Uint8Array || init?.body instanceof ArrayBuffer
+        ? init.body.byteLength
+        : undefined;
+    calls.push({ url, method, bodyLength });
 
     for (const h of handlers) {
       if (h.match(url, method)) return h.response();
@@ -462,6 +467,81 @@ describe("StreamingSttProvider", () => {
     expect(feedCalls.length).toBe(feedBaseline + 1);
 
     await provider.stop();
+  });
+
+  it("stop waits for in-flight feed and drains queued audio before deleting the session", async () => {
+    let releaseFirstFeed: (() => void) | null = null;
+    let nonEmptyFeedCount = 0;
+    const callOrder: string[] = [];
+
+    const fetchFn = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? "GET";
+      const bodyLength = init?.body instanceof Uint8Array ? init.body.byteLength : 0;
+
+      if (method === "POST" && url === STREAM_URL) {
+        callOrder.push("create");
+        return new Response(JSON.stringify({ session_id: "s1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (method === "POST" && url === `${STREAM_URL}/s1`) {
+        if (bodyLength === 0) {
+          callOrder.push("verify");
+          return new Response(JSON.stringify({ text: "" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        nonEmptyFeedCount += 1;
+        callOrder.push(`feed-${nonEmptyFeedCount}`);
+        if (nonEmptyFeedCount === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstFeed = resolve;
+          });
+        }
+        return new Response(JSON.stringify({ text: `chunk ${nonEmptyFeedCount}` }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (method === "DELETE" && url === `${STREAM_URL}/s1`) {
+        callOrder.push("delete");
+        return new Response(JSON.stringify({ text: "done" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    }) as typeof globalThis.fetch;
+
+    const provider = makeProvider(fetchFn);
+    await flush();
+    await provider.start();
+
+    provider.feedAudio(Buffer.from([1]));
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+    expect(callOrder).toContain("feed-1");
+
+    provider.feedAudio(Buffer.from([2]));
+    const stopPromise = provider.stop();
+    await Promise.resolve();
+
+    expect(callOrder).not.toContain("delete");
+    releaseFirstFeed?.();
+
+    await stopPromise;
+    expect(callOrder.slice(0, 5)).toEqual(["create", "verify", "feed-1", "feed-2", "delete"]);
   });
 
   // Edge: 404 on feed + createSession also fails → logs warning, no throw

@@ -106,6 +106,7 @@ export class StreamingSttProvider implements SttProvider {
   private feeding = false;
   private stopped = false;
   private feedTimer: ReturnType<typeof setInterval> | null = null;
+  private inFlightFlush: Promise<void> | null = null;
   /** Max time audio may sit in the proxy queue before forwarding upstream. */
   private feedIntervalMs: number;
   /** ASR system prompt (domain term sheet). Injected into every session. */
@@ -152,6 +153,7 @@ export class StreamingSttProvider implements SttProvider {
     this.lastPreviewSignature = null;
     this.audioQueue = [];
     this.feeding = false;
+    this.inFlightFlush = null;
     this.stopped = false;
 
     // Use warm session if available, otherwise create fresh.
@@ -196,10 +198,12 @@ export class StreamingSttProvider implements SttProvider {
       this.feedTimer = null;
     }
 
-    // Flush remaining audio
-    if (this.sessionId && this.audioQueue.length > 0) {
+    // Flush remaining audio and wait for any in-flight feed request before
+    // closing the upstream session. Without this, dictation_stop can race a
+    // POST already carrying microphone audio and DELETE the session first.
+    if (this.sessionId) {
       try {
-        await this.flushAudio();
+        await this.drainAudioQueue();
       } catch {
         // Best effort
       }
@@ -232,6 +236,8 @@ export class StreamingSttProvider implements SttProvider {
       }
       this.sessionId = null;
     }
+
+    this.inFlightFlush = null;
 
     // Pre-warm next session so next mic tap is instant
     void this.warmUpSession();
@@ -353,8 +359,36 @@ export class StreamingSttProvider implements SttProvider {
     this.sessionId = data.session_id ?? null;
   }
 
+  private async drainAudioQueue(): Promise<void> {
+    while (this.sessionId) {
+      if (this.inFlightFlush) {
+        await this.inFlightFlush;
+        continue;
+      }
+      if (this.audioQueue.length === 0) return;
+      await this.flushAudio();
+    }
+  }
+
   private async flushAudio(): Promise<void> {
+    if (this.inFlightFlush) {
+      await this.inFlightFlush;
+      return;
+    }
     if (this.feeding || !this.sessionId || this.audioQueue.length === 0) return;
+
+    const flush = this.flushAudioOnce();
+    this.inFlightFlush = flush;
+    try {
+      await flush;
+    } finally {
+      if (this.inFlightFlush === flush) {
+        this.inFlightFlush = null;
+      }
+    }
+  }
+
+  private async flushAudioOnce(): Promise<void> {
     this.feeding = true;
 
     try {
