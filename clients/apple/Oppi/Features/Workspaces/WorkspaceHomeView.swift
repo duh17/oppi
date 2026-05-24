@@ -125,12 +125,9 @@ private extension View {
 }
 
 private struct WorkspaceHomeSessionPreview: Identifiable {
-    let session: Session
-    let attention: SessionListAttentionCounts
-    let children: SessionRow.ChildSummary?
-    let modelSummaries: [SessionModelSummary]
+    let presentation: SessionRowPresentation
 
-    var id: String { session.id }
+    var id: String { presentation.session.id }
 }
 
 /// Tracks whether app launch metric has been recorded this process.
@@ -453,19 +450,16 @@ struct WorkspaceHomeView: View {
                 ForEach(sessionPreviews) { preview in
                     Button {
                         navigation.workspacePath.append(
-                            WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.session.id)
+                            WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.presentation.session.id)
                         )
                     } label: {
-                        WorkspaceHomeSessionPreviewRow(
-                            preview: preview,
-                            activitySummary: activitySummary(for: preview.session, attention: preview.attention, connection: connection)
-                        )
+                        WorkspaceHomeSessionPreviewRow(preview: preview)
                     }
                     .buttonStyle(.plain)
                     .listRowBackground(Color.themeBg)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         previewRowSwipeAction(
-                            session: preview.session,
+                            session: preview.presentation.session,
                             serverId: serverId,
                             workspaceId: workspace.id,
                             connection: connection
@@ -545,10 +539,11 @@ struct WorkspaceHomeView: View {
 
         for session in activeRoots {
             let descendants = activeChildIndex.allDescendants(of: session.id)
-            let attention = attentionCounts(
+            let attention = SessionRowPresentationBuilder.attentionCounts(
                 sessionId: session.id,
                 descendants: descendants,
-                connection: connection
+                pendingPermissionCountForSession: { connection.permissionStore.pending(for: $0).count },
+                pendingAskCountForSession: { connection.askRequestStore.hasPending(for: $0) ? 1 : 0 }
             )
             attentionBySessionId[session.id] = attention
 
@@ -585,7 +580,8 @@ struct WorkspaceHomeView: View {
             previewRow(
                 session: $0,
                 attention: attentionBySessionId[$0.id] ?? .none,
-                childIndex: allChildIndex
+                childIndex: allChildIndex,
+                connection: connection
             )
         }
         previews.append(contentsOf: yourTurnRows)
@@ -594,7 +590,8 @@ struct WorkspaceHomeView: View {
             previewRow(
                 session: $0,
                 attention: attentionBySessionId[$0.id] ?? .none,
-                childIndex: allChildIndex
+                childIndex: allChildIndex,
+                connection: connection
             )
         }
         previews.append(contentsOf: workingRows)
@@ -612,7 +609,8 @@ struct WorkspaceHomeView: View {
                     previewRow(
                         session: $0,
                         attention: .none,
-                        childIndex: allChildIndex
+                        childIndex: allChildIndex,
+                        connection: connection
                     )
                 }
             previews.append(contentsOf: recentStopped)
@@ -624,81 +622,20 @@ struct WorkspaceHomeView: View {
     private func previewRow(
         session: Session,
         attention: SessionListAttentionCounts,
-        childIndex: SessionTreeHelper.ChildIndex
+        childIndex: SessionTreeHelper.ChildIndex,
+        connection: ServerConnection
     ) -> WorkspaceHomeSessionPreview {
         let descendants = childIndex.allDescendants(of: session.id)
         return WorkspaceHomeSessionPreview(
-            session: session,
-            attention: attention,
-            children: childSummary(for: session, descendants: descendants),
-            modelSummaries: modelSummaries(for: session, descendants: descendants)
-        )
-    }
-
-    private func modelSummaries(for session: Session, descendants: [Session]) -> [SessionModelSummary] {
-        SessionModelSummaryBuilder.summaries(
-            primaryModel: session.model,
-            descendantModels: descendants.compactMap(\.model)
-        )
-    }
-
-    private func childSummary(
-        for session: Session,
-        descendants: [Session]
-    ) -> SessionRow.ChildSummary? {
-        guard !descendants.isEmpty else { return nil }
-
-        var counts = SessionTreeHelper.StatusCounts()
-        var totalCost = session.cost
-        var aggregateCompactionCount = max(0, session.changeStats?.compactionCount ?? 0)
-        var aggregateFilesChanged = max(0, session.changeStats?.filesChanged ?? 0)
-
-        for descendant in descendants {
-            counts.total += 1
-            switch descendant.status {
-            case .starting, .busy, .stopping: counts.working += 1
-            case .ready: counts.ready += 1
-            case .stopped: counts.stopped += 1
-            case .error: counts.error += 1
-            }
-            totalCost += descendant.cost
-            aggregateCompactionCount += max(0, descendant.changeStats?.compactionCount ?? 0)
-            aggregateFilesChanged += max(0, descendant.changeStats?.filesChanged ?? 0)
-        }
-
-        return .init(
-            childCount: descendants.count,
-            statusCounts: counts,
-            aggregateCost: totalCost,
-            aggregateCompactionCount: aggregateCompactionCount,
-            aggregateFilesChanged: aggregateFilesChanged
-        )
-    }
-
-    private func attentionCounts(
-        sessionId: String,
-        descendants: [Session],
-        connection: ServerConnection
-    ) -> SessionListAttentionCounts {
-        let ids = [sessionId] + descendants.map(\.id)
-        return SessionListAttentionCounts(
-            permissionCount: ids.reduce(0) { $0 + connection.permissionStore.pending(for: $1).count },
-            askCount: ids.reduce(0) { $0 + (connection.askRequestStore.hasPending(for: $1) ? 1 : 0) }
-        )
-    }
-
-    private func activitySummary(
-        for session: Session,
-        attention: SessionListAttentionCounts,
-        connection: ServerConnection?
-    ) -> String? {
-        guard let connection else { return nil }
-        return SessionActivitySummary.text(
-            session: session,
-            pendingCount: attention.permissionCount,
-            pendingPermissions: connection.permissionStore.pending(for: session.id),
-            pendingAsk: connection.askRequestStore.pending(for: session.id),
-            activity: connection.activityStore.lastActivity(for: session.id)
+            presentation: SessionRowPresentationBuilder.make(
+                session: session,
+                descendants: descendants,
+                pendingPermissionCount: attention.permissionCount,
+                pendingAskCount: attention.askCount,
+                pendingPermissions: connection.permissionStore.pending(for: session.id),
+                pendingAsk: connection.askRequestStore.pending(for: session.id),
+                activity: connection.activityStore.lastActivity(for: session.id)
+            )
         )
     }
 
@@ -943,18 +880,10 @@ private struct WorkspaceHomeOpenButton: View {
 
 private struct WorkspaceHomeSessionPreviewRow: View {
     let preview: WorkspaceHomeSessionPreview
-    let activitySummary: String?
 
     var body: some View {
-        SessionRow(
-            session: preview.session,
-            pendingCount: preview.attention.permissionCount,
-            pendingAskCount: preview.attention.askCount,
-            activitySummary: activitySummary,
-            children: preview.children,
-            modelSummaries: preview.modelSummaries
-        )
-        .padding(.vertical, 1)
+        SessionRow(presentation: preview.presentation)
+            .padding(.vertical, 1)
     }
 }
 

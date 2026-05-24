@@ -302,17 +302,15 @@ struct WorkspaceDetailView: View {
         _ session: Session,
         using childIndex: SessionTreeHelper.ChildIndex
     ) -> SessionListActiveSectionKind? {
-        let pendingCount = SessionTreeHelper.aggregatePendingCount(
-            of: session.id, in: activeSessions,
-            pendingForSession: { permissionStore.pending(for: $0).count }
-        )
-        let askCount = SessionTreeHelper.aggregatePendingCount(
-            of: session.id, in: activeSessions,
-            pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
+        let descendants = childIndex.allDescendants(of: session.id)
+        let attention = SessionRowPresentationBuilder.attentionCounts(
+            sessionId: session.id,
+            descendants: descendants,
+            pendingPermissionCountForSession: { permissionStore.pending(for: $0).count },
+            pendingAskCountForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
         )
 
         // Parent is idle but has working children → tree is still working.
-        let descendants = childIndex.allDescendants(of: session.id)
         let hasWorkingDescendant = descendants.contains {
             if $0.isAwaitingFirstPrompt { return false }
             switch $0.status {
@@ -323,10 +321,7 @@ struct WorkspaceDetailView: View {
 
         return SessionListPresentation.activeSectionKind(
             for: session,
-            attention: SessionListAttentionCounts(
-                permissionCount: pendingCount,
-                askCount: askCount
-            ),
+            attention: attention,
             hasWorkingDescendant: hasWorkingDescendant
         )
     }
@@ -474,16 +469,9 @@ struct WorkspaceDetailView: View {
                 localSessions: data.localFiltered,
                 hasSearchQuery: hasSessionSearchQuery,
                 isImportingLocal: isImportingLocal,
-                lineageHint: { _ in nil },
-                childSummary: { session in
-                    let descendants = data.childIndex.allDescendants(of: session.id)
-                    return childSummary(for: session, descendants: descendants)
+                sessionPresentation: { session in
+                    rowPresentation(for: session, using: data.childIndex)
                 },
-                modelSummaries: { session in
-                    let descendants = data.childIndex.allDescendants(of: session.id)
-                    return modelSummaries(for: session, descendants: descendants)
-                },
-                searchSnippet: { searchStore.snippetsBySessionId[$0] },
                 onOpenSession: { session in
                     openStoppedSession(session)
                 },
@@ -670,83 +658,42 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    /// Build a SessionRow with computed activity summary for the given session.
+    /// Build a SessionRow with shared presentation inputs for the given session.
     @ViewBuilder
     private func sessionRow(for session: Session, using childIndex: SessionTreeHelper.ChildIndex) -> some View {
         let rowStartNs = SessionListPerf.timestampNs()
-        let pending = SessionTreeHelper.aggregatePendingCount(
-            of: session.id, in: activeSessions,
-            pendingForSession: { permissionStore.pending(for: $0).count }
-        )
-        let askPending = SessionTreeHelper.aggregatePendingCount(
-            of: session.id, in: activeSessions,
-            pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
-        )
-        let summary = SessionActivitySummary.text(
-            session: session,
-            pendingCount: pending,
-            pendingPermissions: permissionStore.pending(for: session.id),
-            pendingAsk: askRequestStore.pending(for: session.id),
-            activity: activityStore.lastActivity(for: session.id)
-        )
-        let descendants = childIndex.allDescendants(of: session.id)
-        let children = childSummary(for: session, descendants: descendants)
-        let models = modelSummaries(for: session, descendants: descendants)
+        let presentation = rowPresentation(for: session, using: childIndex)
         let rowMs = Int((SessionListPerf.timestampNs() &- rowStartNs) / 1_000_000)
         let _ = SessionListPerf.recordRowCompute(
             durationMs: rowMs,
             rowCount: 1,
             workspaceId: workspace.id
         )
-        SessionRow(
-            session: session,
-            pendingCount: pending,
-            pendingAskCount: askPending,
-            activitySummary: summary,
-            children: children,
-            modelSummaries: models,
-            searchSnippet: searchStore.snippetsBySessionId[session.id]
-        )
+        SessionRow(presentation: presentation)
     }
 
-    private func modelSummaries(for session: Session, descendants: [Session]) -> [SessionModelSummary] {
-        SessionModelSummaryBuilder.summaries(
-            primaryModel: session.model,
-            descendantModels: descendants.compactMap(\.model)
-        )
-    }
-
-    /// Compute child summary for a root session using pre-built descendant list.
-    private func childSummary(
+    private func rowPresentation(
         for session: Session,
-        descendants: [Session]
-    ) -> SessionRow.ChildSummary? {
-        guard !descendants.isEmpty else { return nil }
-
-        var counts = SessionTreeHelper.StatusCounts()
-        var totalCost = session.cost
-        var aggregateCompactionCount = max(0, session.changeStats?.compactionCount ?? 0)
-        var aggregateFilesChanged = max(0, session.changeStats?.filesChanged ?? 0)
-
-        for desc in descendants {
-            counts.total += 1
-            switch desc.status {
-            case .starting, .busy, .stopping: counts.working += 1
-            case .ready: counts.ready += 1
-            case .stopped: counts.stopped += 1
-            case .error: counts.error += 1
-            }
-            totalCost += desc.cost
-            aggregateCompactionCount += max(0, desc.changeStats?.compactionCount ?? 0)
-            aggregateFilesChanged += max(0, desc.changeStats?.filesChanged ?? 0)
-        }
-
-        return .init(
-            childCount: descendants.count,
-            statusCounts: counts,
-            aggregateCost: totalCost,
-            aggregateCompactionCount: aggregateCompactionCount,
-            aggregateFilesChanged: aggregateFilesChanged
+        using childIndex: SessionTreeHelper.ChildIndex,
+        lineageHint: String? = nil
+    ) -> SessionRowPresentation {
+        let descendants = childIndex.allDescendants(of: session.id)
+        let attention = SessionRowPresentationBuilder.attentionCounts(
+            sessionId: session.id,
+            descendants: descendants,
+            pendingPermissionCountForSession: { permissionStore.pending(for: $0).count },
+            pendingAskCountForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
+        )
+        return SessionRowPresentationBuilder.make(
+            session: session,
+            descendants: descendants,
+            pendingPermissionCount: attention.permissionCount,
+            pendingAskCount: attention.askCount,
+            pendingPermissions: permissionStore.pending(for: session.id),
+            pendingAsk: askRequestStore.pending(for: session.id),
+            activity: activityStore.lastActivity(for: session.id),
+            lineageHint: lineageHint,
+            searchSnippet: searchStore.snippetsBySessionId[session.id]
         )
     }
 

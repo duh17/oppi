@@ -5,10 +5,7 @@ struct WorkspaceStoppedSessionsSection: View {
     let localSessions: [LocalSession]
     let hasSearchQuery: Bool
     let isImportingLocal: Bool
-    let lineageHint: (Session) -> String?
-    let childSummary: (Session) -> SessionRow.ChildSummary?
-    let modelSummaries: (Session) -> [SessionModelSummary]
-    let searchSnippet: (String) -> AttributedString?
+    let sessionPresentation: (Session) -> SessionRowPresentation
     let onOpenSession: (Session) -> Void
     let onResumeSession: (Session) -> Void
     let onDeleteSession: (Session) -> Void
@@ -142,14 +139,7 @@ struct WorkspaceStoppedSessionsSection: View {
                             Button {
                                 onOpenSession(session)
                             } label: {
-                                SessionRow(
-                                    session: session,
-                                    pendingCount: 0,
-                                    lineageHint: lineageHint(session),
-                                    children: childSummary(session),
-                                    modelSummaries: modelSummaries(session),
-                                    searchSnippet: searchSnippet(session.id)
-                                )
+                                SessionRow(presentation: sessionPresentation(session))
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("session.nav.\(session.id)")
@@ -220,14 +210,7 @@ struct WorkspaceStoppedSessionsSection: View {
                                 Button {
                                     onOpenSession(session)
                                 } label: {
-                                    SessionRow(
-                                        session: session,
-                                        pendingCount: 0,
-                                        lineageHint: lineageHint(session),
-                                        children: childSummary(session),
-                                        modelSummaries: modelSummaries(session),
-                                        searchSnippet: searchSnippet(session.id)
-                                    )
+                                    SessionRow(presentation: sessionPresentation(session))
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("session.nav.\(session.id)")

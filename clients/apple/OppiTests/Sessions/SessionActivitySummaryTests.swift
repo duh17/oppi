@@ -179,7 +179,7 @@ struct SessionActivitySummaryTests {
 
     // MARK: - Stopped sessions
 
-    @Test func stopped_showsFileCount() {
+    @Test func stopped_omitsFileCountFromActivitySummary() {
         let stats = SessionChangeStats(
             mutatingToolCalls: 5,
             filesChanged: 3,
@@ -194,7 +194,7 @@ struct SessionActivitySummaryTests {
             pendingPermissions: [],
             activity: nil
         )
-        #expect(result == "3 files changed")
+        #expect(result == nil)
     }
 
     @Test func stopped_noChanges_returnsNil() {

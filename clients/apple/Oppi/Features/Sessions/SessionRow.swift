@@ -364,8 +364,8 @@ enum SessionRowMetricsFormatting {
 
 /// Generate activity summary text from session state and activity data.
 ///
-/// Called by the parent view (WorkspaceDetailView) to compute the summary
-/// before passing it to SessionRow. Keeps SessionRow pure and testable.
+/// Called by `SessionRowPresentationBuilder` before passing inputs to
+/// `SessionRow`. Keeps SessionRow pure and testable.
 enum SessionActivitySummary {
     static func text(
         session: Session,
@@ -401,11 +401,10 @@ enum SessionActivitySummary {
             return nil
         }
 
-        // Stopped: show file summary if available
+        // Stopped: keep activity text quiet. Change metrics are rendered once
+        // in SessionRow's compact metrics line so home previews and workspace
+        // detail rows do not duplicate "files changed" text.
         if session.status == .stopped {
-            if let stats = session.changeStats, stats.filesChanged > 0 {
-                return "\(stats.filesChanged) files changed"
-            }
             return nil
         }
 
