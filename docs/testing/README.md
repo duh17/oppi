@@ -2,6 +2,13 @@
 
 Canonical test commands for the Oppi monorepo.
 
+## Policy as code
+
+- Gate policy: `server/testing-policy.json`
+- Gate runner: `cd server && npm run test:gate:pr-fast`
+- PR fast gate currently runs `check` and `test:coverage`; coverage thresholds live in `server/vitest.config.ts`.
+- Last server coverage run: 2026-05-23 with Vitest v8 — statements 75.29%, branches 65.15%, functions 80.07%, lines 76.21%.
+
 ## Server
 
 From `server/`:

@@ -18,6 +18,7 @@ server/scripts/*
 !server/scripts/architecture-layer-rules.mjs
 !server/scripts/check-architecture-boundaries.ts
 !server/scripts/check-testing-policy.ts
+!server/scripts/testing-gates.ts
 !server/scripts/telemetry-review.ts
 !server/scripts/manual/
 !server/scripts/manual/telemetry-import-sqlite.mjs
