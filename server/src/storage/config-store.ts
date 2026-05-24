@@ -767,7 +767,6 @@ function normalizeConfig(
     if (typeof asr.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0) {
       asrConfig.sttEndpoint = asr.sttEndpoint.trim();
     }
-
     if (Object.keys(asrConfig).length > 0) {
       config.asr = asrConfig;
     }

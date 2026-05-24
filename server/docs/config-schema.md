@@ -119,10 +119,10 @@ oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 
 ### Auto Title
 
-| Setting             | Type    | Default | Description                                                                                                                                       |
-| ------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `autoTitle.enabled` | boolean | `false` | When `true`, auto-generates a 3-5 word task title from the first user message. Uses a standalone LLM call (no pi system prompt, no tool context). |
-| `autoTitle.model`   | string  | -       | Model to use for title generation. Format: `"provider/model-id"`. When omitted, server-side auto-title generation is disabled. A cheap/fast local model works well here.    |
+| Setting             | Type    | Default | Description                                                                                                                                                              |
+| ------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `autoTitle.enabled` | boolean | `false` | When `true`, auto-generates a 3-5 word task title from the first user message. Uses a standalone LLM call (no pi system prompt, no tool context).                        |
+| `autoTitle.model`   | string  | -       | Model to use for title generation. Format: `"provider/model-id"`. When omitted, server-side auto-title generation is disabled. A cheap/fast local model works well here. |
 
 ```json
 {
