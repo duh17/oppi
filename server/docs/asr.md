@@ -110,7 +110,7 @@ Notes:
 
 ## Audio retention
 
-Oppi server does not persist dictation audio locally. If you need archival, configure that in your STT backend.
+Oppi server does not persist dictation audio locally. If you need archival or replay fixtures, configure that in your STT backend.
 
 ## Troubleshooting
 
