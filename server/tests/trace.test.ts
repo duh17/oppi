@@ -699,8 +699,13 @@ describe("buildSessionContext edge cases", () => {
     expect(events[0].type).toBe("system");
   });
 
-  it("warns on unknown content block types instead of silently dropping", () => {
+  it("warns on unknown content block types instead of silently dropping", async () => {
     const stderrLines: string[] = [];
+    const originalLogLevel = process.env.OPPI_LOG_LEVEL;
+    process.env.OPPI_LOG_LEVEL = "warn";
+    vi.resetModules();
+    const { parseJsonl: parseJsonlWithWarnings } = await import("../src/trace.js");
+
     const writeSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(((chunk: string | Uint8Array) => {
@@ -731,7 +736,7 @@ describe("buildSessionContext edge cases", () => {
         }),
       ].join("\n");
 
-      const events = parseJsonl(lines);
+      const events = parseJsonlWithWarnings(lines);
       // The known text block should still be emitted
       expect(events.some((e) => e.type === "assistant" && e.text === "I can still answer")).toBe(true);
 
@@ -744,6 +749,12 @@ describe("buildSessionContext edge cases", () => {
       expect(warningEvents[0]).toContain("future_block_type");
     } finally {
       writeSpy.mockRestore();
+      if (originalLogLevel === undefined) {
+        delete process.env.OPPI_LOG_LEVEL;
+      } else {
+        process.env.OPPI_LOG_LEVEL = originalLogLevel;
+      }
+      vi.resetModules();
     }
   });
 
