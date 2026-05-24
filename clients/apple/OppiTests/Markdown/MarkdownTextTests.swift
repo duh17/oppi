@@ -1098,7 +1098,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
         markdownView.layoutIfNeeded()
 
         let imageHost = try #require(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView))
-        let decoded = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             markdownView.layoutIfNeeded()
             return timelineAllImageViews(in: imageHost).contains { !$0.isHidden && $0.image != nil }
         }
@@ -1137,7 +1137,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
         markdownView.layoutIfNeeded()
 
         let imageHost = try #require(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView))
-        let decoded = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             markdownView.layoutIfNeeded()
             return timelineAllImageViews(in: imageHost).contains { !$0.isHidden && $0.image != nil }
         }
@@ -1263,7 +1263,7 @@ struct NativeMarkdownImageViewTests {
         #expect(!loadButton.isHidden)
         loadButton.sendActions(for: .touchUpInside)
 
-        let loaded = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             timelineAllImageViews(in: view).contains { !$0.isHidden && $0.image != nil }
         }
         #expect(loaded, "NativeMarkdownImageView should load and display the remote image after explicit tap")
@@ -1324,7 +1324,7 @@ struct NativeMarkdownImageViewTests {
             fetchSessionFile: nil
         )
 
-        let hasTapOverlay = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let hasTapOverlay = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             view.layoutIfNeeded()
             return timelineAllViews(in: view).contains { $0.accessibilityIdentifier == "markdown-image.svg.tap-overlay" }
         }

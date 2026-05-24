@@ -13,10 +13,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func reconnectIfNeededReentrancyGuard() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         await conn.reconnectIfNeeded()
         #expect(!conn.foregroundRecoveryInFlight, "Flag should be reset after completion")
@@ -25,10 +22,7 @@ struct ServerConnectionForegroundRecoveryTests {
     @Test func reconnectDoesNotTouchReducerTimeline() async {
         // With per-session reducers, the connection has no reducer to touch.
         // This test verifies foreground recovery doesn't crash without one.
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         await conn.reconnectIfNeeded()
@@ -38,19 +32,13 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func reconnectRefreshesWithoutActiveSession() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
         await conn.reconnectIfNeeded()
         #expect(!conn.foregroundRecoveryInFlight)
     }
 
     @Test func reconnectSkipsFullListRefreshWhenRecentSyncIsFresh() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -66,10 +54,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func reconnectPerformsFullListRefreshWhenCachedDataIsStale() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         let stale = Date().addingTimeInterval(-600)
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -85,10 +70,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -100,10 +82,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipEmitsStructuredBreadcrumb() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -124,10 +103,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListForceRefreshesEvenWhenFresh() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -139,10 +115,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.workspaceStore.workspaces = [makeTestWorkspace()]
@@ -155,10 +128,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogForceEmitsEndBreadcrumbWithCounts() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeForegroundRecoveryConnection()
 
         var endMetadata: [String: String] = [:]
         var endLevel: ClientLogLevel?
@@ -179,4 +149,37 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(endLevel != nil)
     }
 
+    private func makeForegroundRecoveryConnection() -> ServerConnection {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "test.local", port: 7749, token: "sk_test", name: "Test"
+        ))
+        conn.setAPIClientForTesting(makeForegroundRecoveryFailingAPIClient())
+        return conn
+    }
+}
+
+
+private func makeForegroundRecoveryFailingAPIClient() -> APIClient {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [ForegroundRecoveryFailingURLProtocol.self]
+    config.timeoutIntervalForRequest = 0.1
+    config.timeoutIntervalForResource = 0.1
+    config.waitsForConnectivity = false
+    return APIClient(
+        baseURL: URL(string: "http://test.local:7749")!,
+        token: "sk_test",
+        configuration: config
+    )
+}
+
+private final class ForegroundRecoveryFailingURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+    }
+
+    override func stopLoading() {}
 }

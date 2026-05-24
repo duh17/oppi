@@ -67,6 +67,60 @@ final class ScriptedStreamFactory {
     }
 }
 
+@MainActor
+final class ScriptedFrameStreamFactory {
+    private(set) var streamsCreated = 0
+    private var continuations: [AsyncStream<StreamFrameEvent>.Continuation] = []
+
+    func makeStream() -> AsyncStream<StreamFrameEvent> {
+        let index = streamsCreated
+        streamsCreated += 1
+
+        return AsyncStream { continuation in
+            if index < self.continuations.count {
+                self.continuations[index] = continuation
+            } else {
+                self.continuations.append(continuation)
+            }
+        }
+    }
+
+    func yield(index: Int, event: StreamFrameEvent) {
+        guard continuations.indices.contains(index) else { return }
+        continuations[index].yield(event)
+    }
+
+    func finish(index: Int) {
+        guard continuations.indices.contains(index) else { return }
+        continuations[index].finish()
+    }
+
+    func waitForCreated(_ expected: Int, timeoutMs: Int = 1_000) async -> Bool {
+        let attempts = max(1, timeoutMs / 20)
+        for _ in 0..<attempts {
+            if streamsCreated >= expected, continuations.count >= expected {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return false
+    }
+}
+
+func makeCancellableNeverCompletingTaskForTesting() -> Task<Void, Never> {
+    Task {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+func suspendUntilCancelledForTesting() async throws {
+    while true {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 actor MessageCounter {
     private var value = 0
 

@@ -626,6 +626,7 @@ struct ServerConnectionTests {
     @Test func sendRetryReusesClientTurnId() async throws {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
+        conn._turnSendRetryDelayForTesting = .milliseconds(1)
         let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
         var attempt = 0
@@ -674,6 +675,7 @@ struct ServerConnectionTests {
         conn._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
         conn._sendAckTimeoutForTesting = .milliseconds(160)
+        conn._turnSendRetryDelayForTesting = .milliseconds(1)
 
         var requestOrder: [String: Int] = [:]
         var attemptsByRequest: [String: Int] = [:]
@@ -814,7 +816,8 @@ struct ServerConnectionTests {
         for command in AckCommand.allCases {
             let conn = ServerConnection()
             conn._setActiveSessionIdForTesting("s1")
-            conn._sendAckTimeoutForTesting = .milliseconds(120)
+            conn._sendAckTimeoutForTesting = .milliseconds(40)
+            conn._turnSendRetryDelayForTesting = .milliseconds(1)
 
             // Simulate successful socket write with no command_result ack arriving.
             conn._sendMessageForTesting = { _ in }
@@ -1211,10 +1214,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectIfNeededReentrancyGuard() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         // Simulate the flag being set (as if another call is in progress)
         // by calling reconnectIfNeeded and checking the flag is reset after.
@@ -1223,10 +1223,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectDoesNotTouchReducerTimeline() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
         conn._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
@@ -1247,10 +1244,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectRefreshesWithoutActiveSession() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
         // No activeSessionId set — should still attempt session list refresh
         // (API calls fail to unreachable host, but no crash)
         await conn.reconnectIfNeeded()
@@ -1258,10 +1252,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectSkipsFullListRefreshWhenRecentSyncIsFresh() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1278,10 +1269,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectPerformsFullListRefreshWhenCachedDataIsStale() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let stale = Date().addingTimeInterval(-600)
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1297,10 +1285,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1312,10 +1297,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipEmitsStructuredBreadcrumb() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1336,10 +1318,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListForceRefreshesEvenWhenFresh() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1351,10 +1330,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.workspaceStore.workspaces = [makeTestWorkspace()]
@@ -1367,10 +1343,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func syncWorkspaceSummaryFallsBackToLocalProjectionWhenNoStoredSnapshot() {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         let rootBusy = makeTestSession(
             id: "root-busy",
@@ -1404,10 +1377,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func syncWorkspaceSummaryPreservesStoredCountsAndUsesLiveAttentionOverlay() {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(
@@ -1459,10 +1429,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func syncWorkspaceSummaryClearsLocalErrorOverlayOnceLiveStateRecovers() {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(
@@ -1496,10 +1463,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func syncAllWorkspaceSummariesRemovesFallbackOnlyWorkspaceWhenLocalStateDisappears() {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         conn.sessionStore.applyServerSnapshot([
             makeTestSession(id: "root", workspaceId: "w1", status: .ready)
@@ -1513,10 +1477,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogForceEmitsEndBreadcrumbWithCounts() async {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
-        ))
+        let conn = makeLegacyForegroundRecoveryConnection()
 
         var endMetadata: [String: String] = [:]
         var endLevel: ClientLogLevel?
@@ -1536,6 +1497,40 @@ struct ForegroundRecoveryTests {
         #expect(endMetadata["skillCount"] != nil)
         #expect(endLevel != nil)
     }
+}
+
+@MainActor
+private func makeLegacyForegroundRecoveryConnection() -> ServerConnection {
+    let conn = ServerConnection()
+    conn.configure(credentials: ServerCredentials(
+        host: "test.local", port: 7749, token: "sk_test", name: "Test"
+    ))
+    conn.setAPIClientForTesting(makeLegacyForegroundRecoveryFailingAPIClient())
+    return conn
+}
+
+private func makeLegacyForegroundRecoveryFailingAPIClient() -> APIClient {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [LegacyForegroundRecoveryFailingURLProtocol.self]
+    config.timeoutIntervalForRequest = 0.1
+    config.timeoutIntervalForResource = 0.1
+    config.waitsForConnectivity = false
+    return APIClient(
+        baseURL: URL(string: "http://test.local:7749")!,
+        token: "sk_test",
+        configuration: config
+    )
+}
+
+private final class LegacyForegroundRecoveryFailingURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+    }
+
+    override func stopLoading() {}
 }
 
 // MARK: - Stream Lifecycle
@@ -1812,7 +1807,8 @@ struct StreamLifecycleTests {
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: now)
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
-        conn.wsClient?.setStreamURL(URL(string: "ws://192.0.2.1:7749/workspaces/w1/sessions/s1/stream"))
+        let streamFactory = ScriptedFrameStreamFactory()
+        conn._connectStreamForTesting = { streamFactory.makeStream() }
 
         // Simulate a dead bound WS (disconnected, no consumption task)
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -1824,9 +1820,11 @@ struct StreamLifecycleTests {
         await conn.reconnectIfNeeded()
 
         // connectStream should have been called, creating a new task
+        #expect(await streamFactory.waitForCreated(1, timeoutMs: 100))
         #expect(conn.streamConsumptionTask != nil,
                 "reconnectIfNeeded should restart a prepared bound session stream")
 
+        streamFactory.finish(index: 0)
         conn.streamConsumptionTask?.cancel()
         conn.disconnectStream()
     }

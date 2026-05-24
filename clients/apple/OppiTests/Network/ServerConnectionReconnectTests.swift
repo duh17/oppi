@@ -13,9 +13,7 @@ struct ServerConnectionReconnectTests {
         let (conn, _) = makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
-        let staleTask: Task<Void, Never> = Task {
-            try? await Task.sleep(for: .seconds(60))
-        }
+        let staleTask = makeCancellableNeverCompletingTaskForTesting()
         conn.deferredQueueSyncTask = staleTask
         #expect(conn.deferredQueueSyncTask != nil)
         conn._sendMessageForTesting = { _ in }
@@ -25,7 +23,7 @@ struct ServerConnectionReconnectTests {
             message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
-        let cancelled = await waitForTestCondition(timeoutMs: 1_500) {
+        let cancelled = await waitForTestCondition(timeoutMs: 500) {
             staleTask.isCancelled
         }
         #expect(cancelled, "handleStreamReconnected should cancel stale deferred queue sync before scheduling a fresh one")
@@ -56,7 +54,7 @@ struct ServerConnectionReconnectTests {
             message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
-        let sent = await waitForTestCondition(timeoutMs: 3_000) {
+        let sent = await waitForTestCondition(timeoutMs: 500) {
             await getQueueCounter.count() >= 1
         }
         #expect(sent, "After a bound stream reconnect, queue sync should send get_queue")
@@ -92,7 +90,7 @@ struct ServerConnectionReconnectTests {
             message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
-        let sent = await waitForTestCondition(timeoutMs: 3_000) {
+        let sent = await waitForTestCondition(timeoutMs: 500) {
             await getQueueCounter.count() >= 1
         }
         #expect(sent)
@@ -141,11 +139,11 @@ struct ServerConnectionReconnectTests {
             message: .streamConnected(userName: "test", serverDictationAvailable: false)
         ))
 
-        let cancelled = await waitForTestCondition(timeoutMs: 1_500) {
+        let cancelled = await waitForTestCondition(timeoutMs: 500) {
             staleTask.isCancelled
         }
         #expect(cancelled)
-        let sent = await waitForTestCondition(timeoutMs: 3_000) {
+        let sent = await waitForTestCondition(timeoutMs: 500) {
             await getQueueCounter.count() >= 1
         }
         #expect(sent, "Fresh reconnect queue sync should still run after stale task cancellation")

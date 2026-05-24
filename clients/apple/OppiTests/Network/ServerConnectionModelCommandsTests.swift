@@ -558,7 +558,7 @@ struct ServerConnectionModelCommandsTests {
 @MainActor
 private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, sessionId: String = "s1") async {
     connection.wsClient?._setStatusForTesting(.connected)
-    connection.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+    connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
     connection._setActiveSessionIdForTesting(sessionId)
     connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
     _ = await connection.sessionStreamCoordinator.streamSession(

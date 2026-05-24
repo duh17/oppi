@@ -459,7 +459,7 @@ struct ToolExpandedSurfaceHostTests {
         let secondIP = IndexPath(item: 1, section: 0)
         let initialSecondMinY = try #require(collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
 
-        let imageRendered = await waitForTimelineCondition(timeoutMs: 2_500) { @MainActor in
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 1_800) { @MainActor in
             hostController.view.setNeedsLayout()
             hostController.view.layoutIfNeeded()
             collectionView.layoutIfNeeded()
@@ -474,7 +474,7 @@ struct ToolExpandedSurfaceHostTests {
 
         #expect(imageRendered, "Expected SVG attachment preview to render and grow beyond the placeholder height")
 
-        let layoutReflowed = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let layoutReflowed = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             hostController.view.setNeedsLayout()
             hostController.view.layoutIfNeeded()
             collectionView.layoutIfNeeded()
@@ -554,7 +554,7 @@ struct ToolExpandedSurfaceHostTests {
             mimeType: "image/svg+xml"
         )
 
-        let ready = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             container.setNeedsLayout()
             container.layoutIfNeeded()
             return firstToolSubview(ofType: AnimatedImageWebContainerView.self, in: preview) != nil
@@ -724,7 +724,7 @@ struct ToolExpandedSurfaceHostTests {
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
 
-        let ready = await waitForTimelineCondition(timeoutMs: 3_500) { @MainActor in
+        let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             hostController.view.setNeedsLayout()
             hostController.view.layoutIfNeeded()
             view.setNeedsLayout()
@@ -790,7 +790,7 @@ struct ToolExpandedSurfaceHostTests {
         hostController.view.layoutIfNeeded()
 
         let webView = try #require(firstToolSubview(ofType: PiWKWebView.self, in: preview))
-        let ready = await waitForTimelineCondition(timeoutMs: 2_500) { @MainActor in
+        let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             hostController.view.setNeedsLayout()
             hostController.view.layoutIfNeeded()
             let imageReady = try? await webView.evaluateJavaScript("document.images.length === 1 && document.images[0].complete && document.images[0].naturalWidth > 0") as? Bool

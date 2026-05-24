@@ -341,7 +341,7 @@ struct UserTimelineRowContentTests {
         view.setNeedsLayout()
         view.layoutIfNeeded()
 
-        let rendered = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let rendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             view.setNeedsLayout()
             view.layoutIfNeeded()
             guard let thumbnail = firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.0", in: view) else {

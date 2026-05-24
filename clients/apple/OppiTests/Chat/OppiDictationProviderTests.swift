@@ -1314,9 +1314,10 @@ struct DictationErrorSurfacingTests {
         let (audioStream, _) = AsyncStream.makeStream(of: Data.self)
 
         let readinessTask = Task<DictationProviderInfo?, Error> {
-            // Simulate being cancelled
-            try? await Task.sleep(for: .seconds(10))
-            throw CancellationError()
+            // Simulate an in-flight readiness probe that is cancelled by the test.
+            while true {
+                try await Task.sleep(for: .milliseconds(10))
+            }
         }
 
         let session = OppiDictationSession(

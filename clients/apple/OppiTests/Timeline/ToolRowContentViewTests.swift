@@ -658,7 +658,7 @@ struct ToolTimelineRowContentViewTests {
         }
         #expect(hasInlineImageView)
 
-        let decoded = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 timelineAllViews(in: view).contains { candidate in
                     guard candidate is NativeExpandedInlineImageView else { return false }
@@ -709,7 +709,7 @@ struct ToolTimelineRowContentViewTests {
             Mirror(reflecting: landscapeView).children.first { $0.label == "expandedViewportHeightConstraint" }?.value as? NSLayoutConstraint
         )
 
-        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let updated = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 portraitContainer.setNeedsLayout()
                 landscapeContainer.setNeedsLayout()
@@ -738,7 +738,7 @@ struct ToolTimelineRowContentViewTests {
         ])
         view.apply(base64: Data(svg.utf8).base64EncodedString(), mimeType: "image/svg+xml")
 
-        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let updated = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 container.setNeedsLayout()
                 container.layoutIfNeeded()
@@ -771,7 +771,7 @@ struct ToolTimelineRowContentViewTests {
             view.topAnchor.constraint(equalTo: container.topAnchor),
         ])
 
-        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let updated = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 container.setNeedsLayout()
                 container.layoutIfNeeded()
@@ -801,7 +801,7 @@ struct ToolTimelineRowContentViewTests {
         ])
         view.apply(base64: Data(svg.utf8).base64EncodedString(), mimeType: "image/svg+xml")
 
-        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let updated = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 container.setNeedsLayout()
                 container.layoutIfNeeded()

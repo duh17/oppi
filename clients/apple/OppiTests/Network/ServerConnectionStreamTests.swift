@@ -328,7 +328,8 @@ struct ServerConnectionStreamTests {
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: now)
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
-        conn.wsClient?.setStreamURL(URL(string: "ws://192.0.2.1:7749/workspaces/w1/sessions/s1/stream"))
+        let streamFactory = ScriptedFrameStreamFactory()
+        conn._connectStreamForTesting = { streamFactory.makeStream() }
         conn.wsClient?._setStatusForTesting(.disconnected)
         conn.streamConsumptionTask = nil
 
@@ -336,9 +337,11 @@ struct ServerConnectionStreamTests {
 
         await conn.reconnectIfNeeded()
 
+        #expect(await streamFactory.waitForCreated(1, timeoutMs: 100))
         #expect(conn.streamConsumptionTask != nil,
                 "reconnectIfNeeded should restart a prepared bound session stream")
 
+        streamFactory.finish(index: 0)
         conn.streamConsumptionTask?.cancel()
         conn.disconnectStream()
     }
@@ -443,7 +446,7 @@ struct ServerConnectionStreamTests {
     @Test func splitSessionStreamCompletesWithinTimeBudget() async {
         let (conn, _) = makeTestConnection()
         conn.wsClient?._setStatusForTesting(.connected)
-        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
         let start = ContinuousClock.now
@@ -464,7 +467,7 @@ struct ServerConnectionStreamTests {
     @Test func modelAndThinkingCommandsProceedAfterBoundStreamMarksFull() async throws {
         let (conn, _) = makeTestConnection()
         conn.wsClient?._setStatusForTesting(.connected)
-        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn._setActiveSessionIdForTesting("s1")
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
@@ -496,7 +499,7 @@ struct ServerConnectionStreamTests {
     @Test func splitSessionStreamDoesNotBlockOnMissingGetQueueAck() async {
         let (conn, _) = makeTestConnection()
         conn.wsClient?._setStatusForTesting(.connected)
-        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         conn._sendMessageForTesting = { _ in }
 
@@ -529,7 +532,7 @@ struct ServerConnectionStreamTests {
             conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
             conn.wsClient?.setStreamURL(URL(string: "ws://127.0.0.1:9/workspaces/w1/sessions/old/stream"))
             conn.wsClient?._setStatusForTesting(status)
-            let staleTask = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
+            let staleTask = makeCancellableNeverCompletingTaskForTesting()
             conn.streamConsumptionTask = staleTask
             conn._sendMessageForTesting = { _ in }
 
@@ -605,7 +608,7 @@ struct ServerConnectionStreamTests {
     @Test func splitSessionStreamSkipsExplicitSubscribe() async throws {
         let (conn, _) = makeTestConnection(sessionId: "s1")
         conn.wsClient?._setStatusForTesting(.connected)
-        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
         var sentTypes: [String] = []

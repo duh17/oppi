@@ -1154,10 +1154,13 @@ struct ChatActionHandlerTests {
         }
 
         // --- handler1: user sent first message, then navigated away ---
+        let titleGate = AsyncStream.makeStream(of: Void.self)
+        defer { titleGate.continuation.finish() }
+
         let handler1 = ChatActionHandler()
         handler1._generateSessionTitleForTesting = { _ in
-            // Simulate slow on-device model — won't finish before cleanup
-            try? await Task.sleep(for: .seconds(10))
+            // Simulate slow on-device model deterministically — won't finish before cleanup.
+            for await _ in titleGate.stream { break }
             return "Should never complete"
         }
 

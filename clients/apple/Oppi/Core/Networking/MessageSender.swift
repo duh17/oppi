@@ -57,6 +57,7 @@ final class MessageSender {
 
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
     var _sendAckTimeoutForTesting: Duration?
+    var _turnSendRetryDelayForTesting: Duration?
 
     // MARK: - Init
 
@@ -169,7 +170,7 @@ final class MessageSender {
         for attempt in 1...Self.turnSendMaxAttempts {
             if attempt > 1 {
                 pending.resetWaiter()
-                try? await Task.sleep(for: Self.turnSendRetryDelay)
+                try? await Task.sleep(for: _turnSendRetryDelayForTesting ?? Self.turnSendRetryDelay)
 
                 // Re-check after sleep: focus may have been cleared by
                 // disconnectSession() during the retry delay.

@@ -13,7 +13,7 @@ struct ToolOutputFetchTests {
         harness.coordinator._fetchToolOutputForTesting = { _, _ in
             await probe.markStarted()
             do {
-                try await Task.sleep(for: .seconds(5))
+                try await suspendUntilCancelledForTesting()
                 return "late output"
             } catch is CancellationError {
                 await probe.markCanceled()
@@ -65,7 +65,7 @@ struct ToolOutputFetchTests {
         harness.coordinator._fetchToolOutputForTesting = { _, _ in
             await probe.markStarted()
             do {
-                try await Task.sleep(for: .seconds(5))
+                try await suspendUntilCancelledForTesting()
                 return "late output"
             } catch is CancellationError {
                 await probe.markCanceled()
@@ -239,6 +239,7 @@ struct ToolOutputFetchTests {
         }
 
         let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.coordinator._toolOutputRetryDelayForTesting = 0.001
         let toolID = "tool-read-stream-retry"
         let attempts = Attempts()
 
@@ -277,7 +278,7 @@ struct ToolOutputFetchTests {
         )
 
         #expect(harness.reducer.expandedItemIDs.contains(toolID))
-        #expect(await waitForTimelineCondition(timeoutMs: 3_500) {
+        #expect(await waitForTimelineCondition(timeoutMs: 500) {
             await MainActor.run {
                 harness.toolOutputStore.fullOutput(for: toolID) == "full read output (retry)"
             }

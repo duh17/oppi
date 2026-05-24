@@ -25,7 +25,8 @@ struct ChatActionHandlerReconnectTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
-        connection._sendAckTimeoutForTesting = .milliseconds(300)
+        connection._sendAckTimeoutForTesting = .milliseconds(100)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
 
         // First send: WS accepts the bytes but ack never comes (simulates dead connection)
         connection._sendMessageForTesting = { _ in
@@ -71,7 +72,7 @@ struct ChatActionHandlerReconnectTests {
         #expect(third == "?", "Third send should also be blocked")
 
         // Wait for ack timeout + retry to exhaust
-        let finished = await waitForTestCondition(timeoutMs: 2_000) {
+        let finished = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished, "Send should eventually finish after ack timeout")
@@ -98,7 +99,8 @@ struct ChatActionHandlerReconnectTests {
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-        connection._sendAckTimeoutForTesting = .milliseconds(200)
+        connection._sendAckTimeoutForTesting = .milliseconds(100)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
 
         var sendCount = 0
 
@@ -136,7 +138,7 @@ struct ChatActionHandlerReconnectTests {
         )
 
         // Wait for timeout to clear
-        let cleared = await waitForTestCondition(timeoutMs: 2_000) {
+        let cleared = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         }
         #expect(cleared)
@@ -174,7 +176,8 @@ struct ChatActionHandlerReconnectTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
-        connection._sendAckTimeoutForTesting = .milliseconds(200)
+        connection._sendAckTimeoutForTesting = .milliseconds(100)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
 
         // Send will fail (no ack)
         connection._sendMessageForTesting = { _ in }
@@ -193,7 +196,7 @@ struct ChatActionHandlerReconnectTests {
         #expect(queueBefore.steering.count == 1)
 
         // Wait for send to fail
-        let finished = await waitForTestCondition(timeoutMs: 2_000) {
+        let finished = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished)
@@ -264,7 +267,8 @@ struct ChatActionHandlerReconnectTests {
         connection.configure(credentials: makeTestCredentials())
         // Deliberately do NOT set focus — simulates the nil window
         connection._setActiveSessionIdForTesting(nil)
-        connection._sendAckTimeoutForTesting = .milliseconds(200)
+        connection._sendAckTimeoutForTesting = .milliseconds(100)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
 
         var restoredText: String?
 
@@ -280,7 +284,7 @@ struct ChatActionHandlerReconnectTests {
             }
         )
 
-        let finished = await waitForTestCondition(timeoutMs: 2_000) {
+        let finished = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished, "Send should eventually fail, not hang forever")
@@ -494,7 +498,8 @@ struct ChatActionHandlerReconnectTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
-        connection._sendAckTimeoutForTesting = .milliseconds(300)
+        connection._sendAckTimeoutForTesting = .milliseconds(100)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
 
         // First send — will sit waiting for ack
         connection._sendMessageForTesting = { _ in }
@@ -540,7 +545,7 @@ struct ChatActionHandlerReconnectTests {
         )
 
         // Wait for first send to timeout
-        _ = await waitForTestCondition(timeoutMs: 2_000) {
+        _ = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         }
     }
@@ -575,7 +580,7 @@ struct ChatActionHandlerReconnectTests {
             }
         )
 
-        let finished = await waitForTestCondition(timeoutMs: 2_000) {
+        let finished = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished)

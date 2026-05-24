@@ -36,7 +36,7 @@ struct ImagePreviewSecurityTests {
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
 
-        let hasNonzeroWebView = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+        let hasNonzeroWebView = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             controller.view.setNeedsLayout()
             controller.view.layoutIfNeeded()
             return timelineAllViews(in: controller.view).contains { view in

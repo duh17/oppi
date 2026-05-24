@@ -839,12 +839,16 @@ func extractEventFlowAckRequest(from message: ClientMessage) -> EventFlowAckRequ
 @MainActor
 func makeEventFlowAckTestConnection(
     sessionId: String = "s1",
-    timeout: Duration? = nil
+    timeout: Duration? = nil,
+    retryDelay: Duration? = .milliseconds(1)
 ) -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()
     connection._setActiveSessionIdForTesting(sessionId)
     if let timeout {
         connection._sendAckTimeoutForTesting = timeout
+    }
+    if let retryDelay {
+        connection._turnSendRetryDelayForTesting = retryDelay
     }
     let pipeline = TestEventPipeline(sessionId: sessionId, connection: connection)
     return (connection, pipeline)

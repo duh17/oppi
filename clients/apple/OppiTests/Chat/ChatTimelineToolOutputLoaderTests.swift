@@ -126,6 +126,7 @@ struct ExpandedToolOutputLoaderTests {
         }
 
         let loader = ExpandedToolOutputLoader()
+        loader.retryDelayForTesting = 0.001
         let attempts = Attempts()
         var appliedOutput: String?
 
@@ -145,7 +146,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForTestCondition(timeoutMs: 3_500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { appliedOutput == "retry output" }
         })
 
@@ -182,8 +183,6 @@ struct ExpandedToolOutputLoaderTests {
         #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run { loader.taskCountForTesting == 0 }
         })
-
-        try? await Task.sleep(for: .milliseconds(700))
 
         #expect(await attempts.current() == 1)
         #expect(loader.appliedCountForTesting == 0)
@@ -271,7 +270,7 @@ struct ExpandedToolOutputLoaderTests {
             fetchToolOutput: { _, _ in
                 await probe.markStarted()
                 do {
-                    try await Task.sleep(for: .seconds(5))
+                    try await suspendUntilCancelledForTesting()
                     return "late"
                 } catch is CancellationError {
                     await probe.markCanceled()

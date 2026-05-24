@@ -9,12 +9,13 @@ struct ChatActionHandlerRecoveryTests {
     @Test func promptAutoRetriesAfterSessionReconnect() async {
         let sessionId = "recover-send"
         let handler = ChatActionHandler()
-        handler._reconnectRecoveryTimeoutForTesting = .seconds(2)
+        handler._reconnectRecoveryTimeoutForTesting = .milliseconds(500)
         handler._reconnectRecoveryPollIntervalForTesting = .milliseconds(25)
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
         let pipe = TestEventPipeline(sessionId: sessionId, connection: connection)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -95,7 +96,7 @@ struct ChatActionHandlerRecoveryTests {
             }
         )
 
-        #expect(await waitForTestCondition(timeoutMs: 2_000) {
+        #expect(await waitForTestCondition(timeoutMs: 800) {
             await MainActor.run { !handler.isSending }
         })
 
@@ -118,11 +119,12 @@ struct ChatActionHandlerRecoveryTests {
     @Test func promptRecoveryTimeoutRestoresComposerAndExplainsStage() async {
         let sessionId = "recover-timeout"
         let handler = ChatActionHandler()
-        handler._reconnectRecoveryTimeoutForTesting = .milliseconds(250)
+        handler._reconnectRecoveryTimeoutForTesting = .milliseconds(120)
         handler._reconnectRecoveryPollIntervalForTesting = .milliseconds(25)
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -179,7 +181,7 @@ struct ChatActionHandlerRecoveryTests {
             }
         )
 
-        #expect(await waitForTestCondition(timeoutMs: 1_500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         })
 
@@ -201,11 +203,12 @@ struct ChatActionHandlerRecoveryTests {
     @Test func stoppedSessionDuringRecoveryTellsUserToResume() async {
         let sessionId = "recover-stopped"
         let handler = ChatActionHandler()
-        handler._reconnectRecoveryTimeoutForTesting = .seconds(1)
+        handler._reconnectRecoveryTimeoutForTesting = .milliseconds(500)
         handler._reconnectRecoveryPollIntervalForTesting = .milliseconds(25)
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -260,7 +263,7 @@ struct ChatActionHandlerRecoveryTests {
             }
         )
 
-        #expect(await waitForTestCondition(timeoutMs: 1_500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !handler.isSending }
         })
 

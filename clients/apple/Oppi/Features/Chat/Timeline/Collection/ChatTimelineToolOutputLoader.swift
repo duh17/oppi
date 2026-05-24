@@ -50,6 +50,7 @@ final class ExpandedToolOutputLoader {
 
     #if DEBUG
         var fetchOverrideForTesting: FetchToolOutput?
+        var retryDelayForTesting: TimeInterval?
 
         private(set) var canceledCountForTesting = 0
         private(set) var staleDiscardCountForTesting = 0
@@ -211,10 +212,18 @@ final class ExpandedToolOutputLoader {
         cancelRetryWork(for: request.itemID)
 
         let nextAttempt = request.attempt + 1
-        let delay = min(
-            Self.retryMaxDelay,
-            Self.retryBaseDelay * pow(1.6, Double(request.attempt))
-        )
+        let delay: TimeInterval
+        #if DEBUG
+            delay = retryDelayForTesting ?? min(
+                Self.retryMaxDelay,
+                Self.retryBaseDelay * pow(1.6, Double(request.attempt))
+            )
+        #else
+            delay = min(
+                Self.retryMaxDelay,
+                Self.retryBaseDelay * pow(1.6, Double(request.attempt))
+            )
+        #endif
 
         let retryRequest = request.retrying(attempt: nextAttempt)
         let retryWork = DispatchWorkItem { [weak self] in

@@ -174,9 +174,7 @@ struct FileSuggestionInsertionTests {
 
     @Test func clearFileSuggestionsCancelsTask() {
         let (conn, _) = makeTestConnection()
-        let task = Task<Void, Never> { @MainActor in
-            try? await Task.sleep(for: .seconds(60))
-        }
+        let task = makeCancellableNeverCompletingTaskForTesting()
         conn.chatState.fileSuggestionTask = task
         conn.clearFileSuggestions()
         #expect(task.isCancelled)
@@ -187,9 +185,7 @@ struct FileSuggestionInsertionTests {
         let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
-        let oldTask = Task<Void, Never> { @MainActor in
-            try? await Task.sleep(for: .seconds(60))
-        }
+        let oldTask = makeCancellableNeverCompletingTaskForTesting()
         conn.chatState.fileSuggestionTask = oldTask
 
         conn.fetchFileSuggestions(query: "src")
@@ -231,10 +227,9 @@ struct FileSuggestionInsertionTests {
 
         conn.fetchFileSuggestions(query: "fuzzy")
 
-        // Wait for the detached task to complete
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(conn.chatState.fileSuggestions[0].path.contains("FuzzyMatch"))
         #expect(!conn.chatState.fileSuggestions[0].matchPositions.isEmpty,
                 "Match positions should be populated for highlighting")
@@ -253,9 +248,9 @@ struct FileSuggestionInsertionTests {
         ])
 
         conn.fetchFileSuggestions(query: "server.ts")
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(conn.chatState.fileSuggestions[0].path == "server/src/server.ts")
     }
 
@@ -267,9 +262,9 @@ struct FileSuggestionInsertionTests {
         ])
 
         conn.fetchFileSuggestions(query: "compose")
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(conn.chatState.fileSuggestions[0].path ==
                 "clients/apple/Oppi/Features/Chat/Composer/ComposerAutocomplete.swift")
     }
@@ -283,9 +278,9 @@ struct FileSuggestionInsertionTests {
         ])
 
         conn.fetchFileSuggestions(query: "api")
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(!conn.chatState.fileSuggestions[0].path.hasSuffix(".png"))
     }
 
@@ -297,9 +292,9 @@ struct FileSuggestionInsertionTests {
         ])
 
         conn.fetchFileSuggestions(query: "serverconnection")
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(conn.chatState.fileSuggestions[0].path ==
                 "clients/apple/Oppi/Core/Networking/ServerConnection.swift")
     }
@@ -312,9 +307,9 @@ struct FileSuggestionInsertionTests {
         ])
 
         conn.fetchFileSuggestions(query: "workspace-files")
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(conn.chatState.fileSuggestions[0].path == "server/src/routes/workspace-files.ts")
     }
 
@@ -327,9 +322,9 @@ struct FileSuggestionInsertionTests {
         ])
 
         conn.fetchFileSuggestions(query: "wft")
-        try? await Task.sleep(for: .milliseconds(100))
-
-        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !conn.chatState.fileSuggestions.isEmpty
+        })
         #expect(conn.chatState.fileSuggestions[0].path.contains("workspace-files"))
     }
 
@@ -371,8 +366,9 @@ struct FileSuggestionInsertionTests {
         conn.fetchFileSuggestions(query: "src")
         conn.clearFileSuggestions()
 
-        // Brief wait — task should be cancelled
-        try? await Task.sleep(for: .milliseconds(100))
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            conn.chatState.fileSuggestionTask == nil
+        })
         #expect(conn.chatState.fileSuggestions.isEmpty)
     }
 }

@@ -156,7 +156,7 @@ struct AssistantMarkdownLayoutTests {
         let secondIP = IndexPath(item: 1, section: 0)
         let initialSecondMinY = try #require(collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
 
-        let imageRendered = await waitForTimelineCondition(timeoutMs: 2_500) {
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 guard let firstCell = collectionView.cellForItem(at: firstIP),
                       let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView) else {
@@ -170,7 +170,7 @@ struct AssistantMarkdownLayoutTests {
 
         #expect(imageRendered, "SVG fixture did not render in time")
 
-        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
                       let secondFrame = collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
@@ -233,7 +233,7 @@ struct AssistantMarkdownLayoutTests {
 
         let initialSecondMinY = try #require(wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
 
-        let diagramRendered = await waitForTimelineCondition(timeoutMs: 2_500) {
+        let diagramRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 guard let firstCell = wh.collectionView.cellForItem(at: firstIP),
                       let mermaidView = timelineFirstView(ofType: NativeMermaidBlockView.self, in: firstCell.contentView) else {
@@ -245,7 +245,7 @@ struct AssistantMarkdownLayoutTests {
 
         #expect(diagramRendered, "Mermaid fixture did not render image in time")
 
-        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 guard let firstFrame = wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
                       let secondFrame = wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame else {

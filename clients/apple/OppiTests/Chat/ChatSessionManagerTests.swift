@@ -1568,7 +1568,7 @@ struct ChatSessionManagerTests {
         streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
 
         // Wait for streaming state
-        let reachedStreaming = await waitForTestCondition(timeoutMs: 2_000) {
+        let reachedStreaming = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { manager.entryState == .streaming }
         }
         let streamingReachedMs = Date.nowMs()

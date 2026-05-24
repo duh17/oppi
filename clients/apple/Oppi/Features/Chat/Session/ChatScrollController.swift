@@ -29,17 +29,17 @@ final class ChatScrollController: NSObject {
     private let heavyTimelineThreshold = 120
 
     /// Streaming auto-scroll delay: responsive enough to follow live tokens.
-    private let streamingDelay: Duration = .milliseconds(33)
+    private var streamingDelay: Duration = .milliseconds(33)
 
     /// Non-streaming delay: less aggressive to reduce needless churn.
-    private let nonStreamingDelay: Duration = .milliseconds(60)
+    private var nonStreamingDelay: Duration = .milliseconds(60)
 
     /// Heavy timeline streaming: smooth but bounded.
-    private let heavyStreamingDelay: Duration = .milliseconds(80)
-    private let heavyStreamingMinInterval: Duration = .milliseconds(120)
+    private var heavyStreamingDelay: Duration = .milliseconds(80)
+    private var heavyStreamingMinInterval: Duration = .milliseconds(120)
 
     /// Keyboard animation settle time — suppress auto-scroll until layout settles.
-    private let keyboardSettleDuration: Duration = .milliseconds(500)
+    private var keyboardSettleDuration: Duration = .milliseconds(500)
     private var keyboardTransitionUntil: ContinuousClock.Instant?
 
     /// Set by outline view to scroll to a specific item.
@@ -148,6 +148,22 @@ final class ChatScrollController: NSObject {
         self.keyboardTransitionUntil = nil
         return false
     }
+
+    #if DEBUG
+        // periphery:ignore - used by ChatScrollControllerTests via @testable import
+        func useFastTimingForTesting() {
+            streamingDelay = .milliseconds(1)
+            nonStreamingDelay = .milliseconds(1)
+            heavyStreamingDelay = .milliseconds(1)
+            heavyStreamingMinInterval = .milliseconds(0)
+            keyboardSettleDuration = .milliseconds(1)
+        }
+
+        // periphery:ignore - used by ChatScrollControllerTests via @testable import
+        func expireKeyboardTransitionForTesting() {
+            keyboardTransitionUntil = nil
+        }
+    #endif
 
     // MARK: - CollectionView Callbacks
 

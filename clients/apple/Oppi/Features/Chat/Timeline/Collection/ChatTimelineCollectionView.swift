@@ -305,6 +305,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             // periphery:ignore - used by ChatTimelineTests via @testable import
+            var _toolOutputRetryDelayForTesting: TimeInterval? {
+                get { toolOutputLoader.retryDelayForTesting }
+                set { toolOutputLoader.retryDelayForTesting = newValue }
+            }
+
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             var _loadingToolOutputIDsForTesting: Set<String> {
                 toolOutputLoader.loadingIDsForTesting
             }

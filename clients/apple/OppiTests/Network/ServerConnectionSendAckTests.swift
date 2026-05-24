@@ -309,7 +309,7 @@ struct ServerConnectionSendAckTests {
 
     @Test func sendAckTimeoutForPromptSteerAndFollowUp() async {
         for command in EventFlowAckCommand.allCases {
-            let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(120))
+            let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(40))
 
             conn._sendMessageForTesting = { _ in }
 

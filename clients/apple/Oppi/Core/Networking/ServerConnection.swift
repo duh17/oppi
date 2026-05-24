@@ -160,8 +160,19 @@ final class ServerConnection {
         set { sender._sendAckTimeoutForTesting = newValue }
     }
 
+    // periphery:ignore - test seam used by ServerConnection*Tests via @testable import
+    /// Test seam: shorten retry delay in integration-style tests.
+    var _turnSendRetryDelayForTesting: Duration? {
+        get { sender._turnSendRetryDelayForTesting }
+        set { sender._turnSendRetryDelayForTesting = newValue }
+    }
+
     /// Test seam: observe refresh breadcrumbs emitted by list refresh paths.
     var _onRefreshBreadcrumbForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
+
+    // periphery:ignore - test seam used by ServerConnectionStreamTests via @testable import
+    /// Test seam: replace WebSocket opening with a deterministic stream.
+    var _connectStreamForTesting: (() -> AsyncStream<StreamFrameEvent>)?
 
     /// Test seam: override the cache actor used by list refresh paths.
     var _cacheForTesting: TimelineCache?
@@ -458,7 +469,7 @@ final class ServerConnection {
             return
         }
 
-        let stream = wsClient.connect()
+        let stream = _connectStreamForTesting?() ?? wsClient.connect()
 
         streamConsumptionGeneration &+= 1
         let generation = streamConsumptionGeneration
