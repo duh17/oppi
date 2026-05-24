@@ -229,6 +229,22 @@ export const SERVER_METRIC_REGISTRY = {
     unit: "ms",
     description: "Audio duration of the dictation session in ms. Tagged by language.",
   },
+  "server.dictation_first_audio_ms": {
+    unit: "ms",
+    description: "Time from dictation_start to first audio frame received by the server.",
+  },
+  "server.dictation_first_result_ms": {
+    unit: "ms",
+    description: "Time from dictation_start to first visible streaming transcript update.",
+  },
+  "server.dictation_first_result_audio_ms": {
+    unit: "ms",
+    description: "Audio duration received when the first visible transcript update arrived.",
+  },
+  "server.dictation_result_updates": {
+    unit: "count",
+    description: "Visible streaming transcript updates forwarded before the final transcript.",
+  },
   "server.dictation_stt_ms": {
     unit: "ms",
     description: "Final STT latency on session stop. Tagged by phase (finalize), audio_seconds.",

@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DictationManager, type DictationSendFn } from "./dictation-manager.js";
 
 import type { DictationServerMessage } from "./dictation-types.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerMetricName } from "./server-metric-registry.js";
 import type { SttProvider } from "./stt-provider.js";
 
 // ─── Test helpers ───
@@ -28,6 +30,24 @@ function messagesOfType<T extends DictationServerMessage["type"]>(
   type: T,
 ): Extract<DictationServerMessage, { type: T }>[] {
   return sent.filter((m) => m.type === type) as Extract<DictationServerMessage, { type: T }>[];
+}
+
+function mockMetrics(): {
+  collector: {
+    record: (metric: ServerMetricName, value: number, tags?: Record<string, string>) => void;
+  };
+  records: Array<{ metric: ServerMetricName; value: number; tags?: Record<string, string> }>;
+} {
+  const records: Array<{ metric: ServerMetricName; value: number; tags?: Record<string, string> }> =
+    [];
+  return {
+    collector: {
+      record(metric, value, tags) {
+        records.push({ metric, value, tags });
+      },
+    },
+    records,
+  };
 }
 
 /**
@@ -299,6 +319,34 @@ describe("DictationManager", () => {
         committedText: "hello",
         activeText: "world",
       });
+    });
+
+    it("records server-side first audio, first result, and update count metrics", async () => {
+      const metrics = mockMetrics();
+      const metricProvider = mockSttProvider(["hello", "world"]);
+      const mgr = new DictationManager(
+        metricProvider,
+        metrics.collector as unknown as ServerMetricCollector,
+      );
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (msg) => mgrSent.push(msg));
+      await drain();
+      vi.advanceTimersByTime(25);
+      mgr.handleAudioData(silencePcm(500));
+      metricProvider._fireTokens();
+      mgr.handleControlMessage({ type: "dictation_stop" }, (msg) => mgrSent.push(msg));
+      await drain();
+
+      expect(metrics.records.some((r) => r.metric === "server.dictation_first_audio_ms")).toBe(
+        true,
+      );
+      expect(metrics.records).toContainEqual(
+        expect.objectContaining({ metric: "server.dictation_first_result_audio_ms", value: 500 }),
+      );
+      expect(metrics.records).toContainEqual(
+        expect.objectContaining({ metric: "server.dictation_result_updates", value: 2 }),
+      );
     });
 
     it("ignores audio data before dictation_start", () => {

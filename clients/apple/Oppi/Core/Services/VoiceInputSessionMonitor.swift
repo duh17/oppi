@@ -83,8 +83,10 @@ final class VoiceInputSessionMonitor {
         switch event {
         case .partialTranscript:
             return "volatile"
-        case .appendFinalTranscript, .replaceFinalTranscript:
+        case .appendFinalTranscript:
             return "final"
+        case .replaceFinalTranscript(_, let snap, _, _):
+            return snap ? "final" : "preview"
         case .remoteChunkTelemetry, .providerMetricTags:
             return nil
         }

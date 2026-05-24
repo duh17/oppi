@@ -82,6 +82,30 @@ struct VoiceInputSessionMonitorTests {
         session.yieldEvent(.partialTranscript("two"))
 
         #expect(await waitForMainActorCondition { callbacks.count == 1 })
+        #expect(callbacks[0].1 == "preview")
+    }
+
+    @Test func snappedReplacementCountsAsFinalFirstTranscript() async {
+        let session = TestVoiceSession()
+        let monitor = VoiceInputSessionMonitor()
+        var callbacks: [(Int, String)] = []
+
+        monitor.bind(
+            session: session,
+            recordingStartTime: .now,
+            onAudioLevel: { _ in },
+            onEvent: { _ in },
+            onFirstTranscript: { latencyMs, resultType in
+                callbacks.append((latencyMs, resultType))
+            },
+            onError: { error in
+                Issue.record("Unexpected monitor error: \(error)")
+            }
+        )
+
+        session.yieldEvent(.replaceFinalTranscript("settled", snap: true))
+
+        #expect(await waitForMainActorCondition { callbacks.count == 1 })
         #expect(callbacks[0].1 == "final")
     }
 

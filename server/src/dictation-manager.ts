@@ -8,7 +8,7 @@
  * (Yuwp segment-commit). Oppi forwards streaming updates and the provider's
  * final text instead of re-running a second whole-audio batch pass.
  *
- * Oppi no longer persists dictation audio locally.
+ * Audio preservation belongs in the upstream STT backend, not Oppi server.
  */
 
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
@@ -33,6 +33,14 @@ interface DictationSession {
   totalBytes: number;
   /** High-res monotonic start time for latency measurement. */
   startHrMs: number;
+  /** Time the first binary audio frame arrived, if any. */
+  firstAudioHrMs?: number;
+  /** Time the first visible transcript update arrived, if any. */
+  firstResultHrMs?: number;
+  /** Total PCM bytes received when the first visible transcript update arrived. */
+  firstResultBytes?: number;
+  /** Number of visible transcript updates forwarded before final. */
+  resultUpdateCount: number;
   /** Set to true once dictation_stop is received. */
   stopping: boolean;
 }
@@ -78,6 +86,7 @@ export class DictationManager {
         this.session = {
           totalBytes: 0,
           startHrMs: performance.now(),
+          resultUpdateCount: 0,
           stopping: false,
         };
         this.startSession();
@@ -119,6 +128,15 @@ export class DictationManager {
   /** Handle an incoming binary audio frame. */
   handleAudioData(buf: Buffer): void {
     if (!this.session) return;
+
+    if (buf.length > 0 && this.session.firstAudioHrMs === undefined) {
+      this.session.firstAudioHrMs = performance.now();
+      this.metrics?.record(
+        "server.dictation_first_audio_ms",
+        Math.round(this.session.firstAudioHrMs - this.session.startHrMs),
+        this.metricTags({ language: "auto" }),
+      );
+    }
 
     this.session.totalBytes += buf.length;
     this.sttProvider.feedAudio(buf);
@@ -176,6 +194,33 @@ export class DictationManager {
     // render committed vs. active text like Yuwp without inferring splits.
     this.sttProvider.onToken((update) => {
       if (!this.session || this.session.stopping) return;
+      this.session.resultUpdateCount += 1;
+
+      if (this.session.firstResultHrMs === undefined) {
+        this.session.firstResultHrMs = performance.now();
+        this.session.firstResultBytes = this.session.totalBytes;
+        const firstResultMs = Math.round(this.session.firstResultHrMs - this.session.startHrMs);
+        const firstResultAudioMs = Math.round(
+          (this.session.firstResultBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS)) * 1000,
+        );
+        this.metrics?.record(
+          "server.dictation_first_result_ms",
+          firstResultMs,
+          this.metricTags({ language: "auto" }),
+        );
+        this.metrics?.record(
+          "server.dictation_first_result_audio_ms",
+          firstResultAudioMs,
+          this.metricTags({ language: "auto" }),
+        );
+        log.info("dictation.first_result", {
+          latencyMs: firstResultMs,
+          audioMs: firstResultAudioMs,
+          textLength: update.text.length,
+          resultUpdateCount: this.session.resultUpdateCount,
+        });
+      }
+
       this.send({
         type: "dictation_result",
         text: update.text,
@@ -207,6 +252,11 @@ export class DictationManager {
     this.metrics?.record(
       "server.dictation_audio_duration_ms",
       audioDurationMs,
+      this.metricTags({ language: langTag }),
+    );
+    this.metrics?.record(
+      "server.dictation_result_updates",
+      session.resultUpdateCount,
       this.metricTags({ language: langTag }),
     );
 
