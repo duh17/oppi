@@ -14,12 +14,11 @@ final class SessionLifecycleE2ETests: E2ETestCase {
 
         // Send a prompt that produces a long response
         let chatInput = app.textViews["chat.input"]
-        chatInput.tap()
+        tap(chatInput, named: "chat input")
         chatInput.typeText("Write a detailed 500 word essay about the history of computing")
 
         let sendButton = app.buttons["chat.send"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 3), "Send button not found")
-        sendButton.tap()
+        tap(sendButton, named: "send button", timeout: 3)
 
         // Wait for streaming to start
         let stopButton = app.buttons["chat.stop"]
@@ -29,7 +28,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
 
         // Stop mid-stream
-        stopButton.tap()
+        tap(stopButton, named: "stop button")
 
         // Verify streaming stopped (stop button disappears)
         let gonePredicate = NSPredicate(format: "exists == false")
@@ -74,8 +73,10 @@ final class SessionLifecycleE2ETests: E2ETestCase {
     func testSessionSwitching() throws {
         // Create session A, then go back and create session B.
         createSession()
+        let sessionAId = waitForFocusedSessionId(timeout: 30)
         navigateBackToWorkspace()
         createSession()
+        _ = waitForFocusedSessionId(excluding: sessionAId, timeout: 30)
 
         sendMessageAndWaitForResponse(localEchoPrompt("SESSION_B_MARKER"))
         XCTAssertTrue(
@@ -83,9 +84,9 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             "SESSION_B_MARKER not found in session B"
         )
 
-        // Navigate back and enter session A (older session, index 2)
+        // Navigate back and enter session A by stable session identifier.
         navigateBackToWorkspace()
-        enterSession(at: 2)
+        enterSession(id: sessionAId)
 
         // Verify session B's marker is not in session A
         XCTAssertFalse(

@@ -3,6 +3,9 @@ import SwiftUI
 import UIKit
 
 private let appLog = Logger(subsystem: AppIdentifiers.subsystem, category: "App")
+#if DEBUG
+nonisolated(unsafe) private var e2eInviteProcessedThisProcess = false
+#endif
 
 /// Gate reconnect work so foreground transitions only trigger recovery
 /// after an actual background cycle (not every inactive↔active bounce).
@@ -197,19 +200,25 @@ struct OppiApp: App {
                 // 401s on every old device token.
                 if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
                    let e2eURL = URL(string: e2eInvite) {
-                    // Wipe all stale servers before connecting anything
-                    let staleCount = serverStore.servers.count
-                    for server in serverStore.servers {
-                        coordinator.removeServer(id: server.id)
-                    }
-                    os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
+                    if e2eInviteProcessedThisProcess {
+                        os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
+                        navigation.launchPhase = .ready
+                        navigation.showOnboarding = false
+                    } else {
+                        // Wipe all stale servers before connecting anything
+                        let staleCount = serverStore.servers.count
+                        for server in serverStore.servers {
+                            coordinator.removeServer(id: server.id)
+                        }
+                        os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
 
-                    os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
-                    await handleIncomingURL(e2eURL)
-                    navigation.launchPhase = .ready
-                    os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
-                           navigation.showOnboarding ? 1 : 0,
-                           connection.workspaceStore.workspaces.count)
+                        os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
+                        await handleIncomingURL(e2eURL)
+                        navigation.launchPhase = .ready
+                        os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
+                               navigation.showOnboarding ? 1 : 0,
+                               connection.workspaceStore.workspaces.count)
+                    }
                 } else {
                     await reconnectOnLaunch()
                 }
@@ -233,6 +242,13 @@ struct OppiApp: App {
 
     @MainActor
     private func handleIncomingURL(_ url: URL) async {
+#if DEBUG
+        if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
+           url.absoluteString == e2eInvite {
+            guard !e2eInviteProcessedThisProcess else { return }
+            e2eInviteProcessedThisProcess = true
+        }
+#endif
         if await handleIncomingPermissionURL(url) {
             return
         }
@@ -347,18 +363,40 @@ struct OppiApp: App {
         let existingCredentials = connection.credentials
         let hadExistingCredentials = existingCredentials != nil
         do {
+#if DEBUG
+            let bootstrap: InviteBootstrapResult
+            if let e2eDeviceToken = ProcessInfo.processInfo.environment["OPPI_E2E_DEVICE_TOKEN"],
+               !e2eDeviceToken.isEmpty {
+                let effectiveCredentials = credentials.withAuthToken(e2eDeviceToken)
+                guard let baseURL = effectiveCredentials.baseURL else {
+                    throw InviteBootstrapError.message("Invalid E2E invite URL")
+                }
+                let api = APIClient(
+                    baseURL: baseURL,
+                    token: e2eDeviceToken,
+                    tlsCertFingerprint: effectiveCredentials.normalizedTLSCertFingerprint
+                )
+                let sessions = try await api.listSessionsFromWorkspaces()
+                bootstrap = InviteBootstrapResult(effectiveCredentials: effectiveCredentials, sessions: sessions)
+            } else {
+                bootstrap = try await InviteBootstrapService.validateAndBootstrap(
+                    credentials: credentials,
+                    existingCredentials: existingCredentials
+                ) { reason in
+                    if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+                        return true
+                    }
+                    return await BiometricService.shared.authenticate(reason: reason)
+                }
+            }
+#else
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials,
                 existingCredentials: existingCredentials
             ) { reason in
-#if DEBUG
-                // E2E test mode: auto-trust servers (biometrics unavailable in simulator)
-                if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
-                    return true
-                }
-#endif
                 return await BiometricService.shared.authenticate(reason: reason)
             }
+#endif
 
             // Add to ServerStore via coordinator (creates connection state for split streams)
             guard let pairedServer = PairedServer(
@@ -395,6 +433,13 @@ struct OppiApp: App {
             connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
         } catch {
             connection.sessionStore.markSyncFailed()
+#if DEBUG
+            if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil, !serverStore.servers.isEmpty {
+                navigation.showOnboarding = false
+                navigation.launchPhase = .ready
+                return
+            }
+#endif
             if !hadExistingCredentials { navigation.showOnboarding = true }
             connection.extensionToast = "Invite link failed: \(error.localizedDescription)"
         }

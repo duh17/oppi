@@ -145,6 +145,7 @@ struct WorkspaceDetailView: View {
     @State private var isRefreshingWorkspaceData = false
     @State private var workspaceRefreshGeneration = 0
     @State private var hasPresentedWorkspaceOnce = false
+    @State private var hasAutoCreatedE2ESession = false
     @State private var workspaceLoad: WorkspaceLoadMeasurement?
 
     private struct WorkspaceLoadMeasurement {
@@ -437,6 +438,7 @@ struct WorkspaceDetailView: View {
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
+                            .accessibilityIdentifier("session.stop.\(session.id)")
                             .tint(.themeOrange)
                         }
                     }
@@ -458,6 +460,7 @@ struct WorkspaceDetailView: View {
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
+                            .accessibilityIdentifier("session.stop.\(session.id)")
                             .tint(.themeOrange)
                         }
                     }
@@ -623,6 +626,7 @@ struct WorkspaceDetailView: View {
             async let workspaceDataRefreshTask: Void = refreshWorkspaceData()
             async let policyFallbackTask: Void = refreshPolicyFallback()
             _ = await (workspaceDataRefreshTask, policyFallbackTask)
+            await autoCreateE2ESessionIfRequested()
         }
         .task(id: workspaceRefreshPollingTaskId) {
             guard !isNavigatingDeeperInWorkspaceStack else { return }
@@ -756,6 +760,16 @@ struct WorkspaceDetailView: View {
     /// Sandbox VM errors (QEMU unavailable, VM start failure) return as
     /// standard API errors (500/503) and are caught and displayed in the
     /// error alert — no special handling needed.
+    private func autoCreateE2ESessionIfRequested() async {
+        guard !hasAutoCreatedE2ESession,
+              ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_CREATE_SESSION"] == "1",
+              workspace.name == ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"]
+        else { return }
+
+        hasAutoCreatedE2ESession = true
+        await createSession()
+    }
+
     private func createSession(ephemeral: Bool = false) async {
         guard let api = apiClient else {
             error = "Server is offline — reconnecting in background"

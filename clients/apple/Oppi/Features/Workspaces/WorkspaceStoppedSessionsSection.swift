@@ -160,6 +160,7 @@ struct WorkspaceStoppedSessionsSection: View {
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
+                                .accessibilityIdentifier("session.delete.\(session.id)")
                                 .tint(.themeRed)
                             }
 

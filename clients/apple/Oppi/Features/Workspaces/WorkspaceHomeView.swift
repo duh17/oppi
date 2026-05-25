@@ -162,6 +162,7 @@ struct WorkspaceHomeView: View {
     @State private var guidedCreateConsumed = false
     /// Tracks whether the initial task-driven refresh has already run for this view identity.
     @State private var hasPerformedInitialRefresh = false
+    @State private var hasAutoOpenedE2EWorkspace = false
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -273,6 +274,7 @@ struct WorkspaceHomeView: View {
         .task {
             await refresh(force: false)
             triggerGuidedCreateIfNeeded()
+            autoOpenE2EWorkspaceIfRequested()
         }
         .onChange(of: navigation.selectedTab) { _, selectedTab in
             guard selectedTab == .workspaces else { return }
@@ -325,6 +327,7 @@ struct WorkspaceHomeView: View {
             } label: {
                 Label("Create Workspace", systemImage: "folder.badge.plus")
             }
+            .accessibilityIdentifier("workspace.create.open")
 
             Button {
                 navigation.workspacePath.append(WorkspaceUtilityNavTarget.manageServers)
@@ -430,7 +433,7 @@ struct WorkspaceHomeView: View {
                 )
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspaceAccessibilityName)" : "Expand sessions for \(workspaceAccessibilityName)")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Shows or hides the workspace session preview")
@@ -440,13 +443,24 @@ struct WorkspaceHomeView: View {
                 navigation.workspacePath.append(target)
             } label: {
                 WorkspaceHomeOpenButton()
+                    .onTapGesture {
+                        navigation.workspacePath.append(target)
+                    }
             }
+            .buttonStyle(.borderless)
+            .contentShape(Rectangle())
             .accessibilityIdentifier(Self.workspaceOpenAccessibilityIdentifier(workspaceName: workspace.name))
-            .buttonStyle(.plain)
             .accessibilityLabel("Open \(workspaceAccessibilityName)")
             .accessibilityHint("Opens the workspace session list")
+            .accessibilityRespondsToUserInteraction(true)
+            .zIndex(1)
         }
         .padding(.horizontal, 6)
+        .onTapGesture {
+            if Self.shouldOpenWorkspaceFromRowBody(isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil) {
+                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+            }
+        }
         .background {
             if isExpanded {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -501,6 +515,7 @@ struct WorkspaceHomeView: View {
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+            .accessibilityIdentifier("workspaceHome.session.delete.\(session.id)")
             .tint(.themeRed)
         } else {
             Button {
@@ -508,6 +523,7 @@ struct WorkspaceHomeView: View {
             } label: {
                 Label("Stop", systemImage: "stop.fill")
             }
+            .accessibilityIdentifier("workspaceHome.session.stop.\(session.id)")
             .tint(.themeOrange)
         }
     }
@@ -727,6 +743,19 @@ struct WorkspaceHomeView: View {
         }
     }
 
+    private func autoOpenE2EWorkspaceIfRequested() {
+        guard !hasAutoOpenedE2EWorkspace,
+              navigation.workspacePath.count == 0,
+              let workspaceName = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"],
+              !workspaceName.isEmpty,
+              let server = selectedServer,
+              let workspace = workspacesForServer(server.id).first(where: { $0.name == workspaceName })
+        else { return }
+
+        hasAutoOpenedE2EWorkspace = true
+        navigation.workspacePath.append(WorkspaceNavTarget(serverId: server.id, workspace: workspace))
+    }
+
     // MARK: - Session Actions
 
     private func stopPreviewSession(
@@ -827,6 +856,7 @@ struct WorkspaceHomeView: View {
                 Button("Create First Workspace") {
                     presentCreateWorkspace(on: server)
                 }
+                .accessibilityIdentifier("workspace.create.first.open")
                 .buttonStyle(.borderedProminent)
             }
         }

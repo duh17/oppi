@@ -19,12 +19,11 @@ final class PermissionE2ETests: E2ETestCase {
 
         // Ask the model to use bash — triggers a permission request
         let chatInput = app.textViews["chat.input"]
-        chatInput.tap()
+        tap(chatInput, named: "chat input")
         chatInput.typeText("Use the bash tool. Run exactly this command: echo PERMISSION_APPROVED_OK")
 
         let sendButton = app.buttons["chat.send"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 3), "Send button not found")
-        sendButton.tap()
+        tap(sendButton, named: "send button", timeout: 3)
 
         // Wait for the permission sheet (model needs to decide to call bash)
         let approveButton = app.buttons["permission.approve"]
@@ -35,7 +34,7 @@ final class PermissionE2ETests: E2ETestCase {
         }
 
         // Approve the permission
-        approveButton.tap()
+        tap(approveButton, named: "permission approve button")
 
         // Wait for tool execution and response to complete
         let stopButton = app.buttons["chat.stop"]
@@ -66,12 +65,11 @@ final class PermissionE2ETests: E2ETestCase {
 
         // Ask the model to use bash — triggers a permission request
         let chatInput = app.textViews["chat.input"]
-        chatInput.tap()
+        tap(chatInput, named: "chat input")
         chatInput.typeText("Use the bash tool. Run exactly this command: echo PERMISSION_DENIED_TEST")
 
         let sendButton = app.buttons["chat.send"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 3), "Send button not found")
-        sendButton.tap()
+        tap(sendButton, named: "send button", timeout: 3)
 
         // Wait for the permission sheet
         let approveButton = app.buttons["permission.approve"]
@@ -84,7 +82,7 @@ final class PermissionE2ETests: E2ETestCase {
         // Deny the permission
         let denyButton = app.buttons["permission.deny"]
         XCTAssertTrue(denyButton.exists, "Deny button not found alongside approve button")
-        denyButton.tap()
+        tap(denyButton, named: "permission deny button")
 
         // Wait for the model to process the denial and finish responding
         let stopButton = app.buttons["chat.stop"]

@@ -40,6 +40,11 @@ class E2ETestCase: XCTestCase {
         let application = XCUIApplication()
         application.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
+        if let deviceToken = try? readDeviceToken() {
+            application.launchEnvironment["OPPI_E2E_DEVICE_TOKEN"] = deviceToken
+        }
+        application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
+        application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
         application.launch()
         Self._app = application
 
@@ -47,40 +52,53 @@ class E2ETestCase: XCTestCase {
         // 0.5s is enough to detect — no need to block 2s when no alert is present.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         if springboard.alerts.firstMatch.waitForExistence(timeout: 0.5) {
-            springboard.alerts.firstMatch.buttons.element(boundBy: 1).tap()
+            tap(springboard.alerts.firstMatch.buttons.element(boundBy: 1), named: "SpringBoard alert default button")
         }
 
         // Wait for pairing to complete — workspace list appears. Use the
         // collection identifier instead of the navigation title; chrome changes
         // can hide or rename the bar without changing readiness.
         let workspaceList = application.collectionViews["workspace.list"]
-        XCTAssertTrue(
-            workspaceList.waitForExistence(timeout: 30),
-            "Workspace list did not appear after pairing"
-        )
+        let newSessionButton = application.buttons["workspace.newSession"]
+        let chatInput = application.textViews["chat.input"]
+        let pairedDeadline = Date().addingTimeInterval(30)
+        var paired = workspaceList.exists || newSessionButton.exists || chatInput.exists
+        while !paired && Date() < pairedDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            paired = workspaceList.exists || newSessionButton.exists || chatInput.exists
+        }
+        if !paired || newSessionButton.waitForExistence(timeout: 2) || chatInput.exists {
+            return
+        }
 
-        // Find and tap the e2e-workspace
-        let workspaceCell = workspaceList
-            .cells.containing(.staticText, identifier: "e2e-workspace").firstMatch
-        if !workspaceCell.waitForExistence(timeout: 30) {
-            // Pull to refresh as fallback — then poll again instead of sleeping
-            let list = application.collectionViews["workspace.list"]
-            if list.exists {
-                list.swipeDown()
-            }
+        // Find and open the e2e-workspace. The row body expands previews; the
+        // trailing open affordance navigates to workspace detail.
+        let openWorkspaceButton = application.buttons["workspace.open.e2e-workspace"]
+        if !openWorkspaceButton.waitForExistence(timeout: 30) {
+            // Pull to refresh as fallback — then poll again instead of sleeping.
+            workspaceList.swipeDown()
         }
         XCTAssertTrue(
-            workspaceCell.waitForExistence(timeout: 15),
-            "Workspace 'e2e-workspace' cell did not appear in list"
+            openWorkspaceButton.waitForExistence(timeout: 15),
+            "Workspace 'e2e-workspace' open button did not appear in list"
         )
-        openWorkspaceCell(workspaceCell, in: application)
+        // The workspace row has an expanding row-body button next to the open
+        // affordance. Tap the trailing edge of the open control so XCTest does
+        // not synthesize the event into the neighboring disclosure button.
+        openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
 
         // Verify we arrived at workspace detail
-        let newSessionButton = application.buttons["workspace.newSession"]
         XCTAssertTrue(
             newSessionButton.waitForExistence(timeout: 15),
             "Workspace detail did not load after tapping e2e-workspace"
         )
+    }
+
+    private func readDeviceToken() throws -> String {
+        let path = "/tmp/oppi-e2e-device-token.txt"
+        guard FileManager.default.fileExists(atPath: path) else { return "" }
+        return try String(contentsOfFile: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Reads the invite URL written by the E2E server harness.
@@ -110,17 +128,16 @@ class E2ETestCase: XCTestCase {
         // Might be inside a chat session — try the back button
         let backButton = app.navigationBars.buttons.firstMatch
         if backButton.exists && backButton.isHittable {
-            backButton.tap()
+            tap(backButton, named: "navigation back button")
             if newSessionButton.waitForExistence(timeout: 10) {
                 return
             }
         }
 
-        // Might be at the workspace list — tap e2e-workspace
-        let workspaceCell = app.collectionViews["workspace.list"]
-            .cells.containing(.staticText, identifier: "e2e-workspace").firstMatch
-        if workspaceCell.waitForExistence(timeout: 5) {
-            openWorkspaceCell(workspaceCell, in: app)
+        // Might be at the workspace list — open e2e-workspace
+        let openWorkspaceButton = app.buttons["workspace.open.e2e-workspace"]
+        if openWorkspaceButton.waitForExistence(timeout: 5) {
+            tap(openWorkspaceButton, named: "e2e-workspace open button")
             if newSessionButton.waitForExistence(timeout: 15) {
                 return
             }
@@ -131,13 +148,14 @@ class E2ETestCase: XCTestCase {
         try launchAndPair()
     }
 
-    private func openWorkspaceCell(_ workspaceCell: XCUIElement, in application: XCUIApplication) {
-        let newSessionButton = application.buttons["workspace.newSession"]
-        for _ in 0..<3 {
-            workspaceCell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            if newSessionButton.waitForExistence(timeout: 5) {
-                return
-            }
+    func tap(_ element: XCUIElement, named name: String, timeout: TimeInterval = 10) {
+        XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(name) did not appear")
+        XCTAssertTrue(element.isEnabled, "\(name) is disabled")
+
+        if element.isHittable {
+            element.tap()
+        } else {
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
     }
 
@@ -145,14 +163,18 @@ class E2ETestCase: XCTestCase {
 
     /// Creates a new session by tapping the + button and waits for the app to open it.
     func createSession() {
+        let chatInput = app.textViews["chat.input"]
+        if chatInput.waitForExistence(timeout: 3) {
+            return
+        }
+
         let newSessionButton = app.buttons["workspace.newSession"]
         XCTAssertTrue(
             newSessionButton.waitForExistence(timeout: 10),
             "New session button not found"
         )
-        newSessionButton.tap()
+        tap(newSessionButton, named: "new session button")
 
-        let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(
             chatInput.waitForExistence(timeout: 30),
             "Chat input did not appear after creating session"
@@ -173,7 +195,7 @@ class E2ETestCase: XCTestCase {
             sessionCell.waitForExistence(timeout: 10),
             "Session cell at index \(index) did not appear"
         )
-        sessionCell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        tap(sessionCell, named: "session cell at index \(index)")
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(
@@ -198,7 +220,7 @@ class E2ETestCase: XCTestCase {
             rowTitle.waitForExistence(timeout: 10),
             "Session row \(sessionId) did not appear"
         )
-        rowTitle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        tap(rowTitle, named: "session row \(sessionId)")
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(
@@ -216,7 +238,7 @@ class E2ETestCase: XCTestCase {
     func navigateBackToWorkspace() {
         let backButton = app.navigationBars.buttons.firstMatch
         if backButton.exists && backButton.isHittable {
-            backButton.tap()
+            tap(backButton, named: "navigation back button")
         }
 
         let sessionList = app.collectionViews["workspace.sessionList"]
@@ -245,7 +267,7 @@ class E2ETestCase: XCTestCase {
 
         let jumpToBottom = app.buttons["chat.jumpToBottom"]
         if jumpToBottom.exists && jumpToBottom.isHittable {
-            jumpToBottom.tap()
+            tap(jumpToBottom, named: "jump to bottom button")
             if match.waitForExistence(timeout: 3) {
                 return true
             }
@@ -374,12 +396,24 @@ class E2ETestCase: XCTestCase {
             chatInput.waitForExistence(timeout: 15),
             "Chat input not available before sending"
         )
+        let doneButton = app.buttons["Done"]
+        if doneButton.waitForExistence(timeout: 1) {
+            tap(doneButton, named: "extension sheet done", timeout: 1)
+        }
         chatInput.tap()
+        let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
+        if !focusPredicate.evaluate(with: chatInput) {
+            chatInput.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+        }
+        let focusDeadline = Date().addingTimeInterval(5)
+        while !focusPredicate.evaluate(with: chatInput) && Date() < focusDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(focusPredicate.evaluate(with: chatInput), "Chat input did not gain keyboard focus")
         chatInput.typeText(message)
 
         let sendButton = app.buttons["chat.send"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 3), "Send button not found")
-        sendButton.tap()
+        tap(sendButton, named: "send button", timeout: 3)
 
         // Wait for streaming to start then finish
         let stopButton = app.buttons["chat.stop"]
