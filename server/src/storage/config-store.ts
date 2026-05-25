@@ -1063,6 +1063,7 @@ function normalizeConfig(
                 "model",
                 "thinking",
                 "guidelines",
+                "activeTools",
               ]);
               if (strictUnknown) {
                 for (const key of Object.keys(profileValue)) {
@@ -1136,6 +1137,24 @@ function normalizeConfig(
                 } else {
                   errors.push(
                     `${pathPrefix}.modelPolicy.profiles.${profileName}.guidelines: expected array of non-empty strings`,
+                  );
+                  changed = true;
+                }
+              }
+
+              if ("activeTools" in profileValue) {
+                if (
+                  Array.isArray(profileValue.activeTools) &&
+                  profileValue.activeTools.every(
+                    (value) => typeof value === "string" && value.trim().length > 0,
+                  )
+                ) {
+                  profile.activeTools = Array.from(
+                    new Set(profileValue.activeTools.map((value) => value.trim())),
+                  );
+                } else {
+                  errors.push(
+                    `${pathPrefix}.modelPolicy.profiles.${profileName}.activeTools: expected array of non-empty strings`,
                   );
                   changed = true;
                 }

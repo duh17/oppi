@@ -3,7 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import { createSubagentsFactory, type SubagentsContext } from "./subagents/index.js";
+import {
+  createSubagentToolPolicyFactory,
+  createSubagentsFactory,
+  type SubagentsContext,
+} from "./subagents/index.js";
 import type { Session, ServerMessage, SubagentConfig } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +40,8 @@ interface RegisteredTool {
   name: string;
   label: string;
   description: string;
+  promptSnippet?: string;
+  promptGuidelines?: string[];
   parameters: unknown;
   execute: (
     toolCallId: string,
@@ -54,9 +60,13 @@ interface MockExtensionAPI {
   tools: Map<string, RegisteredTool>;
   sentMessages: Array<{ message: Record<string, unknown>; options?: Record<string, unknown> }>;
   handlers: Map<string, Array<(...args: unknown[]) => unknown>>;
+  activeTools: string[];
+  appendedEntries: Array<{ customType: string; data?: unknown }>;
   registerTool(tool: RegisteredTool): void;
   on(event: string, handler: (...args: unknown[]) => unknown): void;
   sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>): void;
+  setActiveTools(toolNames: string[]): void;
+  appendEntry(customType: string, data?: unknown): void;
 }
 
 function createMockAPI(): MockExtensionAPI {
@@ -64,6 +74,8 @@ function createMockAPI(): MockExtensionAPI {
     tools: new Map(),
     sentMessages: [],
     handlers: new Map(),
+    activeTools: [],
+    appendedEntries: [],
     registerTool(tool) {
       this.tools.set(tool.name, tool);
     },
@@ -74,6 +86,12 @@ function createMockAPI(): MockExtensionAPI {
     },
     sendMessage(message, options) {
       this.sentMessages.push({ message, options });
+    },
+    setActiveTools(toolNames: string[]) {
+      this.activeTools = toolNames;
+    },
+    appendEntry(customType: string, data?: unknown) {
+      this.appendedEntries.push({ customType, data });
     },
   };
 }
@@ -96,6 +114,8 @@ interface MockCtx extends SubagentsContext {
     model?: string;
     thinking?: string;
     prompt: string;
+    activeTools?: string[];
+    profileName?: string;
   }>;
   spawnDetachedCalls: Array<{
     name?: string;
@@ -312,14 +332,75 @@ describe("subagents-extension", () => {
   // -----------------------------------------------------------------------
 
   describe("tool registration", () => {
-    it("registers spawn_agent, stop_agent, send_message, inspect_agent", () => {
+    it("registers spawn_agent, send_message, inspect_agent", () => {
       const { api } = setup();
       expect(api.tools.has("spawn_agent")).toBe(true);
-      expect(api.tools.has("stop_agent")).toBe(true);
       expect(api.tools.has("send_message")).toBe(true);
       expect(api.tools.has("inspect_agent")).toBe(true);
+      expect(api.tools.has("stop_agent")).toBe(false);
       expect(api.tools.has("check_agents")).toBe(false);
-      expect(api.tools.size).toBe(4);
+      expect(api.tools.size).toBe(3);
+    });
+
+    it("documents fire-and-forget result semantics", () => {
+      const { tool } = setup();
+      const spawn = tool("spawn_agent");
+
+      expect(spawn.description).toContain("fire-and-forget");
+      expect(spawn.description).toContain("subagent_result");
+      const guidelines = spawn.promptGuidelines?.join("\n");
+      expect(guidelines).toContain("Do not poll, stop, or repeatedly inspect");
+      expect(guidelines).toContain("tasks that may take an hour");
+    });
+
+    it("enforces configured active tools with pi native active-tool state", () => {
+      const api = createMockAPI();
+      const factory = createSubagentToolPolicyFactory({
+        profileName: "review",
+        activeTools: ["read", "grep", "inspect_agent"],
+      });
+      factory(api as never);
+
+      api.handlers.get("session_start")?.[0]?.({}, {});
+
+      expect(api.activeTools).toEqual(["read", "grep", "inspect_agent"]);
+      expect(api.appendedEntries[0]).toEqual({
+        customType: "oppi.subagents.toolPolicy",
+        data: { profileName: "review", activeTools: ["read", "grep", "inspect_agent"] },
+      });
+      const block = api.handlers.get("tool_call")?.[0]?.({ toolName: "edit" }, {});
+      expect(block).toEqual({
+        block: true,
+        reason:
+          'Tool "edit" is not active for profile "review". Active tools: read, grep, inspect_agent',
+      });
+      const allowed = api.handlers.get("tool_call")?.[0]?.({ toolName: "read" }, {});
+      expect(allowed).toBeUndefined();
+    });
+
+    it("restores persisted active tools for resumed child sessions", () => {
+      const { api } = setup("child-1", { childMode: true });
+      api.handlers.get("session_start")?.[0]?.(
+        {},
+        {
+          sessionManager: {
+            getBranch: () => [
+              {
+                type: "custom",
+                customType: "oppi.subagents.toolPolicy",
+                data: { profileName: "review", activeTools: ["read", "inspect_agent"] },
+              },
+            ],
+          },
+        },
+      );
+
+      expect(api.activeTools).toEqual(["read", "inspect_agent"]);
+      const block = api.handlers.get("tool_call")?.[0]?.({ toolName: "bash" }, {});
+      expect(block).toEqual({
+        block: true,
+        reason: 'Tool "bash" is not active for profile "review". Active tools: read, inspect_agent',
+      });
     });
   });
 
@@ -402,6 +483,44 @@ describe("subagents-extension", () => {
       expect(api.sentMessages[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
     });
 
+    it("fire-and-forget: sends subagent_result when the child turn ends before idle stop", async () => {
+      const { api, ctx, tool } = setup();
+      ctx.sessions.set(
+        "parent-1",
+        makeSession({ id: "parent-1", status: "ready", name: "Parent" }),
+      );
+
+      await tool("spawn_agent").execute("tc1", {
+        message: "Do something",
+        name: "worker",
+      });
+
+      const childId = [...ctx.sessions.keys()].find((k) => k !== "parent-1")!;
+      const child = ctx.sessions.get(childId)!;
+      const fullResponse = "Finished the work with a detailed final report. ".repeat(12);
+
+      emitMessage(ctx, childId, {
+        type: "message_end",
+        role: "assistant",
+        content: fullResponse,
+      });
+      emitMessage(ctx, childId, { type: "agent_end" });
+
+      child.status = "ready";
+      child.messageCount += 1;
+      child.lastMessage = fullResponse.slice(0, 100);
+      child.lastAgentReplyAt = Date.now();
+
+      await vi.waitFor(() => expect(api.sentMessages).toHaveLength(1));
+      expect(api.sentMessages[0].message.customType).toBe("subagent_result");
+      expect(api.sentMessages[0].message.content).toContain("READY");
+      expect(api.sentMessages[0].message.content).toContain(fullResponse);
+      expect(ctx.stopSessionCalls).toHaveLength(0);
+
+      emitMessage(ctx, childId, { type: "session_ended", reason: "done" });
+      expect(api.sentMessages).toHaveLength(1);
+    });
+
     it("passes name, model, thinking to spawnChild", async () => {
       const { ctx, tool } = setup();
 
@@ -473,6 +592,7 @@ describe("subagents-extension", () => {
                   "Prefer search and inspection before editing.",
                   "Stay cheap and fast unless the evidence says otherwise.",
                 ],
+                activeTools: ["read", "grep", "find", "inspect_agent"],
               },
             },
           },
@@ -486,11 +606,27 @@ describe("subagents-extension", () => {
 
       expect(ctx.spawnChildCalls[0].model).toBe("openai-codex/gpt-5.4-mini");
       expect(ctx.spawnChildCalls[0].thinking).toBe("minimal");
+      expect(ctx.spawnChildCalls[0].activeTools).toEqual(["read", "grep", "find", "inspect_agent"]);
+      expect(ctx.spawnChildCalls[0].profileName).toBe("discovery");
       expect(ctx.spawnChildCalls[0].prompt).toContain("[Subagent profile: discovery]");
       expect(ctx.spawnChildCalls[0].prompt).toContain(
         "Prefer search and inspection before editing.",
       );
       expect(ctx.spawnChildCalls[0].prompt).toContain("inspect the repo and summarize hotspots");
+    });
+
+    it("applies built-in profiles", async () => {
+      const { ctx, tool } = setup();
+
+      await tool("spawn_agent").execute("tc1", {
+        message: "implement the focused fix",
+        profile: "coding",
+      });
+
+      expect(ctx.spawnChildCalls[0].prompt).toContain("[Subagent profile: coding]");
+      expect(ctx.spawnChildCalls[0].prompt).toContain("Implementation lane");
+      expect(ctx.spawnChildCalls[0].prompt).toContain("do not revert unrelated work");
+      expect(ctx.spawnChildCalls[0].prompt).toContain("implement the focused fix");
     });
 
     it("rejects models outside the approved subagent list", async () => {
@@ -517,7 +653,7 @@ describe("subagents-extension", () => {
       expect(ctx.spawnChildCalls.length).toBe(0);
     });
 
-    it("rejects unknown profiles and lists configured ones", async () => {
+    it("rejects unknown profiles and lists built-ins plus configured ones", async () => {
       const { ctx, tool } = setup("parent-1", {
         subagentConfig: {
           maxDepth: 1,
@@ -535,12 +671,13 @@ describe("subagents-extension", () => {
 
       const result = await tool("spawn_agent").execute("tc1", {
         message: "do work",
-        profile: "review",
+        profile: "not-a-profile",
       });
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Unknown subagent profile");
       expect(result.content[0].text).toContain("discovery");
+      expect(result.content[0].text).toContain("review");
       expect(ctx.spawnChildCalls.length).toBe(0);
     });
 
@@ -956,55 +1093,6 @@ describe("subagents-extension", () => {
       const result = await promise;
       // Should resolve (not throw) with current status
       expect(result.content[0].text).toBeTruthy();
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // stop_agent
-  // -----------------------------------------------------------------------
-
-  describe("stop_agent", () => {
-    it("stops a running child session", async () => {
-      const { ctx, tool } = setup();
-      // Spawn a child first
-      await tool("spawn_agent").execute("tc1", { message: "Do work" });
-      const childId = ctx.listChildren()[0].id;
-
-      const result = await tool("stop_agent").execute("tc2", { id: childId });
-      const details = result.details as Record<string, unknown>;
-      expect(result.content[0].text).toContain("Stopped agent");
-      expect(details.status).toBe("stopped");
-      expect(ctx.stopSessionCalls).toContain(childId);
-      // Verify mock updated the session status
-      expect(ctx.getSession(childId)?.status).toBe("stopped");
-    });
-
-    it("returns error for unknown session ID", async () => {
-      const { tool } = setup();
-      const result = await tool("stop_agent").execute("tc1", { id: "nonexistent" });
-      expect(result.content[0].text).toContain("Session not found");
-    });
-
-    it("returns already-stopped for terminal sessions", async () => {
-      const { ctx, tool } = setup();
-      // Add a stopped child
-      ctx.sessions.set(
-        "child-done",
-        makeSession({ id: "child-done", parentSessionId: "parent-1", status: "stopped" }),
-      );
-
-      const result = await tool("stop_agent").execute("tc1", { id: "child-done" });
-      expect(result.content[0].text).toContain("already stopped");
-      expect(ctx.stopSessionCalls).toHaveLength(0);
-    });
-
-    it("rejects sessions outside the spawn tree", async () => {
-      const { ctx, tool } = setup();
-      // Add an unrelated session (no parentSessionId linking to us)
-      ctx.sessions.set("unrelated", makeSession({ id: "unrelated", status: "busy" }));
-
-      const result = await tool("stop_agent").execute("tc1", { id: "unrelated" });
-      expect(result.content[0].text).toContain("not in this session's tree");
     });
   });
 
@@ -2000,24 +2088,6 @@ describe("subagents-extension", () => {
 
       const result = await tool("inspect_agent").execute("tc1", { id: "other-ws" });
       expect(result.content[0].text).toContain("not in this workspace");
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Cross-session: stop_agent stays tree-scoped
-  // -----------------------------------------------------------------------
-
-  describe("stop_agent tree scope (unchanged)", () => {
-    it("still rejects sessions outside the spawn tree", async () => {
-      const { ctx, tool } = setup();
-
-      ctx.sessions.set(
-        "unrelated",
-        makeSession({ id: "unrelated", status: "busy", name: "Not Mine" }),
-      );
-
-      const result = await tool("stop_agent").execute("tc1", { id: "unrelated" });
-      expect(result.content[0].text).toContain("not in this session's tree");
     });
   });
 

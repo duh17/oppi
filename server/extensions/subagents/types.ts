@@ -8,12 +8,16 @@ export interface SubagentsContext {
     model?: string;
     thinking?: string;
     prompt: string;
+    activeTools?: string[];
+    profileName?: string;
   }): Promise<Session>;
   spawnDetached(params: {
     name?: string;
     model?: string;
     thinking?: string;
     prompt: string;
+    activeTools?: string[];
+    profileName?: string;
   }): Promise<Session>;
   listChildren(): Session[];
   getSession(sessionId: string): Session | undefined;
@@ -41,12 +45,6 @@ export interface SpawnAgentDetails {
   waited?: boolean;
   cost?: number;
   durationMs?: number;
-}
-
-export interface StopAgentDetails {
-  agentId: string;
-  name?: string;
-  status: string;
 }
 
 export interface InspectAgentDetails {

@@ -60,11 +60,20 @@ export interface SessionStartCoordinatorDeps {
       model?: string;
       thinking?: string;
       prompt: string;
+      activeTools?: string[];
+      profileName?: string;
     },
   ) => Promise<Session>;
   spawnDetachedSession: (
     originSessionId: string,
-    params: { name?: string; model?: string; thinking?: string; prompt: string },
+    params: {
+      name?: string;
+      model?: string;
+      thinking?: string;
+      prompt: string;
+      activeTools?: string[];
+      profileName?: string;
+    },
   ) => Promise<Session>;
   listChildSessions: (parentSessionId: string) => Session[];
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
@@ -117,12 +126,16 @@ export class SessionStartCoordinator {
             model?: string;
             thinking?: string;
             prompt: string;
+            activeTools?: string[];
+            profileName?: string;
           }) => this.deps.spawnChildSession(session.id, params),
           spawnDetached: (params: {
             name?: string;
             model?: string;
             thinking?: string;
             prompt: string;
+            activeTools?: string[];
+            profileName?: string;
           }) => this.deps.spawnDetachedSession(session.id, params),
           listChildren: () => this.deps.listChildSessions(session.id),
           getSession: (id: string) => this.deps.storage.getSession(id),

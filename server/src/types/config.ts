@@ -166,6 +166,8 @@ export interface SubagentModelProfileConfig {
   thinking?: string;
   /** Extra instructions injected ahead of the child prompt for this profile. */
   guidelines?: string[];
+  /** Exact pi tool names to activate for child sessions using this profile. Omitted means inherit the default active tool set. */
+  activeTools?: string[];
 }
 
 export interface SubagentModelPolicyConfig {
@@ -175,7 +177,7 @@ export interface SubagentModelPolicyConfig {
   defaultModel?: string;
   /** Default thinking level when spawn_agent omits thinking. */
   defaultThinking?: string;
-  /** Named presets such as discovery/research/coding/review. */
+  /** Named presets such as discovery/research/coding/review. Overrides built-in subagent profiles by name. */
   profiles?: Record<string, SubagentModelProfileConfig>;
 }
 

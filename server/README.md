@@ -179,7 +179,7 @@ oppi-server` to remove. `oppi update` updates mutable runtime dependencies only.
 The server ships four built-in extension names:
 
 - **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards and routes answers back.
-- **subagents** — multi-agent orchestration. Includes the `spawn_agent`, `stop_agent`, `send_message`, and `inspect_agent` tools. See [docs/sub-agents.md](docs/sub-agents.md).
+- **subagents** — multi-agent orchestration. Includes the `spawn_agent`, `send_message`, and `inspect_agent` tools. See [docs/sub-agents.md](docs/sub-agents.md).
 - **voice** — server-managed voice creation and playback helpers exposed through the Oppi voice tools. See [Voice replies / TTS](docs/tts.md).
 - **oppi-admin** — workspace and theme administration tools, including `build_theme`. See [Custom themes](docs/themes.md).
 

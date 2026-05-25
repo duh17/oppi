@@ -102,11 +102,20 @@ export interface SessionCoordinatorBundleDeps {
       model?: string;
       thinking?: string;
       prompt: string;
+      activeTools?: string[];
+      profileName?: string;
     },
   ) => Promise<Session>;
   spawnDetachedSession: (
     originSessionId: string,
-    params: { name?: string; model?: string; thinking?: string; prompt: string },
+    params: {
+      name?: string;
+      model?: string;
+      thinking?: string;
+      prompt: string;
+      activeTools?: string[];
+      profileName?: string;
+    },
   ) => Promise<Session>;
   listChildSessions: (parentSessionId: string) => Session[];
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;

@@ -162,6 +162,7 @@ struct ChatViewLifecycleTests {
                 .environment(connection.fileIndexStore)
                 .environment(connection.messageQueueStore)
                 .environment(connection.permissionStore)
+                .environment(connection.askRequestStore)
                 .environment(appNavigation)
                 .environment(piQuickActionStore)
         )

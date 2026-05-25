@@ -11,12 +11,16 @@ export interface SubagentsContext {
     model?: string;
     thinking?: string;
     prompt: string;
+    activeTools?: string[];
+    profileName?: string;
   }): Promise<Session>;
   spawnDetached(params: {
     name?: string;
     model?: string;
     thinking?: string;
     prompt: string;
+    activeTools?: string[];
+    profileName?: string;
   }): Promise<Session>;
   listChildren(): Session[];
   getSession(sessionId: string): Session | undefined;

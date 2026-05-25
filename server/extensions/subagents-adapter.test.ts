@@ -52,11 +52,6 @@ describe("subagents adapter", () => {
       sendMessage() {},
     } as never);
 
-    expect([...tools.keys()].sort()).toEqual([
-      "inspect_agent",
-      "send_message",
-      "spawn_agent",
-      "stop_agent",
-    ]);
+    expect([...tools.keys()].sort()).toEqual(["inspect_agent", "send_message", "spawn_agent"]);
   });
 });

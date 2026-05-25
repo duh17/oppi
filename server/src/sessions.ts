@@ -39,6 +39,7 @@ import { type SessionStateActiveSession } from "./session-state.js";
 import { type ExtensionUIResponse } from "./session-ui.js";
 import { createLogger } from "./logger.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
+import { createSubagentToolPolicyFactory } from "../extensions/subagents/index.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -689,6 +690,8 @@ export class SessionManager extends EventEmitter {
       model?: string;
       thinking?: string;
       prompt: string;
+      activeTools?: string[];
+      profileName?: string;
     },
   ): Promise<Session> {
     const parentSession = this.storage.getSession(parentSessionId);
@@ -717,6 +720,15 @@ export class SessionManager extends EventEmitter {
     this.storage.saveSession(session);
 
     try {
+      if (params.activeTools) {
+        this.setPendingExtensionFactories(session.id, [
+          createSubagentToolPolicyFactory({
+            profileName: params.profileName,
+            activeTools: params.activeTools,
+          }),
+        ]);
+      }
+
       await this.startSession(session.id, workspace);
 
       if (params.thinking) {
@@ -761,7 +773,8 @@ export class SessionManager extends EventEmitter {
   /**
    * Spawn a detached session in the same workspace as the origin session.
    * Unlike spawnChildSession, does NOT set parentSessionId — the new session
-   * is fully independent and gets full capabilities (including spawn_agent).
+   * is fully independent and gets full capabilities (including spawn_agent)
+   * unless the selected profile applies an active-tool policy.
    */
   async spawnDetachedSession(
     originSessionId: string,
@@ -770,6 +783,8 @@ export class SessionManager extends EventEmitter {
       model?: string;
       thinking?: string;
       prompt: string;
+      activeTools?: string[];
+      profileName?: string;
     },
   ): Promise<Session> {
     const originSession = this.storage.getSession(originSessionId);
@@ -794,6 +809,15 @@ export class SessionManager extends EventEmitter {
     this.storage.saveSession(session);
 
     try {
+      if (params.activeTools) {
+        this.setPendingExtensionFactories(session.id, [
+          createSubagentToolPolicyFactory({
+            profileName: params.profileName,
+            activeTools: params.activeTools,
+          }),
+        ]);
+      }
+
       await this.startSession(session.id, workspace);
 
       if (params.thinking) {
