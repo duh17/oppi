@@ -4,8 +4,7 @@ import XCTest
 /// multi-turn conversations, and switching between sessions.
 ///
 /// Requires the E2E server and local model endpoint to be running.
-/// Run via `ios/scripts/e2e.sh` which handles server lifecycle
-/// and writes the invite URL to `/tmp/oppi-e2e-invite.txt`.
+/// The E2E server harness writes the invite URL to `/tmp/oppi-e2e-invite.txt`.
 final class SessionLifecycleE2ETests: E2ETestCase {
 
     // MARK: - Tests

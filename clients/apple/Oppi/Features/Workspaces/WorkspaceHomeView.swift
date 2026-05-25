@@ -139,6 +139,14 @@ nonisolated(unsafe) private var appLaunchMetricRecorded = false
 /// Shows one server at a time, with a server switcher in the toolbar and
 /// expandable workspace rows that preview active or recent sessions.
 struct WorkspaceHomeView: View {
+    static func workspaceOpenAccessibilityIdentifier(workspaceName: String) -> String {
+        "workspace.open.\(workspaceName)"
+    }
+
+    static func shouldOpenWorkspaceFromRowBody(isE2EInviteMode: Bool) -> Bool {
+        isE2EInviteMode
+    }
+
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -406,7 +414,11 @@ struct WorkspaceHomeView: View {
 
         HStack(alignment: .center, spacing: 8) {
             Button {
-                toggleWorkspaceExpansion(key: key, summary: summary)
+                if Self.shouldOpenWorkspaceFromRowBody(isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil) {
+                    navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+                } else {
+                    toggleWorkspaceExpansion(key: key, summary: summary)
+                }
             } label: {
                 WorkspaceHomeRow(
                     workspace: workspace,
@@ -423,11 +435,13 @@ struct WorkspaceHomeView: View {
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Shows or hides the workspace session preview")
 
+            let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
             Button {
-                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+                navigation.workspacePath.append(target)
             } label: {
                 WorkspaceHomeOpenButton()
             }
+            .accessibilityIdentifier(Self.workspaceOpenAccessibilityIdentifier(workspaceName: workspace.name))
             .buttonStyle(.plain)
             .accessibilityLabel("Open \(workspaceAccessibilityName)")
             .accessibilityHint("Opens the workspace session list")

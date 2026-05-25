@@ -62,6 +62,35 @@ final class AppNavigation {
     /// Extracted from `pendingQuickSessionNav` by ContentView.onDismiss.
     var pendingQuickSessionAttachments: [PendingAttachment]?
 
+    // MARK: - Legacy Shell Routing
+
+    /// Routes legacy tab selections into the Workspaces-primary navigation stack.
+    ///
+    /// Older persisted state and a few compatibility call sites can still set
+    /// `.server` or `.settings`. Those are no longer primary app roots; they
+    /// become utility destinations under `WorkspaceHomeView` and the selected
+    /// tab resets to `.workspaces`.
+    @discardableResult
+    func routeLegacySelectedTabIfNeeded() -> WorkspaceUtilityNavTarget? {
+        guard !showOnboarding else { return nil }
+        guard case .ready = launchPhase else { return nil }
+
+        let target: WorkspaceUtilityNavTarget
+        switch selectedTab {
+        case .workspaces:
+            return nil
+        case .server:
+            target = .manageServers
+        case .settings:
+            target = .appSettings
+        }
+
+        workspacePath = NavigationPath()
+        workspacePath.append(target)
+        selectedTab = .workspaces
+        return target
+    }
+
     // MARK: - Pi Quick Actions
 
     /// Creates the default non-chat selected-text routing scope.

@@ -59,7 +59,7 @@ struct ContentView: View {
                         WorkspaceHomeView()
                     }
                     .task {
-                        routeLegacySelectedTab(navigation.selectedTab)
+                        navigation.routeLegacySelectedTabIfNeeded()
                     }
                 }
             }
@@ -145,8 +145,8 @@ struct ContentView: View {
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             handleQuickSessionPresentationRequestChange(newValue)
         }
-        .onChange(of: navigation.selectedTab) { _, newValue in
-            routeLegacySelectedTab(newValue)
+        .onChange(of: navigation.selectedTab) { _, _ in
+            navigation.routeLegacySelectedTabIfNeeded()
         }
         .overlay(alignment: .topLeading) {
             e2eDiagnosticsOverlay
@@ -189,24 +189,6 @@ struct ContentView: View {
         let showingOnboarding = navigation.showOnboarding
         guard shouldPresent, !showingOnboarding else { return }
         navigation.showQuickSession = true
-    }
-
-    private func routeLegacySelectedTab(_ tab: AppTab) {
-        guard !navigation.showOnboarding else { return }
-        guard case .ready = navigation.launchPhase else { return }
-
-        switch tab {
-        case .workspaces:
-            break
-        case .server:
-            navigation.workspacePath = NavigationPath()
-            navigation.workspacePath.append(WorkspaceUtilityNavTarget.manageServers)
-            navigation.selectedTab = .workspaces
-        case .settings:
-            navigation.workspacePath = NavigationPath()
-            navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
-            navigation.selectedTab = .workspaces
-        }
     }
 
     private func sessionLabel(for sessionId: String) -> String {

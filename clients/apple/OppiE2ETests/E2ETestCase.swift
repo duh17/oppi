@@ -83,11 +83,11 @@ class E2ETestCase: XCTestCase {
         )
     }
 
-    /// Reads the invite URL written by `ios/scripts/e2e.sh`.
+    /// Reads the invite URL written by the E2E server harness.
     private func readInviteURL() throws -> String {
         let path = "/tmp/oppi-e2e-invite.txt"
         guard FileManager.default.fileExists(atPath: path) else {
-            throw XCTSkip("No invite URL found at \(path) — run ios/scripts/e2e.sh to set up server")
+            throw XCTSkip("No invite URL found at \(path) — run the Oppi E2E server harness to set up pairing")
         }
         let url = try String(contentsOfFile: path, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
