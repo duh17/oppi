@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SLO_THRESHOLDS,
   buildTelemetryTrendSvg,
   buildTrendBuckets,
   review,
@@ -36,6 +37,18 @@ function makeReviewData(endTs: number) {
 }
 
 describe("telemetry-review svg reporting", () => {
+  it("gates on current emitted release metrics", () => {
+    expect(SLO_THRESHOLDS).toHaveProperty("chat.ws_wait_for_connected_ms");
+    expect(SLO_THRESHOLDS).toHaveProperty("server.ws_handshake_ms");
+    expect(SLO_THRESHOLDS).toHaveProperty("server.session_subscribe_ms");
+
+    expect(SLO_THRESHOLDS).not.toHaveProperty("chat.subscribe_ack_ms");
+    expect(SLO_THRESHOLDS).not.toHaveProperty("chat.ws_connect_ms");
+    expect(SLO_THRESHOLDS).not.toHaveProperty("chat.connected_dispatch_ms");
+    expect(SLO_THRESHOLDS).not.toHaveProperty("server.dictation_llm_correction_ms");
+    expect(SLO_THRESHOLDS).not.toHaveProperty("chat.session_list_row_compute_ms");
+  });
+
   it("buckets trend samples into deterministic p95 windows", () => {
     const endTs = Date.UTC(2026, 4, 13, 12, 0, 0);
     const data = makeReviewData(endTs);
@@ -57,6 +70,11 @@ describe("telemetry-review svg reporting", () => {
   it("renders an svg dashboard with escaped labels and status cards", () => {
     const endTs = Date.UTC(2026, 4, 13, 12, 0, 0);
     const data = makeReviewData(endTs);
+    for (const sample of data.samples) {
+      if (sample.metric === "chat.timeline_apply_ms") sample.value = 50;
+    }
+    data.values["chat.timeline_apply_ms"].vals = [50, 50, 50, 50, 50];
+
     const result = review(data, {
       days: 1,
       dataDir: "/tmp/oppi-test-data",
@@ -79,9 +97,11 @@ describe("telemetry-review svg reporting", () => {
     expect(svg).toContain("<svg");
     expect(svg).toContain("Release &lt;31&gt;");
     expect(svg).toContain("A &amp; B");
+    expect(result.summary.statusBasis).toBe("tm99_vs_slo");
     expect(svg).toContain("Timeline apply (30fps)");
     expect(svg).toContain("Time to first token");
+    expect(svg).toContain("overall tm99");
     expect(svg).toContain(">OVER<");
-    expect(svg).toContain("SLO 33.0ms");
+    expect(svg).toContain("SLO 20.0ms");
   });
 });

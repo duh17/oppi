@@ -91,7 +91,7 @@ interface ReviewSummary {
   violations: number;
   sloMetricCount: number;
   groups: Record<string, { pass: number; over: number; missing: number }>;
-  statusBasis: "p95_vs_slo_p95";
+  statusBasis: "tm99_vs_slo";
 }
 
 interface DictationConfigSummary {
@@ -128,42 +128,40 @@ interface ReviewOutput {
   fetchedAt: string;
 }
 
-export const STATUS_FILTERED_METRICS = new Set([
-  "chat.queue_sync_ms",
-  "chat.subscribe_ack_ms",
-  "chat.message_queue_ack_ms",
-  "chat.connected_dispatch_ms",
-]);
+export const STATUS_FILTERED_METRICS = new Set(["chat.queue_sync_ms", "chat.message_queue_ack_ms"]);
 
+// Release SLOs gate on TM99, not raw p95. Values are intentionally tighter
+// than historical p95-era thresholds while keeping headroom over recent
+// two-week daily TM99 behavior.
 export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
-  "chat.ttft_ms": { p95: 45_000, label: "Time to first token", group: "UX Quality", short: "ttft" },
+  "chat.ttft_ms": { p95: 20_000, label: "Time to first token", group: "UX Quality", short: "ttft" },
   "chat.fresh_content_lag_ms": {
-    p95: 4_000,
+    p95: 1_000,
     label: "Fresh content lag",
     group: "UX Quality",
     short: "content_lag",
   },
   "chat.catchup_ms": {
-    p95: 1_500,
+    p95: 500,
     label: "Reconnection catch-up",
     group: "UX Quality",
     short: "catchup",
   },
   "chat.full_reload_ms": {
-    p95: 3_000,
+    p95: 1_500,
     label: "Full reload",
     group: "UX Quality",
     short: "full_reload",
   },
-  "chat.cache_load_ms": { p95: 300, label: "Cache load", group: "UX Quality", short: "cache_load" },
+  "chat.cache_load_ms": { p95: 200, label: "Cache load", group: "UX Quality", short: "cache_load" },
   "chat.reducer_load_ms": {
-    p95: 400,
+    p95: 200,
     label: "Timeline rebuild",
     group: "UX Quality",
     short: "reducer",
   },
   "chat.session_load_ms": {
-    p95: 1_000,
+    p95: 600,
     label: "Session switch",
     group: "UX Quality",
     short: "sess_load",
@@ -175,34 +173,39 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     short: "app_launch",
   },
 
-  "chat.subscribe_ack_ms": {
-    p95: 1_500,
-    label: "Subscribe ack (ok only)",
+  "chat.ws_wait_for_connected_ms": {
+    p95: 1_000,
+    label: "Client WS connected wait",
     group: "Network",
-    short: "sub_ack",
+    short: "ws_wait",
   },
-  "chat.ws_connect_ms": { p95: 5_000, label: "WS connect", group: "Network", short: "ws_connect" },
+  "server.ws_handshake_ms": {
+    p95: 100,
+    label: "Server WS handshake",
+    group: "Network",
+    short: "ws_handshake",
+  },
+  "server.session_subscribe_ms": {
+    p95: 300,
+    label: "Server session subscribe",
+    group: "Network",
+    short: "srv_sub",
+  },
   "chat.queue_sync_ms": {
-    p95: 1_500,
+    p95: 500,
     label: "Queue sync (ok only)",
     group: "Network",
     short: "queue_sync",
   },
-  "chat.connected_dispatch_ms": {
-    p95: 500,
-    label: "Connected dispatch (ok)",
-    group: "Network",
-    short: "dispatch",
-  },
   "chat.message_queue_ack_ms": {
-    p95: 500,
+    p95: 300,
     label: "Message queue ack (ok)",
     group: "Network",
     short: "msg_ack",
   },
 
   "chat.timeline_apply_ms": {
-    p95: 33,
+    p95: 20,
     label: "Timeline apply (30fps)",
     group: "Render",
     short: "tl_apply",
@@ -214,7 +217,7 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     short: "tl_layout",
   },
   "chat.cell_configure_ms": {
-    p95: 16,
+    p95: 8,
     label: "Cell configure",
     group: "Render",
     short: "cell_config",
@@ -225,104 +228,92 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     group: "Render",
     short: "md_stream",
   },
-  "chat.jank_pct": { p95: 30, label: "Scroll jank %", group: "Render", short: "jank_pct" },
+  "chat.jank_pct": { p95: 25, label: "Scroll jank %", group: "Render", short: "jank_pct" },
 
   "chat.voice_setup_ms": {
-    p95: 400,
-    label: "Voice setup (legacy)",
-    group: "Voice Legacy",
+    p95: 150,
+    label: "Voice setup (legacy alias)",
+    group: "Voice Compatibility",
     short: "voice_setup",
   },
   "chat.voice_first_result_ms": {
-    p95: 10_000,
-    label: "Voice first result (legacy)",
-    group: "Voice Legacy",
+    p95: 6_000,
+    label: "Voice first result (legacy alias)",
+    group: "Voice Compatibility",
     short: "voice_1st",
   },
   "chat.voice_prewarm_ms": {
-    p95: 800,
-    label: "Voice prewarm",
-    group: "Voice Legacy",
+    p95: 100,
+    label: "Voice prewarm (legacy alias)",
+    group: "Voice Compatibility",
     short: "voice_prewarm",
   },
 
   "chat.dictation_setup_ms": {
-    p95: 400,
+    p95: 350,
     label: "Dictation setup",
     group: "Dictation UX",
     short: "setup",
   },
   "chat.dictation_first_result_ms": {
-    p95: 10_000,
+    p95: 6_000,
     label: "Dictation first result",
     group: "Dictation UX",
     short: "first_result",
   },
   "chat.dictation_finalize_ms": {
-    p95: 5_000,
+    p95: 500,
     label: "Dictation finalize",
     group: "Dictation UX",
     short: "finalize",
   },
   "chat.dictation_preview_final_delta": {
-    p95: 0.35,
+    p95: 0.15,
     label: "Preview/final delta",
     group: "Dictation UX",
     short: "preview_delta",
   },
 
   "server.dictation_stt_ms": {
-    p95: 500,
+    p95: 200,
     label: "STT inference",
     group: "Dictation Backend",
     short: "stt_ms",
   },
   "server.dictation_stt_audio_ratio": {
-    p95: 0.5,
+    p95: 0.1,
     label: "STT real-time factor",
     group: "Dictation Backend",
     short: "stt_rtf",
   },
   "server.dictation_finalize_ms": {
-    p95: 5_000,
+    p95: 250,
     label: "Finalize total",
     group: "Dictation Backend",
     short: "finalize",
   },
-  "server.dictation_llm_correction_ms": {
-    p95: 4_000,
-    label: "LLM correction",
-    group: "Dictation Backend",
-    short: "llm_correct",
-  },
   "chat.session_list_compute_ms": {
-    p95: 60,
+    p95: 10,
     label: "List compute",
     group: "Session List",
     short: "list_compute",
   },
-  "chat.session_list_row_compute_ms": {
-    p95: 10,
-    label: "List row compute",
-    group: "Session List",
-    short: "list_row",
-  },
   "chat.session_list_body_rate": {
-    p95: 20,
+    p95: 12,
     label: "List body evals/5s",
     group: "Session List",
     short: "list_body",
   },
 
   "device.cpu_pct": {
-    p95: 80,
+    p95: 20,
     label: "CPU usage %",
     group: "Device",
     short: "cpu_pct",
     displayUnit: "pct",
   },
   "device.memory_mb": {
-    p95: 400,
+    p95: 250,
     label: "Memory footprint",
     group: "Device",
     short: "mem_mb",
@@ -339,29 +330,29 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
   "device.thermal_state": { p95: 1, label: "Thermal (0-3)", group: "Device", short: "thermal" },
 
   "server.cpu_total": {
-    p95: 50,
+    p95: 10,
     label: "Server CPU %",
     group: "Server",
     short: "srv_cpu",
     displayUnit: "pct",
   },
   "server.rss_mb": {
-    p95: 1024,
+    p95: 800,
     label: "Server RSS",
     group: "Server",
     short: "srv_rss",
     displayUnit: "mb",
   },
   "server.heap_mb": {
-    p95: 512,
+    p95: 200,
     label: "Server heap",
     group: "Server",
     short: "srv_heap",
     displayUnit: "mb",
   },
-  "server.ws_connections": { p95: 10, label: "WS connections", group: "Server", short: "srv_ws" },
+  "server.ws_connections": { p95: 5, label: "WS connections", group: "Server", short: "srv_ws" },
   "server.sessions_total": {
-    p95: 20,
+    p95: 8,
     label: "Active sessions",
     group: "Server",
     short: "srv_sess",
@@ -733,8 +724,13 @@ export function computeStats(vals: number[]): MetricStats {
   };
 }
 
+function statusValue(stats: MetricStats): number {
+  return stats.tm99;
+}
+
 function metricPassesSlo(stats: MetricStats, slo: SloThreshold): boolean {
-  return slo.lowerIsBad ? stats.p95 >= slo.p95 : stats.p95 <= slo.p95;
+  const value = statusValue(stats);
+  return slo.lowerIsBad ? value >= slo.p95 : value <= slo.p95;
 }
 
 function buildMetricResult(metric: string, vals: number[], unit: string): MetricResult {
@@ -888,7 +884,7 @@ export function review(
         shouldIncludeMetric(metric, options.dictationOnly),
       ).length,
       groups,
-      statusBasis: "p95_vs_slo_p95",
+      statusBasis: "tm99_vs_slo",
     },
     metrics,
     builds,
@@ -1126,9 +1122,11 @@ export function buildTelemetryTrendSvg(
     options.subtitle ??
     `Last ${result.summary.days}d · ${result.summary.totalSamples.toLocaleString()} samples · ${result.summary.violations} metric(s) over SLO · fetched ${result.fetchedAt}`;
   pieces.push(`<text class="title" x="${margin}" y="${margin + 8}">${escapeXml(title)}</text>`);
-  pieces.push(`<text class="subtitle" x="${margin}" y="${margin + 34}">${escapeXml(subtitle)}</text>`);
   pieces.push(
-    `<text class="subtitle" x="${margin}" y="${margin + 56}">Status uses overall p95 vs SLO. Each card sparkline shows bucketed p95 so release regressions are visible at a glance.</text>`,
+    `<text class="subtitle" x="${margin}" y="${margin + 34}">${escapeXml(subtitle)}</text>`,
+  );
+  pieces.push(
+    `<text class="subtitle" x="${margin}" y="${margin + 56}">Status uses overall TM99 vs SLO. Each card sparkline shows bucketed TM99 so release regressions are visible without one-off spikes dominating.</text>`,
   );
 
   let chipX = margin;
@@ -1176,13 +1174,13 @@ export function buildTelemetryTrendSvg(
       const chartY = cardY + 60;
       const chartWidth = cardWidth - 32;
       const chartHeight = 34;
-      const series = trendBuckets.map((bucket) => bucket.metrics[metric]?.p95 ?? null);
+      const series = trendBuckets.map((bucket) => bucket.metrics[metric]?.tm99 ?? null);
       const latestValue = lastDefinedValue(series);
       const maxSeriesValue = series.reduce((max, value) => {
         if (value == null || !Number.isFinite(value)) return max;
         return Math.max(max, value);
       }, 0);
-      const chartMax = Math.max(1, maxSeriesValue, metricResult.p95, metricResult.slo_p95 ?? 0);
+      const chartMax = Math.max(1, maxSeriesValue, metricResult.tm99, metricResult.slo_p95 ?? 0);
       const thresholdY =
         metricResult.slo_p95 == null
           ? null
@@ -1196,7 +1194,7 @@ export function buildTelemetryTrendSvg(
         `<text class="metric-title" x="${cardX + 16}" y="${cardY + 22}">${escapeXml(titleText)}</text>`,
       );
       pieces.push(
-        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">overall p95 ${escapeXml(fmtValue(metricResult.p95, metricResult.unit))} / slo ${escapeXml(fmtValue(metricResult.slo_p95 ?? 0, metricResult.unit))}${slo.lowerIsBad ? " · low bad" : ""}</text>`,
+        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">overall tm99 ${escapeXml(fmtValue(metricResult.tm99, metricResult.unit))} / slo ${escapeXml(fmtValue(metricResult.slo_p95 ?? 0, metricResult.unit))}${slo.lowerIsBad ? " · low bad" : ""}</text>`,
       );
       pieces.push(
         `<text class="status" x="${cardX + cardWidth - 16}" y="${cardY + 22}" text-anchor="end" fill="${palette.text}">${metricResult.status === "over" ? "OVER" : "OK"}</text>`,
@@ -1220,7 +1218,10 @@ export function buildTelemetryTrendSvg(
       }
       if (latestValue != null) {
         const step = series.length > 1 ? chartWidth / (series.length - 1) : 0;
-        const latestIndex = series.reduce((found, value, index) => (value != null ? index : found), 0);
+        const latestIndex = series.reduce(
+          (found, value, index) => (value != null ? index : found),
+          0,
+        );
         const latestX = chartX + step * latestIndex;
         const latestY = chartY + chartHeight - (latestValue / chartMax) * chartHeight;
         pieces.push(
@@ -1298,6 +1299,16 @@ function makeColors(enabled: boolean) {
     yellow: enabled ? "\x1b[33m" : "",
     cyan: enabled ? "\x1b[36m" : "",
   };
+}
+
+const GROUP_NOTES: Record<string, string> = {
+  "Voice Compatibility":
+    "chat.voice_* metrics are legacy aliases kept for older dashboards; Dictation UX is the canonical voice-input namespace.",
+};
+
+function printGroupNote(groupName: string, c: ReturnType<typeof makeColors>): void {
+  const note = GROUP_NOTES[groupName];
+  if (note) console.log(`  ${c.dim}${note}${c.reset}`);
 }
 
 function printConfigSummary(
@@ -1421,6 +1432,7 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
 
   for (const [groupName, metrics] of Object.entries(groups)) {
     console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
+    printGroupNote(groupName, c);
     for (const metric of metrics) {
       const slo = SLO_THRESHOLDS[metric];
       const r = result.metrics[metric];
@@ -1430,10 +1442,10 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
         continue;
       }
       const over = r.status === "over";
-      const p95Str = fmtValue(r.p95, r.unit).padStart(VAL_W);
+      const statusStr = fmtValue(statusValue(r), r.unit).padStart(VAL_W);
       const sloStr = fmtValue(r.slo_p95 ?? 0, r.unit).padStart(SLO_W);
       console.log(
-        `  ${name.padEnd(NAME_W)} ${over ? c.red : ""}${p95Str}${c.reset} /${sloStr}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
+        `  ${name.padEnd(NAME_W)} ${over ? c.red : ""}${statusStr}${c.reset} /${sloStr}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
       );
     }
     console.log();
@@ -1465,6 +1477,7 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
 
   for (const [groupName, metrics] of Object.entries(groups)) {
     console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
+    printGroupNote(groupName, c);
     const cols: string[] = [`  ${"Metric".padEnd(34)}`];
     if (fields.has("count")) cols.push("Count".padStart(8));
     if (fields.has("tm99")) cols.push("tm99".padStart(8));
@@ -1725,7 +1738,9 @@ function main(): void {
     });
     const svg = buildTelemetryTrendSvg(result, trendBuckets, {
       dictationOnly: args.dictation,
-      title: args.dictation ? "Oppi Dictation Telemetry Trend Review" : "Oppi Telemetry Trend Review",
+      title: args.dictation
+        ? "Oppi Dictation Telemetry Trend Review"
+        : "Oppi Telemetry Trend Review",
     });
     writtenSvgPath = writeSvgReport(args.svgOut, svg);
   }
