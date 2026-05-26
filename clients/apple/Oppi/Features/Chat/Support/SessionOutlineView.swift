@@ -339,16 +339,18 @@ struct SessionOutlineView: View {
             return true
         }
 
-        if !query.isEmpty {
-            var scored: [(entry: OutlineEntry, score: Int)] = []
-            for var entry in filtered {
-                if let result = FuzzyMatch.match(query: query, candidate: entry.summary) {
-                    entry.matchPositions = result.positions
-                    scored.append((entry, result.score))
-                }
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let summaries = filtered.map(\.summary)
+            let matches = TextSearchMatch.search(
+                query: query,
+                candidates: summaries,
+                limit: filtered.count
+            )
+            filtered = matches.map { match in
+                var entry = filtered[match.index]
+                entry.matchPositions = match.positions
+                return entry
             }
-            scored.sort { $0.score > $1.score }
-            filtered = scored.map(\.entry)
         } else {
             // Clear positions when search is cleared
             for i in filtered.indices {
@@ -433,7 +435,6 @@ struct SessionOutlineView: View {
 
         let query = debouncedSearchText
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
 
         let baseNodes = treeSnapshot.nodes.filter(\.matchesFilter)
 
@@ -448,10 +449,10 @@ struct SessionOutlineView: View {
                     node.type,
                     node.role,
                 ]
-                    .compactMap { $0?.lowercased() }
+                    .compactMap { $0 }
                     .joined(separator: " ")
 
-                return candidate.contains(query)
+                return TextSearchMatch.match(query: query, candidate: candidate) != nil
             }
         }
 
@@ -1043,7 +1044,7 @@ private struct OutlineEntry: Identifiable {
     let isMessage: Bool
     let isTool: Bool
 
-    /// Unicode scalar positions of matched characters (populated during search).
+    /// Unicode scalar positions of literal search matches (populated during search).
     var matchPositions: [Int] = []
 }
 
