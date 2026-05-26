@@ -35,7 +35,7 @@ struct QuickSessionSheet: View {
     @State private var selectedWorkspace: Workspace?
     @State private var selectedWorkspaceSelectionSource = "unknown"
     @State private var selectedServerId: String?
-    @State private var selectedModelId: String?
+    @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     @State private var showModelPicker = false
     @State private var showExpandedComposer = false
@@ -53,9 +53,9 @@ struct QuickSessionSheet: View {
         }
     }
 
-    /// Display model: explicit selection wins, then the workspace default.
-    /// Session creation only sends explicit selections; server-side resolution
-    /// applies workspace defaults and Pi settings centrally.
+    /// Display model: last or current explicit selection wins, then the workspace default.
+    /// Session creation sends only the last/current explicit selection; server-side
+    /// resolution applies workspace defaults and Pi settings centrally.
     private var effectiveModelId: String? {
         selectedModelId ?? selectedWorkspace?.defaultModel
     }
@@ -474,9 +474,9 @@ struct QuickSessionSheet: View {
                 // server and may differ for cross-server quick sessions).
                 targetConnection.sessionStore.upsert(session)
 
-                // Save the workspace and thinking defaults. Model persists only
-                // when explicitly selected; nil clears old client-side overrides
-                // so the server can apply workspace/Pi defaults centrally.
+                // Save defaults for next time. Model persists from the last/current
+                // explicit selection; workspace defaults are displayed but not sent
+                // as client overrides.
                 AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
                 AppPreferences.QuickSession.saveModelId(modelId)
                 AppPreferences.QuickSession.saveThinkingLevel(thinking)

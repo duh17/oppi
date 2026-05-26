@@ -27,6 +27,7 @@ Model IDs stored in Oppi workspace defaults should use canonical `provider/model
 ## Flow notes
 
 - Workspace “New Session” uses explicit request model, then parent/source model if present, then the workspace default, then Pi settings.
+- Quick Session sheet sends the last/current explicit quick-session model when present; otherwise the server applies the workspace default, then Pi settings. It displays workspace defaults but does not send them as client overrides.
 - Quick-action sessions inherit the selected/source session model when available, otherwise use the workspace default, then Pi settings.
 - Subagents use the model selected by `spawn_agent` or its profile/policy, then inherit the parent/origin model, then the workspace default, then Pi settings.
 - Fork sessions preserve the source session model before falling back to workspace/Pi defaults.
