@@ -362,21 +362,18 @@ export class ProviderAuthManager {
             });
         }
       },
+      onDeviceCode: (info) => {
+        this.flowStore.setAuthInfo(flowId, {
+          url: info.verificationUri,
+          instructions: `Enter code ${info.userCode}`,
+        });
+      },
       onPrompt: async (prompt) => {
-        const record = this.flowStore.get(flowId);
-        if (!record || isTerminalProviderAuthStatus(record.snapshot.status)) {
-          throw new Error("Login flow is no longer active");
-        }
-
-        const waiter = createDeferred<string>();
-        const promptShape: ProviderAuthPrompt = {
+        return this.waitForPromptResponse(flowId, {
           message: prompt.message,
           placeholder: prompt.placeholder,
           allowEmpty: prompt.allowEmpty,
-        };
-        this.flowStore.setPromptWaiter(flowId, promptShape, waiter);
-
-        return waiter.promise;
+        });
       },
       onManualCodeInput: async () => {
         const record = this.flowStore.get(flowId);
@@ -391,6 +388,20 @@ export class ProviderAuthManager {
       },
       onProgress: (message) => {
         this.flowStore.setProgress(flowId, message);
+      },
+      onSelect: async (prompt) => {
+        const selected = await this.waitForPromptResponse(flowId, {
+          message: prompt.message,
+          placeholder: "Enter option id",
+          allowEmpty: true,
+          options: prompt.options.map((option) => ({ id: option.id, label: option.label })),
+        });
+        const normalized = selected.trim();
+        if (!normalized) return undefined;
+        const matchingOption = prompt.options.find(
+          (option) => option.id === normalized || option.label === normalized,
+        );
+        return matchingOption?.id ?? normalized;
       },
       signal: existing.abortController.signal,
     };
@@ -422,6 +433,20 @@ export class ProviderAuthManager {
         error: message,
       });
     }
+  }
+
+  private async waitForPromptResponse(
+    flowId: string,
+    promptShape: ProviderAuthPrompt,
+  ): Promise<string> {
+    const record = this.flowStore.get(flowId);
+    if (!record || isTerminalProviderAuthStatus(record.snapshot.status)) {
+      throw new Error("Login flow is no longer active");
+    }
+
+    const waiter = createDeferred<string>();
+    this.flowStore.setPromptWaiter(flowId, promptShape, waiter);
+    return waiter.promise;
   }
 
   private mustGetFlow(flowId: string): ProviderAuthFlowSnapshot {

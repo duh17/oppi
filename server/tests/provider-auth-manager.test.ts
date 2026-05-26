@@ -187,6 +187,64 @@ describe("ProviderAuthManager", () => {
     expect(flow.auth?.url).toBe("https://github.com/login/device");
   });
 
+  it("exposes device-code flows as external auth instructions", async () => {
+    const providers = [makeProvider("github-copilot", "GitHub Copilot", false)];
+    const storage = new FakeAuthStorage(providers, {
+      "github-copilot": async (callbacks) => {
+        callbacks.onDeviceCode({
+          verificationUri: "https://github.com/login/device",
+          userCode: "ABCD-1234",
+        });
+        storage.seedOAuth("github-copilot");
+      },
+    });
+
+    const manager = new ProviderAuthManager({ authStorage: storage });
+    const started = manager.startFlow("github-copilot", "none");
+
+    await waitFor(() => manager.getFlow(started.flowId).status === "completed");
+
+    const flow = manager.getFlow(started.flowId);
+    expect(flow.auth).toEqual({
+      url: "https://github.com/login/device",
+      instructions: "Enter code ABCD-1234",
+    });
+  });
+
+  it("maps provider selection prompts to prompt responses", async () => {
+    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)", false)];
+    const storage = new FakeAuthStorage(providers, {
+      "openai-codex": async (callbacks) => {
+        const selected = await callbacks.onSelect({
+          message: "Choose account",
+          options: [
+            { id: "personal", label: "Personal" },
+            { id: "work", label: "Work" },
+          ],
+        });
+        if (selected !== "work") {
+          throw new Error(`unexpected selection: ${selected}`);
+        }
+        storage.seedOAuth("openai-codex");
+      },
+    });
+
+    const manager = new ProviderAuthManager({ authStorage: storage });
+    const started = manager.startFlow("openai-codex", "none");
+
+    await waitFor(() => manager.getFlow(started.flowId).status === "awaiting_prompt");
+
+    const prompt = manager.getFlow(started.flowId).prompt;
+    expect(prompt?.options).toEqual([
+      { id: "personal", label: "Personal" },
+      { id: "work", label: "Work" },
+    ]);
+
+    manager.submitPromptResponse(started.flowId, "Work");
+
+    await waitFor(() => manager.getFlow(started.flowId).status === "completed");
+  });
+
   it("records browser launch failures without failing the auth flow", async () => {
     const providers = [makeProvider("openai-codex", "ChatGPT (Codex)", true)];
     const storage = new FakeAuthStorage(providers, {

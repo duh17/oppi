@@ -17,10 +17,16 @@ export interface ProviderAuthInfo {
   instructions?: string;
 }
 
+export interface ProviderAuthPromptOption {
+  id: string;
+  label: string;
+}
+
 export interface ProviderAuthPrompt {
   message: string;
   placeholder?: string;
   allowEmpty?: boolean;
+  options?: ProviderAuthPromptOption[];
 }
 
 export interface ProviderAuthFlowSnapshot {

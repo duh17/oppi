@@ -537,15 +537,25 @@ struct ServerDetailView: View {
 
                     if flow.status == .awaitingPrompt, let prompt = flow.prompt {
                         Section(prompt.message) {
-                            TextField(prompt.placeholder ?? "Enter response", text: $flowInput)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .disabled(isCancellingFlow)
+                            if let options = prompt.options, !options.isEmpty {
+                                ForEach(options) { option in
+                                    Button(option.label) {
+                                        flowInput = option.id
+                                        submitPromptResponse()
+                                    }
+                                    .disabled(isCancellingFlow)
+                                }
+                            } else {
+                                TextField(prompt.placeholder ?? "Enter response", text: $flowInput)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .disabled(isCancellingFlow)
 
-                            Button("Submit") {
-                                submitPromptResponse()
+                                Button("Submit") {
+                                    submitPromptResponse()
+                                }
+                                .disabled(isCancellingFlow || (flowInput.isEmpty && prompt.allowEmpty != true))
                             }
-                            .disabled(isCancellingFlow || (flowInput.isEmpty && prompt.allowEmpty != true))
                         }
                     }
 

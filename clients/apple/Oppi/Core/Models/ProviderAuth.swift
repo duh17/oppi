@@ -86,8 +86,14 @@ struct ProviderAuthFlowSnapshot: Codable, Sendable, Identifiable, Equatable {
     }
 
     struct Prompt: Codable, Sendable, Equatable {
+        struct Option: Codable, Sendable, Equatable, Identifiable {
+            let id: String
+            let label: String
+        }
+
         let message: String
         let placeholder: String?
         let allowEmpty: Bool?
+        let options: [Option]?
     }
 }
