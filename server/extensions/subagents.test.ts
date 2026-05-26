@@ -459,7 +459,7 @@ describe("subagents-extension", () => {
       expect(api.sentMessages).toHaveLength(1);
       expect(api.sentMessages[0].message.customType).toBe("subagent_result");
       expect(api.sentMessages[0].message.content).toContain("Finished the work");
-      expect(api.sentMessages[0].options).toBeUndefined();
+      expect(api.sentMessages[0].options).toEqual({ triggerTurn: true });
     });
 
     it("fire-and-forget: queues subagent_result as follow-up when parent is busy", async () => {
@@ -515,6 +515,7 @@ describe("subagents-extension", () => {
       expect(api.sentMessages[0].message.customType).toBe("subagent_result");
       expect(api.sentMessages[0].message.content).toContain("READY");
       expect(api.sentMessages[0].message.content).toContain(fullResponse);
+      expect(api.sentMessages[0].options).toEqual({ triggerTurn: true });
       expect(ctx.stopSessionCalls).toHaveLength(0);
 
       emitMessage(ctx, childId, { type: "session_ended", reason: "done" });

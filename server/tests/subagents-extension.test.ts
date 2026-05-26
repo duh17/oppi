@@ -222,7 +222,7 @@ describe("spawn_agent", () => {
     expect(result.details.name).toBe("Fix the login flow for OAuth2 providers");
   });
 
-  it("sends subagent_result without queueing when parent is idle", async () => {
+  it("sends subagent_result and triggers parent turn when parent is idle", async () => {
     const { spawn, sessions, subscriberCallbacks, sentMessages } = setup();
     sessions.set("parent-1", makeSession({ id: "parent-1", status: "ready" }));
 
@@ -241,7 +241,7 @@ describe("spawn_agent", () => {
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0].message.customType).toBe("subagent_result");
     expect(sentMessages[0].message.content).toContain("Finished the work");
-    expect(sentMessages[0].options).toBeUndefined();
+    expect(sentMessages[0].options).toEqual({ triggerTurn: true });
   });
 
   it("queues subagent_result as follow-up when parent is busy", async () => {

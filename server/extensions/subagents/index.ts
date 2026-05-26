@@ -446,18 +446,21 @@ export function createSubagentsFactory(
           return;
         }
 
-        pi.sendMessage({
-          customType: "subagent_result",
-          content: result.text,
-          display: true,
-          details: {
-            agentId: childId,
-            name: childName,
-            status: result.status,
-            cost: result.cost,
-            durationMs: result.durationMs,
+        pi.sendMessage(
+          {
+            customType: "subagent_result",
+            content: result.text,
+            display: true,
+            details: {
+              agentId: childId,
+              name: childName,
+              status: result.status,
+              cost: result.cost,
+              durationMs: result.durationMs,
+            },
           },
-        });
+          { triggerTurn: true },
+        );
       };
 
       const finalizeIfReady = (): void => {
