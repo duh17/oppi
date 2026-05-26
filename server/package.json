@@ -1,6 +1,6 @@
 {
   "name": "oppi-server",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Self-hosted server for the Oppi mobile coding agent",
   "type": "module",
   "main": "dist/src/cli.js",
@@ -9,6 +9,8 @@
   },
   "files": [
     "dist/",
+    "!dist/oppi-extensions/",
+    "!dist/oppi-extensions/**",
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts",
     "extensions/",
@@ -39,8 +41,9 @@
     "claude"
   ],
   "scripts": {
-    "build": "bash -c 'tsc && chmod +x dist/src/cli.js'",
-    "prepare": "bash -c 'tsc && chmod +x dist/src/cli.js'",
+    "clean": "rm -rf dist",
+    "build": "bash -c 'npm run clean && tsc && chmod +x dist/src/cli.js'",
+    "prepare": "bash -c 'npm run clean && tsc && chmod +x dist/src/cli.js'",
     "dev": "tsx watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",
