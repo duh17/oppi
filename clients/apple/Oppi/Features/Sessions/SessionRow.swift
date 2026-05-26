@@ -135,6 +135,10 @@ struct SessionRow: View {
         children?.aggregateFilesChanged ?? session.changeStats?.filesChanged ?? 0
     }
 
+    private var isIncognito: Bool {
+        session.ephemeral == true
+    }
+
     private var currentTurnStartedAt: Date? {
         switch session.status {
         case .starting, .busy, .stopping:
@@ -206,6 +210,10 @@ struct SessionRow: View {
                     NativeContextGauge(percent: pct)
                 }
 
+                if isIncognito {
+                    incognitoBadge
+                }
+
                 let displayCost = children?.aggregateCost ?? session.cost
                 if displayCost > 0 {
                     Text(costString(displayCost))
@@ -261,7 +269,20 @@ struct SessionRow: View {
         }
     }
 
-    // MARK: - Child Badge
+    // MARK: - Privacy Badge
+
+    private var incognitoBadge: some View {
+        Label("Incognito", systemImage: "eye.slash.fill")
+            .font(.caption2.weight(.medium))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(.themePurple)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Color.themePurple.opacity(0.14), in: Capsule())
+            .accessibilityLabel("Incognito session")
+    }
+
+    // MARK: - Model Summary
 
     @ViewBuilder
     private func modelSummaryView(_ model: SessionModelSummary) -> some View {
