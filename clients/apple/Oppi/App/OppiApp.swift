@@ -91,6 +91,70 @@ enum PermissionDeepLink {
     }
 }
 
+enum WorkspaceDeepLink {
+    struct Payload: Equatable, Sendable {
+        let path: String
+        let name: String?
+        let serverFingerprint: String?
+    }
+
+    static func fingerprintsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        normalizedFingerprint(lhs) == normalizedFingerprint(rhs)
+    }
+
+    static func payload(from url: URL) -> Payload? {
+        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+            return nil
+        }
+        guard routeName(from: url) == "workspace" else {
+            return nil
+        }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            return nil
+        }
+        guard let path = trimmedQueryValue("path", in: queryItems), !path.isEmpty else {
+            return nil
+        }
+
+        let name = nonEmptyTrimmedQueryValue("name", in: queryItems)
+        let serverFingerprint = nonEmptyTrimmedQueryValue("server", in: queryItems)
+        return Payload(path: path, name: name, serverFingerprint: serverFingerprint)
+    }
+
+    private static func routeName(from url: URL) -> String? {
+        if let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
+            return host.lowercased()
+        }
+        return url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .first?
+            .lowercased()
+    }
+
+    private static func trimmedQueryValue(_ name: String, in queryItems: [URLQueryItem]) -> String? {
+        queryItems
+            .first { $0.name.lowercased() == name }
+            .flatMap(\.value)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func nonEmptyTrimmedQueryValue(_ name: String, in queryItems: [URLQueryItem]) -> String? {
+        guard let value = trimmedQueryValue(name, in: queryItems), !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private static func normalizedFingerprint(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("sha256:") {
+            return String(trimmed.dropFirst("sha256:".count))
+        }
+        return trimmed
+    }
+}
+
 @main
 struct OppiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -255,6 +319,9 @@ struct OppiApp: App {
         if handleIncomingSessionURL(url) {
             return
         }
+        if handleIncomingWorkspaceURL(url) {
+            return
+        }
         await handleIncomingInviteURL(url)
     }
 
@@ -286,6 +353,44 @@ struct OppiApp: App {
         navigation.selectedTab = .workspaces
         navigation.workspacePath = NavigationPath()
         return true
+    }
+
+    /// Handle `oppi://workspace?path=<path>&name=<name>[&server=<fingerprint>]` deep links.
+    @MainActor
+    private func handleIncomingWorkspaceURL(_ url: URL) -> Bool {
+        guard let payload = WorkspaceDeepLink.payload(from: url) else { return false }
+        guard let server = workspaceDeepLinkTargetServer(for: payload) else { return true }
+        guard coordinator.switchToServer(server) else {
+            connection.extensionToast = "Could not open the server for this workspace link"
+            return true
+        }
+
+        navigation.pendingWorkspaceDeepLink = payload
+        navigation.selectedTab = .workspaces
+        navigation.workspacePath = NavigationPath()
+        return true
+    }
+
+    @MainActor
+    private func workspaceDeepLinkTargetServer(for payload: WorkspaceDeepLink.Payload) -> PairedServer? {
+        if let fingerprint = payload.serverFingerprint {
+            if let server = serverStore.servers.first(where: { WorkspaceDeepLink.fingerprintsMatch($0.id, fingerprint) }) {
+                return server
+            }
+            connection.extensionToast = "Server not found for this workspace link"
+            return nil
+        }
+
+        if serverStore.servers.count == 1, let server = serverStore.servers.first {
+            return server
+        }
+
+        if serverStore.servers.isEmpty {
+            connection.extensionToast = "Pair a server before opening workspace links"
+        } else {
+            connection.extensionToast = "Workspace link needs a server fingerprint"
+        }
+        return nil
     }
 
     @MainActor

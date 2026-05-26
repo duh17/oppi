@@ -24,12 +24,16 @@ private struct WorkspaceCreateSheetContext: Identifiable {
     let server: PairedServer
     let presentation: WorkspaceCreatePresentation
     let openWorkspaceAfterCreate: Bool
+    let prefillName: String?
+    let prefillPath: String?
 
     var id: String {
         [
             server.id,
             presentation == .guidedFirstWorkspace ? "guided" : "standard",
-            openWorkspaceAfterCreate ? "open" : "stay"
+            openWorkspaceAfterCreate ? "open" : "stay",
+            prefillName ?? "",
+            prefillPath ?? ""
         ].joined(separator: "|")
     }
 }
@@ -217,6 +221,8 @@ struct WorkspaceHomeView: View {
             WorkspaceCreateView(
                 server: context.server,
                 presentation: context.presentation,
+                prefillName: context.prefillName,
+                prefillPath: context.prefillPath,
                 onCreate: { workspace in
                     guard context.openWorkspaceAfterCreate else { return }
                     pendingCreatedWorkspaceTarget = WorkspaceNavTarget(
@@ -273,8 +279,13 @@ struct WorkspaceHomeView: View {
         }
         .task {
             await refresh(force: false)
+            consumeWorkspaceDeepLinkIfNeeded()
             triggerGuidedCreateIfNeeded()
             autoOpenE2EWorkspaceIfRequested()
+        }
+        .onChange(of: navigation.pendingWorkspaceDeepLink != nil) { _, hasPending in
+            guard hasPending else { return }
+            consumeWorkspaceDeepLinkIfNeeded()
         }
         .onChange(of: navigation.selectedTab) { _, selectedTab in
             guard selectedTab == .workspaces else { return }
@@ -809,12 +820,16 @@ struct WorkspaceHomeView: View {
     private func presentCreateWorkspace(
         on server: PairedServer,
         presentation: WorkspaceCreatePresentation = .standard,
-        openWorkspaceAfterCreate: Bool = false
+        openWorkspaceAfterCreate: Bool = false,
+        prefillName: String? = nil,
+        prefillPath: String? = nil
     ) {
         createSheetContext = WorkspaceCreateSheetContext(
             server: server,
             presentation: presentation,
-            openWorkspaceAfterCreate: openWorkspaceAfterCreate
+            openWorkspaceAfterCreate: openWorkspaceAfterCreate,
+            prefillName: prefillName,
+            prefillPath: prefillPath
         )
     }
 
@@ -828,6 +843,7 @@ struct WorkspaceHomeView: View {
 
     /// After a fresh pairing, auto-present WorkspaceCreateView if the server has no workspaces.
     private func triggerGuidedCreateIfNeeded() {
+        guard createSheetContext == nil else { return }
         guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
         guard allWorkspacesEmpty else {
             // Server already has workspaces — nothing to guide.
@@ -842,6 +858,38 @@ struct WorkspaceHomeView: View {
             on: server,
             presentation: .guidedFirstWorkspace,
             openWorkspaceAfterCreate: true
+        )
+    }
+
+    /// Consume a workspace creation deep link and present the create form with
+    /// the linked path/name prefilled.
+    private func consumeWorkspaceDeepLinkIfNeeded() {
+        guard let payload = navigation.pendingWorkspaceDeepLink else { return }
+        navigation.pendingWorkspaceDeepLink = nil
+        navigation.shouldGuideWorkspaceCreation = false
+
+        let server: PairedServer?
+        if let fingerprint = payload.serverFingerprint {
+            server = servers.first { WorkspaceDeepLink.fingerprintsMatch($0.id, fingerprint) }
+        } else {
+            server = selectedServer ?? servers.first
+        }
+
+        guard let server else {
+            coordinator.activeConnection.extensionToast = "Server not found for this workspace link"
+            return
+        }
+        guard coordinator.switchToServer(server) else {
+            coordinator.activeConnection.extensionToast = "Could not open the server for this workspace link"
+            return
+        }
+
+        navigation.selectedTab = .workspaces
+        navigation.workspacePath = NavigationPath()
+        presentCreateWorkspace(
+            on: server,
+            prefillName: payload.name,
+            prefillPath: payload.path
         )
     }
 

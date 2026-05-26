@@ -19,11 +19,24 @@ struct WorkspaceCreateView: View {
     init(
         server: PairedServer,
         presentation: WorkspaceCreatePresentation = .standard,
+        prefillName: String? = nil,
+        prefillPath: String? = nil,
         onCreate: ((Workspace) -> Void)? = nil
     ) {
         self.server = server
         self.presentation = presentation
         self.onCreate = onCreate
+
+        if let prefillPath {
+            // Deep-linked workspaces intentionally start minimal: skills remain
+            // empty unless the user opts in before creating the workspace.
+            _name = State(initialValue: prefillName ?? "")
+            _hostMount = State(initialValue: prefillPath)
+            _isHostMountFromProjectPicker = State(initialValue: false)
+            _step = State(initialValue: .configure)
+        } else if let prefillName {
+            _name = State(initialValue: prefillName)
+        }
     }
 
     @Environment(ConnectionCoordinator.self) private var coordinator
@@ -82,9 +95,15 @@ struct WorkspaceCreateView: View {
         isGuidedFirstWorkspace ? "Not Now" : "Cancel"
     }
 
+    /// Store scoped to the server this sheet creates on. The environment store
+    /// normally matches, but deep links can switch servers just before presenting.
+    private var targetWorkspaceStore: WorkspaceStore {
+        coordinator.connection(for: server.id)?.workspaceStore ?? workspaceStore
+    }
+
     /// Skills from the target server.
     private var skills: [SkillInfo] {
-        workspaceStore.skillsByServer[server.id] ?? []
+        targetWorkspaceStore.skillsByServer[server.id] ?? []
     }
 
     private var trimmedHostMount: String {
@@ -699,11 +718,12 @@ struct WorkspaceCreateView: View {
     }
 
     private func loadSkills() async {
-        if (workspaceStore.skillsByServer[server.id] ?? []).isEmpty {
+        let store = targetWorkspaceStore
+        if (store.skillsByServer[server.id] ?? []).isEmpty {
             guard let api = coordinator.apiClient(for: server.id) else { return }
             do {
                 let loadedSkills = try await api.listSkills()
-                workspaceStore.skillsByServer[server.id] = loadedSkills
+                store.skillsByServer[server.id] = loadedSkills
 
                 if selectAllSkillsWhenLoaded && selectedSkills.isEmpty {
                     selectedSkills = skillNames
