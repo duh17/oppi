@@ -15,11 +15,14 @@ import type {
   GitCommitDetail,
   GitCommitFileInfo,
   GitCommitSummary,
+  WorkspaceReviewDiffHunk,
+  WorkspaceReviewDiffLine,
   WorkspaceReviewDiffResponse,
 } from "./types.js";
 
 const GIT_TIMEOUT_MS = 5000;
 const MAX_DIFF_TEXT_BYTES = 256 * 1024;
+const MAX_DIFF_PATCH_BYTES = 256 * 1024;
 const FIELD_SEP = "---sep---";
 
 // ─── Helpers ───
@@ -36,9 +39,9 @@ function git(cwd: string, args: string[]): Promise<string | null> {
   });
 }
 
-function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
+function gitBuffer(cwd: string, args: string[], maxBuffer?: number): Promise<Buffer | null> {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
+    execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer }, (err, stdout) => {
       if (err) {
         resolve(null);
         return;
@@ -56,6 +59,73 @@ function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
 
 function bufferLooksBinary(buffer: Buffer): boolean {
   return buffer.includes(0);
+}
+
+function parseHunkHeader(line: string): {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+} | null {
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+  if (!match) return null;
+
+  return {
+    oldStart: parseInt(match[1] ?? "0", 10),
+    oldCount: parseInt(match[2] ?? "1", 10),
+    newStart: parseInt(match[3] ?? "0", 10),
+    newCount: parseInt(match[4] ?? "1", 10),
+  };
+}
+
+function parseUnifiedDiffHunks(patch: string): WorkspaceReviewDiffHunk[] {
+  const hunks: WorkspaceReviewDiffHunk[] = [];
+  let current: WorkspaceReviewDiffHunk | null = null;
+  let oldLine = 0;
+  let newLine = 0;
+
+  for (const rawLine of patch.split("\n")) {
+    const header = parseHunkHeader(rawLine);
+    if (header) {
+      current = { ...header, lines: [] };
+      hunks.push(current);
+      oldLine = header.oldStart;
+      newLine = header.newStart;
+      continue;
+    }
+
+    if (!current || rawLine.startsWith("diff --git ") || rawLine.startsWith("index ")) {
+      continue;
+    }
+    if (rawLine.startsWith("--- ") || rawLine.startsWith("+++ ")) {
+      continue;
+    }
+    if (rawLine.startsWith("\\ No newline at end of file")) {
+      continue;
+    }
+
+    const marker = rawLine[0];
+    const text = rawLine.slice(1);
+    let line: WorkspaceReviewDiffLine | null = null;
+
+    if (marker === " ") {
+      line = { kind: "context", text, oldLine, newLine };
+      oldLine += 1;
+      newLine += 1;
+    } else if (marker === "-") {
+      line = { kind: "removed", text, oldLine, newLine: null };
+      oldLine += 1;
+    } else if (marker === "+") {
+      line = { kind: "added", text, oldLine: null, newLine };
+      newLine += 1;
+    }
+
+    if (line) {
+      current.lines.push(line);
+    }
+  }
+
+  return hunks.filter((hunk) => hunk.lines.length > 0);
 }
 
 function validateSha(sha: string): void {
@@ -211,6 +281,9 @@ export async function getCommitFileDiff(
   if (!filePath || filePath.trim().length === 0) {
     throw new CommitDiffError(400, "path parameter required");
   }
+  if (filePath.includes("\0")) {
+    throw new CommitDiffError(400, "path parameter invalid");
+  }
 
   const trimmedPath = filePath.trim();
 
@@ -235,28 +308,74 @@ export async function getCommitFileDiff(
     throw new CommitDiffError(422, "Binary files are not supported in diff view.");
   }
 
-  // Check file size
-  if (beforeBuf && beforeBuf.byteLength > MAX_DIFF_TEXT_BYTES) {
-    throw new CommitDiffError(413, "File too large for diff view.");
-  }
-  if (afterBuf && afterBuf.byteLength > MAX_DIFF_TEXT_BYTES) {
-    throw new CommitDiffError(413, "File too large for diff view.");
+  const canDiffFullText =
+    (!beforeBuf || beforeBuf.byteLength <= MAX_DIFF_TEXT_BYTES) &&
+    (!afterBuf || afterBuf.byteLength <= MAX_DIFF_TEXT_BYTES);
+
+  if (canDiffFullText) {
+    const beforeText = beforeBuf ? beforeBuf.toString("utf8") : "";
+    const afterText = afterBuf ? afterBuf.toString("utf8") : "";
+
+    const flatLines = computeDiffLines(beforeText, afterText);
+    const hunks = buildDiffHunks(flatLines);
+    const stats = computeLineDiffStatsFromLines(flatLines);
+
+    return {
+      workspaceId,
+      path: trimmedPath,
+      baselineText: beforeText,
+      currentText: afterText,
+      addedLines: stats.added,
+      removedLines: stats.removed,
+      hunks,
+    };
   }
 
-  const beforeText = beforeBuf ? beforeBuf.toString("utf8") : "";
-  const afterText = afterBuf ? afterBuf.toString("utf8") : "";
+  // Large source files can still have tiny commits. In that case, diff the patch
+  // Git already narrowed to the changed hunks instead of rejecting based on full
+  // file size.
+  const patchBuf = await gitBuffer(
+    resolved,
+    [
+      "--literal-pathspecs",
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--unified=3",
+      `${sha}^`,
+      sha,
+      "--",
+      trimmedPath,
+    ],
+    MAX_DIFF_PATCH_BYTES,
+  );
 
-  const flatLines = computeDiffLines(beforeText, afterText);
-  const hunks = buildDiffHunks(flatLines);
-  const stats = computeLineDiffStatsFromLines(flatLines);
+  if (!patchBuf) {
+    throw new CommitDiffError(413, "Diff too large for diff view.");
+  }
+
+  const patchText = patchBuf.toString("utf8");
+  if (patchText.includes("Binary files ")) {
+    throw new CommitDiffError(422, "Binary files are not supported in diff view.");
+  }
+
+  const hunks = parseUnifiedDiffHunks(patchText);
+  let addedLines = 0;
+  let removedLines = 0;
+  for (const hunk of hunks) {
+    for (const line of hunk.lines) {
+      if (line.kind === "added") addedLines += 1;
+      if (line.kind === "removed") removedLines += 1;
+    }
+  }
 
   return {
     workspaceId,
     path: trimmedPath,
-    baselineText: beforeText,
-    currentText: afterText,
-    addedLines: stats.added,
-    removedLines: stats.removed,
+    baselineText: "",
+    currentText: "",
+    addedLines,
+    removedLines,
     hunks,
   };
 }
