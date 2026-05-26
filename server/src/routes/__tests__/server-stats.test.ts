@@ -61,8 +61,12 @@ describe("parseRange", () => {
 
   test("rejects invalid values", () => {
     expect(parseRange("14")).toBe(7);
+    expect(parseRange("0")).toBe(7);
+    expect(parseRange("365")).toBe(7);
     expect(parseRange("abc")).toBe(7);
+    expect(parseRange("7abc")).toBe(7);
     expect(parseRange("-1")).toBe(7);
+    expect(parseRange("7.0")).toBe(7);
   });
 });
 
@@ -109,10 +113,11 @@ describe("getActiveSessions", () => {
       makeSession({ id: "s-3", status: "ready" }),
       makeSession({ id: "s-4", status: "error" }),
       makeSession({ id: "s-5", status: "starting" }),
+      makeSession({ id: "s-6", status: "stopping" }),
     ];
 
     const active = getActiveSessions(sessions);
-    expect(active.map((s) => s.id)).toEqual(["s-1", "s-3", "s-5"]);
+    expect(active.map((s) => s.id)).toEqual(["s-1", "s-3", "s-5", "s-6"]);
   });
 
   test("with activeSessionIds, excludes zombie sessions not in memory", () => {
@@ -138,6 +143,7 @@ describe("getActiveSessions", () => {
         model: "anthropic/opus",
         cost: 1.234,
         name: "my session",
+        firstMessage: "hello from first prompt",
         thinkingLevel: "high",
         parentSessionId: "s-0",
         contextTokens: 50000,
@@ -153,7 +159,7 @@ describe("getActiveSessions", () => {
       model: "anthropic/opus",
       cost: 1.23,
       name: "my session",
-      firstMessage: undefined,
+      firstMessage: "hello from first prompt",
       workspaceName: "coding",
       thinkingLevel: "high",
       parentSessionId: "s-0",
@@ -201,6 +207,19 @@ describe("aggregateStats", () => {
     const result = aggregate({ sessions });
     expect(result.totals.sessions).toBe(1);
     expect(result.totals.cost).toBe(1);
+  });
+
+  test("includes sessions exactly at cutoff and excludes sessions just before it", () => {
+    const sessions = [
+      makeSession({ id: "at-cutoff", createdAt: now - 7 * DAY_MS, cost: 1 }),
+      makeSession({ id: "before-cutoff", createdAt: now - 7 * DAY_MS - 1, cost: 100 }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.totals.sessions).toBe(1);
+    expect(result.daily.flatMap((day) => Object.keys(day.byModel))).toContain(
+      "anthropic/claude-sonnet-4-20250514",
+    );
   });
 
   test("aggregates daily breakdown", () => {
@@ -522,6 +541,16 @@ describe("aggregateStats", () => {
     expect(result.modelBreakdown[0].model).toBe("unknown");
   });
 
+  test("treats model ids as opaque case-sensitive values", () => {
+    const sessions = [
+      makeSession({ id: "s1", createdAt: now - DAY_MS, cost: 1, model: "GPT-5" }),
+      makeSession({ id: "s2", createdAt: now - DAY_MS, cost: 2, model: "gpt-5" }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown.map((entry) => entry.model).sort()).toEqual(["GPT-5", "gpt-5"]);
+  });
+
   test("totals sum all sessions in range", () => {
     const sessions = [
       makeSession({
@@ -546,6 +575,26 @@ describe("aggregateStats", () => {
 
     const result = aggregate({ sessions });
     expect(result.totals).toEqual({ sessions: 3, cost: 4.5, tokens: 5200 });
+  });
+
+  test("rounds floating-point costs in daily and totals", () => {
+    const sessions = [makeSession({ id: "s1", createdAt: now - DAY_MS, cost: 0.1 + 0.2 })];
+
+    const result = aggregate({ sessions });
+    expect(result.daily[0].cost).toBe(0.3);
+    expect(result.totals.cost).toBe(0.3);
+  });
+
+  test("handles missing cost and token fields from stale records", () => {
+    const session = {
+      ...makeSession({ id: "stale-record", createdAt: now - DAY_MS }),
+      cost: undefined,
+      tokens: undefined,
+    } as unknown as Session;
+
+    const result = aggregate({ sessions: [session] });
+    expect(result.totals).toEqual({ sessions: 1, cost: 0, tokens: 0 });
+    expect(result.daily[0].tokens).toBe(0);
   });
 
   test("respects range parameter", () => {
