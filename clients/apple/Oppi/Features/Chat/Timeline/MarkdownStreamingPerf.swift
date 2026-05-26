@@ -8,8 +8,8 @@ import os
 /// - FlatSegment build duration
 /// - Whether the tail-only path was taken (cache hit on prefix)
 ///
-/// Integrates with Instruments via `OSSignposter` and logs slow paths via
-/// `ClientLog.error`.  Deliberately separate from `ChatTimelinePerf` to
+/// Integrates with Instruments via `OSSignposter` and breadcrumbs slow paths via
+/// `ClientLog.info`.  Deliberately separate from `ChatTimelinePerf` to
 /// avoid coupling the markdown rendering subsystem to the timeline collection.
 @MainActor
 enum MarkdownStreamingPerf {
@@ -66,7 +66,7 @@ enum MarkdownStreamingPerf {
         guard totalMs >= slowThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
-        ClientLog.error(
+        ClientLog.info(
             "MarkdownPerf",
             "Slow markdown parse",
             metadata: [
@@ -127,7 +127,7 @@ enum MarkdownStreamingPerf {
         guard totalMs >= slowThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
-        ClientLog.error(
+        ClientLog.info(
             "MarkdownPerf",
             "Slow markdown full cycle",
             metadata: [

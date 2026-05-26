@@ -2,12 +2,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { isSensitiveLogKey, redactLogString, REDACTED } from "../log-redact.js";
 import {
   CHAT_METRIC_NAME_VALUES,
   CHAT_METRIC_REGISTRY,
   telemetryUploadsEnabledFromEnv,
   type ChatMetricSample,
   type ChatMetricUploadRequest,
+  type ClientKind,
+  type ClientLogEntry,
+  type ClientLogLevel,
+  type ClientLogUploadRequest,
   type MetricKitPayloadItem,
   type MetricKitUploadRequest,
 } from "../types.js";
@@ -27,6 +32,15 @@ const CHAT_METRIC_MAX_TAG_KEY_CHARS = 96;
 const CHAT_METRIC_MAX_TAG_VALUE_CHARS = 256;
 const CHAT_METRIC_MAX_METRIC_CHARS = 96;
 const CHAT_METRIC_MAX_UNIT_CHARS = 16;
+
+const CLIENT_LOG_FILE_PREFIX = "client-logs-";
+const CLIENT_LOG_MAX_ENTRY_COUNT = 200;
+const CLIENT_LOG_MAX_CATEGORY_CHARS = 96;
+const CLIENT_LOG_MAX_MESSAGE_CHARS = 2_048;
+const CLIENT_LOG_MAX_METADATA_FIELDS = 24;
+const CLIENT_LOG_MAX_METADATA_KEY_CHARS = 96;
+const CLIENT_LOG_MAX_METADATA_VALUE_CHARS = 512;
+const CLIENT_LOG_MAX_ID_CHARS = 128;
 
 function telemetryDir(ctx: RouteContext): string {
   return join(ctx.storage.getDataDir(), "diagnostics", METRICKIT_DIR);
@@ -62,6 +76,18 @@ function trimText(value: string | undefined, maxLength: number): string {
 function toFiniteNumber(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.trunc(value);
+}
+
+function toValidTimestamp(value: unknown, fallback: number): number | null {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const timestamp = Math.trunc(value);
+  return Number.isNaN(new Date(timestamp).getTime()) ? null : timestamp;
 }
 
 function pruneTelemetryDataByPrefix(
@@ -206,6 +232,11 @@ function sanitizeSummary(value: unknown): Record<string, string> {
 function sanitizeString(value: unknown, maxLength: number): string {
   if (!isString(value)) return "";
   return trimText(value, maxLength);
+}
+
+function sanitizeRedactedString(value: unknown, maxLength: number): string {
+  if (!isString(value)) return "";
+  return redactLogString(value, maxLength);
 }
 
 function normalizePayload(
@@ -449,6 +480,181 @@ function appendChatMetricRecord(ctx: RouteContext, request: ChatMetricUploadRequ
   });
 }
 
+function isClientKind(value: string): value is ClientKind {
+  return value === "ios" || value === "mac";
+}
+
+function normalizeClientLogLevel(value: unknown): ClientLogLevel | null {
+  if (value === "debug" || value === "info" || value === "warn" || value === "error") {
+    return value;
+  }
+  if (value === "warning") {
+    return "warn";
+  }
+  return null;
+}
+
+function sanitizeClientLogMetadata(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const out: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(out).length >= CLIENT_LOG_MAX_METADATA_FIELDS) {
+      break;
+    }
+    if (typeof rawValue !== "string") {
+      continue;
+    }
+
+    const safeKey = redactLogString(key.trim(), CLIENT_LOG_MAX_METADATA_KEY_CHARS);
+    if (!safeKey || safeKey in out) {
+      continue;
+    }
+
+    out[safeKey] =
+      isSensitiveLogKey(key) || isSensitiveLogKey(safeKey)
+        ? REDACTED
+        : redactLogString(rawValue, CLIENT_LOG_MAX_METADATA_VALUE_CHARS);
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function normalizeClientLogEntry(value: unknown): ClientLogEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const ts = raw.ts;
+  const seq = raw.seq;
+  if (typeof ts !== "number" || !Number.isFinite(ts)) {
+    return null;
+  }
+  if (typeof seq !== "number" || !Number.isFinite(seq)) {
+    return null;
+  }
+
+  const level = normalizeClientLogLevel(raw.level);
+  if (!level) {
+    return null;
+  }
+
+  const category = sanitizeRedactedString(raw.category, CLIENT_LOG_MAX_CATEGORY_CHARS);
+  const message = sanitizeRedactedString(raw.message, CLIENT_LOG_MAX_MESSAGE_CHARS);
+  if (!category || !message) {
+    return null;
+  }
+
+  const metadata = sanitizeClientLogMetadata(raw.metadata);
+  const sessionId = sanitizeRedactedString(raw.sessionId, CLIENT_LOG_MAX_ID_CHARS);
+  const workspaceId = sanitizeRedactedString(raw.workspaceId, CLIENT_LOG_MAX_ID_CHARS);
+
+  return {
+    ts: Math.trunc(ts),
+    seq: Math.trunc(seq),
+    level,
+    category,
+    message,
+    ...(metadata ? { metadata } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
+  };
+}
+
+function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const raw = body as Record<string, unknown>;
+  const clientKindRaw = sanitizeString(raw.clientKind, 16);
+  if (!isClientKind(clientKindRaw)) {
+    return null;
+  }
+
+  const rawEntries = raw.entries;
+  if (!Array.isArray(rawEntries)) {
+    return null;
+  }
+
+  const entries: ClientLogEntry[] = [];
+  for (const candidate of rawEntries.slice(0, CLIENT_LOG_MAX_ENTRY_COUNT)) {
+    const normalized = normalizeClientLogEntry(candidate);
+    if (normalized) {
+      entries.push(normalized);
+    }
+  }
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const generatedAt = toValidTimestamp(raw.generatedAt, Date.now());
+  if (generatedAt === null) {
+    return null;
+  }
+
+  const droppedCountRaw = raw.droppedCount;
+  const droppedCount =
+    typeof droppedCountRaw === "number" && Number.isFinite(droppedCountRaw)
+      ? Math.max(0, Math.trunc(droppedCountRaw))
+      : undefined;
+
+  return {
+    generatedAt,
+    appVersion: sanitizeRedactedString(raw.appVersion, 96),
+    buildNumber: sanitizeRedactedString(raw.buildNumber, 64),
+    osVersion: sanitizeRedactedString(raw.osVersion, 128),
+    deviceModel: sanitizeRedactedString(raw.deviceModel, 128),
+    clientKind: clientKindRaw,
+    appInstanceId: sanitizeRedactedString(raw.appInstanceId, CLIENT_LOG_MAX_ID_CHARS),
+    bootId: sanitizeRedactedString(raw.bootId, CLIENT_LOG_MAX_ID_CHARS),
+    ...(droppedCount && droppedCount > 0 ? { droppedCount } : {}),
+    entries,
+  };
+}
+
+function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadRequest): void {
+  const dir = telemetryDir(ctx);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+
+  const receivedAt = Date.now();
+  const record = {
+    receivedAt,
+    generatedAt: request.generatedAt,
+    appVersion: request.appVersion,
+    buildNumber: request.buildNumber,
+    osVersion: request.osVersion,
+    deviceModel: request.deviceModel,
+    clientKind: request.clientKind,
+    appInstanceId: request.appInstanceId,
+    bootId: request.bootId,
+    droppedCount: request.droppedCount ?? 0,
+    entryCount: request.entries.length,
+    entries: request.entries.map((entry) => ({
+      receivedAt,
+      clientKind: request.clientKind,
+      appInstanceId: request.appInstanceId,
+      bootId: request.bootId,
+      ...entry,
+    })),
+  };
+
+  const path = join(
+    dir,
+    `${CLIENT_LOG_FILE_PREFIX}${new Date(request.generatedAt).toISOString().slice(0, 10)}${METRICKIT_FILE_SUFFIX}`,
+  );
+  appendFileSync(path, `${JSON.stringify(record)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
 export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   async function handleUploadMetricKit(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!telemetryUploadsEnabledFromEnv()) {
@@ -504,6 +710,34 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
     });
   }
 
+  async function handleUploadClientLogs(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!telemetryUploadsEnabledFromEnv()) {
+      helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
+      return;
+    }
+
+    const rawBody = await helpers.parseBody<ClientLogUploadRequest>(req);
+    const request = parseClientLogRequest(rawBody);
+    if (!request) {
+      helpers.error(res, 400, "entries must be a non-empty array of valid client logs");
+      return;
+    }
+
+    appendClientLogRecord(ctx, request);
+    pruneTelemetryDataByPrefix(ctx, CLIENT_LOG_FILE_PREFIX, chatMetricRetentionDaysFromEnv());
+
+    const windowStartMs = Math.min(...request.entries.map((entry) => entry.ts));
+    const windowEndMs = Math.max(...request.entries.map((entry) => entry.ts));
+
+    helpers.json(res, {
+      ok: true,
+      accepted: request.entries.length,
+      droppedCount: request.droppedCount ?? 0,
+      windowStartMs,
+      windowEndMs,
+    });
+  }
+
   return async ({ method, path, req, res }) => {
     if (method === "POST" && path === "/telemetry/metrickit") {
       await handleUploadMetricKit(req, res);
@@ -512,6 +746,11 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     if (method === "POST" && path === "/telemetry/chat-metrics") {
       await handleUploadChatMetrics(req, res);
+      return true;
+    }
+
+    if (method === "POST" && path === "/telemetry/client-logs") {
+      await handleUploadClientLogs(req, res);
       return true;
     }
 

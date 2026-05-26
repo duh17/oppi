@@ -29,11 +29,11 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         let allowed = TelemetrySettings.allowsRemoteDiagnosticsUpload
         metricKitLog.info("Telemetry preference changed (upload=\(allowed, privacy: .public))")
 
+        let client = allowed ? currentAPIClient : nil
         Task {
-            await ChatMetricsService.shared.setUploadClient(
-                allowed ? currentAPIClient : nil
-            )
+            await ChatMetricsService.shared.setUploadClient(client)
         }
+        ClientLogUploadService.configureUploader(client)
 
         guard allowed else { return }
         Task {
@@ -50,6 +50,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         Task {
             await ChatMetricsService.shared.setUploadClient(client)
         }
+        ClientLogUploadService.configureUploader(client)
 
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
 

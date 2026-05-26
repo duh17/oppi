@@ -404,3 +404,32 @@ export interface ChatMetricUploadRequest {
   deviceModel?: string;
   samples: ChatMetricSample[];
 }
+
+export type ClientLogLevel = "debug" | "info" | "warn" | "error";
+export type ClientKind = "ios" | "mac";
+
+export interface ClientLogEntry {
+  /** Client-side timestamp (ms since epoch). */
+  ts: number;
+  /** Monotonic per-process sequence assigned before upload. */
+  seq: number;
+  level: ClientLogLevel;
+  category: string;
+  message: string;
+  metadata?: Record<string, string>;
+  sessionId?: string;
+  workspaceId?: string;
+}
+
+export interface ClientLogUploadRequest {
+  generatedAt: number;
+  appVersion?: string;
+  buildNumber?: string;
+  osVersion?: string;
+  deviceModel?: string;
+  clientKind: ClientKind;
+  appInstanceId: string;
+  bootId: string;
+  droppedCount?: number;
+  entries: ClientLogEntry[];
+}

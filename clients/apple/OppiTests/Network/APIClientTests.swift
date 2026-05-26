@@ -1215,6 +1215,67 @@ struct APIClientTests {
         )
     }
 
+    @Test func clientLogRedactorRemovesSensitiveKeysAndValues() {
+        let metadata = ClientLogRedactor.redactedMetadata([
+            "accessToken": "plain-token-that-does-not-match-value-regex",
+            "apiKey": "unpatterned-api-key",
+            "authPresent": "true",
+            "tokenCount": "42",
+            "url": "https://example.test/path?token=secret-token",
+        ])
+
+        #expect(metadata["accessToken"] == ClientLogRedactor.redacted)
+        #expect(metadata["apiKey"] == ClientLogRedactor.redacted)
+        #expect(metadata["authPresent"] == "true")
+        #expect(metadata["tokenCount"] == "42")
+        #expect(metadata["url"] == "https://example.test/path?token=[REDACTED]")
+        #expect(ClientLogRedactor.redactedText("Authorization: Bearer abcdefghi") == "Authorization: Bearer [REDACTED]")
+    }
+
+    @Test func uploadClientLogsUsesTelemetryPostPathWithSortedMetadata() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/telemetry/client-logs")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+
+            let body = self.requestBodyData(request)
+            let bodyText = String(data: body, encoding: .utf8) ?? ""
+            #expect(bodyText.contains(#""metadata":{"a":"first","z":"last"}"#))
+
+            return self.mockResponse(json: "{\"ok\":true,\"accepted\":1,\"windowStartMs\":1,\"windowEndMs\":1}")
+        }
+
+        try await client.uploadClientLogs(
+            request: ClientLogUploadRequest(
+                generatedAt: 1,
+                appVersion: "1.0",
+                buildNumber: "1",
+                osVersion: "test-os",
+                deviceModel: "test-device",
+                clientKind: .ios,
+                appInstanceId: "app-1",
+                bootId: "boot-1",
+                droppedCount: nil,
+                entries: [
+                    ClientLogUploadEntry(
+                        ts: 1,
+                        seq: 1,
+                        level: .warn,
+                        category: "Network",
+                        message: "Stream reconnect",
+                        metadata: ["z": "last", "a": "first"],
+                        sessionId: "s1",
+                        workspaceId: "w1"
+                    ),
+                ]
+            )
+        )
+    }
+
     // MARK: - Error handling
 
     @Test func serverErrorExtractsMessage() async throws {

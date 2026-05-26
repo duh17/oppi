@@ -342,7 +342,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         let durationMs = ChatTimelinePerf.elapsedMs(since: applyStartNs)
         if durationMs >= Self.slowApplyThresholdMs {
-            ClientLog.error(
+            ClientLog.info(
                 "ChatPerf",
                 "Slow user row apply",
                 metadata: [

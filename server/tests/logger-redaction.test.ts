@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger } from "../src/logger.js";
-import { redactLogString, redactLogValue } from "../src/log-redact.js";
+import { isSensitiveLogKey, redactLogString, redactLogValue } from "../src/log-redact.js";
 
 describe("logger", () => {
   afterEach(() => {
@@ -22,6 +22,7 @@ describe("logger", () => {
       requestId: "req-1",
       nested: {
         apiKey: "ghp_SUPER_SECRET_abcdefghijklmnopqrstuvwxyz",
+        accessToken: "plain-token-that-does-not-match-value-regex",
         password: "dont-log-me",
         command: "curl https://api.example.com?token=sk_live_ABCDEF1234",
       },
@@ -33,6 +34,7 @@ describe("logger", () => {
     expect(raw).not.toContain("sk_live_SUPER_SECRET_123456");
     expect(raw).not.toContain("ghp_SUPER_SECRET_abcdefghijklmnopqrstuvwxyz");
     expect(raw).not.toContain("dont-log-me");
+    expect(raw).not.toContain("plain-token-that-does-not-match-value-regex");
 
     const parsed = JSON.parse(raw) as {
       ts: string;
@@ -47,6 +49,7 @@ describe("logger", () => {
     expect(parsed.event).toBe("ws.command");
     expect(parsed.authorization).toBe("[REDACTED]");
     expect(parsed.nested.apiKey).toBe("[REDACTED]");
+    expect(parsed.nested.accessToken).toBe("[REDACTED]");
     expect(parsed.nested.password).toBe("[REDACTED]");
     expect(parsed.nested.command).toBe("curl https://api.example.com?token=[REDACTED]");
   });
@@ -93,6 +96,13 @@ describe("log-redact", () => {
     expect(redacted.token).toBe("[REDACTED]");
     expect((redacted.child as Record<string, unknown>).cookie).toBe("[REDACTED]");
     expect(redacted.self).toBe("[CIRCULAR]");
+  });
+
+  it("detects camelCase sensitive keys without hiding token counters", () => {
+    expect(isSensitiveLogKey("accessToken")).toBe(true);
+    expect(isSensitiveLogKey("openaiApiKey")).toBe(true);
+    expect(isSensitiveLogKey("tokenCount")).toBe(false);
+    expect(isSensitiveLogKey("authPresent")).toBe(false);
   });
 
   it("redacts bearer and private key strings", () => {

@@ -5,13 +5,49 @@ const DEFAULT_MAX_OBJECT_KEYS = 64;
 
 const MAX_STRING_FLOOR = 64;
 
-const REDACTED = "[REDACTED]";
+export const REDACTED = "[REDACTED]";
 const TRUNCATED = "[TRUNCATED]";
 const CIRCULAR = "[CIRCULAR]";
 const DEPTH_LIMIT = "[DEPTH_LIMIT]";
 
 const SENSITIVE_KEY =
   /(?:^|[_-])(authorization|auth|cookie|token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|refresh[_-]?token|client[_-]?secret)(?:$|[_-])/i;
+
+const SENSITIVE_NORMALIZED_KEY_TERMS = [
+  "authorization",
+  "cookie",
+  "secret",
+  "password",
+  "passwd",
+  "apikey",
+  "accesskey",
+  "privatekey",
+  "refreshtoken",
+  "clientsecret",
+  "accesstoken",
+  "authtoken",
+] as const;
+
+export function isSensitiveLogKey(key: string): boolean {
+  if (SENSITIVE_KEY.test(key)) {
+    return true;
+  }
+
+  const normalized = key.replace(/[^A-Za-z0-9]+/g, "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === "auth" || normalized === "token") {
+    return true;
+  }
+
+  if (normalized.endsWith("token") && normalized !== "tokens") {
+    return true;
+  }
+
+  return SENSITIVE_NORMALIZED_KEY_TERMS.some((term) => normalized.includes(term));
+}
 
 const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   {
@@ -127,7 +163,7 @@ function sanitizeValue(
   seen: WeakSet<object>,
   options: ResolvedLogRedactOptions,
 ): unknown {
-  if (key && SENSITIVE_KEY.test(key)) {
+  if (key && isSensitiveLogKey(key)) {
     return REDACTED;
   }
 

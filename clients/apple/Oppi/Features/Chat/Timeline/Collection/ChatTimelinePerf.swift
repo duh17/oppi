@@ -13,7 +13,7 @@ import Sentry
 /// - cell configure duration (by row type)
 /// - scroll command rate
 ///
-/// Uses OSSignposter for Instruments timelines and ClientLog for slow-path alerts.
+/// Uses OSSignposter for Instruments timelines and low-volume ClientLog breadcrumbs.
 @MainActor
 enum ChatTimelinePerf {
     struct Snapshot: Sendable {
@@ -296,7 +296,7 @@ enum ChatTimelinePerf {
         guard durationMs >= slowApplyThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
-        ClientLog.error(
+        ClientLog.info(
             "ChatPerf",
             "Slow collection apply",
             metadata: [
@@ -369,7 +369,7 @@ enum ChatTimelinePerf {
         guard durationMs >= slowLayoutThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
-        ClientLog.error(
+        ClientLog.info(
             "ChatPerf",
             "Slow collection layout",
             metadata: [
@@ -452,7 +452,7 @@ enum ChatTimelinePerf {
 
         guard shouldEmitSlowLog() else { return }
 
-        ClientLog.error(
+        ClientLog.info(
             "ChatPerf",
             "Slow cell configure",
             metadata: [
@@ -511,7 +511,7 @@ enum ChatTimelinePerf {
         ]
         if let language { metadata["language"] = language }
 
-        ClientLog.error(
+        ClientLog.info(
             "ChatPerf",
             "Slow render strategy",
             metadata: metadata
@@ -545,7 +545,7 @@ enum ChatTimelinePerf {
         guard durationMs >= slowMeasurementThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
-        ClientLog.error(
+        ClientLog.info(
             "ChatPerf",
             "Slow tool row measurement",
             metadata: [
@@ -603,7 +603,7 @@ enum ChatTimelinePerf {
                 if let sid = resolvedSessionId(sessionId) {
                     metadata["sessionId"] = sid
                 }
-                ClientLog.error(
+                ClientLog.info(
                     "ChatPerf",
                     "High scroll command rate",
                     metadata: metadata

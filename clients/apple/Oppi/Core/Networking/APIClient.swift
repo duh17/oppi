@@ -7,7 +7,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIC
 ///
 /// Handles session CRUD, health checks, and authentication.
 /// All methods throw on network/server errors with descriptive messages.
-actor APIClient {
+actor APIClient: ClientLogUploading {
     enum SessionTraceView: String, Sendable {
         case context
         case full
@@ -1411,6 +1411,15 @@ actor APIClient {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
         _ = try await post(
             "/telemetry/chat-metrics",
+            body: body,
+            encoder: Self.chatMetricsEncoder
+        )
+    }
+
+    func uploadClientLogs(request body: ClientLogUploadRequest) async throws {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
+        _ = try await post(
+            "/telemetry/client-logs",
             body: body,
             encoder: Self.chatMetricsEncoder
         )

@@ -19,14 +19,25 @@ enum ClientLog {
         guard level == .warning || level == .error else { return }
 #endif
 
+        let safeCategory = ClientLogRedactor.redactedText(category, maxLength: 96)
+        let safeMessage = ClientLogRedactor.redactedText(message, maxLength: 2_048)
+        let safeMetadata = ClientLogRedactor.redactedMetadata(metadata)
+
         Task.detached(priority: .utility) {
             await SentryService.shared.recordBreadcrumb(
                 level: level,
-                category: category,
-                message: message,
-                metadata: metadata
+                category: safeCategory,
+                message: safeMessage,
+                metadata: safeMetadata
             )
         }
+
+        ClientLogUploadService.record(
+            level: level,
+            category: safeCategory,
+            message: safeMessage,
+            metadata: safeMetadata
+        )
     }
 
     static func info(_ category: String, _ message: String, metadata: [String: String] = [:]) {
