@@ -364,7 +364,7 @@ struct WorkspaceHomeView: View {
         Button {
             navigation.showQuickSession = true
         } label: {
-            Image(systemName: "plus")
+            Image(systemName: "square.and.pencil")
         }
         .accessibilityLabel("Start Quick Session")
         .accessibilityHint("Opens the quick session composer")

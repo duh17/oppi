@@ -734,13 +734,13 @@ struct WorkspaceDetailView: View {
         Button {
             Task { await createSession() }
         } label: {
-            Image(systemName: "plus")
+            Image(systemName: "square.and.pencil")
         }
         .contextMenu {
             Button {
                 Task { await createSession() }
             } label: {
-                Label("New Session", systemImage: "plus")
+                Label("New Session", systemImage: "square.and.pencil")
             }
 
             Button {
