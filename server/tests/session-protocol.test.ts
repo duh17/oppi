@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { ServerMessage, Session } from "./types.js";
-import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import type { ServerMessage, Session } from "../src/types.js";
+import type { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import {
   applyMessageEndToSession,
   translatePiEvent,
@@ -10,7 +10,7 @@ import {
   extractToolFullOutputPath,
   updateSessionChangeStats,
   type TranslationContext,
-} from "./session-protocol.js";
+} from "../src/session-protocol.js";
 
 // ─── Factories ───
 

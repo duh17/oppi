@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
 import { WebSocket } from "ws";
-import { BoundSessionStreamMux, SessionAudioStreamMux, type StreamContext } from "./stream.js";
-import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
+import { BoundSessionStreamMux, SessionAudioStreamMux, type StreamContext } from "../src/stream.js";
+import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
   return {

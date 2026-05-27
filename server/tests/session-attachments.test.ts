@@ -10,7 +10,7 @@ import {
   materializeToolMediaDetails,
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolCall,
-} from "./session-attachments.js";
+} from "../src/session-attachments.js";
 
 let root: string;
 

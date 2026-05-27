@@ -2,15 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionBackendEvent } from "./pi-events.js";
+import type { SessionBackendEvent } from "../src/pi-events.js";
 import {
   SessionAgentEventCoordinator,
   type SessionAgentEventState,
-} from "./session-agent-events.js";
-import { sessionAttachmentMediaDetailsForToolCall } from "./session-attachments.js";
-import { buildSessionSummary } from "./session-summary.js";
-import { TurnDedupeCache } from "./turn-cache.js";
-import type { Session } from "./types.js";
+} from "../src/session-agent-events.js";
+import { sessionAttachmentMediaDetailsForToolCall } from "../src/session-attachments.js";
+import { buildSessionSummary } from "../src/session-summary.js";
+import { TurnDedupeCache } from "../src/turn-cache.js";
+import type { Session } from "../src/types.js";
 
 function makeSession(overrides?: Partial<Session>): Session {
   return {

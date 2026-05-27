@@ -4,9 +4,9 @@ import {
   type BroadcastSessionState,
   type SessionBroadcastEvent,
   type SessionBroadcasterDeps,
-} from "./session-broadcast.js";
-import { EventRing } from "./event-ring.js";
-import type { ServerMessage, Session } from "./types.js";
+} from "../src/session-broadcast.js";
+import { EventRing } from "../src/event-ring.js";
+import type { ServerMessage, Session } from "../src/types.js";
 
 function makeSession(id = "sess-1"): Session {
   return {

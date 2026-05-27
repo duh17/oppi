@@ -4,9 +4,9 @@ import {
   SessionEventProcessor,
   type EventProcessorSessionState,
   type ExtensionUIRequest,
-} from "./session-events.js";
-import { SessionUICoordinator, type SessionUIState } from "./session-ui.js";
-import type { Session } from "./types.js";
+} from "../src/session-events.js";
+import { SessionUICoordinator, type SessionUIState } from "../src/session-ui.js";
+import type { Session } from "../src/types.js";
 
 function makeSession(id = "sess-1"): Session {
   const now = Date.now();

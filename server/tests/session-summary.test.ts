@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSessionSummary } from "./session-summary.js";
-import type { Session } from "./types.js";
+import { buildSessionSummary } from "../src/session-summary.js";
+import type { Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   const now = Date.now();

@@ -6,7 +6,7 @@ import {
   SessionTitleGenerator,
   type SessionTitleGeneratorDeps,
   type TitleGenerationMetrics,
-} from "./session-title-generator.js";
+} from "../src/session-title-generator.js";
 
 // ─── normalizeTitle ───
 
@@ -230,7 +230,7 @@ describe("SessionTitleGenerator", () => {
 describe("appendSessionMessage trigger", () => {
   it("returns true when firstMessage is first captured", async () => {
     // Import the actual function
-    const { appendSessionMessage } = await import("./session-protocol.js");
+    const { appendSessionMessage } = await import("../src/session-protocol.js");
     const session: Record<string, unknown> = {
       id: "s1",
       status: "ready" as const,
@@ -254,7 +254,7 @@ describe("appendSessionMessage trigger", () => {
   });
 
   it("returns false for subsequent user messages", async () => {
-    const { appendSessionMessage } = await import("./session-protocol.js");
+    const { appendSessionMessage } = await import("../src/session-protocol.js");
     const session = {
       id: "s1",
       status: "ready" as const,
@@ -277,7 +277,7 @@ describe("appendSessionMessage trigger", () => {
   });
 
   it("returns false for assistant messages", async () => {
-    const { appendSessionMessage } = await import("./session-protocol.js");
+    const { appendSessionMessage } = await import("../src/session-protocol.js");
     const session: Record<string, unknown> = {
       id: "s1",
       status: "ready" as const,

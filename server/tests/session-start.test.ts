@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { SdkBackend } from "./sdk-backend.js";
-import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "./session-start.js";
-import type { GateServer } from "./gate.js";
-import type { Storage } from "./storage.js";
-import type { ServerConfig, Session, Workspace } from "./types.js";
-import type { WorkspaceRuntime } from "./workspace-runtime.js";
+import { SdkBackend } from "../src/sdk-backend.js";
+import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "../src/session-start.js";
+import type { GateServer } from "../src/gate.js";
+import type { Storage } from "../src/storage.js";
+import type { ServerConfig, Session, Workspace } from "../src/types.js";
+import type { WorkspaceRuntime } from "../src/workspace-runtime.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
