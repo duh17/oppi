@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { EventRing, type SequencedEvent } from "./event-ring.js";
-import type { ServerMessage } from "./types.js";
+import { EventRing, type SequencedEvent } from "../src/event-ring.js";
+import type { ServerMessage } from "../src/types.js";
 
 function makeEvent(seq: number, type: ServerMessage["type"] = "agent_start"): SequencedEvent {
   return { seq, event: { type } as ServerMessage, timestamp: Date.now() };
