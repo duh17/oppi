@@ -15,7 +15,7 @@ import Foundation
 ///
 /// Each test asserts correctness AND measures wall-clock time against a budget.
 /// Budgets are generous (10x typical) to catch regressions, not benchmark.
-@Suite("TimelineStress")
+@Suite("TimelineStress", .tags(.perf))
 @MainActor
 struct TimelineStressTests {
 
