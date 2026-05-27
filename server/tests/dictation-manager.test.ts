@@ -4,12 +4,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DictationManager, type DictationSendFn } from "./dictation-manager.js";
+import { DictationManager, type DictationSendFn } from "../src/dictation-manager.js";
 
-import type { DictationServerMessage } from "./dictation-types.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
-import type { ServerMetricName } from "./server-metric-registry.js";
-import type { SttProvider } from "./stt-provider.js";
+import type { DictationServerMessage } from "../src/dictation-types.js";
+import type { ServerMetricCollector } from "../src/server-metric-collector.js";
+import type { ServerMetricName } from "../src/server-metric-registry.js";
+import type { SttProvider } from "../src/stt-provider.js";
 
 // ─── Test helpers ───
 

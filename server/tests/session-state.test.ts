@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { composeModelId } from "./session-state.js";
+import { composeModelId } from "../src/session-state.js";
 
 describe("composeModelId", () => {
   it("prefixes simple model ids with the provider", () => {

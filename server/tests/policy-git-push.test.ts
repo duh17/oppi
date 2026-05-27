@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { PolicyEngine } from "./policy.js";
-import type { GateRequest } from "./policy-types.js";
-import type { Rule } from "./rules.js";
-import { defaultPresetRules } from "./policy-presets.js";
+import { PolicyEngine } from "../src/policy.js";
+import type { GateRequest } from "../src/policy-types.js";
+import type { Rule } from "../src/rules.js";
+import { defaultPresetRules } from "../src/policy-presets.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 

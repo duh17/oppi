@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveInitialChatModel } from "./session-model-selection.js";
+import { resolveInitialChatModel } from "../src/session-model-selection.js";
 
 describe("resolveInitialChatModel", () => {
   it("uses explicit request model before all other sources", () => {

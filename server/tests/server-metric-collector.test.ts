@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { ServerMetricCollector, type ServerMetricSample } from "./server-metric-collector.js";
-import { JsonlMetricWriter, type MetricWriter } from "./server-metric-writer.js";
+import { ServerMetricCollector, type ServerMetricSample } from "../src/server-metric-collector.js";
+import { JsonlMetricWriter, type MetricWriter } from "../src/server-metric-writer.js";
 
 // ─── Helpers ───
 

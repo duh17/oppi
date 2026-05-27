@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchBashPattern, parseBashCommand, splitBashCommandChain } from "./policy-bash.js";
+import { matchBashPattern, parseBashCommand, splitBashCommandChain } from "../src/policy-bash.js";
 
 // ─── splitBashCommandChain ───────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripAnsiEscapes } from "./ansi.js";
+import { stripAnsiEscapes } from "../src/ansi.js";
 
 describe("stripAnsiEscapes", () => {
   it("returns plain text unchanged", () => {

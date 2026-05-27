@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { SearchIndex } from "./search-index.js";
-import type { Session } from "./types.js";
+import { SearchIndex } from "../src/search-index.js";
+import type { Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {

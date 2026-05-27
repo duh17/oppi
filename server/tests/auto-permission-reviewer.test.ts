@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAutoPermissionDecision } from "./auto-permission-reviewer.js";
-import { PolicyEngine } from "./policy.js";
+import { parseAutoPermissionDecision } from "../src/auto-permission-reviewer.js";
+import { PolicyEngine } from "../src/policy.js";
 
 describe("auto permission review", () => {
   it("parses allow/ask decisions and rejects deny", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isQueryTokenAllowed } from "./http-auth.js";
+import { isQueryTokenAllowed } from "../src/http-auth.js";
 
 describe("isQueryTokenAllowed", () => {
   const allowed = (method: string, rawUrl: string): boolean => {

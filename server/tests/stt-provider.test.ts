@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { StreamingSttProvider } from "./stt-provider.js";
+import { StreamingSttProvider } from "../src/stt-provider.js";
 
 // ─── Mock helpers ───
 

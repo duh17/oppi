@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AskOption, AskQuestion, ServerMessage, ClientMessage } from "./types.js";
+import type { AskOption, AskQuestion, ServerMessage, ClientMessage } from "../src/types.js";
 
 describe("AskOption", () => {
   it("accepts value and label only", () => {

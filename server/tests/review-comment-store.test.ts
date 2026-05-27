@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { openDatabase } from "./sqlite-compat.js";
-import { Storage } from "./storage.js";
-import { ReviewCommentStore, ReviewCommentStoreError } from "./review-comment-store.js";
+import { openDatabase } from "../src/sqlite-compat.js";
+import { Storage } from "../src/storage.js";
+import { ReviewCommentStore, ReviewCommentStoreError } from "../src/review-comment-store.js";
 
 let root: string;
 let stores: ReviewCommentStore[];

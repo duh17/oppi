@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createAudioPresentationDetails, createAudioStreamEmitter } from "./tts-provider.js";
+import { createAudioPresentationDetails, createAudioStreamEmitter } from "../src/tts-provider.js";
 
 describe("tts-provider helpers", () => {
   it("builds generic audio presentation details", () => {
