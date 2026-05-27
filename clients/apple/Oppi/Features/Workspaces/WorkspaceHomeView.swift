@@ -1010,7 +1010,6 @@ private struct WorkspaceHomeRow: View {
                         .font(.headline)
                         .foregroundStyle(.themeFg)
                         .lineLimit(1)
-                        .layoutPriority(1)
 
                     if hasAttention {
                         Text("Needs attention")
