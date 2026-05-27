@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { APNsClient, NoopAPNsClient, createPushClient, redactTokenForLog } from "../src/push.js";
 
 interface CapturedSend {
@@ -121,6 +121,123 @@ describe("APNs permission push", () => {
     const aps = sends[0].payload.aps as Record<string, unknown>;
     expect(aps["interruption-level"]).toBe("time-sensitive");
     expect(sends[0].opts.priority).toBe(10);
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("APNs session event push", () => {
+  it("uses passive priority for ended sessions", async () => {
+    const { client, sends } = makeClientHarness();
+
+    const ok = await client.sendSessionEventPush("deadbeef", {
+      sessionId: "s-ended",
+      sessionName: "Session Ended",
+      event: "ended",
+      reason: "Completed successfully",
+    });
+
+    expect(ok).toBe(true);
+    expect(sends).toHaveLength(1);
+    expect(sends[0].opts).toMatchObject({ pushType: "alert", priority: 5 });
+
+    const aps = sends[0].payload.aps as {
+      category: string;
+      sound?: string;
+      "interruption-level": string;
+      alert: { title: string; subtitle: string; body: string };
+    };
+    expect(aps.category).toBe("SESSION_DONE");
+    expect(aps.sound).toBeUndefined();
+    expect(aps["interruption-level"]).toBe("passive");
+    expect(aps.alert.title).toBe("Session Ended");
+  });
+
+  it("uses active priority and sound for error sessions", async () => {
+    const { client, sends } = makeClientHarness();
+
+    const ok = await client.sendSessionEventPush("deadbeef", {
+      sessionId: "s-error",
+      event: "error",
+      reason: "Tool crashed",
+    });
+
+    expect(ok).toBe(true);
+    expect(sends).toHaveLength(1);
+    expect(sends[0].opts).toMatchObject({ pushType: "alert", priority: 10 });
+
+    const aps = sends[0].payload.aps as {
+      category: string;
+      sound?: string;
+      "interruption-level": string;
+      alert: { title: string; subtitle: string; body: string };
+    };
+    expect(aps.category).toBe("SESSION_ERROR");
+    expect(aps.sound).toBe("default");
+    expect(aps["interruption-level"]).toBe("active");
+    expect(aps.alert.subtitle).toBe("s-error");
+  });
+});
+
+describe("APNs live activity push", () => {
+  it("uses the live activity topic and rounds stale dates to seconds", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-02T03:04:05.900Z"));
+
+    const { client, sends } = makeClientHarness();
+    (client as unknown as { config: { bundleId: string } }).config = { bundleId: "com.example.oppi" };
+
+    const ok = await client.sendLiveActivityUpdate(
+      "push-token",
+      { state: "running" },
+      Date.parse("2026-01-02T03:05:06.700Z"),
+      10,
+    );
+
+    expect(ok).toBe(true);
+    expect(sends).toHaveLength(1);
+    expect(sends[0].opts).toEqual({
+      pushType: "liveactivity",
+      priority: 10,
+      topic: "com.example.oppi.push-type.liveactivity",
+    });
+    expect(sends[0].payload).toEqual({
+      aps: {
+        timestamp: 1767323045,
+        event: "update",
+        "content-state": { state: "running" },
+        "stale-date": 1767323106,
+        "dismissal-date": undefined,
+      },
+    });
+  });
+
+  it("adds a default dismissal date when ending a live activity", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-02T03:04:05.900Z"));
+
+    const { client, sends } = makeClientHarness();
+    (client as unknown as { config: { bundleId: string } }).config = { bundleId: "com.example.oppi" };
+
+    const ok = await client.endLiveActivity("push-token", { state: "done" });
+
+    expect(ok).toBe(true);
+    expect(sends).toHaveLength(1);
+    expect(sends[0].opts).toEqual({
+      pushType: "liveactivity",
+      priority: 10,
+      topic: "com.example.oppi.push-type.liveactivity",
+    });
+    expect(sends[0].payload).toEqual({
+      aps: {
+        timestamp: 1767323045,
+        event: "end",
+        "content-state": { state: "done" },
+        "dismissal-date": 1767323345,
+      },
+    });
   });
 });
 
