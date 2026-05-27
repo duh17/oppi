@@ -180,27 +180,12 @@ const goldenCases: GoldenCase[] = [
 ];
 
 describe("policy precedence golden", () => {
-  it("enforces deny/specificity/tie precedence deterministically", () => {
-    const actual = goldenCases.map((scenario) => {
-      const decision = engine.evaluateWithRules(scenario.request, scenario.rules, "s1", "w1");
-      return {
-        name: scenario.name,
-        action: decision.action,
-        layer: decision.layer,
-        ruleId: decision.ruleId,
-        reason: decision.reason,
-      };
-    });
+  it.each(goldenCases)("$name", (scenario) => {
+    const decision = engine.evaluateWithRules(scenario.request, scenario.rules, "s1", "w1");
 
-    for (let index = 0; index < goldenCases.length; index += 1) {
-      const scenario = goldenCases[index];
-      const result = actual[index];
-
-      expect(result.name).toBe(scenario.name);
-      expect(result.action).toBe(scenario.expected.action);
-      expect(result.layer).toBe(scenario.expected.layer);
-      expect(result.ruleId).toBe(scenario.expected.ruleId);
-      expect(result.reason).toContain(scenario.expected.reasonContains);
-    }
+    expect(decision.action).toBe(scenario.expected.action);
+    expect(decision.layer).toBe(scenario.expected.layer);
+    expect(decision.ruleId).toBe(scenario.expected.ruleId);
+    expect(decision.reason).toContain(scenario.expected.reasonContains);
   });
 });
