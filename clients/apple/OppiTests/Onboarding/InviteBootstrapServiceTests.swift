@@ -7,17 +7,78 @@ import Foundation
 struct InviteBootstrapServiceTests {
     private let host = "pairing.example.test"
 
-    @Test func trustConfirmationPrecedesPairingTokenExchange() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let sourceURL = repoRoot.appendingPathComponent("Oppi/Features/Onboarding/OnboardingView.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        let trustIndex = try #require(source.range(of: "let trusted = await confirmTrust(reason)")?.lowerBound)
-        let pairIndex = try #require(source.range(of: "try await bootstrapAPI.pairDevice")?.lowerBound)
+    @Test func trustConfirmationPrecedesPairingTokenExchange() async throws {
+        let log = InviteBootstrapCallLog()
+        let bootstrapAPI = RecordingInviteBootstrapAPI(log: log, pairDeviceToken: "device-token")
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis: [RecordingInviteBootstrapAPI] = [bootstrapAPI, authenticatedAPI]
+        var factoryTokens: [String] = []
 
-        #expect(trustIndex < pairIndex)
+        let credentials = ServerCredentials(
+            host: host,
+            port: 443,
+            token: "invite-token",
+            name: "Pairing Server",
+            scheme: .https,
+            pairingToken: "one-time-token",
+            serverFingerprint: "sha256:abcdef1234567890"
+        )
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: credentials,
+            existingCredentials: nil,
+            confirmTrust: { reason in
+                await log.append("trust:\(reason)")
+                return true
+            },
+            apiFactory: { _, token, _ in
+                factoryTokens.append(token)
+                return apis.removeFirst()
+            }
+        )
+
+        let calls = await log.snapshot()
+        #expect(calls == [
+            "trust:Trust pairing.example.test (sha256:abcdef1234567890)",
+            "pair:one-time-token",
+            "health",
+            "me",
+            "listSessions:3"
+        ])
+        #expect(factoryTokens == ["invite-token", "device-token"])
+        #expect(result.effectiveCredentials.token == "device-token")
+    }
+
+    @Test func cancelledTrustDoesNotExchangePairingToken() async throws {
+        let log = InviteBootstrapCallLog()
+        var factoryCalled = false
+        let credentials = ServerCredentials(
+            host: host,
+            port: 443,
+            token: "invite-token",
+            name: "Pairing Server",
+            scheme: .https,
+            pairingToken: "one-time-token",
+            serverFingerprint: "sha256:abcdef1234567890"
+        )
+
+        await #expect(throws: InviteBootstrapError.message("Trust confirmation cancelled")) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials,
+                existingCredentials: nil,
+                confirmTrust: { reason in
+                    await log.append("trust:\(reason)")
+                    return false
+                },
+                apiFactory: { _, _, _ in
+                    factoryCalled = true
+                    return RecordingInviteBootstrapAPI(log: log)
+                }
+            )
+        }
+
+        #expect(await log.snapshot() == ["trust:Trust pairing.example.test (sha256:abcdef1234567890)"])
+        #expect(factoryCalled == false)
     }
 
     @Test func pairingFailureMessageForExpiredInvite() {
@@ -54,5 +115,47 @@ struct InviteBootstrapServiceTests {
         )
 
         #expect(message == "Secure connection to pairing.example.test failed. Verify the invite host and certificate, then try again.")
+    }
+}
+
+private actor InviteBootstrapCallLog {
+    private var calls: [String] = []
+
+    func append(_ call: String) {
+        calls.append(call)
+    }
+
+    func snapshot() -> [String] {
+        calls
+    }
+}
+
+private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
+    private let log: InviteBootstrapCallLog
+    private let pairDeviceToken: String
+
+    init(log: InviteBootstrapCallLog, pairDeviceToken: String = "device-token") {
+        self.log = log
+        self.pairDeviceToken = pairDeviceToken
+    }
+
+    func pairDevice(pairingToken: String, deviceName: String?) async throws -> PairDeviceResponse {
+        await log.append("pair:\(pairingToken)")
+        return PairDeviceResponse(deviceToken: pairDeviceToken)
+    }
+
+    func health() async throws -> Bool {
+        await log.append("health")
+        return true
+    }
+
+    func me() async throws -> User {
+        await log.append("me")
+        return User(user: "test-user", name: "Test User")
+    }
+
+    func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {
+        await log.append("listSessions:\(recentDays)")
+        return []
     }
 }

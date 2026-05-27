@@ -270,12 +270,24 @@ enum InviteBootstrapError: LocalizedError, Equatable {
     }
 }
 
+protocol InviteBootstrapAPI: Sendable {
+    func pairDevice(pairingToken: String, deviceName: String?) async throws -> PairDeviceResponse
+    func health() async throws -> Bool
+    func me() async throws -> User
+    func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session]
+}
+
+extension APIClient: InviteBootstrapAPI {}
+
 @MainActor
 enum InviteBootstrapService {
     static func validateAndBootstrap(
         credentials: ServerCredentials,
         existingCredentials: ServerCredentials?,
-        confirmTrust: @MainActor (String) async -> Bool
+        confirmTrust: @MainActor (String) async -> Bool,
+        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI = { baseURL, token, tlsCertFingerprint in
+            APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
+        }
     ) async throws -> InviteBootstrapResult {
         guard let baseURL = credentials.baseURL else {
             throw InviteBootstrapError.message(
@@ -308,16 +320,19 @@ enum InviteBootstrapService {
             }
         }
 
-        let bootstrapAPI = APIClient(
-            baseURL: baseURL,
-            token: credentials.token,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        let bootstrapAPI = apiFactory(
+            baseURL,
+            credentials.token,
+            credentials.normalizedTLSCertFingerprint
         )
 
         let effectiveToken: String
         if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
             do {
-                let pairResult = try await bootstrapAPI.pairDevice(pairingToken: pairingToken)
+                let pairResult = try await bootstrapAPI.pairDevice(
+                    pairingToken: pairingToken,
+                    deviceName: nil
+                )
                 effectiveToken = pairResult.deviceToken
             } catch {
                 throw InviteBootstrapError.message(pairingFailureMessage(for: error, host: credentials.host))
@@ -326,10 +341,10 @@ enum InviteBootstrapService {
             effectiveToken = credentials.token
         }
 
-        let api = APIClient(
-            baseURL: baseURL,
-            token: effectiveToken,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        let api = apiFactory(
+            baseURL,
+            effectiveToken,
+            credentials.normalizedTLSCertFingerprint
         )
 
         let healthy = try await api.health()
@@ -340,7 +355,7 @@ enum InviteBootstrapService {
         _ = try await api.me()
 
         let effectiveCredentials = credentials.withAuthToken(effectiveToken)
-        let sessions = try await api.listSessionsFromWorkspaces()
+        let sessions = try await api.listSessionsFromWorkspaces(recentDays: 3)
 
         return InviteBootstrapResult(
             effectiveCredentials: effectiveCredentials,
