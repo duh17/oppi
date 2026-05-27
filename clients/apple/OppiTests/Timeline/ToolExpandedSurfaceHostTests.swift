@@ -6,6 +6,14 @@ import WebKit
 @Suite("Tool expanded surface host")
 @MainActor
 struct ToolExpandedSurfaceHostTests {
+    private func snapshotOutputDirectory(_ component: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("oppi-tool-expanded-surface-host-tests", isDirectory: true)
+            .appendingPathComponent(component, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     @Test func expandedSurfaceHostActivatesExpectedSurfaceForEachMode() {
         let markdownView = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Header\n\nBody"),
@@ -354,8 +362,7 @@ struct ToolExpandedSurfaceHostTests {
     }
 
     @Test func readMediaVerticalAndHorizontalSnapshotsUseExpectedAspectFits() async throws {
-        let outputDirectory = URL(fileURLWithPath: "/Users/chenda/workspace/oppi/.pi/reports/read-media-image-fit", isDirectory: true)
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let outputDirectory = try snapshotOutputDirectory("read-media-image-fit")
 
         let vertical = try await renderReadMediaSnapshot(
             image: makeReadToolTestImage(size: CGSize(width: 80, height: 220)),
@@ -492,8 +499,7 @@ struct ToolExpandedSurfaceHostTests {
     }
 
     @Test func brentSVGPreviewSnapshotFillsWidthAndShowsLowerAxis() async throws {
-        let outputDirectory = URL(fileURLWithPath: "/Users/chenda/workspace/oppi/.pi/reports/svg-regression", isDirectory: true)
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let outputDirectory = try snapshotOutputDirectory("svg-regression")
         let outputURL = outputDirectory.appendingPathComponent("brent-svg-preview.png")
 
         let screenshot = try await renderBrentSVGPreviewSnapshot(outputURL: outputURL)
@@ -516,8 +522,7 @@ struct ToolExpandedSurfaceHostTests {
     }
 
     @Test func brentSVGReadMediaRowSnapshotFillsWidthAndShowsLowerAxis() async throws {
-        let outputDirectory = URL(fileURLWithPath: "/Users/chenda/workspace/oppi/.pi/reports/svg-regression", isDirectory: true)
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let outputDirectory = try snapshotOutputDirectory("svg-regression")
         let outputURL = outputDirectory.appendingPathComponent("brent-svg-read-media-row-preview.png")
 
         let screenshot = try await renderBrentSVGReadMediaPreviewSnapshot(outputURL: outputURL)

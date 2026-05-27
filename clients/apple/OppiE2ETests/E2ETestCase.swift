@@ -17,18 +17,33 @@ class E2ETestCase: XCTestCase {
         Self._app!
     }
 
+    /// Override in focused labs that need the paired workspace list itself,
+    /// not the default workspace-detail starting point used by interaction E2Es.
+    var e2eLaunchesWorkspaceHomeOnly: Bool {
+        false
+    }
+
+    /// Override in labs that need server-side fixtures before the app refreshes.
+    func seedE2EFixtures() throws {}
+
     // MARK: - Lifecycle
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
+        try seedE2EFixtures()
 
         if Self._app == nil {
             try launchAndPair()
         }
+        dismissExtensionSheetIfNeeded(timeout: 2)
 
-        // Navigate back to workspace detail if a previous test left the app elsewhere
-        try ensureAtWorkspaceDetail()
+        if e2eLaunchesWorkspaceHomeOnly {
+            try ensureAtWorkspaceHome()
+        } else {
+            // Navigate back to workspace detail if a previous test left the app elsewhere.
+            try ensureAtWorkspaceDetail()
+        }
     }
 
     // MARK: - Launch & Pairing (once per class)
@@ -43,8 +58,10 @@ class E2ETestCase: XCTestCase {
         if let deviceToken = try? readDeviceToken() {
             application.launchEnvironment["OPPI_E2E_DEVICE_TOKEN"] = deviceToken
         }
-        application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
-        application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
+        if !e2eLaunchesWorkspaceHomeOnly {
+            application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
+            application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
+        }
         application.launch()
         Self._app = application
 
@@ -66,6 +83,13 @@ class E2ETestCase: XCTestCase {
         while !paired && Date() < pairedDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             paired = workspaceList.exists || newSessionButton.exists || chatInput.exists
+        }
+        if e2eLaunchesWorkspaceHomeOnly {
+            XCTAssertTrue(
+                workspaceList.waitForExistence(timeout: 15),
+                "Workspace list did not appear after pairing"
+            )
+            return
         }
         if !paired || newSessionButton.waitForExistence(timeout: 2) || chatInput.exists {
             return
@@ -117,9 +141,33 @@ class E2ETestCase: XCTestCase {
 
     // MARK: - State Recovery
 
+    /// Ensures the app is at the workspace home screen before each test.
+    /// Handles recovery from chat sessions, workspace detail, or modal sheets.
+    private func ensureAtWorkspaceHome() throws {
+        let workspaceList = app.collectionViews["workspace.list"]
+        if workspaceList.waitForExistence(timeout: 3) {
+            return
+        }
+
+        dismissExtensionSheetIfNeeded(timeout: 1)
+
+        for _ in 0..<5 {
+            if workspaceList.waitForExistence(timeout: 0.5) {
+                return
+            }
+            let backButton = app.navigationBars.buttons.firstMatch
+            guard backButton.exists else { break }
+            tap(backButton, named: "navigation back button", timeout: 1)
+        }
+
+        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not reachable")
+    }
+
     /// Ensures the app is at the workspace detail screen before each test.
     /// Handles recovery from chat sessions, workspace list, or unknown states.
     private func ensureAtWorkspaceDetail() throws {
+        dismissExtensionSheetIfNeeded(timeout: 1)
+
         let newSessionButton = app.buttons["workspace.newSession"]
         if newSessionButton.waitForExistence(timeout: 3) {
             return
@@ -146,6 +194,13 @@ class E2ETestCase: XCTestCase {
         // Unknown state — force relaunch
         Self._app = nil
         try launchAndPair()
+    }
+
+    func dismissExtensionSheetIfNeeded(timeout: TimeInterval = 1) {
+        let doneButton = app.buttons["Done"]
+        if doneButton.waitForExistence(timeout: timeout) {
+            tap(doneButton, named: "dismiss extension sheet", timeout: 1)
+        }
     }
 
     func tap(_ element: XCUIElement, named name: String, timeout: TimeInterval = 10) {
@@ -236,6 +291,8 @@ class E2ETestCase: XCTestCase {
 
     /// Navigates back from a chat session to the workspace detail screen.
     func navigateBackToWorkspace() {
+        dismissExtensionSheetIfNeeded(timeout: 1)
+
         let backButton = app.navigationBars.buttons.firstMatch
         if backButton.exists && backButton.isHittable {
             tap(backButton, named: "navigation back button")
