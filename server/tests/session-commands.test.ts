@@ -19,7 +19,13 @@ function makeSession(id = "s1"): Session {
   };
 }
 
-function makeCoordinator(agentSession: AgentSession): {
+function makeCoordinator(
+  agentSession: AgentSession,
+  options: {
+    sdkBackend?: Partial<SdkBackend>;
+    reloadRuntimeConfig?: () => void;
+  } = {},
+): {
   coordinator: SessionCommandCoordinator;
   broadcast: ReturnType<typeof vi.fn>;
 } {
@@ -27,6 +33,7 @@ function makeCoordinator(agentSession: AgentSession): {
     session: makeSession(),
     sdkBackend: {
       session: agentSession,
+      ...options.sdkBackend,
     } as unknown as SdkBackend,
   };
 
@@ -39,12 +46,35 @@ function makeCoordinator(agentSession: AgentSession): {
     applyPiStateSnapshot: vi.fn(() => false),
     persistWorkspaceLastUsedModel: vi.fn(),
     getContextWindowResolver: vi.fn(() => null),
+    reloadRuntimeConfig: options.reloadRuntimeConfig,
   });
 
   return { coordinator, broadcast };
 }
 
 describe("SessionCommandCoordinator", () => {
+  it("allows reload and refreshes runtime config before SDK resources", async () => {
+    const calls: string[] = [];
+    const reloadResources = vi.fn(async () => {
+      calls.push("resources");
+      return { success: true as const };
+    });
+    const reloadRuntimeConfig = vi.fn(() => calls.push("config"));
+    const { coordinator } = makeCoordinator({} as AgentSession, {
+      sdkBackend: { reloadResources },
+      reloadRuntimeConfig,
+    });
+
+    expect(coordinator.isAllowedCommand("reload")).toBe(true);
+
+    const result = await coordinator.sendCommandAsync("s1", { type: "reload" });
+
+    expect(result).toEqual({ success: true });
+    expect(reloadRuntimeConfig).toHaveBeenCalledOnce();
+    expect(reloadResources).toHaveBeenCalledOnce();
+    expect(calls).toEqual(["config", "resources"]);
+  });
+
   it("supports get_commands passthrough", async () => {
     const agentSession = {
       extensionRunner: {
