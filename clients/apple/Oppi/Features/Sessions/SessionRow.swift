@@ -249,6 +249,7 @@ struct SessionRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 4)
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
