@@ -502,12 +502,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
-  function summarizeWorkspaceListSessions(
-    sessions: Session[],
-  ): ReturnType<typeof buildSessionSummary>[] {
-    return sessions.map((session) => buildSessionSummary(ctx.ensureSessionContextWindow(session)));
-  }
-
   function isActiveListSession(session: Session): boolean {
     return session.status !== "stopped";
   }
@@ -677,11 +671,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspace.id, recentDays, serverNow)
           : ctx.storage.listAllWorkspaceSessionSnapshots(workspace.id),
       );
-    const sessions = summarizeWorkspaceListSessions(
+    const attention = collectPendingAttentionCounts(serverNow);
+    const sessions = buildManagedSessionListRows(
       mergeActiveSessionsAcrossWorkspaces(
         projectedSessions,
         recentDays > 0 ? { cutoffMs: serverNow - recentDays * 86_400_000 } : {},
       ),
+      attention,
     );
 
     helpers.compressedJson(req, res, { sessions });

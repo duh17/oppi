@@ -445,6 +445,8 @@ struct WorkspaceHomeView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspaceAccessibilityName)" : "Expand sessions for \(workspaceAccessibilityName)")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Shows or hides the workspace session preview")
@@ -583,8 +585,8 @@ struct WorkspaceHomeView: View {
             let attention = SessionRowPresentationBuilder.attentionCounts(
                 sessionId: session.id,
                 descendants: descendants,
-                pendingPermissionCountForSession: { connection.permissionStore.pending(for: $0).count },
-                pendingAskCountForSession: { connection.askRequestStore.hasPending(for: $0) ? 1 : 0 }
+                pendingPermissionCountForSession: { pendingPermissionCount(for: $0, connection: connection) },
+                pendingAskCountForSession: { pendingAskCount(for: $0, connection: connection) }
             )
             attentionBySessionId[session.id] = attention
 
@@ -658,6 +660,20 @@ struct WorkspaceHomeView: View {
         }
 
         return previews
+    }
+
+    private func pendingPermissionCount(for sessionId: String, connection: ServerConnection) -> Int {
+        max(
+            connection.sessionStore.listPendingPermissionCount(for: sessionId),
+            connection.permissionStore.pending(for: sessionId).count
+        )
+    }
+
+    private func pendingAskCount(for sessionId: String, connection: ServerConnection) -> Int {
+        max(
+            connection.sessionStore.listPendingAskCount(for: sessionId),
+            connection.askRequestStore.hasPending(for: sessionId) ? 1 : 0
+        )
     }
 
     private func previewRow(
@@ -960,6 +976,8 @@ private struct WorkspaceHomeOpenButton: View {
         Text("Open")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.themeBlue)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(.themeBlue.opacity(0.10), in: Capsule())
@@ -1010,34 +1028,18 @@ private struct WorkspaceHomeRow: View {
                         .font(.headline)
                         .foregroundStyle(.themeFg)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                         .layoutPriority(1)
-
-                    if hasAttention {
-                        Text("Needs attention")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeOrange)
-                    }
 
                     Spacer(minLength: 8)
 
-                    if isUnreachable {
-                        Text("Offline")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    } else if activeCount > 0 {
-                        Text("\(activeCount) active")
-                            .font(.caption)
-                            .foregroundStyle(.themeGreen)
-                    } else if stoppedCount == 0 {
-                        Text("No sessions")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-
-                    if stoppedCount > 0 {
-                        Text("\(stoppedCount) stopped")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
+                    let statusPresentation = WorkspaceHomeStatusPresentation(
+                        activeCount: activeCount,
+                        stoppedCount: stoppedCount,
+                        hasAttention: hasAttention
+                    )
+                    if statusPresentation.isVisible {
+                        WorkspaceHomeStatusIndicator(presentation: statusPresentation)
                     }
                 }
 
@@ -1048,8 +1050,128 @@ private struct WorkspaceHomeRow: View {
                         .lineLimit(1)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 7)
+    }
+}
+
+private struct WorkspaceHomeStatusPresentation: Equatable {
+    enum Kind: Equatable {
+        case attention
+        case active
+        case stopped
+    }
+
+    let kind: Kind?
+    let activeCount: Int
+    let stoppedCount: Int
+
+    init(activeCount: Int, stoppedCount: Int, hasAttention: Bool) {
+        self.activeCount = activeCount
+        self.stoppedCount = stoppedCount
+
+        if hasAttention {
+            kind = .attention
+        } else if activeCount > 0 {
+            kind = .active
+        } else if stoppedCount > 0 {
+            kind = .stopped
+        } else {
+            kind = nil
+        }
+    }
+
+    var isVisible: Bool {
+        kind != nil
+    }
+
+    var tint: Color {
+        switch kind {
+        case .attention:
+            return .themeOrange
+        case .active:
+            return .themeGreen
+        case .stopped, nil:
+            return .themeComment
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch kind {
+        case .attention:
+            return "Needs attention"
+        case .active:
+            if stoppedCount > 0 {
+                return "\(activeCount) active \(sessionWord(activeCount)), \(stoppedCount) stopped \(sessionWord(stoppedCount))"
+            }
+            return "\(activeCount) active \(sessionWord(activeCount))"
+        case .stopped:
+            return "\(stoppedCount) stopped \(sessionWord(stoppedCount))"
+        case nil:
+            return ""
+        }
+    }
+
+    private func sessionWord(_ count: Int) -> String {
+        count == 1 ? "session" : "sessions"
+    }
+}
+
+private struct WorkspaceHomeStatusIndicator: View {
+    let presentation: WorkspaceHomeStatusPresentation
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            symbolCluster(showCounts: true)
+            symbolCluster(showCounts: false)
+        }
+        .font(.caption.weight(.medium))
+        .imageScale(.medium)
+        .foregroundStyle(presentation.tint)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(presentation.accessibilityLabel)
+    }
+
+    private func symbolCluster(showCounts: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            switch presentation.kind {
+            case .attention:
+                Image(systemName: "exclamationmark.triangle.fill")
+
+            case .active:
+                Image(systemName: "play.circle.fill")
+                if showCounts {
+                    countText(presentation.activeCount)
+                    if presentation.stoppedCount > 0 {
+                        Image(systemName: "stop.circle")
+                        countText(presentation.stoppedCount)
+                    }
+                }
+
+            case .stopped:
+                Image(systemName: "stop.circle")
+                if showCounts {
+                    countText(presentation.stoppedCount)
+                }
+
+            case nil:
+                EmptyView()
+            }
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func countText(_ count: Int) -> some View {
+        Text(compactCount(count))
+            .lineLimit(1)
+            .monospacedDigit()
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func compactCount(_ count: Int) -> String {
+        count > 99 ? "99+" : "\(count)"
     }
 }

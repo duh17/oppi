@@ -109,6 +109,20 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
     var removedLines: Int
 }
 
+struct SessionSummaryAttentionCounts: Sendable, Equatable {
+    var pendingPermissionCount: Int
+    var pendingAskCount: Int
+
+    static let none = SessionSummaryAttentionCounts(
+        pendingPermissionCount: 0,
+        pendingAskCount: 0
+    )
+
+    var hasAttention: Bool {
+        pendingPermissionCount > 0 || pendingAskCount > 0
+    }
+}
+
 /// Cold-lane projection for workspace lists and cross-session status surfaces.
 ///
 /// Unlike full `Session` state, summaries are intended to be sparse and
@@ -135,6 +149,15 @@ struct SessionSummary: Sendable, Equatable {
     var thinkingLevel: String?
     var ephemeral: Bool?
     var parentSessionId: String?
+    var pendingPermissionCount: Int
+    var pendingAskCount: Int
+
+    var attentionCounts: SessionSummaryAttentionCounts {
+        SessionSummaryAttentionCounts(
+            pendingPermissionCount: pendingPermissionCount,
+            pendingAskCount: pendingAskCount
+        )
+    }
 
     var session: Session {
         Session(
@@ -186,6 +209,8 @@ extension SessionSummary {
         self.thinkingLevel = session.thinkingLevel
         self.ephemeral = session.ephemeral
         self.parentSessionId = session.parentSessionId
+        self.pendingPermissionCount = 0
+        self.pendingAskCount = 0
     }
 }
 
@@ -196,6 +221,7 @@ extension SessionSummary: Decodable {
         case model, messageCount, tokens, cost, changeStats
         case contextTokens, contextWindow, firstMessage, lastMessage
         case thinkingLevel, ephemeral, parentSessionId
+        case pendingPermissionCount, pendingAskCount
     }
 
     init(from decoder: Decoder) throws {
@@ -217,6 +243,8 @@ extension SessionSummary: Decodable {
         thinkingLevel = try c.decodeIfPresent(String.self, forKey: .thinkingLevel)
         ephemeral = try c.decodeIfPresent(Bool.self, forKey: .ephemeral)
         parentSessionId = try c.decodeIfPresent(String.self, forKey: .parentSessionId)
+        pendingPermissionCount = try c.decodeIfPresent(Int.self, forKey: .pendingPermissionCount) ?? 0
+        pendingAskCount = try c.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
 
         let createdMs = try c.decode(Double.self, forKey: .createdAt)
         createdAt = Date(timeIntervalSince1970: createdMs / 1000)

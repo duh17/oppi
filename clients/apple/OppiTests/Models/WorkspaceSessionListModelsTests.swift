@@ -35,7 +35,7 @@ struct WorkspaceSessionListModelsTests {
             {
               "path": "/tmp/local.jsonl",
               "piSessionId": "pi-1",
-              "cwd": "/Users/chenda/workspace/oppi",
+              "cwd": "/Users/example/workspace/oppi",
               "name": "Local Session",
               "messageCount": 3,
               "createdAt": 1700001000000,
@@ -112,7 +112,7 @@ struct WorkspaceSessionListModelsTests {
               "workspaceId": "w1",
               "path": "/tmp/local.jsonl",
               "piSessionId": "pi-1",
-              "cwd": "/Users/chenda/workspace/oppi",
+              "cwd": "/Users/example/workspace/oppi",
               "name": "Local Session",
               "messageCount": 3,
               "createdAt": 1700001000000,
@@ -132,6 +132,8 @@ struct WorkspaceSessionListModelsTests {
 
         #expect(response.workspaceId == "w1")
         #expect(response.sessionSummaries.map(\.id) == ["s-active", "s-old"])
+        #expect(response.sessionSummaries.first?.pendingPermissionCount == 2)
+        #expect(response.sessionSummaries.first?.pendingAskCount == 0)
         #expect(response.importableSessions.map(\.path) == ["/tmp/local.jsonl"])
         if case .session(let row) = response.active[0] {
             #expect(row.pendingPermissionCount == 2)

@@ -24,6 +24,13 @@ final class SessionStore {
     /// evolve without accidentally waking every workspace row.
     private var serverListProjectionSessions: [String: [Session]] = [:]
 
+    /// Attention counts supplied by cold session-list HTTP snapshots.
+    ///
+    /// This is intentionally separate from `PermissionStore` and `AskRequestStore`:
+    /// workspace-home previews only need badges, while focused chat/detail views
+    /// need the full request payloads from the live or attention snapshot paths.
+    private var serverListAttentionCounts: [String: [String: SessionSummaryAttentionCounts]] = [:]
+
     /// Which server's sessions are currently active. Set by ConnectionCoordinator
     /// when switching servers.
     private(set) var activeServerId: String?
@@ -74,6 +81,18 @@ final class SessionStore {
 
     func listProjectionSessions(workspaceId: String) -> [Session] {
         listProjectionSessions.filter { $0.workspaceId == workspaceId }
+    }
+
+    func listAttentionCounts(for sessionId: String) -> SessionSummaryAttentionCounts {
+        serverListAttentionCounts[activeServerKey]?[sessionId] ?? .none
+    }
+
+    func listPendingPermissionCount(for sessionId: String) -> Int {
+        listAttentionCounts(for: sessionId).pendingPermissionCount
+    }
+
+    func listPendingAskCount(for sessionId: String) -> Int {
+        listAttentionCounts(for: sessionId).pendingAskCount
     }
 
     /// Current active session (convenience).
@@ -135,6 +154,7 @@ final class SessionStore {
     func removeServer(_ serverId: String) {
         serverSessions.removeValue(forKey: serverId)
         serverListProjectionSessions.removeValue(forKey: serverId)
+        serverListAttentionCounts.removeValue(forKey: serverId)
         serverTurnEndedDates.removeValue(forKey: serverId)
         serverDeletedSessionTombstones.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
@@ -268,13 +288,17 @@ final class SessionStore {
     /// from summaries, not timeline-frequency live events.
     @discardableResult
     func applySummary(_ summary: SessionSummary) -> Bool {
-        upsertMerged(summary.session)
+        let didMutateSession = upsertMerged(summary.session)
+        let didMutateAttention = applyListAttentionCounts(from: [summary])
+        return didMutateSession || didMutateAttention
     }
 
     /// Insert or update several session summaries as a single store mutation.
     @discardableResult
     func upsertManySummaries(_ summaries: [SessionSummary]) -> Bool {
-        upsertMany(summaries.map(\.session))
+        let didMutateSessions = upsertMany(summaries.map(\.session))
+        let didMutateAttention = applyListAttentionCounts(from: summaries)
+        return didMutateSessions || didMutateAttention
     }
 
     /// Apply the authoritative recent workspace snapshot used by workspace detail.
@@ -350,7 +374,11 @@ final class SessionStore {
             if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
             return lhs.id < rhs.id
         }
-        guard next != current else { return false }
+        let didMutateAttention = applyListAttentionCounts(
+            from: incomingSummaries,
+            replacingWorkspaceId: workspaceId
+        )
+        guard next != current else { return didMutateAttention }
 
         let nextIds = Set(next.map(\.id))
         let removedIds = Set(current.map(\.id)).subtracting(nextIds)
@@ -363,6 +391,40 @@ final class SessionStore {
         }
 
         setActiveSessionsPreservingListProjection(next)
+        return true
+    }
+
+    @discardableResult
+    private func applyListAttentionCounts(
+        from summaries: [SessionSummary],
+        replacingWorkspaceId workspaceId: String? = nil
+    ) -> Bool {
+        let key = activeServerKey
+        var counts = serverListAttentionCounts[key] ?? [:]
+        let original = counts
+
+        if let workspaceId {
+            for session in listProjectionSessions where session.workspaceId == workspaceId {
+                counts.removeValue(forKey: session.id)
+            }
+        }
+
+        for summary in summaries {
+            guard !isDeletedSessionTombstoned(summary.id) else { continue }
+            let nextCounts = summary.attentionCounts
+            if nextCounts.hasAttention {
+                counts[summary.id] = nextCounts
+            } else {
+                counts.removeValue(forKey: summary.id)
+            }
+        }
+
+        guard counts != original else { return false }
+        if counts.isEmpty {
+            serverListAttentionCounts.removeValue(forKey: key)
+        } else {
+            serverListAttentionCounts[key] = counts
+        }
         return true
     }
 
@@ -425,6 +487,7 @@ final class SessionStore {
         let key = activeServerKey
         serverSessions[key] = list
         serverListProjectionSessions[key] = list
+        pruneListAttentionCounts(key: key, keepingSessionIds: Set(list.map(\.id)))
     }
 
     private func setActiveSessionsPreservingListProjection(_ list: [Session]) {
@@ -432,6 +495,18 @@ final class SessionStore {
         serverSessions[key] = list
         if listProjectionChanged(key: key, newSessions: list) {
             serverListProjectionSessions[key] = list
+        }
+        pruneListAttentionCounts(key: key, keepingSessionIds: Set(list.map(\.id)))
+    }
+
+    private func pruneListAttentionCounts(key: String, keepingSessionIds ids: Set<String>) {
+        guard let current = serverListAttentionCounts[key] else { return }
+        let next = current.filter { ids.contains($0.key) }
+        guard next != current else { return }
+        if next.isEmpty {
+            serverListAttentionCounts.removeValue(forKey: key)
+        } else {
+            serverListAttentionCounts[key] = next
         }
     }
 
@@ -544,6 +619,7 @@ final class SessionStore {
         list.removeAll { $0.id == id }
         sessions = list
         let key = activeServerKey
+        serverListAttentionCounts[key]?.removeValue(forKey: id)
         serverTurnEndedDates[key]?.removeValue(forKey: id)
         if activeSessionId == id {
             activeSessionId = nil

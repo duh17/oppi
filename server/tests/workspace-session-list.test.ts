@@ -53,7 +53,7 @@ function makeLocalSession(overrides: Partial<LocalSession> = {}): LocalSession {
   return {
     path: "/tmp/local.jsonl",
     piSessionId: "pi-1",
-    cwd: "/Users/chenda/workspace/oppi",
+    cwd: "/Users/example/workspace/oppi",
     messageCount: 0,
     createdAt: Date.now(),
     lastModified: Date.now(),
@@ -395,7 +395,7 @@ describe("workspace session list routes", () => {
             workspaceId: "ws-1",
             status: "ready",
             lastActivity: now,
-            piSessionFile: "/Users/chenda/.pi/agent/sessions/ws-1-row.jsonl",
+            piSessionFile: "/Users/example/.pi/agent/sessions/ws-1-row.jsonl",
             warnings: ["local warning"],
           }),
         ];
@@ -406,11 +406,24 @@ describe("workspace session list routes", () => {
           workspaceId: "ws-2",
           status: "busy",
           lastActivity: now + 1_000,
-          piSessionFile: "/Users/chenda/.pi/agent/sessions/ws-2-row.jsonl",
+          piSessionFile: "/Users/example/.pi/agent/sessions/ws-2-row.jsonl",
           warnings: ["other warning"],
         }),
       ];
     });
+    mock.gate.getPendingForUser.mockReturnValue([
+      { sessionId: "ws-1-row", workspaceId: "ws-1" },
+    ]);
+    mock.sessions.getActiveSessionIds.mockReturnValue(["ws-2-row"]);
+    mock.sessions.getPendingAskMessage.mockImplementation((sessionId: string) =>
+      sessionId === "ws-2-row"
+        ? {
+            type: "extension_ui_request",
+            method: "ask",
+            questions: [{ id: "q1", question: "Pick one", options: [] }],
+          }
+        : undefined,
+    );
 
     const handled = await dispatch(
       mock,
@@ -427,6 +440,16 @@ describe("workspace session list routes", () => {
 
     expect(mock.storage.listRecentWorkspaceSessionSnapshots).toHaveBeenCalledTimes(2);
     expect(response.sessions.map((session) => session.id)).toEqual(["ws-2-row", "ws-1-row"]);
+    expect(response.sessions[0]).toMatchObject({
+      id: "ws-2-row",
+      pendingPermissionCount: 0,
+      pendingAskCount: 1,
+    });
+    expect(response.sessions[1]).toMatchObject({
+      id: "ws-1-row",
+      pendingPermissionCount: 1,
+      pendingAskCount: 0,
+    });
     expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
     expect(response.sessions[0]).not.toHaveProperty("warnings");
     expect(response.sessions[1]).not.toHaveProperty("piSessionFile");
