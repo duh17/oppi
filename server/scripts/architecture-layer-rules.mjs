@@ -232,6 +232,22 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
       continue;
     }
 
+    if (importer.endsWith(".test.ts")) {
+      violations.push(
+        makeServerViolation({
+          rule: "server-test-placement",
+          importer,
+          target: "server/tests/**",
+          line: 1,
+          column: 1,
+          reason: "Server tests should not live under server/src.",
+          remediation:
+            "Move the test into server/tests/** and import production code from ../src/**.",
+        }),
+      );
+      continue;
+    }
+
     const importEntries = readImportEntriesFromFile(absolutePath);
 
     if (importer === SERVER_TYPES_CONTRACT_FILE) {

@@ -15,6 +15,27 @@ function write(path: string, content: string): void {
 }
 
 describe("architecture layer rule helpers", () => {
+  it("flags server tests placed under src", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-src-tests-"));
+
+    try {
+      write(join(repoRoot, "server/src/leaked.test.ts"), "import { describe } from 'vitest';\n");
+
+      const violations = findServerLayerViolations(repoRoot);
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "server-test-placement",
+            file: "server/src/leaked.test.ts",
+            target: "server/tests/**",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags types.ts imports as protocol leaf violations", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-server-"));
 
