@@ -242,7 +242,7 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         guard let scheme = normalizedURL.scheme?.lowercased() else {
             return .systemDefault
         }
-        if scheme == "pi" || scheme == "oppi" {
+        if scheme == "oppi" {
             return .deepLink(normalizedURL)
         }
         if scheme == "http" || scheme == "https" {
@@ -281,8 +281,10 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return UIAction { _ in
                 NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
             }
-        case .webLink:
-            return nil
+        case .webLink(let normalizedURL):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+            }
         case .systemDefault:
             return defaultAction
         }
@@ -309,7 +311,7 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         }
 
         let openAction = UIAction(
-            title: "Open in Browser",
+            title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
             image: UIImage(systemName: "safari")
         ) { _ in
             NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)

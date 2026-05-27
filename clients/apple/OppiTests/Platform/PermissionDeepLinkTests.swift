@@ -11,7 +11,7 @@ struct PermissionDeepLinkTests {
     }
 
     @Test func parsesPermissionFromHostQuery() throws {
-        let url = try #require(URL(string: "pi://permission?id=perm%2F123"))
+        let url = try #require(URL(string: "oppi://permission?id=perm%2F123"))
 
         #expect(PermissionDeepLink.permissionID(from: url) == "perm/123")
     }

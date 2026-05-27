@@ -14,7 +14,7 @@ struct WorkspaceDeepLinkTests {
     }
 
     @Test func parsesWorkspacePathOnlyURL() throws {
-        let url = try #require(URL(string: "pi:///workspace?path=/srv/repo&name=Server%20Repo"))
+        let url = try #require(URL(string: "oppi:///workspace?path=/srv/repo&name=Server%20Repo"))
         let payload = try #require(WorkspaceDeepLink.payload(from: url))
 
         #expect(payload.path == "/srv/repo")

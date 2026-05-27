@@ -21,10 +21,11 @@ enum ServerScheme: String, Codable, Sendable {
     }
 }
 
-/// Connection credentials from QR code scan.
+/// Connection credentials from QR code scan or deep link.
 ///
 /// Invite payload is decoded by `decodeInvitePayload(_:)`.
-/// Supported invite format: unsigned v3 payloads.
+/// Current invites use signed v3 envelopes. Unsigned v3 payloads are
+/// accepted only when they do not carry pinned identity metadata.
 struct ServerCredentials: Codable, Sendable, Equatable {
     let host: String
     let port: Int
@@ -74,8 +75,9 @@ struct ServerCredentials: Codable, Sendable, Equatable {
 
     /// Decode invite payload JSON.
     ///
-    /// Supported format:
-    /// - unsigned v3 payload (current)
+    /// Supported formats:
+    /// - signed v3 envelope with pinned server identity metadata (current)
+    /// - unsigned v3 payload without pinned identity metadata
     static func decodeInvitePayload(_ payload: String) -> Self? {
         guard let data = payload.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
@@ -119,13 +121,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     /// Decode a deep-link invite.
     ///
     /// Supported routes:
-    /// - `pi://connect?...`
-    /// - `pi://pair?...`
     /// - `oppi://connect?...`
     /// - `oppi://pair?...`
     static func decodeInviteURL(_ url: URL) -> Self? {
-        guard let scheme = url.scheme?.lowercased(),
-              scheme == "pi" || scheme == "oppi" else {
+        guard url.scheme?.lowercased() == "oppi" else {
             return nil
         }
 

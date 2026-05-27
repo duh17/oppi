@@ -80,8 +80,7 @@ enum AppPreferences {
 
         static var timeoutPreset: TimeoutPreset {
             if let raw = UserDefaults.standard.object(forKey: presetKey) as? Int,
-               let preset = TimeoutPreset(rawValue: raw)
-            {
+               let preset = TimeoutPreset(rawValue: raw) {
                 return preset
             }
             return .twoMinutes
@@ -93,6 +92,56 @@ enum AppPreferences {
 
         static func setTimeoutPreset(_ preset: TimeoutPreset) {
             UserDefaults.standard.set(preset.rawValue, forKey: presetKey)
+        }
+    }
+
+    // MARK: - Browser
+
+    /// User-facing preference for where regular web links open.
+    enum Browser {
+        enum LinkOpeningMode: String, CaseIterable, Identifiable {
+            case inApp
+            case external
+
+            var id: String { rawValue }
+
+            var label: String {
+                switch self {
+                case .inApp: return "In-App Browser"
+                case .external: return "External Browser"
+                }
+            }
+
+            var detail: String {
+                switch self {
+                case .inApp:
+                    return "Open web links in Oppi's built-in Safari sheet. Oppi cannot read browser cookies or page data."
+                case .external:
+                    return "Open web links in your default browser outside Oppi."
+                }
+            }
+
+            var openActionTitle: String {
+                switch self {
+                case .inApp: return "Open In-App Browser"
+                case .external: return "Open in External Browser"
+                }
+            }
+        }
+
+        private static let linkOpeningModeKey = "\(AppIdentifiers.subsystem).browser.linkOpeningMode"
+
+        static var linkOpeningMode: LinkOpeningMode {
+            guard let raw = UserDefaults.standard.string(forKey: linkOpeningModeKey),
+                  let mode = LinkOpeningMode(rawValue: raw)
+            else {
+                return .inApp
+            }
+            return mode
+        }
+
+        static func setLinkOpeningMode(_ mode: LinkOpeningMode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: linkOpeningModeKey)
         }
     }
 
@@ -569,4 +618,3 @@ enum AppPreferences {
         }
     }
 }
-

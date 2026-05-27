@@ -88,7 +88,6 @@ targets:
             CFBundleURLName: dev.chenda.oppi.invite
             CFBundleURLSchemes:
               - oppi
-              - pi
         UILaunchScreen: {}
         UIBackgroundModes:
           - remote-notification

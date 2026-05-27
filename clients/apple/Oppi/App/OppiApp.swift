@@ -56,7 +56,7 @@ private struct ThemeColorSchemeSyncView: View {
 
 enum PermissionDeepLink {
     static func permissionID(from url: URL) -> String? {
-        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+        guard url.scheme?.lowercased() == "oppi" else {
             return nil
         }
 
@@ -103,7 +103,7 @@ enum WorkspaceDeepLink {
     }
 
     static func payload(from url: URL) -> Payload? {
-        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+        guard url.scheme?.lowercased() == "oppi" else {
             return nil
         }
         guard routeName(from: url) == "workspace" else {
@@ -239,7 +239,12 @@ struct OppiApp: App {
                 guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
                     return
                 }
-                inAppBrowserDestination = InAppBrowserDestination(url: url)
+                switch AppPreferences.Browser.linkOpeningMode {
+                case .inApp:
+                    inAppBrowserDestination = InAppBrowserDestination(url: url)
+                case .external:
+                    UIApplication.shared.open(url)
+                }
             }
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
             .sheet(item: $inAppBrowserDestination) { destination in
@@ -328,7 +333,7 @@ struct OppiApp: App {
     /// Handle `oppi://session/<sessionId>` deep links from Live Activity taps.
     @MainActor
     private func handleIncomingSessionURL(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+        guard url.scheme?.lowercased() == "oppi" else {
             return false
         }
         guard url.host?.lowercased() == "session" else {
@@ -458,7 +463,7 @@ struct OppiApp: App {
     private func handleIncomingInviteURL(_ url: URL) async {
         guard !inviteBootstrapInFlight else { return }
         guard let credentials = ServerCredentials.decodeInviteURL(url) else {
-            if let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" {
+            if url.scheme?.lowercased() == "oppi" {
                 connection.extensionToast = "Unsupported invite link format"
             }
             return

@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var telemetryEnabled = AppPreferences.Telemetry.isEnabled
     @State private var selectedCodeFont = FontPreferences.codeFont
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
+    @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
 
@@ -158,6 +159,23 @@ struct SettingsView: View {
                 Text("Text Selection")
             } footer: {
                 Text("Customize the quick comments shown after selecting text and choosing Comment.")
+            }
+
+            Section {
+                Picker("Open Links", selection: $linkOpeningMode) {
+                    ForEach(AppPreferences.Browser.LinkOpeningMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .onChange(of: linkOpeningMode) { _, newValue in
+                    AppPreferences.Browser.setLinkOpeningMode(newValue)
+                }
+
+                Text(linkOpeningMode.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+            } header: {
+                Text("Browser")
             }
 
             Section {

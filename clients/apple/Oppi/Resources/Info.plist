@@ -28,7 +28,6 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>oppi</string>
-				<string>pi</string>
 			</array>
 		</dict>
 	</array>
