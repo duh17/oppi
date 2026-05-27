@@ -92,7 +92,7 @@ struct OrgToMarkdownConverterTests {
     }
 
     @Test func authorConvertsToEmphasis() {
-        let blocks = parser.parse("#+AUTHOR: Chen")
+        let blocks = parser.parse("#+AUTHOR: Test User")
         let mdBlocks = OrgToMarkdownConverter.convert(blocks)
 
         guard case .paragraph(let inlines) = mdBlocks[0] else {

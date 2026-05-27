@@ -55,16 +55,16 @@ describe("isValidExtensionName", () => {
 describe("extensionNameFromPath", () => {
   it("uses the parent directory name for directory-style index entries", () => {
     expect(
-      extensionNameFromPath("/Users/chenda/.pi/agent/extensions/pi-codex-image-gen/index.ts"),
+      extensionNameFromPath("/Users/example/.pi/agent/extensions/pi-codex-image-gen/index.ts"),
     ).toBe("pi-codex-image-gen");
   });
 
   it("keeps file-based extension names unchanged", () => {
-    expect(extensionNameFromPath("/Users/chenda/.pi/agent/extensions/pi-zit.ts")).toBe("pi-zit");
+    expect(extensionNameFromPath("/Users/example/.pi/agent/extensions/pi-zit.ts")).toBe("pi-zit");
   });
 
   it("does not rewrite a top-level index.ts extension file", () => {
-    expect(extensionNameFromPath("/Users/chenda/.pi/agent/extensions/index.ts")).toBe("index");
+    expect(extensionNameFromPath("/Users/example/.pi/agent/extensions/index.ts")).toBe("index");
   });
 });
 

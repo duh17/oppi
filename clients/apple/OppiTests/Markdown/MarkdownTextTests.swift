@@ -791,7 +791,7 @@ struct FlatSegmentImageResolutionTests {
 
     @Test func fileURLWithSessionContextUsesSessionFileURL() {
         let blocks: [MarkdownBlock] = [
-            .paragraph([.image(alt: "Local", source: "file:///Users/chenda/workspace/oppi/downloads/local.jpeg")])
+            .paragraph([.image(alt: "Local", source: "file:///Users/example/workspace/oppi/downloads/local.jpeg")])
         ]
         let segments = FlatSegment.build(
             from: blocks,
@@ -803,7 +803,7 @@ struct FlatSegmentImageResolutionTests {
             let components = SessionFileURL.parse(url)
             #expect(components?.workspaceID == workspaceID)
             #expect(components?.sessionID == "sess-123")
-            #expect(components?.filePath == "/Users/chenda/workspace/oppi/downloads/local.jpeg")
+            #expect(components?.filePath == "/Users/example/workspace/oppi/downloads/local.jpeg")
         } else {
             Issue.record("Expected file:// markdown image to resolve through session file API")
         }
@@ -1120,13 +1120,13 @@ struct AssistantMarkdownInlineImageRenderingTests {
         markdownView.fetchSessionFile = { workspaceID, sessionID, path in
             #expect(workspaceID == "workspace-1")
             #expect(sessionID == "session-1")
-            #expect(path == "/Users/chenda/workspace/oppi/downloads/red-green.jpeg")
+            #expect(path == "/Users/example/workspace/oppi/downloads/red-green.jpeg")
             return imageData
         }
 
         let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
         markdownView.apply(configuration: .make(
-            content: "Before ![Red green](file:///Users/chenda/workspace/oppi/downloads/red-green.jpeg) after",
+            content: "Before ![Red green](file:///Users/example/workspace/oppi/downloads/red-green.jpeg) after",
             isStreaming: false,
             themeID: .dark,
             plainTextFallbackThreshold: nil,

@@ -343,11 +343,11 @@ struct UserCodableTests {
 
     @Test func decodeUser() throws {
         let json = """
-        {"user": "u1", "name": "Chen"}
+        {"user": "u1", "name": "Test User"}
         """
         let user = try JSONDecoder().decode(User.self, from: json.data(using: .utf8)!)
         #expect(user.user == "u1")
-        #expect(user.name == "Chen")
+        #expect(user.name == "Test User")
     }
 
     @Test func encodeDecodeRoundTrip() throws {
