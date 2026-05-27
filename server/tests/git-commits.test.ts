@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { getCommitFileDiff } from "../src/git-commits.js";
+import { CommitDiffError, getCommitFileDiff } from "../src/git-commits.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -42,5 +42,85 @@ describe("getCommitFileDiff", () => {
     expect(diff.removedLines).toBe(1);
     expect(diff.hunks).toHaveLength(1);
     expect(diff.hunks[0]?.lines.some((line) => line.text === "int value_10000 = 42;")).toBe(true);
+  });
+
+  it("returns full text diff for newly added files", async () => {
+    const dir = await createRepo();
+
+    await writeFile(join(dir, "README.md"), "seed\n");
+    git(dir, ["add", "README.md"]);
+    git(dir, ["commit", "-m", "initial"]);
+
+    const filePath = "notes.txt";
+    await writeFile(join(dir, filePath), "alpha\nbeta\n");
+    git(dir, ["add", filePath]);
+    git(dir, ["commit", "-m", "add notes"]);
+
+    const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
+    const diff = await getCommitFileDiff(dir, sha, filePath, "workspace-1");
+
+    expect(diff.workspaceId).toBe("workspace-1");
+    expect(diff.path).toBe(filePath);
+    expect(diff.baselineText).toBe("");
+    expect(diff.currentText).toBe("alpha\nbeta\n");
+    expect(diff.addedLines).toBe(2);
+    expect(diff.removedLines).toBe(0);
+  });
+
+  it("rejects invalid commit SHAs before shelling out", async () => {
+    const dir = await createRepo();
+
+    await expect(getCommitFileDiff(dir, "bad;sha", "file.txt", "workspace-1")).rejects.toThrow(
+      "Invalid commit SHA",
+    );
+  });
+
+  it("rejects blank paths", async () => {
+    const dir = await createRepo();
+
+    await writeFile(join(dir, "README.md"), "seed\n");
+    git(dir, ["add", "README.md"]);
+    git(dir, ["commit", "-m", "initial"]);
+
+    const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
+
+    await expect(getCommitFileDiff(dir, sha, "   ", "workspace-1")).rejects.toMatchObject({
+      name: "CommitDiffError",
+      status: 400,
+      message: "path parameter required",
+    } satisfies Partial<CommitDiffError>);
+  });
+
+  it("returns not found when a path is absent from the commit", async () => {
+    const dir = await createRepo();
+
+    await writeFile(join(dir, "README.md"), "seed\n");
+    git(dir, ["add", "README.md"]);
+    git(dir, ["commit", "-m", "initial"]);
+
+    const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
+
+    await expect(getCommitFileDiff(dir, sha, "missing.txt", "workspace-1")).rejects.toMatchObject({
+      name: "CommitDiffError",
+      status: 404,
+      message: "File not found in commit",
+    } satisfies Partial<CommitDiffError>);
+  });
+
+  it("rejects binary files in diff view", async () => {
+    const dir = await createRepo();
+    const filePath = "image.bin";
+
+    await writeFile(join(dir, filePath), Buffer.from([0xde, 0xad, 0x00, 0xbe, 0xef]));
+    git(dir, ["add", filePath]);
+    git(dir, ["commit", "-m", "add binary"]);
+
+    const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
+
+    await expect(getCommitFileDiff(dir, sha, filePath, "workspace-1")).rejects.toMatchObject({
+      name: "CommitDiffError",
+      status: 422,
+      message: "Binary files are not supported in diff view.",
+    } satisfies Partial<CommitDiffError>);
   });
 });
