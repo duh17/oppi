@@ -142,8 +142,10 @@ Requirements: macOS 15+, [pi](https://github.com/badlogic/pi-mono) CLI.
 
 ## Docs
 
+- [Changelog](CHANGELOG.md) — release history and versioning policy
 - [Server README](server/README.md) — server setup, Docker, development
 - [Onboarding and pairing](docs/onboarding.md) — intended first-run user flow
+- [Deep links](docs/deeplinks.md) — custom URL schemes for pairing, workspaces, sessions, and permissions
 - [Config schema](server/docs/config-schema.md) — all config options
 - [Dictation / ASR](server/docs/asr.md) — server dictation setup
 - [Voice replies / TTS](server/docs/tts.md) — voice extension setup

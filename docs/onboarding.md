@@ -73,6 +73,7 @@ Host override notes:
 - Invite is single-use.
 - Invite expires after 90 seconds by default.
 - Invite includes server identity and transport details.
+- Deep-link format details live in [Deep links](deeplinks.md).
 
 ## Troubleshooting
 
