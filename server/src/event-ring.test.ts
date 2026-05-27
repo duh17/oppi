@@ -227,5 +227,17 @@ describe("EventRing", () => {
       ring.push(makeEvent(30)); // evicts 10
       expect(ring.oldestSeq).toBe(20);
     });
+
+    it("reports retained sequence window after capacity overflow", () => {
+      const ring = new EventRing(3);
+
+      for (let seq = 1; seq <= 5; seq += 1) {
+        ring.push(makeEvent(seq));
+      }
+
+      expect(ring.oldestSeq).toBe(3);
+      expect(ring.currentSeq).toBe(5);
+      expect(ring.since(0).map((event) => event.seq)).toEqual([3, 4, 5]);
+    });
   });
 });
