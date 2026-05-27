@@ -33,7 +33,7 @@ struct ModelSwitchPolicyTests {
         )
     }
 
-    @Test func decisionRequiresConfirmationForMidSessionSwitch() {
+    @Test func decisionAppliesImmediatelyForMidSessionSwitch() {
         let selected = makeModel(provider: "openai", id: "gpt-4.1")
 
         let decision = ModelSwitchPolicy.decision(
@@ -42,7 +42,7 @@ struct ModelSwitchPolicyTests {
             messageCount: 3
         )
 
-        #expect(decision == .requireConfirmation)
+        #expect(decision == .applyImmediately)
     }
 
     @Test func decisionAppliesImmediatelyForEmptySession() {

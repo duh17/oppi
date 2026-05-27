@@ -50,8 +50,6 @@ struct ChatView: View {
 
     @State private var showOutline = false
     @State private var showModelPicker = false
-    @State private var showModelSwitchWarning = false
-    @State private var pendingModelSwitch: ModelInfo?
     @State private var showComposer = false
     @State private var childSessionToOpen: ChildSessionRoute?
     @State private var showRenameAlert = false
@@ -327,16 +325,6 @@ struct ChatView: View {
             }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
-            .alert("Switch model in active session?", isPresented: $showModelSwitchWarning) {
-                Button("Keep Current", role: .cancel) {
-                    pendingModelSwitch = nil
-                }
-                Button("Switch Anyway") {
-                    applyPendingModelSwitch()
-                }
-            } message: {
-                Text(pendingModelSwitchWarningMessage)
-            }
             .alert("Compact Context", isPresented: $showCompactConfirmation) {
                 Button("Compact", role: .destructive) {
                     actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
@@ -1106,21 +1094,6 @@ struct ChatView: View {
         }
     }
 
-    private var pendingModelSwitchWarningMessage: String {
-        guard let pendingModelSwitch else {
-            return "Switching now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session."
-        }
-        let modelName = shortModelName(ModelSwitchPolicy.fullModelID(for: pendingModelSwitch))
-        return "Switching to \(modelName) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session."
-    }
-
-    @MainActor
-    private func applyPendingModelSwitch() {
-        guard let model = pendingModelSwitch else { return }
-        applyModelSelection(model)
-        pendingModelSwitch = nil
-    }
-
     @MainActor
     private func handleScenePhaseChange(_ phase: ScenePhase) {
         switch phase {
@@ -1430,9 +1403,6 @@ struct ChatView: View {
         ) {
         case .unchanged:
             return
-        case .requireConfirmation:
-            pendingModelSwitch = model
-            showModelSwitchWarning = true
         case .applyImmediately:
             applyModelSelection(model)
         }

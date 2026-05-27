@@ -1242,16 +1242,6 @@
         }
       }
     },
-    "Keep Current": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保持当前"
-          }
-        }
-      }
-    },
     "Loading available extensions…": {
       "localizations": {
         "zh-Hans": {
@@ -2229,36 +2219,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "摘要"
-          }
-        }
-      }
-    },
-    "Switch Anyway": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "仍然切换"
-          }
-        }
-      }
-    },
-    "Switch model in active session?": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在活跃会话中切换模型？"
-          }
-        }
-      }
-    },
-    "Switching to %@ now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切换到 %@ 会使此对话的提示缓存失效，可能增加成本和延迟。建议在开始新会话时切换。"
           }
         }
       }

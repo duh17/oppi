@@ -5,24 +5,21 @@ enum ModelSwitchDecision: Equatable {
     /// Selected model is already active.
     case unchanged
 
-    /// Safe to switch immediately (empty/new session).
+    /// Switch to the selected model immediately.
     case applyImmediately
-
-    /// Mid-session switch should show a warning and require confirmation.
-    case requireConfirmation
 }
 
 struct ModelSwitchPolicy {
     static func decision(
         currentModel: String?,
         selectedModel: ModelInfo,
-        messageCount: Int
+        messageCount _: Int
     ) -> ModelSwitchDecision {
         if isCurrentSelection(currentModel: currentModel, selectedModel: selectedModel) {
             return .unchanged
         }
 
-        return messageCount > 0 ? .requireConfirmation : .applyImmediately
+        return .applyImmediately
     }
 
     static func isCurrentSelection(
