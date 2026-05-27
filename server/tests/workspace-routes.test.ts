@@ -1,0 +1,249 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { getPiSessionsRoot } from "../src/local-sessions.js";
+import { createRouteHelpers } from "../src/routes/http.js";
+import type { RouteContext } from "../src/routes/types.js";
+import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
+import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+
+describe("workspaces module", () => {
+  it("handles GET /workspaces in isolation", async () => {
+    const ctx = {
+      storage: {
+        listWorkspaces: vi.fn(() => [{ id: "ws-1", name: "Default", skills: [] }]),
+        listWorkspaceSessionSummarySnapshots: vi.fn(() => [
+          {
+            workspaceId: "ws-1",
+            activeCount: 1,
+            stoppedCount: 2,
+            hasErrorRoot: false,
+            latestActivity: 1_700_000_000_000,
+          },
+        ]),
+      },
+      gate: { getPendingForUser: vi.fn(() => []) },
+      sessions: { getActiveSessionIds: vi.fn(() => []) },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/workspaces",
+      url: new URL("http://localhost/workspaces"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+
+    const body = JSON.parse(res.body) as {
+      workspaces: unknown[];
+      summaries: Array<{ workspaceId: string; activeCount: number; stoppedCount: number }>;
+    };
+    expect(body.workspaces).toHaveLength(1);
+    expect(body.summaries).toEqual([
+      expect.objectContaining({ workspaceId: "ws-1", activeCount: 1, stoppedCount: 2 }),
+    ]);
+  });
+
+  it("returns 404 for nonexistent workspace", async () => {
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => undefined),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/workspaces/missing",
+      url: new URL("http://localhost/workspaces/missing"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Workspace not found" });
+  });
+
+  it("handles GET /tui-sessions as the global TUI session list", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-route-"));
+    const testDir = join(getPiSessionsRoot(), "--test-route-tui-sessions--");
+    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_route-tui.jsonl");
+
+    try {
+      mkdirSync(testDir, { recursive: true });
+      writeFileSync(
+        filePath,
+        [
+          JSON.stringify({
+            type: "session",
+            id: "route-tui",
+            cwd: "/tmp/project",
+            timestamp: "2026-02-20T00:00:00.000Z",
+          }),
+          JSON.stringify({
+            type: "session_info",
+            name: "Route TUI Session",
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const ctx = {
+        storage: {
+          listSessions: vi.fn(() => []),
+          getDataDir: vi.fn(() => dataDir),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/tui-sessions",
+        url: new URL("http://localhost/tui-sessions"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { sessions: Array<{ piSessionId: string }> };
+      expect(body.sessions.some((session) => session.piSessionId === "route-tui")).toBe(true);
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("validates name on POST /workspaces", async () => {
+    const ctx = {} as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces",
+      url: new URL("http://localhost/workspaces"),
+      req: makeRequest({ skills: ["fetch"] }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "name required" });
+  });
+
+  it("validates skills array on POST /workspaces", async () => {
+    const ctx = {} as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces",
+      url: new URL("http://localhost/workspaces"),
+      req: makeRequest({ name: "Test" }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "skills array required" });
+  });
+
+  it("rejects missing hostMount on POST /workspaces", async () => {
+    const missing = join(tmpdir(), `oppi-route-missing-workspace-${Date.now()}`);
+    rmSync(missing, { recursive: true, force: true });
+    const ctx = {
+      skillRegistry: { get: vi.fn() },
+      storage: { createWorkspace: vi.fn() },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces",
+      url: new URL("http://localhost/workspaces"),
+      req: makeRequest({ name: "Test", skills: [], hostMount: missing }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toContain("Host working directory does not exist");
+    expect(ctx.storage.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("marks review comments sent via the review comments collection", async () => {
+    const comment = { id: "rc-1", workspaceId: "ws-1", status: "sent" };
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", skills: [] })),
+        markReviewCommentsSent: vi.fn(() => [comment]),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/review/comments/sent",
+      url: new URL("http://localhost/workspaces/ws-1/review/comments/sent"),
+      req: makeRequest({ ids: ["rc-1"], sessionId: "s1" }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(ctx.storage.markReviewCommentsSent).toHaveBeenCalledWith("ws-1", {
+      ids: ["rc-1"],
+      sessionId: "s1",
+    });
+    expect(JSON.parse(res.body)).toEqual({ comments: [comment] });
+  });
+
+  it("does not handle the legacy review comments attach route", async () => {
+    const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/review/comments/attach-to-turn",
+      url: new URL("http://localhost/workspaces/ws-1/review/comments/attach-to-turn"),
+      req: makeRequest({ ids: ["rc-1"] }) as never,
+      res: makeResponse() as never,
+    });
+
+    expect(handled).toBe(false);
+  });
+
+  it("returns false for unrelated routes", async () => {
+    const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/not/a/workspace",
+      url: new URL("http://localhost/not/a/workspace"),
+      req: {} as never,
+      res: makeResponse() as never,
+    });
+
+    expect(handled).toBe(false);
+  });
+});

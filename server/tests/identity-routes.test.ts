@@ -1,0 +1,118 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { createRouteHelpers } from "../src/routes/http.js";
+import { createIdentityRoutes } from "../src/routes/identity.js";
+import type { RouteContext } from "../src/routes/types.js";
+import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+
+describe("identity module", () => {
+  it("handles GET /me in isolation", async () => {
+    const ctx = {
+      storage: {
+        getOwnerName: vi.fn(() => "Bob"),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/me",
+      url: new URL("http://localhost/me"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ user: "owner", name: "Bob" });
+  });
+
+  it("validates POST /pair body", async () => {
+    const ctx = {
+      storage: {
+        consumePairingToken: vi.fn(() => undefined),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/pair",
+      url: new URL("http://localhost/pair"),
+      req: makeRequest({}) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "pairingToken required" });
+  });
+
+  it("includes uploadProtocol in GET /server/info", async () => {
+    const ctx = {
+      storage: {
+        getConfig: vi.fn(() => ({
+          configVersion: 2,
+          uploadStore: {
+            maxFileBytes: 123,
+            maxTurnBytes: 456,
+          },
+          images: {
+            autoResize: true,
+          },
+        })),
+        listWorkspaces: vi.fn(() => []),
+        listSessions: vi.fn(() => []),
+      },
+      sessions: {
+        getActiveSessionIds: vi.fn(() => new Set()),
+      },
+      skillRegistry: {
+        list: vi.fn(() => []),
+      },
+      getRuntimeUpdateStatus: vi.fn().mockResolvedValue({ upToDate: true }),
+      getModelCatalog: vi.fn(() => []),
+      serverStartedAt: Date.now(),
+      serverVersion: "test",
+      piVersion: "test",
+    } as unknown as RouteContext;
+
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/server/info",
+      url: new URL("http://localhost/server/info"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      uploadProtocol: { version: number; maxFileBytes: number; maxTurnBytes: number };
+      images: { autoResize: boolean };
+    };
+    expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
+    expect(body.images).toEqual({ autoResize: true });
+  });
+
+  it("returns false for unrelated routes", async () => {
+    const dispatch = createIdentityRoutes({} as RouteContext, createRouteHelpers());
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/identity/nope",
+      url: new URL("http://localhost/identity/nope"),
+      req: {} as never,
+      res: makeResponse() as never,
+    });
+
+    expect(handled).toBe(false);
+  });
+});
