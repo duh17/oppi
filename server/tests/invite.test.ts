@@ -1,0 +1,229 @@
+import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  mockEnsureIdentityMaterial,
+  mockIdentityConfigForDataDir,
+  mockIsTailscaleHostname,
+  mockPrepareTlsForServer,
+  mockReadCertificateFingerprint,
+} = vi.hoisted(() => ({
+  mockEnsureIdentityMaterial: vi.fn(),
+  mockIdentityConfigForDataDir: vi.fn(),
+  mockIsTailscaleHostname: vi.fn(),
+  mockPrepareTlsForServer: vi.fn(),
+  mockReadCertificateFingerprint: vi.fn(),
+}));
+
+vi.mock("../src/security.js", () => ({
+  ensureIdentityMaterial: (...args: unknown[]) => mockEnsureIdentityMaterial(...args),
+  identityConfigForDataDir: (...args: unknown[]) => mockIdentityConfigForDataDir(...args),
+}));
+
+vi.mock("../src/tls.js", () => ({
+  isTailscaleHostname: (...args: unknown[]) => mockIsTailscaleHostname(...args),
+  prepareTlsForServer: (...args: unknown[]) => mockPrepareTlsForServer(...args),
+  readCertificateFingerprint: (...args: unknown[]) => mockReadCertificateFingerprint(...args),
+}));
+
+import { generateInvite } from "../src/invite.js";
+import type { Storage } from "../src/storage.js";
+
+function fingerprintForPublicKeyRaw(publicKeyRaw: string): string {
+  const raw = Buffer.from(publicKeyRaw, "base64url");
+  const digest = createHash("sha256").update(raw).digest("base64url");
+  return `sha256:${digest}`;
+}
+
+function makeIdentity() {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const jwk = publicKey.export({ format: "jwk" }) as { x: string };
+  const publicKeyRaw = jwk.x;
+  return {
+    keyId: "srv-default",
+    algorithm: "ed25519" as const,
+    privateKeyPem,
+    publicKeyPem,
+    publicKeyRaw,
+    fingerprint: fingerprintForPublicKeyRaw(publicKeyRaw),
+  };
+}
+
+function makeStorage(config: {
+  port: number;
+  host: string;
+  tls?: { mode?: "disabled" | "self-signed" | "tailscale" };
+}) {
+  return {
+    getConfig: vi.fn(() => config),
+    ensurePaired: vi.fn(() => "server-token"),
+    getDataDir: vi.fn(() => "/tmp/oppi-test"),
+    issuePairingToken: vi.fn((ttlMs?: number) => `pair-${ttlMs ?? 90_000}`),
+  } as unknown as Pick<Storage, "getConfig" | "ensurePaired" | "getDataDir" | "issuePairingToken">;
+}
+
+function decodeInvite(urlString: string) {
+  const url = new URL(urlString);
+  const invite = url.searchParams.get("invite");
+  expect(invite).toBeTruthy();
+
+  const envelope = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+    v: number;
+    signedPayload: string;
+    publicKey: string;
+    signature: string;
+  };
+  const signedPayloadJson = Buffer.from(envelope.signedPayload, "base64url").toString("utf-8");
+  const signedPayload = JSON.parse(signedPayloadJson) as Record<string, unknown>;
+
+  return { envelope, signedPayloadJson, signedPayload };
+}
+
+describe("generateInvite", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIdentityConfigForDataDir.mockReturnValue({ keyId: "srv-default" });
+    mockPrepareTlsForServer.mockReturnValue({ enabled: false, mode: "disabled" });
+    mockIsTailscaleHostname.mockReturnValue(true);
+    mockReadCertificateFingerprint.mockReturnValue("sha256:cert-fingerprint");
+    mockEnsureIdentityMaterial.mockReturnValue(makeIdentity());
+  });
+
+  it("throws a generic host hint when invite host resolution fails", () => {
+    const storage = makeStorage({ port: 7777, host: "0.0.0.0" });
+
+    expect(() =>
+      generateInvite(storage as Storage, () => null, () => "unused"),
+    ).toThrowError(
+      "Could not determine pairing host. Pass --host <hostname-or-ip>, e.g. --host my-mac.local",
+    );
+  });
+
+  it("throws a tailscale-specific host hint when invite host resolution fails", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "tailscale" },
+    });
+
+    expect(() =>
+      generateInvite(storage as Storage, () => null, () => "unused"),
+    ).toThrowError(
+      "Could not determine pairing host. Pass --host <machine>.<tailnet>.ts.net and ensure Tailscale is connected",
+    );
+  });
+
+  it("rejects non-tailnet hosts in tailscale TLS mode before TLS setup", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "tailscale" },
+    });
+    mockIsTailscaleHostname.mockReturnValue(false);
+
+    expect(() =>
+      generateInvite(storage as Storage, () => "example.local", () => "unused"),
+    ).toThrowError(
+      "Tailscale TLS mode requires a *.ts.net pairing host. Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale",
+    );
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+  });
+
+  it("generates a signed https invite with trimmed requested name and cert pin", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "self-signed" },
+    });
+    const identity = makeIdentity();
+    mockEnsureIdentityMaterial.mockReturnValue(identity);
+    mockPrepareTlsForServer.mockReturnValue({
+      enabled: true,
+      mode: "self-signed",
+      certPath: "/tmp/server.crt",
+    });
+
+    const invite = generateInvite(
+      storage as Storage,
+      () => "server.local",
+      () => "Fallback Label",
+      { requestedName: "  My Work Mac  ", pairingTokenTtlMs: 12_345 },
+    );
+
+    expect(invite).toMatchObject({
+      host: "server.local",
+      port: 7777,
+      scheme: "https",
+      name: "My Work Mac",
+      pairingToken: "pair-12345",
+      fingerprint: identity.fingerprint,
+      tlsCertFingerprint: "sha256:cert-fingerprint",
+    });
+    expect((storage as Storage).ensurePaired).toHaveBeenCalledOnce();
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(12_345);
+    expect(mockReadCertificateFingerprint).toHaveBeenCalledWith("/tmp/server.crt");
+    expect(mockIdentityConfigForDataDir).toHaveBeenCalledWith("/tmp/oppi-test");
+
+    const { envelope, signedPayload, signedPayloadJson } = decodeInvite(invite.inviteURL);
+    expect(envelope.v).toBe(3);
+    expect(envelope.publicKey).toBe(identity.publicKeyRaw);
+    expect(signedPayload).toMatchObject({
+      v: 3,
+      host: "server.local",
+      port: 7777,
+      scheme: "https",
+      token: "",
+      pairingToken: "pair-12345",
+      name: "My Work Mac",
+      tlsCertFingerprint: "sha256:cert-fingerprint",
+      fingerprint: identity.fingerprint,
+    });
+    expect(
+      verify(
+        null,
+        Buffer.from(signedPayloadJson, "utf-8"),
+        createPublicKey(identity.publicKeyPem),
+        Buffer.from(envelope.signature, "base64url"),
+      ),
+    ).toBe(true);
+  });
+
+  it("omits a rotating leaf cert pin for tailscale invites and uses the short host label", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "tailscale" },
+    });
+
+    mockPrepareTlsForServer.mockReturnValue({
+      enabled: true,
+      mode: "tailscale",
+      certPath: "/tmp/tailscale.crt",
+    });
+
+    const invite = generateInvite(
+      storage as Storage,
+      () => "my-server.tail00000.ts.net",
+      () => "Tailnet Mac",
+      { requestedName: "   " },
+    );
+
+    expect(invite.scheme).toBe("https");
+    expect(invite.name).toBe("Tailnet Mac");
+    expect(invite.tlsCertFingerprint).toBeUndefined();
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000);
+    expect(mockReadCertificateFingerprint).not.toHaveBeenCalled();
+
+    const { signedPayload } = decodeInvite(invite.inviteURL);
+    expect(signedPayload).toMatchObject({
+      host: "my-server.tail00000.ts.net",
+      scheme: "https",
+      name: "Tailnet Mac",
+      pairingToken: "pair-90000",
+    });
+    expect(signedPayload.tlsCertFingerprint).toBeUndefined();
+  });
+});
