@@ -1,8 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseJsonl, readSessionTrace, buildSessionContext } from "../src/trace.js";
+import {
+  getSessionAttachment,
+  materializeToolMediaContentBlocks,
+} from "../src/session-attachments.js";
+import type { AuditEntry } from "../src/audit.js";
+import {
+  parseJsonl,
+  readSessionTrace,
+  buildSessionContext,
+  mergePermissionAuditEvents,
+} from "../src/trace.js";
 
 // ─── parseJsonl unit tests ───
 
@@ -77,12 +88,14 @@ describe("parseJsonl", () => {
       timestamp: "2026-01-01T00:00:03Z",
       message: {
         role: "assistant",
-        content: [{
-          type: "toolCall",
-          id: "tc-1",
-          name: "bash",
-          arguments: { command: "ls -la" },
-        }],
+        content: [
+          {
+            type: "toolCall",
+            id: "tc-1",
+            name: "bash",
+            arguments: { command: "ls -la" },
+          },
+        ],
       },
     });
 
@@ -239,12 +252,14 @@ describe("parseJsonl", () => {
       timestamp: "2026-01-01T00:00:00Z",
       message: {
         role: "assistant",
-        content: [{
-          type: "toolCall",
-          id: "tc-partial",
-          name: "write",
-          partialJson: '{"path":"test.ts","content":"hello"}',
-        }],
+        content: [
+          {
+            type: "toolCall",
+            id: "tc-partial",
+            name: "write",
+            partialJson: '{"path":"test.ts","content":"hello"}',
+          },
+        ],
       },
     });
 
@@ -371,9 +386,7 @@ describe("parseJsonl", () => {
         role: "toolResult",
         toolCallId: "tc-read-img",
         toolName: "Read",
-        content: [
-          { type: "image", data: "iVBORw0KGgoAAAANS", mimeType: "image/png" },
-        ],
+        content: [{ type: "image", data: "iVBORw0KGgoAAAANS", mimeType: "image/png" }],
       },
     });
 
@@ -413,9 +426,7 @@ describe("parseJsonl", () => {
         role: "toolResult",
         toolCallId: "tc-read-audio",
         toolName: "Read",
-        content: [
-          { type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" },
-        ],
+        content: [{ type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" }],
       },
     });
 
@@ -483,21 +494,27 @@ describe("readSessionTrace", () => {
     mkdirSync(dir, { recursive: true });
 
     // Older file
-    writeFileSync(join(dir, "2026-01-01_aaa.jsonl"), JSON.stringify({
-      type: "message",
-      id: "old",
-      timestamp: "2026-01-01T00:00:00Z",
-      message: { role: "user", content: "old message" },
-    }));
+    writeFileSync(
+      join(dir, "2026-01-01_aaa.jsonl"),
+      JSON.stringify({
+        type: "message",
+        id: "old",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: { role: "user", content: "old message" },
+      }),
+    );
 
     // Newer file (alphabetically last = most recent)
-    writeFileSync(join(dir, "2026-01-02_bbb.jsonl"), JSON.stringify({
-      type: "message",
-      id: "new",
-      parentId: "old",
-      timestamp: "2026-01-02T00:00:00Z",
-      message: { role: "user", content: "new message" },
-    }));
+    writeFileSync(
+      join(dir, "2026-01-02_bbb.jsonl"),
+      JSON.stringify({
+        type: "message",
+        id: "new",
+        parentId: "old",
+        timestamp: "2026-01-02T00:00:00Z",
+        message: { role: "user", content: "new message" },
+      }),
+    );
 
     const events = readSessionTrace(tmp, "sess1", "ws1");
     expect(events).not.toBeNull();
@@ -554,7 +571,12 @@ describe("readSessionTrace", () => {
 // ─── buildSessionContext edge cases (S5) ───
 
 describe("buildSessionContext edge cases", () => {
-  function entry(id: string, parentId: string | null, type: string, extra: Record<string, unknown> = {}): string {
+  function entry(
+    id: string,
+    parentId: string | null,
+    type: string,
+    extra: Record<string, unknown> = {},
+  ): string {
     return JSON.stringify({ type, id, parentId, timestamp: `2026-01-01T00:00:0${id}Z`, ...extra });
   }
 
@@ -578,7 +600,10 @@ describe("buildSessionContext edge cases", () => {
     const lines = [
       msgEntry("1", null, "user", "first question"),
       msgEntry("2", "1", "assistant", "first answer"),
-      entry("3", "2", "compaction", { summary: "User asked a question and got an answer.", firstKeptEntryId: "2" }),
+      entry("3", "2", "compaction", {
+        summary: "User asked a question and got an answer.",
+        firstKeptEntryId: "2",
+      }),
       msgEntry("4", "3", "user", "follow up"),
       msgEntry("5", "4", "assistant", "follow up answer"),
     ].join("\n");
@@ -616,9 +641,7 @@ describe("buildSessionContext edge cases", () => {
 
   it("handles orphaned entry (parentId points to missing)", () => {
     // Entry "2" points to nonexistent "999" — walk stops early
-    const lines = [
-      msgEntry("2", "999", "user", "orphan"),
-    ].join("\n");
+    const lines = [msgEntry("2", "999", "user", "orphan")].join("\n");
 
     const events = parseJsonl(lines);
     // Should not crash, orphan is the leaf, walk stops at it
@@ -706,12 +729,12 @@ describe("buildSessionContext edge cases", () => {
     vi.resetModules();
     const { parseJsonl: parseJsonlWithWarnings } = await import("../src/trace.js");
 
-    const writeSpy = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(((chunk: string | Uint8Array) => {
-        stderrLines.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
-        return true;
-      }) as typeof process.stderr.write);
+    const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(((
+      chunk: string | Uint8Array,
+    ) => {
+      stderrLines.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+      return true;
+    }) as typeof process.stderr.write);
 
     try {
       const lines = [
@@ -738,12 +761,14 @@ describe("buildSessionContext edge cases", () => {
 
       const events = parseJsonlWithWarnings(lines);
       // The known text block should still be emitted
-      expect(events.some((e) => e.type === "assistant" && e.text === "I can still answer")).toBe(true);
+      expect(events.some((e) => e.type === "assistant" && e.text === "I can still answer")).toBe(
+        true,
+      );
 
       const warningEvents = stderrLines
         .join("")
         .split("\n")
-        .filter((line) => line.includes("\"event\":\"trace.unknown_assistant_block_type\""));
+        .filter((line) => line.includes('"event":"trace.unknown_assistant_block_type"'));
 
       expect(warningEvents.length).toBeGreaterThanOrEqual(1);
       expect(warningEvents[0]).toContain("future_block_type");
@@ -769,24 +794,28 @@ describe("buildSessionContext edge cases", () => {
       const assistantId = `asst-${i}`;
       const parentId = i === 0 ? null : `asst-${i - 1}`;
 
-      lines.push(JSON.stringify({
-        type: "message",
-        id: userId,
-        parentId,
-        timestamp: `2026-01-01T00:00:${String(i * 2).padStart(2, "0")}Z`,
-        message: { role: "user", content: `Question ${i}` },
-      }));
-      lines.push(JSON.stringify({
-        type: "message",
-        id: assistantId,
-        parentId: userId,
-        timestamp: `2026-01-01T00:00:${String(i * 2 + 1).padStart(2, "0")}Z`,
-        message: {
-          role: "assistant",
-          // Alternate between text and output_text to cover both formats
-          content: [{ type: i % 2 === 0 ? "text" : "output_text", text: `Answer ${i}` }],
-        },
-      }));
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: userId,
+          parentId,
+          timestamp: `2026-01-01T00:00:${String(i * 2).padStart(2, "0")}Z`,
+          message: { role: "user", content: `Question ${i}` },
+        }),
+      );
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: assistantId,
+          parentId: userId,
+          timestamp: `2026-01-01T00:00:${String(i * 2 + 1).padStart(2, "0")}Z`,
+          message: {
+            role: "assistant",
+            // Alternate between text and output_text to cover both formats
+            content: [{ type: i % 2 === 0 ? "text" : "output_text", text: `Answer ${i}` }],
+          },
+        }),
+      );
     }
 
     const events = parseJsonl(lines.join("\n"));
@@ -815,3 +844,269 @@ describe("buildSessionContext edge cases", () => {
     expect(events.some((e) => e.text === "hi")).toBe(true);
   });
 });
+
+// ─── media replay and permission audit merge ───
+
+describe("trace media replay", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not replay update-only attachments when final toolResult has no media", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-trace-"));
+    tempDirs.push(dataDir);
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
+
+    materializeToolMediaContentBlocks({
+      dataDir,
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+      contents: [
+        {
+          type: "image",
+          data: pngBase64,
+          mimeType: "image/png",
+          fileName: "preview.png",
+        },
+      ],
+    });
+
+    const trace = parseJsonl(
+      `${JSON.stringify({
+        type: "message",
+        id: "entry-1",
+        timestamp: "2026-05-13T00:00:00.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "screenshot",
+          content: "done",
+        },
+      })}\n`,
+      { attachmentDataDir: dataDir, attachmentSessionId: "session-1" },
+    );
+
+    const toolResult = trace[0] as {
+      type: string;
+      output?: string;
+      details?: { media?: unknown[] };
+    };
+    expect(toolResult.type).toBe("toolResult");
+    expect(toolResult.output).toBe("done");
+    expect(toolResult.details?.media).toBeUndefined();
+  });
+
+  it("replays final inline media from non-PNG session attachments with metadata", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-trace-"));
+    tempDirs.push(dataDir);
+    const icoBytes = makeICO(32, 16);
+    const icoBase64 = icoBytes.toString("base64");
+
+    const blocks = materializeToolMediaContentBlocks({
+      dataDir,
+      sessionId: "session-ico",
+      toolCallId: "tool-ico",
+      contents: [
+        {
+          type: "image",
+          data: icoBase64,
+          mimeType: "image/x-icon",
+          fileName: "favicon.ico",
+        },
+      ],
+    }) as Array<{ id: string }>;
+
+    const trace = parseJsonl(
+      `${JSON.stringify({
+        type: "message",
+        id: "entry-ico",
+        timestamp: "2026-05-13T00:00:00.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-ico",
+          toolName: "screenshot",
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: icoBase64, mimeType: "image/x-icon", fileName: "favicon.ico" },
+          ],
+        },
+      })}\n`,
+      { attachmentDataDir: dataDir, attachmentSessionId: "session-ico" },
+    );
+
+    const toolResult = trace[0] as {
+      type: string;
+      output?: string;
+      details?: { media?: Array<{ id: string; mimeType: string; storageKey: string }> };
+    };
+    expect(toolResult.type).toBe("toolResult");
+    expect(toolResult.output).toBe("captured");
+    expect(toolResult.details?.media).toMatchObject([
+      {
+        kind: "image",
+        id: blocks[0]!.id,
+        mimeType: "image/x-icon",
+        fileName: "favicon.ico",
+        storageKey: expect.stringMatching(/\.ico$/),
+        sizeBytes: icoBytes.length,
+        width: 32,
+        height: 16,
+      },
+    ]);
+  });
+
+  it("replays final inline media from session attachments without leaking base64", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-trace-"));
+    tempDirs.push(dataDir);
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==";
+
+    const pngBytes = Buffer.from(pngBase64, "base64");
+    const blocks = materializeToolMediaContentBlocks({
+      dataDir,
+      sessionId: "session-2",
+      toolCallId: "tool-2",
+      contents: [
+        {
+          type: "image",
+          data: pngBase64,
+          mimeType: "image/png",
+          fileName: "chart.png",
+        },
+      ],
+    }) as Array<{ id: string }>;
+
+    const trace = parseJsonl(
+      `${JSON.stringify({
+        type: "message",
+        id: "entry-2",
+        timestamp: "2026-05-13T00:00:00.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-2",
+          toolName: "screenshot",
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: pngBase64, mimeType: "image/png", fileName: "chart.png" },
+          ],
+        },
+      })}\n`,
+      { attachmentDataDir: dataDir, attachmentSessionId: "session-2" },
+    );
+
+    const toolResult = trace[0] as {
+      type: string;
+      output?: string;
+      details?: { media?: Array<{ id: string; mimeType: string }> };
+    };
+    expect(toolResult.type).toBe("toolResult");
+    expect(toolResult.output).toBe("captured");
+    expect(toolResult.details?.media).toMatchObject([
+      {
+        kind: "image",
+        id: blocks[0]!.id,
+        mimeType: "image/png",
+        fileName: "chart.png",
+        sizeBytes: pngBytes.length,
+        width: 2,
+        height: 3,
+      },
+    ]);
+
+    const attachment = await getSessionAttachment(dataDir, "session-2", blocks[0]!.id);
+    expect(attachment ? await readFile(attachment.path) : null).toEqual(pngBytes);
+  });
+});
+
+describe("permission audit trace merge", () => {
+  it("merges latest permission decisions by request id without a client audit fetch", () => {
+    const trace = [
+      { id: "user-1", type: "user" as const, timestamp: "2026-05-21T10:00:10.000Z", text: "hi" },
+      {
+        id: "assistant-1",
+        type: "assistant" as const,
+        timestamp: "2026-05-21T10:00:30.000Z",
+        text: "done",
+      },
+    ];
+    const auditEntries: AuditEntry[] = [
+      auditEntry({
+        id: "audit-user-allow",
+        requestId: "perm-1",
+        timestamp: Date.parse("2026-05-21T10:00:20.000Z"),
+        decision: "allow",
+        resolvedBy: "user",
+      }),
+      auditEntry({
+        id: "audit-auto-ask",
+        requestId: "perm-1",
+        timestamp: Date.parse("2026-05-21T10:00:12.000Z"),
+        decision: "ask",
+        resolvedBy: "auto_review",
+        autoReview: { outcome: "ask", status: "ask", reason: "needs human" },
+      }),
+      auditEntry({
+        id: "audit-auto-allow",
+        requestId: "perm-2",
+        timestamp: Date.parse("2026-05-21T10:00:05.000Z"),
+        decision: "allow",
+        resolvedBy: "auto_review",
+        autoReview: { outcome: "allow", status: "allow", reason: "read-only" },
+      }),
+      auditEntry({
+        id: "audit-policy",
+        timestamp: Date.parse("2026-05-21T10:00:25.000Z"),
+        decision: "allow",
+        resolvedBy: "policy",
+      }),
+    ];
+
+    const merged = mergePermissionAuditEvents(trace, auditEntries);
+
+    expect(merged.map((event) => event.id)).toEqual(["perm-2", "user-1", "perm-1", "assistant-1"]);
+    expect(merged[0]).toMatchObject({
+      type: "permission",
+      permission: { outcome: "autoAllowed", reason: "read-only" },
+    });
+    expect(merged[2]).toMatchObject({
+      type: "permission",
+      permission: { outcome: "allowed", auditId: "audit-user-allow" },
+    });
+  });
+});
+
+function auditEntry(overrides: Partial<AuditEntry>): AuditEntry {
+  return {
+    id: "audit-1",
+    timestamp: Date.now(),
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    tool: "bash",
+    displaySummary: "git status",
+    decision: "allow",
+    resolvedBy: "user",
+    layer: "test",
+    ...overrides,
+  };
+}
+
+function makeICO(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(22);
+  bytes.writeUInt16LE(0, 0);
+  bytes.writeUInt16LE(1, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes[6] = width === 256 ? 0 : width;
+  bytes[7] = height === 256 ? 0 : height;
+  bytes[8] = 0;
+  bytes[9] = 0;
+  bytes.writeUInt16LE(1, 10);
+  bytes.writeUInt16LE(32, 12);
+  bytes.writeUInt32LE(0, 14);
+  bytes.writeUInt32LE(22, 18);
+  return bytes;
+}
