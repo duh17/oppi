@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { createSessionRoutes } from "./sessions.js";
-import type { RouteContext, RouteHelpers } from "./types.js";
-import { getPiSessionsRoot } from "../local-sessions.js";
-import type { Session, Workspace } from "../types.js";
+import { createSessionRoutes } from "../src/routes/sessions.js";
+import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
+import { getPiSessionsRoot } from "../src/local-sessions.js";
+import type { Session, Workspace } from "../src/types.js";
 
 // ─── Factories ───
 

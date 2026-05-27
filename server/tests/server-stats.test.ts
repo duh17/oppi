@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import type { Session, Workspace } from "../../types.js";
+import type { Session, Workspace } from "../src/types.js";
 import {
   aggregateDailyDetail,
   aggregateStats,
@@ -8,7 +8,7 @@ import {
   parseRange,
   parseTzOffset,
   type AggregateInput,
-} from "../server-stats.js";
+} from "../src/routes/server-stats.js";
 
 // ─── Helpers ───
 

@@ -3,9 +3,9 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RouteContext, RouteHelpers } from "./types.js";
-import type { Session, Workspace, LocalSession } from "../types.js";
-import type { WorkspaceStoppedTimeBucketSnapshot } from "../storage/session-dao.js";
+import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
+import type { Session, Workspace, LocalSession } from "../src/types.js";
+import type { WorkspaceStoppedTimeBucketSnapshot } from "../src/storage/session-dao.js";
 
 const localSessionState = vi.hoisted(() => ({
   snapshot: {
@@ -14,7 +14,7 @@ const localSessionState = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../local-sessions.js", () => ({
+vi.mock("../src/local-sessions.js", () => ({
   discoverLocalSessions: vi.fn(async () => localSessionState.snapshot),
   invalidateLocalSessionsCache: vi.fn(),
   listCatalogedLocalSessions: vi.fn(() => localSessionState.snapshot),
@@ -22,7 +22,7 @@ vi.mock("../local-sessions.js", () => ({
   validateCwdAlignment: vi.fn(() => true),
 }));
 
-import { createSessionRoutes } from "./sessions.js";
+import { createSessionRoutes } from "../src/routes/sessions.js";
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {

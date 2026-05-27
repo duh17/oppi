@@ -6,10 +6,10 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { once } from "node:events";
 
-import { createWorkspaceFileRoutes } from "./workspace-files.js";
-import { createSessionFileHandlers } from "./session-files.js";
-import type { RouteContext, RouteHelpers } from "./types.js";
-import type { Session, Workspace } from "../types.js";
+import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
+import { createSessionFileHandlers } from "../src/routes/session-files.js";
+import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
+import type { Session, Workspace } from "../src/types.js";
 
 class MockWritableResponse extends PassThrough {
   statusCode = 0;

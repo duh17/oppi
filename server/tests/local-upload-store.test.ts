@@ -22,7 +22,7 @@ import {
   garbageCollectUploadStore,
   resolveUploadAttachment,
   writeUploadContent,
-} from "./local-upload-store.js";
+} from "../src/uploads/local-upload-store.js";
 
 function makeRequest(body: Buffer): IncomingMessage {
   const stream = new PassThrough();

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { color256ToHex, convertPiTheme, resolvePiColors } from "../theme-convert.js";
+import { color256ToHex, convertPiTheme, resolvePiColors } from "../src/routes/theme-convert.js";
 
 // All 49 Oppi tokens that a converted theme must contain.
 const REQUIRED_OPPI_KEYS = [

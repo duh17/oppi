@@ -2,10 +2,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { Storage } from "../storage.js";
-import { openDatabase } from "../sqlite-compat.js";
-import { SessionSqliteStore } from "./session-sqlite-store.js";
-import type { Session } from "../types.js";
+import { Storage } from "../src/storage.js";
+import { openDatabase } from "../src/sqlite-compat.js";
+import { SessionSqliteStore } from "../src/storage/session-sqlite-store.js";
+import type { Session } from "../src/types.js";
 
 describe("SessionStore trace context repair", () => {
   it("backfills codex spark cost from stored aggregate tokens", () => {

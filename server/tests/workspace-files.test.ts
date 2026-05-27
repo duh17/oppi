@@ -15,7 +15,7 @@ import {
   isStreamingMediaContentType,
   listDirectoryEntries,
   getFileIndex,
-} from "./workspace-files.js";
+} from "../src/routes/workspace-files.js";
 
 // MARK: - ALLOWED_EXTENSIONS
 

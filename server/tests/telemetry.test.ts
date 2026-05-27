@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTelemetryRoutes } from "./telemetry.js";
-import type { RouteContext, RouteHelpers } from "./types.js";
+import { createTelemetryRoutes } from "../src/routes/telemetry.js";
+import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
 
 function makeHarness(body: unknown): {
   ctx: RouteContext;
