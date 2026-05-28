@@ -793,6 +793,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Activate the expanded viewport height constraint.
     func showExpandedViewport() {
+        // Label and markdown viewports are the row's visible clamp. Keep that
+        // clamp required so self-sizing cells cannot expand to the full code or
+        // text content height. Read-media remains softer because image/media
+        // attachments intentionally size to their natural timeline height.
+        expandedViewportHeightConstraint?.priority = expandedUsesReadMediaLayout ? .defaultHigh : .required
         expandedViewportHeightConstraint?.isActive = true
         expandedUsesViewport = true
     }
@@ -1528,6 +1533,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateExpandedLabelWidthIfNeeded()
         if output.surface == .compactHostedView {
             expandedUsesViewport = false
+            expandedViewportHeightConstraint?.priority = .defaultHigh
             let width = max(1, bounds.width > 0 ? bounds.width - 16 : UIScreen.main.bounds.width - 48)
             let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
                 for: expandedReadMediaContentView ?? expandedReadMediaContainer,

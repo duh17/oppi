@@ -109,6 +109,7 @@ struct ToolTimelineRowViewportPolicyTests {
             privateConstraint(named: "expandedViewportHeightConstraint", in: view)
         )
         #expect(viewportConstraint.isActive)
+        #expect(viewportConstraint.priority == .required)
         #expect(viewportConstraint.constant == 420)
         #expect(size.height < 700, "Large expanded code should stay bounded; got \(size.height)")
         #expect(privateView(named: "expandFloatingButton", in: view) == nil)
