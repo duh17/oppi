@@ -101,6 +101,8 @@ export class SessionAgentEventCoordinator {
     "agent_end",
   ]);
 
+  private static readonly CHANGE_SUMMARY_TOOL_NAMES = new Set(["edit", "write"]);
+
   private readonly lastSummaryFingerprintBySession = new Map<string, string>();
 
   constructor(private readonly deps: SessionAgentEventCoordinatorDeps) {}
@@ -248,11 +250,24 @@ export class SessionAgentEventCoordinator {
       }
     }
 
-    if (SessionAgentEventCoordinator.SUMMARY_BROADCAST_TYPES.has(event.type)) {
+    if (this.shouldBroadcastSessionSummaryAfterUpdate(event)) {
       this.broadcastSessionSummaryIfChanged(key, active, event.type);
     }
 
     this.deps.resetIdleTimer(key);
+  }
+
+  private shouldBroadcastSessionSummaryAfterUpdate(event: AgentSessionEvent): boolean {
+    if (SessionAgentEventCoordinator.SUMMARY_BROADCAST_TYPES.has(event.type)) {
+      return true;
+    }
+
+    if (event.type !== "tool_execution_start") {
+      return false;
+    }
+
+    const toolName = typeof event.toolName === "string" ? event.toolName.toLowerCase() : "";
+    return SessionAgentEventCoordinator.CHANGE_SUMMARY_TOOL_NAMES.has(toolName);
   }
 
   private materializeMediaEvent(

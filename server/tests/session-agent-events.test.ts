@@ -7,6 +7,7 @@ import {
   SessionAgentEventCoordinator,
   type SessionAgentEventState,
 } from "../src/session-agent-events.js";
+import { SessionEventProcessor } from "../src/session-events.js";
 import { sessionAttachmentMediaDetailsForToolCall } from "../src/session-attachments.js";
 import { buildSessionSummary } from "../src/session-summary.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
@@ -146,6 +147,57 @@ describe("SessionAgentEventCoordinator", () => {
       ([, message]) => message.type === "session_summary",
     );
     expect(summaryBroadcasts).toHaveLength(0);
+  });
+
+  it("broadcasts edit/write summaries after real change stats update", () => {
+    const active = makeActiveSession({ parentSessionId: "parent-1", status: "busy" });
+    const broadcast = vi.fn();
+    const eventProcessor = new SessionEventProcessor({
+      storage: {} as never,
+      mobileRenderers: {
+        renderCall: vi.fn(),
+        renderResult: vi.fn(),
+      } as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+      respondToUIRequest: vi.fn(),
+    });
+    const coordinator = new SessionAgentEventCoordinator({
+      getActiveSession: vi.fn(() => active),
+      eventProcessor,
+      stopCoordinator: {
+        finishPendingStopOnAgentEnd: vi.fn(),
+      } as never,
+      turnCoordinator: {
+        markNextTurnStarted: vi.fn(),
+      } as never,
+      broadcast,
+      resetIdleTimer: vi.fn(),
+    });
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "edit",
+      args: { path: "src/a.ts", oldText: "a", newText: "a\nb\nc" },
+    } as unknown as SessionBackendEvent);
+
+    expect(active.session.changeStats).toMatchObject({
+      mutatingToolCalls: 1,
+      filesChanged: 1,
+      changedFiles: ["src/a.ts"],
+      addedLines: 2,
+      removedLines: 0,
+    });
+    const summary = buildSessionSummary(active.session);
+    const summaryBroadcasts = broadcast.mock.calls.filter(
+      ([, message]) => message.type === "session_summary",
+    );
+    expect(summaryBroadcasts).toEqual([
+      ["child-1", { type: "session_summary", summary }],
+      ["parent-1", { type: "session_summary", summary }],
+    ]);
   });
 
   it("normalizes prompt_error before broadcasting it to clients", () => {

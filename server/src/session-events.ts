@@ -250,6 +250,10 @@ export class SessionEventProcessor {
         }
         break;
 
+      case "tool_execution_end":
+        this.maybeEmitGitStatus(key, session, event.toolName);
+        break;
+
       case "message_end":
         applyMessageEndToSession(session, event.message);
 
