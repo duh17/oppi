@@ -536,7 +536,7 @@ struct OppiApp: App {
                 MetricKitService.shared.setUploadClient(api)
                 await connection.workspaceStore.load(api: api)
             }
-            if ReleaseFeatures.pushNotificationsEnabled {
+            if ReleaseFeatures.remotePushNotificationsEnabled {
                 await PushRegistration.shared.requestAndRegister()
                 await coordinator.registerPushWithAllServers()
             }
@@ -691,12 +691,12 @@ struct OppiApp: App {
 #endif
 
     private func setupNotifications() async {
-        guard ReleaseFeatures.pushNotificationsEnabled else {
+        guard ReleaseFeatures.localAttentionNotificationsEnabled else {
             return
         }
 
         let notificationService = PermissionNotificationService.shared
-        await notificationService.setup()
+        notificationService.configureForLaunch()
 
         // Wire notification actions back to the correct server's connection.
         // Permission responses go over WebSocket — find the right connection.
@@ -714,12 +714,12 @@ struct OppiApp: App {
             }
         }
 
-        // Configure push registration with the active connection
-        PushRegistration.shared.configure(connection: connection)
+        // Configure remote push registration only when the APNs lane is enabled.
+        if ReleaseFeatures.remotePushNotificationsEnabled {
+            PushRegistration.shared.configure(connection: connection)
+        }
 
-        // Navigate to session when user taps a push notification body.
-        // Cross-server: find which server owns the session and switch to it.
-        notificationService.onNavigateToPermission = { [weak coord] _, sessionId in
+        let navigateToSessionFromNotification: (String) -> Void = { [weak coord] sessionId in
             guard let coord, !sessionId.isEmpty else { return }
             Task { @MainActor in
                 if let found = coord.findSession(id: sessionId) {
@@ -733,6 +733,15 @@ struct OppiApp: App {
                     navigation.workspacePath = NavigationPath()
                 }
             }
+        }
+
+        // Navigate to session when user taps an attention notification body.
+        // Cross-server: find which server owns the session and switch to it.
+        notificationService.onNavigateToPermission = { _, sessionId in
+            navigateToSessionFromNotification(sessionId)
+        }
+        notificationService.onNavigateToSession = { sessionId in
+            navigateToSessionFromNotification(sessionId)
         }
     }
 
@@ -870,8 +879,8 @@ struct OppiApp: App {
             ? "offline_cache_only"
             : "online_refresh_ok"
 
-        // 5. Register for push notifications with all paired servers
-        if ReleaseFeatures.pushNotificationsEnabled {
+        // 5. Register for remote push notifications with all paired servers.
+        if ReleaseFeatures.remotePushNotificationsEnabled {
             await PushRegistration.shared.requestAndRegister()
             await coordinator.registerPushWithAllServers()
         }

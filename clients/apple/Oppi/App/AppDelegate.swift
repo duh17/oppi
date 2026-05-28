@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Force-capture process start timestamp before any SwiftUI views load.
         // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
         ChatSessionTelemetry.warmProcessStartTime()
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            PermissionNotificationService.shared.configureForLaunch()
+        }
         return true
     }
 
@@ -24,7 +27,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
-        guard ReleaseFeatures.pushNotificationsEnabled else {
+        guard ReleaseFeatures.remotePushNotificationsEnabled else {
             return
         }
         PushRegistration.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
@@ -34,7 +37,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        guard ReleaseFeatures.pushNotificationsEnabled else {
+        guard ReleaseFeatures.remotePushNotificationsEnabled else {
             return
         }
         PushRegistration.shared.didFailToRegisterForRemoteNotifications(error: error)

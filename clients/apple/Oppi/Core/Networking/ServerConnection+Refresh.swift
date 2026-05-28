@@ -271,7 +271,7 @@ extension ServerConnection {
             if isFocusedSession(request.sessionId) {
                 onPermissionResolved?(request.id, .expired, request.tool, request.displaySummary)
             }
-            if ReleaseFeatures.pushNotificationsEnabled {
+            if ReleaseFeatures.localAttentionNotificationsEnabled {
                 PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
             }
         }

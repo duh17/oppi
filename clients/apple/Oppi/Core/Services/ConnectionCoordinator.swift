@@ -479,7 +479,7 @@ final class ConnectionCoordinator {
 
     /// Register push token with all paired servers.
     func registerPushWithAllServers() async {
-        guard ReleaseFeatures.pushNotificationsEnabled else {
+        guard ReleaseFeatures.remotePushNotificationsEnabled else {
             return
         }
         await PushRegistration.shared.registerWithAllServers(serverStore.servers)

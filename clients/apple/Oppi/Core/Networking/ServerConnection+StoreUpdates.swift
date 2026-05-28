@@ -66,7 +66,7 @@ extension ServerConnection {
 
         case .permissionRequest(let perm):
             let inserted = permissionStore.add(perm)
-            if inserted, ReleaseFeatures.pushNotificationsEnabled {
+            if inserted, ReleaseFeatures.localAttentionNotificationsEnabled {
                 PermissionNotificationService.shared.notifyIfNeeded(
                     perm,
                     activeSessionId: focusedSessionId
@@ -83,7 +83,7 @@ extension ServerConnection {
 
         case .permissionExpired(let id, _), .permissionCancelled(let id), .permissionResolved(let id, _):
             let request = permissionStore.take(id: id)
-            if ReleaseFeatures.pushNotificationsEnabled {
+            if ReleaseFeatures.localAttentionNotificationsEnabled {
                 PermissionNotificationService.shared.cancelNotification(permissionId: id)
             }
             if let workspaceId = attentionWorkspaceId(
@@ -389,7 +389,7 @@ extension ServerConnection {
             requests: response.attention.permissions,
             workspaceSessionIds: workspaceSessionIds
         )
-        if ReleaseFeatures.pushNotificationsEnabled {
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
             for permission in removedPermissions {
                 PermissionNotificationService.shared.cancelNotification(permissionId: permission.id)
             }
@@ -402,6 +402,9 @@ extension ServerConnection {
         )
         for sessionId in removedAskSessionIds {
             pendingAskRequests.removeValue(forKey: sessionId)
+            if ReleaseFeatures.localAttentionNotificationsEnabled {
+                PermissionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+            }
             if activeAskRequest?.sessionId == sessionId {
                 activeAskRequest = nil
             }

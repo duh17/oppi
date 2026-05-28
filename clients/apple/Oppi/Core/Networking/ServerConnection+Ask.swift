@@ -30,6 +30,12 @@ extension ServerConnection {
         ) {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            PermissionNotificationService.shared.notifyAskIfNeeded(
+                ask,
+                activeSessionId: focusedSessionId
+            )
+        }
         // The agent is blocked waiting for user input, so silence is expected.
         silenceWatchdog.stop()
     }
@@ -50,6 +56,12 @@ extension ServerConnection {
             sessionId: sessionId
         ) {
             syncWorkspaceSummary(workspaceId: workspaceId)
+        }
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            PermissionNotificationService.shared.notifyAskIfNeeded(
+                ask,
+                activeSessionId: focusedSessionId
+            )
         }
     }
 
@@ -92,6 +104,9 @@ extension ServerConnection {
         )
         pendingAskRequests.removeValue(forKey: sessionId)
         askRequestStore.remove(for: sessionId)
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            PermissionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+        }
 
         if activeAskRequest?.sessionId == sessionId {
             activeAskRequest = nil

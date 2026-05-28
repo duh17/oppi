@@ -212,7 +212,7 @@ struct ServerConnectionTests {
 
         pipe.handle(.permissionRequest(perm), sessionId: "stream-s1")
 
-        if ReleaseFeatures.pushNotificationsEnabled {
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
             #expect(capturedRequestSessionId == "other-s2")
             #expect(capturedActiveSessionId == "active-s1")
             #expect(capturedShouldNotify == true)

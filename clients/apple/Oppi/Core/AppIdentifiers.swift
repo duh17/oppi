@@ -17,8 +17,15 @@ enum AppIdentifiers {
 /// Keep these centralized so we can re-enable features intentionally
 /// once reliability is proven.
 enum ReleaseFeatures {
-    /// Remote/local notification flow for permission prompts.
-    static let pushNotificationsEnabled = false
+    /// Local, in-process notifications for attention requests received while
+    /// the app has launched. This does not register with APNs or upload a
+    /// device token to paired servers.
+    static let localAttentionNotificationsEnabled = true
+
+    /// Remote APNs push registration and server fallback notifications.
+    /// Keep disabled until payload privacy, entitlements, and provisioning are
+    /// reviewed together.
+    static let remotePushNotificationsEnabled = false
 
     /// Live Activity codepath availability (runtime opt-in handled by
     /// `AppPreferences.LiveActivity`).

@@ -1149,7 +1149,7 @@ final class ServerConnection {
                 onPermissionResolved?(id, outcome, request.tool, request.displaySummary)
             }
         }
-        if ReleaseFeatures.pushNotificationsEnabled {
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
             PermissionNotificationService.shared.cancelNotification(permissionId: id)
         }
         syncLiveActivityPermissions()
