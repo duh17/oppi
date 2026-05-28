@@ -22,7 +22,7 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
-import { BoundSessionStreamMux, SessionAudioStreamMux } from "./stream.js";
+import { BoundSessionStreamMux, SessionAudioStreamMux, startServerPing } from "./stream.js";
 import { UserEventStore } from "./user-event-store.js";
 import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
@@ -642,6 +642,13 @@ export class Server {
       // Record in the user-level event ring for push fallback and diagnostics,
       // separate from the per-session EventRing used by session catch-up.
       this.userEventStore.recordEvent(payload.sessionId, payload.event);
+
+      // Ask requests are emitted by the session broadcaster, not the gate.
+      // Forward them to launched clients on the user-wide attention stream so
+      // the app can schedule local notifications while APNs remains disabled.
+      if (payload.event.type === "extension_ui_request") {
+        this.broadcastToUser(payload.event, { recordEvent: false });
+      }
     });
 
     // Initialize search index (SQLite FTS5)
@@ -1408,6 +1415,68 @@ export class Server {
 
   // ─── WebSocket ───
 
+  private handleUserEventsWebSocket(ws: WebSocket, upgradeReceivedAt?: number): void {
+    const connectedAt = Date.now();
+    const connId = `user-${connectedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const path = "/user/events/stream";
+
+    if (upgradeReceivedAt) {
+      this.opsMetrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
+        path: "user_events_stream",
+      });
+    }
+
+    log.info("ws.user_events_stream_connected", {
+      connId,
+      owner: this.storage.getOwnerName(),
+      path,
+    });
+
+    this.trackConnection(ws, { userBroadcast: true });
+    const stopPing = startServerPing(ws, path, undefined, this.opsMetrics, connId);
+    let msgSent = 0;
+    const send = (msg: ServerMessage): void => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      msgSent += 1;
+      ws.send(JSON.stringify(msg));
+    };
+
+    send({
+      type: "stream_connected",
+      userName: this.storage.getOwnerName(),
+      serverDictationAvailable: !!this.dictationConfig?.sttEndpoint,
+    });
+
+    ws.on("close", (code, reason) => {
+      stopPing();
+      this.untrackConnection(ws);
+      this.opsMetrics.record("server.ws_session_duration_ms", Date.now() - connectedAt, {
+        path: "user_events_stream",
+      });
+      this.opsMetrics.record("server.ws_messages_sent", msgSent, {
+        path: "user_events_stream",
+      });
+      this.opsMetrics.record("server.ws_close_code", 1, {
+        code: String(code),
+        path: "user_events_stream",
+      });
+      log.info("ws.user_events_stream_disconnected", {
+        connId,
+        code,
+        reason: reason.toString() || undefined,
+        sent: msgSent,
+        durationMs: Date.now() - connectedAt,
+      });
+    });
+
+    ws.on("error", (err) => {
+      log.warn("ws.user_events_stream_error", {
+        connId,
+        error: safeErrorMessage(err),
+      });
+    });
+  }
+
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     (socket as Socket).setNoDelay?.(true);
 
@@ -1431,13 +1500,19 @@ export class Server {
     const sessionStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
     );
+    const userEventsStreamMatch = url.pathname === "/user/events/stream";
     // TODO(dictation): Remove this legacy session-bound ASR route after old
     // iOS clients that do not know `/dictation/stream` are no longer supported.
     const sessionAudioStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/audio\/stream$/,
     );
     const dictationStreamMatch = url.pathname === "/dictation/stream";
-    if (!sessionStreamMatch && !sessionAudioStreamMatch && !dictationStreamMatch) {
+    if (
+      !sessionStreamMatch &&
+      !userEventsStreamMatch &&
+      !sessionAudioStreamMatch &&
+      !dictationStreamMatch
+    ) {
       // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
@@ -1460,6 +1535,10 @@ export class Server {
 
     const upgradeReceivedAt = Date.now();
     this.wss.handleUpgrade(req, socket, head, (ws) => {
+      if (userEventsStreamMatch) {
+        this.handleUserEventsWebSocket(ws, upgradeReceivedAt);
+        return;
+      }
       if (sessionStreamMatch) {
         const workspaceId = decodeURIComponent(sessionStreamMatch[1]);
         const sessionId = decodeURIComponent(sessionStreamMatch[2]);
