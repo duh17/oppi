@@ -57,6 +57,34 @@ enum ContextBarScoping {
     }
 }
 
+enum ContextBarCrossSessionEdits {
+    static func sharedFilePaths(
+        displayFiles: [GitFileStatus],
+        currentSessionId: String?,
+        workspaceId: String?,
+        sessions: [Session]
+    ) -> Set<String> {
+        guard let currentSessionId, !displayFiles.isEmpty else { return [] }
+        let displayedPaths = displayFiles.map(\.path)
+        var sharedPaths: Set<String> = []
+
+        for session in sessions where session.id != currentSessionId {
+            if let workspaceId, let sessionWorkspaceId = session.workspaceId, sessionWorkspaceId != workspaceId {
+                continue
+            }
+            guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { continue }
+
+            for path in displayedPaths where !sharedPaths.contains(path) {
+                if changedFiles.contains(where: { SessionScopedGitStatus.sessionPathMatches(sessionPath: $0, gitRelativePath: path) }) {
+                    sharedPaths.insert(path)
+                }
+            }
+        }
+
+        return sharedPaths
+    }
+}
+
 enum ContextBarSubagentStatus: Equatable {
     case waiting
     case question
@@ -223,6 +251,7 @@ struct WorkspaceContextBar: View {
         appliesOuterHorizontalPadding: Bool = true,
         workspaceId: String? = nil,
         sessionId: String? = nil,
+        initialExpanded: Bool = false,
         childSessions: [Session] = [],
         onSelectChild: ((String) -> Void)? = nil,
         onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
@@ -235,6 +264,7 @@ struct WorkspaceContextBar: View {
         self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
         self.workspaceId = workspaceId
         self.sessionId = sessionId
+        _isExpanded = State(initialValue: initialExpanded)
         self.childSessions = childSessions
         self.onSelectChild = onSelectChild
         self.onReviewInCurrentSession = onReviewInCurrentSession
@@ -329,6 +359,15 @@ struct WorkspaceContextBar: View {
         !displayFiles.isEmpty && displayFiles.allSatisfy { selectedPaths.contains($0.path) }
     }
 
+    private var sharedEditPaths: Set<String> {
+        ContextBarCrossSessionEdits.sharedFilePaths(
+            displayFiles: displayFiles,
+            currentSessionId: sessionId,
+            workspaceId: workspaceId,
+            sessions: sessionStore.sessions
+        )
+    }
+
     private var canLaunch: Bool {
         !selectedPaths.isEmpty && launchActionInFlightTitle == nil
     }
@@ -357,8 +396,9 @@ struct WorkspaceContextBar: View {
         let commitRows = CGFloat(allCommits.count) * 17
         let loadMoreRow: CGFloat = hasMoreCommits ? 24 : 0
         let sectionHeaders: CGFloat = (!childSessions.isEmpty && !displayFiles.isEmpty) ? 48 : 24
+        let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : 22
         let chrome: CGFloat = 20
-        return min(agentRows + fileRows + commitRows + loadMoreRow + sectionHeaders + chrome, 480)
+        return min(agentRows + fileRows + commitRows + loadMoreRow + sectionHeaders + overlapHint + chrome, 480)
     }
 
     // MARK: - Body
@@ -525,6 +565,7 @@ struct WorkspaceContextBar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("workspace-context-bar.toggle")
 
             if isExpanded, workspaceId != nil {
                 // Select/cancel toggle
@@ -612,6 +653,22 @@ struct WorkspaceContextBar: View {
             // File list
             if !displayFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 1) {
+                    if !sharedEditPaths.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "rectangle.on.rectangle")
+                                .font(.caption2.weight(.semibold))
+                            Text("\(sharedEditPaths.count) file\(sharedEditPaths.count == 1 ? "" : "s") touched in another session")
+                                .font(.caption2.weight(.medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(.themeOrange)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 6)
+                        .padding(.bottom, 3)
+                        .accessibilityIdentifier("context-bar-overlap-hint")
+                    }
+
                     ForEach(displayFiles) { file in
                         contextBarFileRow(file: file)
                             .background(
@@ -760,6 +817,16 @@ struct WorkspaceContextBar: View {
                     .truncationMode(.middle)
 
                 Spacer(minLength: 4)
+
+                if sharedEditPaths.contains(file.path) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.appBadgeLight)
+                        .foregroundStyle(.themeOrange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.themeOrange.opacity(0.12), in: Capsule())
+                        .accessibilityLabel("Touched in another session")
+                }
 
                 if let added = file.addedLines, added > 0 {
                     Text("+\(added)")

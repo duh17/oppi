@@ -80,6 +80,20 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testContextBarOverlapPreview() throws {
+        launchPreview(screen: "context-bar-overlap")
+
+        let title = app.staticTexts["Cross-session overlap"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Context bar overlap title not found")
+        XCTAssertTrue(app.staticTexts["2 changed"].waitForExistence(timeout: 5), "Scoped changed count not visible")
+
+        let hint = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "touched in another session")).firstMatch
+        XCTAssertTrue(hint.waitForExistence(timeout: 3), "Overlap hint not visible")
+        let sharedFile = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "WorkspaceContextBar.swift")).firstMatch
+        XCTAssertTrue(sharedFile.waitForExistence(timeout: 3), "Expanded file list not visible")
+        saveScreenshot(name: "context-bar-overlap-expanded")
+    }
+
     func testVoiceMessageExpandedPreview() throws {
         launchPreview(screen: "voice-message-expanded")
 
