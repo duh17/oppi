@@ -262,6 +262,30 @@ export interface LocalSessionCatalogSnapshot {
   lastScannedAt?: number;
 }
 
+export interface KnownLocalSessionIdentities {
+  files?: Set<string>;
+  piSessionIds?: Set<string>;
+}
+
+type KnownLocalSessions = Set<string> | KnownLocalSessionIdentities | undefined;
+
+function isKnownLocalSession(
+  row: Pick<TuiSessionCatalogRow, "path" | "pi_session_id">,
+  known: KnownLocalSessions,
+): boolean {
+  if (!known) return false;
+  if (known instanceof Set) return known.has(row.path);
+  return known.files?.has(row.path) === true || known.piSessionIds?.has(row.pi_session_id) === true;
+}
+
+function isKnownLocalSessionValue(session: LocalSession, known: KnownLocalSessions): boolean {
+  if (!known) return false;
+  if (known instanceof Set) return known.has(session.path);
+  return (
+    known.files?.has(session.path) === true || known.piSessionIds?.has(session.piSessionId) === true
+  );
+}
+
 class TuiSessionCatalog {
   private readonly db: SqliteDatabase;
 
@@ -514,7 +538,7 @@ export function deleteCatalogedLocalSessionPaths(
 }
 
 export function listCatalogedLocalSessions(
-  knownPiSessionFiles: Set<string> | undefined,
+  knownPiSessions: KnownLocalSessions,
   options: { dataDir: string },
 ): LocalSessionCatalogSnapshot {
   const catalog = new TuiSessionCatalog(options.dataDir);
@@ -523,7 +547,7 @@ export function listCatalogedLocalSessions(
     return {
       sessions: catalog
         .listRows()
-        .filter((row) => row.is_subagent === 0 && !knownPiSessionFiles?.has(row.path))
+        .filter((row) => row.is_subagent === 0 && !isKnownLocalSession(row, knownPiSessions))
         .map(rowToLocalSession),
       ...(lastScannedAt !== undefined ? { lastScannedAt } : {}),
     };
@@ -542,7 +566,7 @@ export function listCatalogedLocalSessions(
  * @param knownPiSessionFiles Set of piSessionFile paths already managed by oppi
  */
 export async function discoverLocalSessions(
-  knownPiSessionFiles?: Set<string>,
+  knownPiSessions?: KnownLocalSessions,
   options: { dataDir?: string } = {},
 ): Promise<LocalSession[]> {
   if (!existsSync(PI_SESSIONS_ROOT)) {
@@ -618,7 +642,7 @@ export async function discoverLocalSessions(
 
       return catalog
         .listRows()
-        .filter((row) => row.is_subagent === 0 && !knownPiSessionFiles?.has(row.path))
+        .filter((row) => row.is_subagent === 0 && !isKnownLocalSession(row, knownPiSessions))
         .map(rowToLocalSession);
     } finally {
       catalog.close();
@@ -643,10 +667,10 @@ export async function discoverLocalSessions(
     if (!livePaths.has(key)) metadataCache.delete(key);
   }
 
-  // Collect results, filtering out known oppi-managed files
+  // Collect results, filtering out known Oppi-managed identities.
   const results: LocalSession[] = [];
   for (const { session } of metadataCache.values()) {
-    if (knownPiSessionFiles?.has(session.path)) continue;
+    if (isKnownLocalSessionValue(session, knownPiSessions)) continue;
     if (isSubagentLocalSession(session)) continue;
     results.push(session);
   }

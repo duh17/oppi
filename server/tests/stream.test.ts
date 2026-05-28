@@ -148,6 +148,26 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
+  it("does not auto-start a terminal mirror session when a client attaches", async () => {
+    const session = { ...makeSession("sess-mirror", "w1"), runtime: "pi-tui-mirror" as const };
+    const { ctx } = createMockContext([session]);
+    const mirrorSubscribe = vi.fn(() => () => {});
+    ctx.mirrorRuntime = {
+      getActiveSession: () => session,
+      getCurrentSeq: () => 7,
+      subscribe: mirrorSubscribe,
+    } as unknown as StreamContext["mirrorRuntime"];
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-mirror", ws as unknown as WebSocket);
+    await drain();
+
+    expect(ctx.sessions.startSession).not.toHaveBeenCalled();
+    expect(ws.sentOfType("connected", "sess-mirror")[0]).toMatchObject({ currentSeq: 7 });
+    expect(mirrorSubscribe).toHaveBeenCalledWith("sess-mirror", expect.any(Function));
+  });
+
   it("includes server dictation availability in the split session bootstrap", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);

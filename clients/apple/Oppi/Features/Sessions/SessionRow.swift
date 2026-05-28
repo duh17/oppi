@@ -139,6 +139,14 @@ struct SessionRow: View {
         session.ephemeral == true
     }
 
+    private var terminalMirrorBadge: (label: String, color: Color)? {
+        guard session.runtime == .piTuiMirror else { return nil }
+        if session.mirror?.status == "connected" {
+            return ("Terminal Live", .themeGreen)
+        }
+        return ("Terminal unavailable", .themeComment)
+    }
+
     private var currentTurnStartedAt: Date? {
         switch session.status {
         case .starting, .busy, .stopping:
@@ -214,6 +222,10 @@ struct SessionRow: View {
                     incognitoBadge
                 }
 
+                if let terminalMirrorBadge {
+                    terminalBadge(label: terminalMirrorBadge.label, color: terminalMirrorBadge.color)
+                }
+
                 let displayCost = children?.aggregateCost ?? session.cost
                 if displayCost > 0 {
                     Text(costString(displayCost))
@@ -281,6 +293,17 @@ struct SessionRow: View {
             .padding(.vertical, 1)
             .background(Color.themePurple.opacity(0.14), in: Capsule())
             .accessibilityLabel("Incognito session")
+    }
+
+    private func terminalBadge(label: String, color: Color) -> some View {
+        Label(label, systemImage: "terminal.fill")
+            .font(.caption2.weight(.medium))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.14), in: Capsule())
+            .accessibilityLabel(label)
     }
 
     // MARK: - Model Summary

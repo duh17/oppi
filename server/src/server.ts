@@ -33,6 +33,8 @@ import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
+import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
+import { SessionRuntimeRouter } from "./runtime-router.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   PolicyEngine,
@@ -390,6 +392,8 @@ export class Server {
   private userEventStore!: UserEventStore;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private sessionAudioStreamMux!: SessionAudioStreamMux;
+  private mirrorRuntime!: PiTuiMirrorRuntime;
+  private sessionRuntimeRouter!: SessionRuntimeRouter;
   // REST route handler (dispatch + all HTTP handlers)
   private routes!: RouteHandler;
   // WebSocket message command dispatcher for full-session commands
@@ -512,8 +516,18 @@ export class Server {
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
     this.sessions.availableModelIdsResolver = () => this.models.getAll().map((m) => m.id);
 
+    this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
+      isManagedSessionActive: (sessionId) =>
+        this.sessions.getActiveSession(sessionId) !== undefined,
+    });
+    this.sessionRuntimeRouter = new SessionRuntimeRouter(
+      this.storage,
+      this.sessions,
+      this.mirrorRuntime,
+    );
+
     this.wsMessageHandler = new WsMessageHandler({
-      sessions: this.sessions,
+      sessions: this.sessionRuntimeRouter,
       gate: this.gate,
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
@@ -529,6 +543,7 @@ export class Server {
     const streamContext = {
       storage: this.storage,
       sessions: this.sessions,
+      mirrorRuntime: this.mirrorRuntime,
       gate: this.gate,
       metrics: this.opsMetrics,
       ensureSessionContextWindow: (session: Session) =>
@@ -632,7 +647,7 @@ export class Server {
     });
     this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
 
-    this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
+    const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
       this.liveActivity.handleSessionEvent(payload);
 
       if (!this.userEventStore.isNotificationLevelMessage(payload.event)) {
@@ -649,7 +664,9 @@ export class Server {
       if (payload.event.type === "extension_ui_request") {
         this.broadcastToUser(payload.event, { recordEvent: false });
       }
-    });
+    };
+    this.sessions.on("session_event", handleSessionEvent);
+    this.mirrorRuntime.on("session_event", handleSessionEvent);
 
     // Initialize search index (SQLite FTS5)
     try {
@@ -1507,11 +1524,13 @@ export class Server {
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/audio\/stream$/,
     );
     const dictationStreamMatch = url.pathname === "/dictation/stream";
+    const mirrorBridgeMatch = url.pathname === "/mirror/v1/bridge";
     if (
       !sessionStreamMatch &&
       !userEventsStreamMatch &&
       !sessionAudioStreamMatch &&
-      !dictationStreamMatch
+      !dictationStreamMatch &&
+      !mirrorBridgeMatch
     ) {
       // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
@@ -1561,6 +1580,12 @@ export class Server {
       }
       if (dictationStreamMatch) {
         this.sessionAudioStreamMux.handleServerWebSocket(ws, upgradeReceivedAt);
+        return;
+      }
+      if (mirrorBridgeMatch) {
+        this.trackConnection(ws, { userBroadcast: false });
+        ws.on("close", () => this.untrackConnection(ws));
+        this.mirrorRuntime.handleBridgeWebSocket(ws);
         return;
       }
       ws.close(1008, "Unsupported WebSocket endpoint");

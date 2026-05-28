@@ -260,6 +260,13 @@ export function createSessionCoordinatorBundle(
         clientTurnId,
         requestId,
       ),
+    isDuplicateTurnIntent: (active, command, clientTurnId, payload) =>
+      turnCoordinator.isDuplicateTurnIntent(
+        active as TurnSessionState,
+        command,
+        clientTurnId,
+        payload,
+      ),
     markTurnDispatched: (key, active, command, turn, requestId) =>
       turnCoordinator.markTurnDispatched(key, active as TurnSessionState, command, turn, requestId),
     sendCommand: (key, command) => deps.sendCommand(key, command),

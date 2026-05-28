@@ -26,6 +26,31 @@ describe("storage session metadata format", () => {
     expect(new Storage(dir).getSession(session.id)?.status).toBe("ready");
   });
 
+  it("persists terminal mirror runtime metadata", () => {
+    const storage = new Storage(dir);
+    const session = storage.createSession("terminal live", "openai/gpt-5");
+    session.runtime = "pi-tui-mirror";
+    session.mirror = {
+      status: "connected",
+      capabilities: ["prompt", "abort"],
+      protocolVersion: 1,
+      terminal: {
+        bridgeId: "bridge-1",
+        hostname: "mac-studio",
+        pid: 123,
+        cwd: "/tmp/project",
+        connectedAt: 1234,
+        lastSeenAt: 5678,
+      },
+    };
+    storage.saveSession(session);
+
+    const loaded = new Storage(dir).getSession(session.id);
+    expect(loaded?.runtime).toBe("pi-tui-mirror");
+    expect(loaded?.mirror?.status).toBe("connected");
+    expect(loaded?.mirror?.terminal?.cwd).toBe("/tmp/project");
+  });
+
   it("imports legacy session metadata from disk", () => {
     const now = Date.now();
 

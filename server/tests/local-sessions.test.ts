@@ -3,12 +3,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import {
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  mkdtempSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
@@ -98,9 +93,9 @@ describe("validateCwdAlignment", () => {
   });
 
   it("rejects different directory", () => {
-    expect(
-      validateCwdAlignment("/Users/chen/workspace/other", "/Users/chen/workspace/oppi"),
-    ).toBe(false);
+    expect(validateCwdAlignment("/Users/chen/workspace/other", "/Users/chen/workspace/oppi")).toBe(
+      false,
+    );
   });
 
   it("rejects partial path prefix that is not a parent", () => {
@@ -224,6 +219,18 @@ describe("discoverLocalSessions", () => {
     const knownFiles = new Set([filePath]);
     const sessions = await discoverLocalSessions(knownFiles);
     const found = sessions.find((s) => s.piSessionId === "uuid-2");
+
+    expect(found).toBeUndefined();
+  });
+
+  it("filters out known session identities by piSessionId", async () => {
+    writeFileSync(
+      join(testDir, "2026-02-20T00-00-00-000Z_uuid-known-id.jsonl"),
+      makeSessionJsonl({ id: "uuid-known-id" }),
+    );
+
+    const sessions = await discoverLocalSessions({ piSessionIds: new Set(["uuid-known-id"]) });
+    const found = sessions.find((s) => s.piSessionId === "uuid-known-id");
 
     expect(found).toBeUndefined();
   });
