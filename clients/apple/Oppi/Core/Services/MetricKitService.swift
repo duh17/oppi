@@ -9,7 +9,9 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
     static let shared = MetricKitService()
 
     private let uploader = MetricKitUploadQueue()
+    private let diagnosticFingerprintLock = NSLock()
     private var configured = false
+    private var queuedDiagnosticFingerprints = Set<String>()
 
     override private init() {}
 
@@ -20,6 +22,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         // Always subscribe to MetricKit — payloads are gated at upload time.
         // This ensures we start receiving data immediately if the user opts in later.
         MXMetricManager.shared.add(self)
+        collectPastDiagnosticPayloadsIfAllowed(reason: "configure")
         metricKitLog.info("MetricKit subscriber registered (upload=\(TelemetrySettings.allowsRemoteDiagnosticsUpload, privacy: .public))")
     }
 
@@ -35,8 +38,14 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         }
         ClientLogUploadService.configureUploader(client)
 
-        guard allowed else { return }
+        guard allowed else {
+            Task { await uploader.clear() }
+            return
+        }
+        collectPastDiagnosticPayloadsIfAllowed(reason: "preference_change")
         Task {
+            await uploader.setClient(client)
+            await uploader.setMetadata(Self.makeMetadata())
             await uploader.flushIfNeeded()
         }
     }
@@ -52,8 +61,12 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         }
         ClientLogUploadService.configureUploader(client)
 
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            Task { await uploader.clear() }
+            return
+        }
 
+        collectPastDiagnosticPayloadsIfAllowed(reason: "set_upload_client")
         Task {
             await uploader.setClient(client)
             await uploader.setMetadata(Self.makeMetadata())
@@ -76,14 +89,18 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         guard !payloads.isEmpty else { return }
-        let items = payloads.map { payload in
-            MetricKitPayloadSerializer.item(
+        let context = MetricKitCrashContextStore.snapshotMetadata()
+        let items = payloads.compactMap { payload in
+            let item = MetricKitPayloadSerializer.item(
                 from: payload,
                 kind: .diagnostic,
                 windowStartMs: payload.timeStampBegin.toMs(),
-                windowEndMs: payload.timeStampEnd.toMs()
+                windowEndMs: payload.timeStampEnd.toMs(),
+                context: context
             )
+            return markDiagnosticIfNew(item)
         }
+        recordDiagnosticBreadcrumbs(items, reason: "did_receive")
         upload(items)
     }
 
@@ -93,6 +110,66 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
         Task {
             await uploader.enqueue(payloads: items)
+        }
+    }
+
+    private func collectPastDiagnosticPayloadsIfAllowed(reason: String) {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
+
+        let payloads = MXMetricManager.shared.pastDiagnosticPayloads
+        guard !payloads.isEmpty else { return }
+
+        let context = MetricKitCrashContextStore.snapshotMetadata()
+        let items = payloads.compactMap { payload in
+            let item = MetricKitPayloadSerializer.item(
+                from: payload,
+                kind: .diagnostic,
+                windowStartMs: payload.timeStampBegin.toMs(),
+                windowEndMs: payload.timeStampEnd.toMs(),
+                context: context
+            )
+            return markDiagnosticIfNew(item)
+        }
+        recordDiagnosticBreadcrumbs(items, reason: reason)
+        upload(items)
+    }
+
+    private func markDiagnosticIfNew(_ item: MetricKitPayloadItem) -> MetricKitPayloadItem? {
+        let fingerprint = [
+            String(item.windowStartMs),
+            String(item.windowEndMs),
+            item.summary["crashDiagnosticCount"] ?? "0",
+            item.summary["hangDiagnosticCount"] ?? "0",
+            item.summary["cpuExceptionDiagnosticCount"] ?? "0",
+            item.summary["diskWriteExceptionDiagnosticCount"] ?? "0",
+        ].joined(separator: "|")
+        diagnosticFingerprintLock.lock()
+        defer { diagnosticFingerprintLock.unlock() }
+        guard !queuedDiagnosticFingerprints.contains(fingerprint) else { return nil }
+        queuedDiagnosticFingerprints.insert(fingerprint)
+        return item
+    }
+
+    private func recordDiagnosticBreadcrumbs(_ items: [MetricKitPayloadItem], reason: String) {
+        for item in items {
+            let crashCount = Int(item.summary["crashDiagnosticCount"] ?? "0") ?? 0
+            let hangCount = Int(item.summary["hangDiagnosticCount"] ?? "0") ?? 0
+            let cpuExceptionCount = Int(item.summary["cpuExceptionDiagnosticCount"] ?? "0") ?? 0
+            guard crashCount > 0 || hangCount > 0 || cpuExceptionCount > 0 else { continue }
+
+            var metadata: [String: String] = [
+                "reason": reason,
+                "crashDiagnosticCount": String(crashCount),
+                "hangDiagnosticCount": String(hangCount),
+                "cpuExceptionDiagnosticCount": String(cpuExceptionCount),
+            ]
+            if let sessionId = item.summary["lastSessionId"] {
+                metadata["sessionId"] = sessionId
+            }
+            if let workspaceId = item.summary["lastWorkspaceId"] {
+                metadata["workspaceId"] = workspaceId
+            }
+            ClientLog.error("MetricKit", "Crash diagnostic payload queued", metadata: metadata)
         }
     }
 
@@ -142,6 +219,10 @@ private actor MetricKitUploadQueue {
     }
 
     func enqueue(payloads: [MetricKitPayloadItem]) {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            clear()
+            return
+        }
         guard !payloads.isEmpty else { return }
 
         backlog.append(contentsOf: payloads)
@@ -153,6 +234,10 @@ private actor MetricKitUploadQueue {
     }
 
     func flushIfNeeded() {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            clear()
+            return
+        }
         if uploading {
             return
         }
@@ -162,7 +247,16 @@ private actor MetricKitUploadQueue {
         }
     }
 
+    func clear() {
+        apiClient = nil
+        backlog.removeAll(keepingCapacity: true)
+    }
+
     private func flush() async {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            clear()
+            return
+        }
         if uploading { return }
         uploading = true
         defer { uploading = false }
@@ -178,6 +272,10 @@ private actor MetricKitUploadQueue {
         }
 
         while !backlog.isEmpty {
+            guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+                clear()
+                return
+            }
             let batch = Array(backlog.prefix(maxBatchSize))
             backlog.removeFirst(min(maxBatchSize, backlog.count))
 
@@ -187,6 +285,9 @@ private actor MetricKitUploadQueue {
                 buildNumber: metadata.buildNumber,
                 osVersion: metadata.osVersion,
                 deviceModel: metadata.deviceModel,
+                clientKind: .ios,
+                appInstanceId: ClientLogUploadService.appInstanceId,
+                bootId: ClientLogUploadService.bootId,
                 payloads: batch
             )
 
@@ -203,6 +304,57 @@ private actor MetricKitUploadQueue {
 
 }
 
+// MARK: - Crash context
+
+struct MetricKitCrashContext: Codable, Equatable, Sendable {
+    let recordedAtMs: Int64
+    let sessionId: String?
+    let workspaceId: String?
+    let streamState: String
+}
+
+enum MetricKitCrashContextStore {
+    private static let defaultsKey = "oppi.diagnostics.lastActiveContext.v1"
+
+    static func record(sessionId: String?, workspaceId: String?, streamState: String) {
+        let context = MetricKitCrashContext(
+            recordedAtMs: Date.nowMs(),
+            sessionId: clean(sessionId),
+            workspaceId: clean(workspaceId),
+            streamState: clean(streamState) ?? "unknown"
+        )
+        guard let data = try? JSONEncoder().encode(context) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
+    }
+
+    static func snapshot() -> MetricKitCrashContext? {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return nil }
+        return try? JSONDecoder().decode(MetricKitCrashContext.self, from: data)
+    }
+
+    static func snapshotMetadata() -> [String: String] {
+        guard let context = snapshot() else { return [:] }
+        var metadata: [String: String] = [
+            "lastContextRecordedAtMs": String(context.recordedAtMs),
+            "lastStreamState": context.streamState,
+        ]
+        if let sessionId = context.sessionId {
+            metadata["lastSessionId"] = sessionId
+        }
+        if let workspaceId = context.workspaceId {
+            metadata["lastWorkspaceId"] = workspaceId
+        }
+        return metadata
+    }
+
+    private static func clean(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(128))
+    }
+}
+
 // MARK: - Payload item builder (internal for testing)
 
 /// Converts a dictionary (from MX*.jsonRepresentation()) into a MetricKitPayloadItem.
@@ -213,30 +365,60 @@ enum MetricKitPayloadItemBuilder {
         from snapshot: [String: Any],
         kind: MetricKitPayloadItem.Kind,
         windowStartMs: Int64,
-        windowEndMs: Int64
+        windowEndMs: Int64,
+        context: [String: String] = [:]
     ) -> MetricKitPayloadItem {
-        let summary = summarize(snapshot)
+        var enrichedSnapshot = snapshot
+        if !context.isEmpty {
+            enrichedSnapshot["oppiDiagnosticContext"] = context
+        }
+
+        let summary = summarize(enrichedSnapshot, context: context)
         return MetricKitPayloadItem(
             kind: kind,
             windowStartMs: windowStartMs,
             windowEndMs: windowEndMs,
             summary: summary,
-            raw: ["payload": jsonString(from: snapshot)]
+            raw: ["payload": jsonString(from: enrichedSnapshot)]
         )
     }
 
-    private static func summarize(_ snapshot: [String: Any]) -> [String: String] {
+    private static func summarize(_ snapshot: [String: Any], context: [String: String]) -> [String: String] {
         var out: [String: String] = [
             "source": snapshot["type"] as? String ?? "MetricKit"
         ]
 
+        addDiagnosticCounts(from: snapshot, to: &out)
+        for (key, value) in context {
+            guard out.count < 24, !key.isEmpty else { break }
+            out[key] = String(value.prefix(140))
+        }
+
         for (key, value) in snapshot {
             guard out.count < 24, !key.isEmpty else { continue }
             let safeKey = String(key.prefix(64))
-            out[safeKey] = summarizeValue(value)
+            if out[safeKey] == nil {
+                out[safeKey] = summarizeValue(value)
+            }
         }
 
         return out
+    }
+
+    private static func addDiagnosticCounts(from snapshot: [String: Any], to out: inout [String: String]) {
+        let fields = [
+            ("crashDiagnostics", "crashDiagnosticCount"),
+            ("hangDiagnostics", "hangDiagnosticCount"),
+            ("cpuExceptionDiagnostics", "cpuExceptionDiagnosticCount"),
+            ("diskWriteExceptionDiagnostics", "diskWriteExceptionDiagnosticCount"),
+            ("appLaunchDiagnostics", "appLaunchDiagnosticCount"),
+        ]
+
+        for (payloadKey, summaryKey) in fields {
+            if let diagnostics = snapshot[payloadKey] as? [Any] {
+                out[summaryKey] = String(diagnostics.count)
+            }
+        }
     }
 
     private static func summarizeValue(_ value: Any) -> String {
@@ -320,13 +502,15 @@ private enum MetricKitPayloadSerializer {
         from payload: MXDiagnosticPayload,
         kind: MetricKitPayloadItem.Kind,
         windowStartMs: Int64,
-        windowEndMs: Int64
+        windowEndMs: Int64,
+        context: [String: String] = [:]
     ) -> MetricKitPayloadItem {
         MetricKitPayloadItemBuilder.makeItem(
             from: dictionaryFrom(payload),
             kind: kind,
             windowStartMs: windowStartMs,
-            windowEndMs: windowEndMs
+            windowEndMs: windowEndMs,
+            context: context
         )
     }
 

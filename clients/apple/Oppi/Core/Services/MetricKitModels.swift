@@ -19,7 +19,32 @@ struct MetricKitUploadRequest: Codable, Sendable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
+    let clientKind: AppleClientKind?
+    let appInstanceId: String?
+    let bootId: String?
     let payloads: [MetricKitPayloadItem]
+
+    init(
+        generatedAt: Int64,
+        appVersion: String,
+        buildNumber: String,
+        osVersion: String,
+        deviceModel: String,
+        clientKind: AppleClientKind? = nil,
+        appInstanceId: String? = nil,
+        bootId: String? = nil,
+        payloads: [MetricKitPayloadItem]
+    ) {
+        self.generatedAt = generatedAt
+        self.appVersion = appVersion
+        self.buildNumber = buildNumber
+        self.osVersion = osVersion
+        self.deviceModel = deviceModel
+        self.clientKind = clientKind
+        self.appInstanceId = appInstanceId
+        self.bootId = bootId
+        self.payloads = payloads
+    }
 }
 
 enum ChatMetricName: String, Codable, Sendable {

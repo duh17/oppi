@@ -273,12 +273,18 @@ function parseRequest(body: unknown): MetricKitUploadRequest | null {
   if (!Array.isArray(rawPayloads)) return null;
 
   const generatedAt = toFiniteNumber(raw.generatedAt, Date.now());
+  const rawClientKind = sanitizeString(raw.clientKind, 16);
+  const appInstanceId = sanitizeRedactedString(raw.appInstanceId, 128);
+  const bootId = sanitizeRedactedString(raw.bootId, 128);
   const result: MetricKitUploadRequest = {
     generatedAt,
     appVersion: sanitizeString(raw.appVersion, 96),
     buildNumber: sanitizeString(raw.buildNumber, 64),
     osVersion: sanitizeString(raw.osVersion, 128),
     deviceModel: sanitizeString(raw.deviceModel, 128),
+    clientKind: rawClientKind === "ios" || rawClientKind === "mac" ? rawClientKind : undefined,
+    appInstanceId: appInstanceId || undefined,
+    bootId: bootId || undefined,
     payloads: [],
   };
 
@@ -304,6 +310,9 @@ function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadReques
     buildNumber: request.buildNumber,
     osVersion: request.osVersion,
     deviceModel: request.deviceModel,
+    clientKind: request.clientKind,
+    appInstanceId: request.appInstanceId,
+    bootId: request.bootId,
     payloadCount: request.payloads.length,
     payloads: request.payloads,
   };

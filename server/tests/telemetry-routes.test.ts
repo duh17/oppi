@@ -31,6 +31,9 @@ describe("telemetry module", () => {
           generatedAt,
           appVersion: "1.0.0",
           buildNumber: "1",
+          clientKind: "ios",
+          appInstanceId: "app-instance-1",
+          bootId: "boot-1",
           payloads: [
             {
               kind: "metric",
@@ -58,10 +61,16 @@ describe("telemetry module", () => {
 
       const record = JSON.parse(lines[0]) as {
         appVersion?: string;
+        clientKind?: string;
+        appInstanceId?: string;
+        bootId?: string;
         payloadCount: number;
         payloads: Array<{ kind: string }>;
       };
       expect(record.appVersion).toBe("1.0.0");
+      expect(record.clientKind).toBe("ios");
+      expect(record.appInstanceId).toBe("app-instance-1");
+      expect(record.bootId).toBe("boot-1");
       expect(record.payloadCount).toBe(1);
       expect(record.payloads[0]?.kind).toBe("metric");
     } finally {

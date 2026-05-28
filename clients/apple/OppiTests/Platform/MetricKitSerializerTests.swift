@@ -86,12 +86,48 @@ struct MetricKitSerializerTests {
         )
 
         #expect(item.kind == .diagnostic)
+        #expect(item.summary["cpuExceptionDiagnosticCount"] == "1")
 
         let rawPayload = item.raw["payload"] ?? ""
         let parsed = try? JSONSerialization.jsonObject(
             with: Data(rawPayload.utf8)
         ) as? [String: Any]
         #expect(parsed?["cpuExceptionDiagnostics"] != nil, "CPU exception diagnostics must survive")
+    }
+
+    @Test func diagnosticPayloadAddsCrashCountsAndLastContext() {
+        let dict: [String: Any] = [
+            "crashDiagnostics": [
+                [
+                    "signal": 11,
+                    "callStackTree": ["callStackPerThread": true],
+                ]
+            ],
+        ]
+
+        let item = MetricKitPayloadItemBuilder.makeItem(
+            from: dict,
+            kind: .diagnostic,
+            windowStartMs: 5000,
+            windowEndMs: 6000,
+            context: [
+                "lastSessionId": "session-1",
+                "lastWorkspaceId": "workspace-1",
+                "lastStreamState": "streaming",
+            ]
+        )
+
+        #expect(item.summary["crashDiagnosticCount"] == "1")
+        #expect(item.summary["lastSessionId"] == "session-1")
+        #expect(item.summary["lastWorkspaceId"] == "workspace-1")
+        #expect(item.summary["lastStreamState"] == "streaming")
+
+        let rawPayload = item.raw["payload"] ?? ""
+        let parsed = try? JSONSerialization.jsonObject(
+            with: Data(rawPayload.utf8)
+        ) as? [String: Any]
+        let context = parsed?["oppiDiagnosticContext"] as? [String: String]
+        #expect(context?["lastSessionId"] == "session-1")
     }
 
     // MARK: - Empty/broken payloads (the old bug)

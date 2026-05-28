@@ -6,11 +6,13 @@ import Foundation
 /// the same server contract with a Mac-specific uploader.
 enum ClientLogUploadService {
     private static let appInstanceDefaultsKey = "oppi.clientLog.appInstanceId"
-    private static let bootId = UUID().uuidString
+
+    static let appInstanceId = loadAppInstanceId()
+    static let bootId = UUID().uuidString
 
     static let shared = ClientLogUploadQueue(
         clientKind: .ios,
-        appInstanceId: appInstanceId(),
+        appInstanceId: appInstanceId,
         bootId: bootId,
         isUploadAllowed: { TelemetrySettings.allowsRemoteDiagnosticsUpload }
     )
@@ -80,7 +82,7 @@ enum ClientLogUploadService {
         }
     }
 
-    private static func appInstanceId() -> String {
+    private static func loadAppInstanceId() -> String {
         let defaults = UserDefaults.standard
         if let existing = defaults.string(forKey: appInstanceDefaultsKey), !existing.isEmpty {
             return existing

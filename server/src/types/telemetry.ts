@@ -51,6 +51,9 @@ export interface MetricKitUploadRequest {
   buildNumber?: string;
   osVersion?: string;
   deviceModel?: string;
+  clientKind?: "ios" | "mac";
+  appInstanceId?: string;
+  bootId?: string;
   payloads: MetricKitPayloadItem[];
 }
 

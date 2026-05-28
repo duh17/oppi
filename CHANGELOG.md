@@ -44,12 +44,14 @@ Example:
 - **Protocol:** Added pending permission and ask counts to workspace session-list summaries so cold workspace lists can show attention badges.
 - **Docs:** Added public deep-link documentation for pairing, workspace, session, and permission links.
 - **Docs:** Adopted this changelog and versioning policy for future releases.
+- **Client/Server:** Added MetricKit crash diagnostic upload with persisted session context, gated by the Send Diagnostics to Server setting.
 
 ### Changed
 
 - **Client:** App-owned deep links now use only the `oppi://` scheme; legacy `pi://` handling was removed.
 - **Client:** Model switches now apply immediately without the prompt-cache warning dialog.
 - **Client:** Workspace home rows use compact status indicators for active, stopped, and attention states.
+- **Client:** Renamed the public diagnostics toggle to “Send Diagnostics to Server” and clarified that it covers performance metrics, client breadcrumbs, and crash diagnostics.
 
 ### Fixed
 

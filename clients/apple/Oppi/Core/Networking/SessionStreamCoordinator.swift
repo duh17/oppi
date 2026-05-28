@@ -54,6 +54,7 @@ final class SessionStreamCoordinator {
 
     private(set) var state: StreamState = .idle
     private var lastSeenSeqBySession: [String: Int] = [:]
+    private var activeWorkspaceId: String?
 
     func hasFullSubscription(sessionId: String) -> Bool {
         switch state {
@@ -77,6 +78,7 @@ final class SessionStreamCoordinator {
             return nil
         }
 
+        activeWorkspaceId = workspaceId
         transition(to: .connectingTransport(sessionId: sessionId), event: .beginSession)
         let streamStart = ContinuousClock.now
 
@@ -355,6 +357,42 @@ final class SessionStreamCoordinator {
             )
         }
         state = newState
+        persistCrashContext(for: newState)
+    }
+
+    private func persistCrashContext(for state: StreamState) {
+        switch state {
+        case .idle:
+            MetricKitCrashContextStore.record(
+                sessionId: nil,
+                workspaceId: activeWorkspaceId,
+                streamState: StateKind.idle.rawValue
+            )
+        case .connectingTransport(let sessionId):
+            MetricKitCrashContextStore.record(
+                sessionId: sessionId,
+                workspaceId: activeWorkspaceId,
+                streamState: StateKind.connectingTransport.rawValue
+            )
+        case .queueSync(let sessionId, let phase):
+            MetricKitCrashContextStore.record(
+                sessionId: sessionId,
+                workspaceId: activeWorkspaceId,
+                streamState: "\(StateKind.queueSync.rawValue).\(phase.rawValue)"
+            )
+        case .streaming(let sessionId):
+            MetricKitCrashContextStore.record(
+                sessionId: sessionId,
+                workspaceId: activeWorkspaceId,
+                streamState: StateKind.streaming.rawValue
+            )
+        case .resubscribing(let sessionId):
+            MetricKitCrashContextStore.record(
+                sessionId: sessionId,
+                workspaceId: activeWorkspaceId,
+                streamState: StateKind.resubscribing.rawValue
+            )
+        }
     }
 
     private func kind(of state: StreamState) -> StateKind {
