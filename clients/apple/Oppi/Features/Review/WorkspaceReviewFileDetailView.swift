@@ -193,7 +193,13 @@ struct WorkspaceReviewFileDetailView: View {
 
     private func content(diff: WorkspaceReviewDiffResponse) -> some View {
         VStack(spacing: 0) {
-            summaryBar(diff: diff)
+            ReviewFileSummaryBar(
+                path: file.path,
+                status: file.status,
+                statusLabel: file.statusLabel,
+                addedLines: diff.addedLines,
+                removedLines: diff.removedLines
+            )
 
             if isNewFile {
                 // New file: skip tabs, show syntax-highlighted content directly
@@ -255,66 +261,6 @@ struct WorkspaceReviewFileDetailView: View {
             presentation: .document
         )
         .environment(\.selectedTextActionScope, selectedTextScope)
-    }
-
-    private var fileIcon: FileIcon {
-        FileIcon.forPath(file.path)
-    }
-
-    @ViewBuilder
-    private func summaryBar(diff: WorkspaceReviewDiffResponse) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            fileIcon.iconView(size: 17, font: .subheadline.weight(.semibold))
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(fileIcon.color.opacity(0.12))
-                )
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(file.path.lastPathComponentForDisplay)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-
-                    Text(file.statusLabel)
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(GitStatusColor.color(for: file.status).opacity(0.12), in: Capsule())
-                        .foregroundStyle(GitStatusColor.color(for: file.status))
-                }
-
-                if let parentPath = file.path.parentPathForDisplay {
-                    Text(parentPath)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-
-            Spacer(minLength: 4)
-
-            HStack(spacing: 8) {
-                if diff.addedLines > 0 {
-                    Text("+\(diff.addedLines)")
-                        .font(.caption2.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.themeDiffAdded)
-                }
-                if diff.removedLines > 0 {
-                    Text("-\(diff.removedLines)")
-                        .font(.caption2.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.themeDiffRemoved)
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
     }
 
     private func createQuickActionSession(option: WorkspaceQuickActionOption) async {

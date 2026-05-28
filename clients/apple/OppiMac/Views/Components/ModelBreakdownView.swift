@@ -1,32 +1,5 @@
 import SwiftUI
 
-// MARK: - Aggregated model
-
-private struct AggregatedModel: Identifiable {
-    let aggregationKey: String
-    let displayName: String
-    let provider: String?
-    let providerDisplayName: String?
-    let representativeModel: String
-    let sessions: Int
-    let cost: Double
-    let tokens: Int
-    let inputTokens: Int
-    let cacheRead: Int
-    let cacheWrite: Int
-    var share: Double
-
-    var id: String { aggregationKey }
-
-    var cacheRate: Double? {
-        computePromptCacheRate(
-            cacheRead: cacheRead,
-            inputTokens: inputTokens,
-            cacheWrite: cacheWrite
-        )
-    }
-}
-
 /// Number of models shown before "Show more" toggle.
 private let topModelCount = 5
 
@@ -41,66 +14,15 @@ struct ModelBreakdownView: View {
 
     // MARK: - Aggregation
 
-    private var aggregated: [AggregatedModel] {
-        var byKey: [String: AggregatedModel] = [:]
-
-        for item in breakdown {
-            let identity = modelDisplayIdentity(item.model)
-            let key = identity.aggregationKey
-            let cacheRead = item.cacheRead ?? 0
-            let cacheWrite = item.cacheWrite ?? 0
-            let inputTokens = item.inputTokens
-
-            if var existing = byKey[key] {
-                existing = AggregatedModel(
-                    aggregationKey: key,
-                    displayName: existing.displayName,
-                    provider: existing.provider,
-                    providerDisplayName: existing.providerDisplayName,
-                    representativeModel: existing.representativeModel,
-                    sessions: existing.sessions + item.sessions,
-                    cost: existing.cost + item.cost,
-                    tokens: existing.tokens + item.tokens,
-                    inputTokens: existing.inputTokens + inputTokens,
-                    cacheRead: existing.cacheRead + cacheRead,
-                    cacheWrite: existing.cacheWrite + cacheWrite,
-                    share: existing.share + item.share
-                )
-                byKey[key] = existing
-            } else {
-                byKey[key] = AggregatedModel(
-                    aggregationKey: key,
-                    displayName: identity.displayName,
-                    provider: identity.provider,
-                    providerDisplayName: identity.providerDisplayName,
-                    representativeModel: item.model,
-                    sessions: item.sessions,
-                    cost: item.cost,
-                    tokens: item.tokens,
-                    inputTokens: inputTokens,
-                    cacheRead: cacheRead,
-                    cacheWrite: cacheWrite,
-                    share: item.share
-                )
-            }
-        }
-
-        return byKey.values.sorted {
-            if $0.cost != $1.cost {
-                return $0.cost > $1.cost
-            }
-            if $0.displayName != $1.displayName {
-                return $0.displayName < $1.displayName
-            }
-            return ($0.providerDisplayName ?? "") < ($1.providerDisplayName ?? "")
-        }
+    private var aggregated: [AggregatedStatsModel] {
+        aggregateStatsModels(breakdown, sortedBy: .cost)
     }
 
-    private var nonZeroModels: [AggregatedModel] {
-        aggregated.filter { $0.cost > 0.005 }
+    private var nonZeroModels: [AggregatedStatsModel] {
+        aggregated.nonZeroStatsModels(for: .cost)
     }
 
-    private var visibleModels: [AggregatedModel] {
+    private var visibleModels: [AggregatedStatsModel] {
         let models = nonZeroModels
         if showAll || models.count <= topModelCount {
             return models
@@ -150,7 +72,7 @@ struct ModelBreakdownView: View {
 
     // MARK: - Row
 
-    private func modelRow(_ item: AggregatedModel) -> some View {
+    private func modelRow(_ item: AggregatedStatsModel) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 leadingIdentity(item)
@@ -202,7 +124,7 @@ struct ModelBreakdownView: View {
         }
     }
 
-    private func leadingIdentity(_ item: AggregatedModel) -> some View {
+    private func leadingIdentity(_ item: AggregatedStatsModel) -> some View {
         HStack(alignment: .center, spacing: 6) {
             ProviderGlyph(provider: item.provider, size: 11, color: .secondary)
 

@@ -278,6 +278,194 @@ extension StatsMetric {
     }
 }
 
+// MARK: - Shared stats aggregations
+
+/// Hourly per-model cost used by the iOS, iPad, and Mac daily drill-down views.
+struct StatsHourlyCost: Identifiable {
+    let hour: Int
+    let model: String
+    let cost: Double
+
+    var id: String { "\(hour)-\(model)" }
+}
+
+extension DailyDetail {
+    var displayDayTitle: String {
+        guard let date = StatsDailyDetailFormatters.dateParser.date(from: self.date) else {
+            return self.date
+        }
+        return StatsDailyDetailFormatters.dayFormatter.string(from: date)
+    }
+
+    var hourlyCostValues: [StatsHourlyCost] {
+        var result: [StatsHourlyCost] = []
+        for entry in hourly {
+            if let byModel = entry.byModel, !byModel.isEmpty {
+                var byIdentity: [String: (raw: String, sortKey: String, cost: Double)] = [:]
+                for (model, data) in byModel where data.cost > 0 {
+                    let identity = modelDisplayIdentity(model)
+                    let key = identity.aggregationKey
+                    let sortKey = "\(identity.displayName)|\(identity.providerDisplayName ?? "")"
+                    if let existing = byIdentity[key] {
+                        byIdentity[key] = (existing.raw, existing.sortKey, existing.cost + data.cost)
+                    } else {
+                        byIdentity[key] = (model, sortKey, data.cost)
+                    }
+                }
+                for (_, value) in byIdentity.sorted(by: { $0.value.sortKey < $1.value.sortKey }) {
+                    result.append(StatsHourlyCost(hour: entry.hour, model: value.raw, cost: value.cost))
+                }
+            } else if entry.cost > 0 {
+                result.append(StatsHourlyCost(hour: entry.hour, model: "other", cost: entry.cost))
+            }
+        }
+        return result.sorted { $0.hour < $1.hour }
+    }
+}
+
+func statsHourLabel(_ hour: Int) -> String {
+    if hour == 0 { return "12a" }
+    if hour < 12 { return "\(hour)a" }
+    if hour == 12 { return "12p" }
+    return "\(hour - 12)p"
+}
+
+func statsTimeLabel(epochMilliseconds: Double) -> String {
+    let date = Date(timeIntervalSince1970: epochMilliseconds / 1000)
+    return StatsDailyDetailFormatters.timeFormatter.string(from: date)
+}
+
+private enum StatsDailyDetailFormatters {
+    static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f
+    }()
+
+    static let dateParser: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f
+    }()
+}
+
+/// Model stats deduped by provider + stable model id.
+struct AggregatedStatsModel: Identifiable, Equatable {
+    let aggregationKey: String
+    let displayName: String
+    let provider: String?
+    let providerDisplayName: String?
+    /// Any raw model name from this group, used for stable color lookup.
+    let representativeModel: String
+    let sessions: Int
+    let cost: Double
+    let tokens: Int
+    let inputTokens: Int
+    let cacheRead: Int
+    let cacheWrite: Int
+    var share: Double
+
+    var id: String { aggregationKey }
+
+    func value(for metric: StatsMetric) -> Double {
+        switch metric {
+        case .sessions: return Double(sessions)
+        case .cost: return cost
+        case .tokens: return Double(tokens)
+        }
+    }
+
+    /// Prompt-cache effectiveness: cacheRead / (cacheRead + uncachedInput + cacheWrite).
+    /// Excludes output tokens, but counts cache writes against the total.
+    var cacheRate: Double? {
+        computePromptCacheRate(
+            cacheRead: cacheRead,
+            inputTokens: inputTokens,
+            cacheWrite: cacheWrite
+        )
+    }
+}
+
+func aggregateStatsModels(
+    _ breakdown: [StatsModelBreakdown],
+    sortedBy metric: StatsMetric = .cost
+) -> [AggregatedStatsModel] {
+    var byKey: [String: AggregatedStatsModel] = [:]
+
+    for item in breakdown {
+        let identity = modelDisplayIdentity(item.model)
+        let key = identity.aggregationKey
+        let cacheRead = item.cacheRead ?? 0
+        let cacheWrite = item.cacheWrite ?? 0
+        let inputTokens = item.inputTokens
+
+        if let existing = byKey[key] {
+            byKey[key] = AggregatedStatsModel(
+                aggregationKey: key,
+                displayName: existing.displayName,
+                provider: existing.provider,
+                providerDisplayName: existing.providerDisplayName,
+                representativeModel: existing.representativeModel,
+                sessions: existing.sessions + item.sessions,
+                cost: existing.cost + item.cost,
+                tokens: existing.tokens + item.tokens,
+                inputTokens: existing.inputTokens + inputTokens,
+                cacheRead: existing.cacheRead + cacheRead,
+                cacheWrite: existing.cacheWrite + cacheWrite,
+                share: existing.share + item.share
+            )
+        } else {
+            byKey[key] = AggregatedStatsModel(
+                aggregationKey: key,
+                displayName: identity.displayName,
+                provider: identity.provider,
+                providerDisplayName: identity.providerDisplayName,
+                representativeModel: item.model,
+                sessions: item.sessions,
+                cost: item.cost,
+                tokens: item.tokens,
+                inputTokens: inputTokens,
+                cacheRead: cacheRead,
+                cacheWrite: cacheWrite,
+                share: item.share
+            )
+        }
+    }
+
+    return byKey.values.sorted { lhs, rhs in
+        let lhsValue = lhs.value(for: metric)
+        let rhsValue = rhs.value(for: metric)
+        if lhsValue != rhsValue {
+            return lhsValue > rhsValue
+        }
+        if lhs.cost != rhs.cost {
+            return lhs.cost > rhs.cost
+        }
+        if lhs.displayName != rhs.displayName {
+            return lhs.displayName < rhs.displayName
+        }
+        return (lhs.providerDisplayName ?? "") < (rhs.providerDisplayName ?? "")
+    }
+}
+
+extension Array where Element == AggregatedStatsModel {
+    func nonZeroStatsModels(for metric: StatsMetric) -> [AggregatedStatsModel] {
+        filter { item in
+            switch metric {
+            case .cost: return item.cost > 0.005
+            case .sessions, .tokens: return item.value(for: metric) > 0
+            }
+        }
+    }
+}
+
 /// Shared model colors.
 ///
 /// The base hue comes from the stable model family. Version numbers increase

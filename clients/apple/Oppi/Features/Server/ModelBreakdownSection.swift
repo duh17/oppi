@@ -1,44 +1,6 @@
 import Charts
 import SwiftUI
 
-// MARK: - Aggregated model (deduped by provider + stable model id)
-
-private struct AggregatedModel: Identifiable {
-    let aggregationKey: String
-    let displayName: String
-    let provider: String?
-    let providerDisplayName: String?
-    /// Any raw model name from this group (for color lookup).
-    let representativeModel: String
-    let sessions: Int
-    let cost: Double
-    let tokens: Int
-    let inputTokens: Int
-    let cacheRead: Int
-    let cacheWrite: Int
-    var share: Double
-
-    var id: String { aggregationKey }
-
-    func value(for metric: StatsMetric) -> Double {
-        switch metric {
-        case .sessions: return Double(sessions)
-        case .cost: return cost
-        case .tokens: return Double(tokens)
-        }
-    }
-
-    /// Prompt-cache effectiveness: cacheRead / (cacheRead + uncachedInput + cacheWrite).
-    /// Excludes output tokens, but counts cache writes against the total.
-    var cacheRate: Double? {
-        computePromptCacheRate(
-            cacheRead: cacheRead,
-            inputTokens: inputTokens,
-            cacheWrite: cacheWrite
-        )
-    }
-}
-
 /// Number of models shown before "Show more" disclosure.
 private let topModelCount = 5
 
@@ -52,81 +14,20 @@ struct ModelBreakdownSection: View {
 
     // MARK: - Aggregation
 
-    private var aggregated: [AggregatedModel] {
-        var byKey: [String: AggregatedModel] = [:]
-
-        for item in breakdown {
-            let identity = modelDisplayIdentity(item.model)
-            let key = identity.aggregationKey
-            let cacheRead = item.cacheRead ?? 0
-            let cacheWrite = item.cacheWrite ?? 0
-            let inputTokens = item.inputTokens
-
-            if var existing = byKey[key] {
-                existing = AggregatedModel(
-                    aggregationKey: key,
-                    displayName: existing.displayName,
-                    provider: existing.provider,
-                    providerDisplayName: existing.providerDisplayName,
-                    representativeModel: existing.representativeModel,
-                    sessions: existing.sessions + item.sessions,
-                    cost: existing.cost + item.cost,
-                    tokens: existing.tokens + item.tokens,
-                    inputTokens: existing.inputTokens + inputTokens,
-                    cacheRead: existing.cacheRead + cacheRead,
-                    cacheWrite: existing.cacheWrite + cacheWrite,
-                    share: existing.share + item.share
-                )
-                byKey[key] = existing
-            } else {
-                byKey[key] = AggregatedModel(
-                    aggregationKey: key,
-                    displayName: identity.displayName,
-                    provider: identity.provider,
-                    providerDisplayName: identity.providerDisplayName,
-                    representativeModel: item.model,
-                    sessions: item.sessions,
-                    cost: item.cost,
-                    tokens: item.tokens,
-                    inputTokens: inputTokens,
-                    cacheRead: cacheRead,
-                    cacheWrite: cacheWrite,
-                    share: item.share
-                )
-            }
-        }
-
-        return byKey.values.sorted { lhs, rhs in
-            let lhsValue = lhs.value(for: metric)
-            let rhsValue = rhs.value(for: metric)
-            if lhsValue != rhsValue {
-                return lhsValue > rhsValue
-            }
-            if lhs.cost != rhs.cost {
-                return lhs.cost > rhs.cost
-            }
-            if lhs.displayName != rhs.displayName {
-                return lhs.displayName < rhs.displayName
-            }
-            return (lhs.providerDisplayName ?? "") < (rhs.providerDisplayName ?? "")
-        }
+    private var aggregated: [AggregatedStatsModel] {
+        aggregateStatsModels(breakdown, sortedBy: metric)
     }
 
     /// Models with non-zero usage for the selected metric, sorted by that metric descending.
-    private var nonZeroModels: [AggregatedModel] {
-        aggregated.filter { item in
-            switch metric {
-            case .cost: return item.cost > 0.005
-            case .sessions, .tokens: return item.value(for: metric) > 0
-            }
-        }
+    private var nonZeroModels: [AggregatedStatsModel] {
+        aggregated.nonZeroStatsModels(for: metric)
     }
 
     private var totalMetricValue: Double {
         aggregated.reduce(0) { $0 + $1.value(for: metric) }
     }
 
-    private var visibleModels: [AggregatedModel] {
+    private var visibleModels: [AggregatedStatsModel] {
         let models = nonZeroModels
         if showAll || models.count <= topModelCount {
             return models
@@ -158,7 +59,7 @@ struct ModelBreakdownSection: View {
     // MARK: - Donut chart
 
     @ViewBuilder
-    private func donutChart(_ models: [AggregatedModel]) -> some View {
+    private func donutChart(_ models: [AggregatedStatsModel]) -> some View {
         if totalMetricValue <= 0 {
             EmptyView()
         } else {
@@ -225,7 +126,7 @@ struct ModelBreakdownSection: View {
         }
     }
 
-    private func modelRow(_ item: AggregatedModel) -> some View {
+    private func modelRow(_ item: AggregatedStatsModel) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 leadingIdentity(item)
@@ -287,7 +188,7 @@ struct ModelBreakdownSection: View {
         }
     }
 
-    private func metricShare(for item: AggregatedModel) -> Double {
+    private func metricShare(for item: AggregatedStatsModel) -> Double {
         guard totalMetricValue > 0 else { return 0 }
         return max(0, item.value(for: metric) / totalMetricValue)
     }
@@ -303,7 +204,7 @@ struct ModelBreakdownSection: View {
         }
     }
 
-    private func leadingIdentity(_ item: AggregatedModel) -> some View {
+    private func leadingIdentity(_ item: AggregatedStatsModel) -> some View {
         HStack(alignment: .center, spacing: 8) {
             ProviderGlyph(provider: item.provider, size: 12, color: .themeComment)
 

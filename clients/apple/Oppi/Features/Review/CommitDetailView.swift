@@ -241,13 +241,14 @@ struct CommitFileDiffView: View {
     @State private var diff: WorkspaceReviewDiffResponse?
     @State private var error: String?
 
-    private var fileIcon: FileIcon {
-        FileIcon.forPath(file.path)
-    }
-
     var body: some View {
         VStack(spacing: 0) {
-            summaryBar
+            ReviewFileSummaryBar(
+                path: file.path,
+                status: file.status,
+                addedLines: file.addedLines,
+                removedLines: file.removedLines
+            )
 
             Divider().overlay(Color.themeComment.opacity(0.2))
 
@@ -273,64 +274,6 @@ struct CommitFileDiffView: View {
             await loadDiff()
         }
     }
-
-    // MARK: - Summary Bar
-
-    private var summaryBar: some View {
-        HStack(alignment: .top, spacing: 12) {
-            fileIcon.iconView(size: 17, font: .subheadline.weight(.semibold))
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(fileIcon.color.opacity(0.12))
-                )
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(file.path.lastPathComponentForDisplay)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-
-                    Text(file.status)
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(GitStatusColor.color(for: file.status).opacity(0.12), in: Capsule())
-                        .foregroundStyle(GitStatusColor.color(for: file.status))
-                }
-
-                if let parentPath = file.path.parentPathForDisplay {
-                    Text(parentPath)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-
-            Spacer(minLength: 4)
-
-            HStack(spacing: 8) {
-                if let added = file.addedLines, added > 0 {
-                    Text("+\(added)")
-                        .font(.caption2.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.themeDiffAdded)
-                }
-                if let removed = file.removedLines, removed > 0 {
-                    Text("-\(removed)")
-                        .font(.caption2.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.themeDiffRemoved)
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
-    }
-
 
 
     // MARK: - Data Loading
