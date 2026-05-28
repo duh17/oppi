@@ -143,7 +143,7 @@ final class NativeMermaidBlockView: UIView {
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
 
-        let layout = DocumentRenderPipeline.layoutGraphical(
+        guard let result = DocumentRenderPipeline.renderInlineGraphicalImage(
             parser: MermaidParser(),
             renderer: MermaidFlowchartRenderer(),
             text: code,
@@ -153,20 +153,12 @@ final class NativeMermaidBlockView: UIView {
                 theme: theme,
                 displayMode: .inline
             )
-        )
-        guard layout.size.width > 0, layout.size.height > 0 else {
+        ) else {
             showAsCodeFallback(code: code, palette: palette)
             return
         }
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 2.0
-        let renderer = UIGraphicsImageRenderer(size: layout.size, format: format)
-        let image = renderer.image { ctx in
-            layout.draw(ctx.cgContext, .zero)
-        }
-
-        showDiagram(image: image, naturalSize: layout.size, palette: palette)
+        showDiagram(image: result.image, naturalSize: result.size, palette: palette)
     }
 
     /// Render as a diagram (fence closed, not streaming).
@@ -185,7 +177,7 @@ final class NativeMermaidBlockView: UIView {
                 : (self.window?.windowScene?.screen.bounds.width ?? 360)
 
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
-                let layout = DocumentRenderPipeline.layoutGraphical(
+                DocumentRenderPipeline.renderInlineGraphicalImage(
                     parser: MermaidParser(),
                     renderer: MermaidFlowchartRenderer(),
                     text: code,
@@ -196,15 +188,6 @@ final class NativeMermaidBlockView: UIView {
                         displayMode: .inline
                     )
                 )
-                guard layout.size.width > 0, layout.size.height > 0 else { return nil }
-
-                let format = UIGraphicsImageRendererFormat()
-                format.scale = 2.0
-                let renderer = UIGraphicsImageRenderer(size: layout.size, format: format)
-                let image = renderer.image { ctx in
-                    layout.draw(ctx.cgContext, .zero)
-                }
-                return (image: image, size: layout.size)
             }.value
 
             guard !Task.isCancelled else { return }

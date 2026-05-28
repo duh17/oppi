@@ -20,6 +20,7 @@ import {
   materializeToolMediaDetails,
 } from "./session-attachments.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
+import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState
@@ -62,33 +63,6 @@ function stripPartialImageContent(contents: unknown[] | undefined): unknown[] | 
   if (!contents) return undefined;
   const filtered = contents.filter((block) => asRecord(block)?.type !== "image");
   return filtered.length === contents.length ? contents : filtered;
-}
-
-function stripPartialImageDetails(details: unknown): unknown {
-  const root = asRecord(details);
-  if (!root) return details;
-
-  let changed = false;
-  const next: Record<string, unknown> = { ...root };
-
-  if (asRecord(root.image)?.kind === "image") {
-    delete next.image;
-    changed = true;
-  }
-
-  if (Array.isArray(root.media)) {
-    const media = root.media.filter((item) => asRecord(item)?.kind !== "image");
-    if (media.length !== root.media.length) {
-      changed = true;
-      if (media.length > 0) {
-        next.media = media;
-      } else {
-        delete next.media;
-      }
-    }
-  }
-
-  return changed ? (Object.keys(next).length > 0 ? next : undefined) : details;
 }
 
 export interface SessionAgentEventCoordinatorDeps {
@@ -293,7 +267,7 @@ export class SessionAgentEventCoordinator {
         : undefined;
       const content = stripPartialImageContent(rawContent);
       const rawDetails = event.partialResult?.details;
-      const strippedDetails = stripPartialImageDetails(rawDetails);
+      const strippedDetails = stripImageMediaFromDetails(rawDetails);
       const details = materializeToolMediaDetails({
         dataDir: this.deps.dataDir,
         sessionId: active.session.id,

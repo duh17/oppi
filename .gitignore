@@ -11,7 +11,8 @@ clients/apple/*.xcodeproj/
 clients/apple/.env.testflight.local
 
 # Scripts — build-wired + selected ops scripts are tracked
-scripts/
+scripts/*
+!scripts/duplication-scan.ts
 !clients/apple/scripts/
 !server/scripts/
 server/scripts/*

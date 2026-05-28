@@ -37,6 +37,40 @@ func modelDisplayIdentity(_ model: String?) -> ModelDisplayIdentity {
     )
 }
 
+extension StatsMetric {
+    /// Aggregate by provider + stable model id so timestamp-only variants merge.
+    func modelDayValues(from daily: [StatsDailyEntry]) -> [StatsModelDayValue] {
+        var result: [StatsModelDayValue] = []
+        for entry in daily {
+            guard let date = StatsModelDayValue.dateParser.date(from: entry.date) else { continue }
+            if let byModel = entry.byModel, !byModel.isEmpty {
+                var byIdentity: [String: (raw: String, sortKey: String, value: Double)] = [:]
+                for (model, data) in byModel {
+                    let value = value(from: data)
+                    guard value > 0 else { continue }
+                    let identity = modelDisplayIdentity(model)
+                    let key = identity.aggregationKey
+                    let sortKey = "\(identity.displayName)|\(identity.providerDisplayName ?? "")"
+                    if let existing = byIdentity[key] {
+                        byIdentity[key] = (existing.raw, existing.sortKey, existing.value + value)
+                    } else {
+                        byIdentity[key] = (model, sortKey, value)
+                    }
+                }
+                for (_, item) in byIdentity.sorted(by: { $0.value.sortKey < $1.value.sortKey }) {
+                    result.append(StatsModelDayValue(date: date, model: item.raw, value: item.value))
+                }
+            } else {
+                let value = value(from: entry)
+                if value > 0 {
+                    result.append(StatsModelDayValue(date: date, model: "other", value: value))
+                }
+            }
+        }
+        return result.sorted { $0.date < $1.date }
+    }
+}
+
 /// Shared model colors.
 ///
 /// The base hue comes from the stable model family. Version numbers increase

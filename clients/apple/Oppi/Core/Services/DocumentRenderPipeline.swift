@@ -46,6 +46,30 @@ enum DocumentRenderPipeline {
         }
     }
 
+    static func renderInlineGraphicalImage<P: DocumentParser, R: GraphicalDocumentRenderer>(
+        parser: P,
+        renderer: R,
+        text: String,
+        config: RenderConfiguration,
+        scale: CGFloat = 2.0
+    ) -> (image: UIImage, size: CGSize)? where P.Document == R.Document {
+        let layout = layoutGraphical(
+            parser: parser,
+            renderer: renderer,
+            text: text,
+            config: config
+        )
+        guard layout.size.width > 0, layout.size.height > 0 else { return nil }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        let imageRenderer = UIGraphicsImageRenderer(size: layout.size, format: format)
+        let image = imageRenderer.image { ctx in
+            layout.draw(ctx.cgContext, .zero)
+        }
+        return (image: image, size: layout.size)
+    }
+
     // MARK: - LaTeX Multi-Expression Layout
 
     /// Result of laying out multiple LaTeX expressions separated by blank lines.

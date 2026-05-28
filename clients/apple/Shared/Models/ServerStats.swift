@@ -54,6 +54,79 @@ struct StatsDailyEntry: Codable {
     let byModel: [String: DailyModelEntry]?
 }
 
+/// Which server stats metric a chart or hero row displays.
+enum StatsMetric: String, CaseIterable {
+    case sessions
+    case cost
+    case tokens
+
+    var chartTitle: String {
+        switch self {
+        case .sessions: return "Daily Sessions"
+        case .cost: return "Daily Cost"
+        case .tokens: return "Daily Tokens"
+        }
+    }
+
+    func value(from data: DailyModelEntry) -> Double {
+        switch self {
+        case .sessions: return Double(data.sessions)
+        case .cost: return data.cost
+        case .tokens: return Double(data.tokens)
+        }
+    }
+
+    func value(from entry: StatsDailyEntry) -> Double {
+        switch self {
+        case .sessions: return Double(entry.sessions)
+        case .cost: return entry.cost
+        case .tokens: return Double(entry.tokens)
+        }
+    }
+
+    func axisLabel(_ value: Double) -> String {
+        switch self {
+        case .cost:
+            return SessionFormatting.costString(value)
+        case .sessions:
+            return String(format: "%.0f", value)
+        case .tokens:
+            if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
+            if value >= 1_000 { return String(format: "%.0fK", value / 1_000) }
+            return String(format: "%.0f", value)
+        }
+    }
+
+    func displayValue(_ value: Double) -> String {
+        switch self {
+        case .cost:
+            return SessionFormatting.costString(value)
+        case .sessions:
+            return String(format: "%.0f", value)
+        case .tokens:
+            if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
+            if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
+            return String(format: "%.0f", value)
+        }
+    }
+
+}
+
+struct StatsModelDayValue: Identifiable {
+    let date: Date
+    let model: String
+    let value: Double
+
+    var id: String { "\(Int(date.timeIntervalSince1970))-\(model)" }
+
+    static let dateParser: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+}
+
 // MARK: - Model breakdown
 
 struct StatsModelBreakdown: Codable {

@@ -1,20 +1,5 @@
 import SwiftUI
 
-/// Which metric the bar chart displays.
-enum StatsMetric: String, CaseIterable {
-    case sessions
-    case cost
-    case tokens
-
-    var chartTitle: String {
-        switch self {
-        case .sessions: return "Daily Sessions"
-        case .cost: return "Daily Cost"
-        case .tokens: return "Daily Tokens"
-        }
-    }
-}
-
 struct StatsHeroRow: View {
     let totals: StatsTotals
     let daily: [StatsDailyEntry]

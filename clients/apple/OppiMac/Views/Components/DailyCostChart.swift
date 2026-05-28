@@ -1,33 +1,6 @@
 import Charts
 import SwiftUI
 
-// MARK: - Metric enum
-
-/// Which metric the bar chart displays.
-enum StatsMetric: String, CaseIterable {
-    case sessions
-    case cost
-    case tokens
-
-    var chartTitle: String {
-        switch self {
-        case .sessions: "Daily Sessions"
-        case .cost: "Daily Cost"
-        case .tokens: "Daily Tokens"
-        }
-    }
-}
-
-// MARK: - Chart data model
-
-private struct ModelDayValue: Identifiable {
-    let date: Date
-    let model: String
-    let value: Double
-
-    var id: String { "\(Int(date.timeIntervalSince1970))-\(model)" }
-}
-
 // MARK: - DailyCostChart
 
 struct DailyCostChart: View {
@@ -37,13 +10,6 @@ struct DailyCostChart: View {
     var onDaySelected: ((String) -> Void)?
 
     @State private var selectedDate: Date?
-
-    private static let dateParser: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
 
     private static let axisFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -60,38 +26,11 @@ struct DailyCostChart: View {
 
     // MARK: - Derived data
 
-    private var chartData: [ModelDayValue] {
-        var result: [ModelDayValue] = []
-        for entry in daily {
-            guard let date = Self.dateParser.date(from: entry.date) else { continue }
-            if let byModel = entry.byModel, !byModel.isEmpty {
-                var byIdentity: [String: (raw: String, sortKey: String, value: Double)] = [:]
-                for (model, data) in byModel {
-                    let value = metricValue(from: data)
-                    guard value > 0 else { continue }
-                    let identity = modelDisplayIdentity(model)
-                    let key = identity.aggregationKey
-                    let sortKey = "\(identity.displayName)|\(identity.providerDisplayName ?? "")"
-                    if let existing = byIdentity[key] {
-                        byIdentity[key] = (existing.raw, existing.sortKey, existing.value + value)
-                    } else {
-                        byIdentity[key] = (model, sortKey, value)
-                    }
-                }
-                for (_, item) in byIdentity.sorted(by: { $0.value.sortKey < $1.value.sortKey }) {
-                    result.append(ModelDayValue(date: date, model: item.raw, value: item.value))
-                }
-            } else {
-                let value = metricValue(from: entry)
-                if value > 0 {
-                    result.append(ModelDayValue(date: date, model: "other", value: value))
-                }
-            }
-        }
-        return result.sorted { $0.date < $1.date }
+    private var chartData: [StatsModelDayValue] {
+        metric.modelDayValues(from: daily)
     }
 
-    private var selectedDayData: [ModelDayValue] {
+    private var selectedDayData: [StatsModelDayValue] {
         guard let sel = selectedDate else { return [] }
         let cal = Calendar.current
         return chartData
@@ -140,7 +79,7 @@ struct DailyCostChart: View {
             }
     }
 
-    private func isSelected(_ entry: ModelDayValue) -> Bool {
+    private func isSelected(_ entry: StatsModelDayValue) -> Bool {
         guard let sel = selectedDate else { return false }
         return Calendar.current.isDate(entry.date, inSameDayAs: sel)
     }
@@ -196,7 +135,7 @@ struct DailyCostChart: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text(yAxisLabel(v))
+                        Text(metric.axisLabel(v))
                             .font(.system(size: 9))
                     }
                 }
@@ -221,7 +160,7 @@ struct DailyCostChart: View {
         .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 
-    private func tooltipRow(for entry: ModelDayValue) -> some View {
+    private func tooltipRow(for entry: StatsModelDayValue) -> some View {
         HStack(spacing: 6) {
             ProviderGlyph(provider: modelProviderKey(entry.model), size: 10, color: .secondary)
 
@@ -241,53 +180,9 @@ struct DailyCostChart: View {
 
             Spacer()
 
-            Text(formatValue(entry.value))
+            Text(metric.displayValue(entry.value))
                 .font(.caption2)
                 .monospacedDigit()
-        }
-    }
-
-    // MARK: - Metric helpers
-
-    private func metricValue(from data: DailyModelEntry) -> Double {
-        switch metric {
-        case .sessions: Double(data.sessions)
-        case .cost: data.cost
-        case .tokens: Double(data.tokens)
-        }
-    }
-
-    private func metricValue(from entry: StatsDailyEntry) -> Double {
-        switch metric {
-        case .sessions: Double(entry.sessions)
-        case .cost: entry.cost
-        case .tokens: Double(entry.tokens)
-        }
-    }
-
-    private func yAxisLabel(_ v: Double) -> String {
-        switch metric {
-        case .cost:
-            return SessionFormatting.costString(v)
-        case .sessions:
-            return String(format: "%.0f", v)
-        case .tokens:
-            if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000) }
-            if v >= 1_000 { return String(format: "%.0fK", v / 1_000) }
-            return String(format: "%.0f", v)
-        }
-    }
-
-    private func formatValue(_ v: Double) -> String {
-        switch metric {
-        case .cost:
-            return SessionFormatting.costString(v)
-        case .sessions:
-            return String(format: "%.0f", v)
-        case .tokens:
-            if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000) }
-            if v >= 1_000 { return String(format: "%.1fK", v / 1_000) }
-            return String(format: "%.0f", v)
         }
     }
 }

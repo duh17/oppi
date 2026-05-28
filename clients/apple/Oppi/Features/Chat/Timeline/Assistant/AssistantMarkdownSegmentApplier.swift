@@ -96,98 +96,7 @@ final class AssistantMarkdownSegmentApplier {
     ) {
         clear()
 
-        let palette = config.themeID.palette
-        for (index, segment) in segments.enumerated() {
-            switch segment {
-            case .text(let attributed):
-                let textView = makeTextView(palette: palette)
-                textView.isSelectable = config.textSelectionEnabled
-                textView.attributedText = NSAttributedString(attributed)
-                applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
-                stackView.addArrangedSubview(textView)
-                textViews[index] = textView
-
-            case .codeBlock(let language, let code):
-                let codeView = NativeCodeBlockView()
-                let isOpen = config.isStreaming
-                    && index == segments.count - 1
-                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                codeView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
-                stackView.addArrangedSubview(codeView)
-                codeBlockViews[index] = codeView
-                if !isOpen {
-                    applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
-                }
-
-            case .table(let headers, let rows):
-                let tableView = NativeTableBlockView()
-                tableView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantTableSourceContext(config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                tableView.apply(headers: headers, rows: rows, palette: palette)
-                stackView.addArrangedSubview(tableView)
-                tableViews[index] = tableView
-
-            case .thematicBreak:
-                stackView.addArrangedSubview(makeThematicBreak(palette: palette))
-
-            case .image(let alt, let url):
-                let imageView = NativeMarkdownImageView()
-                imageView.apply(
-                    url: url,
-                    alt: alt,
-                    fetchWorkspaceFile: fetchWorkspaceFile,
-                    fetchSessionFile: fetchSessionFile,
-                    renderingMode: config.renderingMode
-                )
-                stackView.addArrangedSubview(imageView)
-                imageViews[index] = imageView
-
-            case .mermaidDiagram(let code):
-                let mermaidView = NativeMermaidBlockView()
-                let isOpen = config.isStreaming
-                    && index == segments.count - 1
-                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                mermaidView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                if isOpen {
-                    mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
-                } else {
-                    config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
-                }
-                stackView.addArrangedSubview(mermaidView)
-                mermaidViews[index] = mermaidView
-
-            case .latexBlock(let code):
-                let latexView = NativeLatexBlockView()
-                let isOpen = config.isStreaming
-                    && index == segments.count - 1
-                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                latexView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                if isOpen {
-                    latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
-                } else {
-                    config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
-                }
-                stackView.addArrangedSubview(latexView)
-                latexViews[index] = latexView
-            }
-        }
-
+        appendSegmentViews(segments: segments, in: segments.indices, config: config)
         renderedSegmentSignatures = signatures
 
         // Seed the incremental cache for the streaming tail.
@@ -197,6 +106,124 @@ final class AssistantMarkdownSegmentApplier {
             let fullText = tv.attributedText ?? NSAttributedString()
             cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullText)
         }
+    }
+
+    private func appendSegmentViews(
+        segments: [FlatSegment],
+        in indices: Range<Array<FlatSegment>.Index>,
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        let palette = config.themeID.palette
+        for index in indices {
+            appendSegmentView(
+                segments[index],
+                at: index,
+                segmentCount: segments.count,
+                config: config,
+                palette: palette
+            )
+        }
+    }
+
+    private func appendSegmentView(
+        _ segment: FlatSegment,
+        at index: Int,
+        segmentCount: Int,
+        config: AssistantMarkdownContentView.Configuration,
+        palette: ThemePalette
+    ) {
+        switch segment {
+        case .text(let attributed):
+            let textView = makeTextView(palette: palette)
+            textView.isSelectable = config.textSelectionEnabled
+            textView.attributedText = NSAttributedString(attributed)
+            applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
+            stackView.addArrangedSubview(textView)
+            textViews[index] = textView
+
+        case .codeBlock(let language, let code):
+            let codeView = NativeCodeBlockView()
+            let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
+            codeView.configureSelectedTextPi(
+                router: config.selectedTextPiRouter,
+                sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
+                reviewCommentAnnotations: config.reviewCommentAnnotations
+            )
+            codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
+            stackView.addArrangedSubview(codeView)
+            codeBlockViews[index] = codeView
+            if !isOpen {
+                applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
+            }
+
+        case .table(let headers, let rows):
+            let tableView = NativeTableBlockView()
+            tableView.configureSelectedTextPi(
+                router: config.selectedTextPiRouter,
+                sourceContext: assistantTableSourceContext(config: config),
+                reviewCommentAnnotations: config.reviewCommentAnnotations
+            )
+            tableView.apply(headers: headers, rows: rows, palette: palette)
+            stackView.addArrangedSubview(tableView)
+            tableViews[index] = tableView
+
+        case .thematicBreak:
+            stackView.addArrangedSubview(makeThematicBreak(palette: palette))
+
+        case .image(let alt, let url):
+            let imageView = NativeMarkdownImageView()
+            imageView.apply(
+                url: url,
+                alt: alt,
+                fetchWorkspaceFile: fetchWorkspaceFile,
+                fetchSessionFile: fetchSessionFile,
+                renderingMode: config.renderingMode
+            )
+            stackView.addArrangedSubview(imageView)
+            imageViews[index] = imageView
+
+        case .mermaidDiagram(let code):
+            let mermaidView = NativeMermaidBlockView()
+            let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
+            mermaidView.configureSelectedTextPi(
+                router: config.selectedTextPiRouter,
+                sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
+                reviewCommentAnnotations: config.reviewCommentAnnotations
+            )
+            if isOpen {
+                mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
+            } else {
+                config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+            }
+            stackView.addArrangedSubview(mermaidView)
+            mermaidViews[index] = mermaidView
+
+        case .latexBlock(let code):
+            let latexView = NativeLatexBlockView()
+            let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
+            latexView.configureSelectedTextPi(
+                router: config.selectedTextPiRouter,
+                sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
+                reviewCommentAnnotations: config.reviewCommentAnnotations
+            )
+            if isOpen {
+                latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+            } else {
+                config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+            }
+            stackView.addArrangedSubview(latexView)
+            latexViews[index] = latexView
+        }
+    }
+
+    private func isOpenStreamingCodeFence(
+        at index: Int,
+        segmentCount: Int,
+        config: AssistantMarkdownContentView.Configuration
+    ) -> Bool {
+        config.isStreaming
+            && index == segmentCount - 1
+            && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
     }
 
     /// Streaming-aware structural rebuild that reuses views for unchanged
@@ -209,7 +236,6 @@ final class AssistantMarkdownSegmentApplier {
         config: AssistantMarkdownContentView.Configuration
     ) {
         let oldSigs = renderedSegmentSignatures
-        let palette = config.themeID.palette
 
         // Find the common prefix length.
         var commonPrefix = 0
@@ -254,96 +280,7 @@ final class AssistantMarkdownSegmentApplier {
         }
 
         // Build and append new tail views.
-        for index in commonPrefix ..< segments.count {
-            switch segments[index] {
-            case .text(let attributed):
-                let textView = makeTextView(palette: palette)
-                textView.isSelectable = config.textSelectionEnabled
-                textView.attributedText = NSAttributedString(attributed)
-                applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
-                stackView.addArrangedSubview(textView)
-                textViews[index] = textView
-
-            case .codeBlock(let language, let code):
-                let codeView = NativeCodeBlockView()
-                let isOpen = config.isStreaming
-                    && index == segments.count - 1
-                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                codeView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
-                stackView.addArrangedSubview(codeView)
-                codeBlockViews[index] = codeView
-                if !isOpen {
-                    applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
-                }
-
-            case .table(let headers, let rows):
-                let tableView = NativeTableBlockView()
-                tableView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantTableSourceContext(config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                tableView.apply(headers: headers, rows: rows, palette: palette)
-                stackView.addArrangedSubview(tableView)
-                tableViews[index] = tableView
-
-            case .thematicBreak:
-                stackView.addArrangedSubview(makeThematicBreak(palette: palette))
-
-            case .image(let alt, let url):
-                let imageView = NativeMarkdownImageView()
-                imageView.apply(
-                    url: url,
-                    alt: alt,
-                    fetchWorkspaceFile: fetchWorkspaceFile,
-                    fetchSessionFile: fetchSessionFile,
-                    renderingMode: config.renderingMode
-                )
-                stackView.addArrangedSubview(imageView)
-                imageViews[index] = imageView
-
-            case .mermaidDiagram(let code):
-                let mermaidView = NativeMermaidBlockView()
-                let isOpen = config.isStreaming
-                    && index == segments.count - 1
-                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                mermaidView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                if isOpen {
-                    mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
-                } else {
-                    config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
-                }
-                stackView.addArrangedSubview(mermaidView)
-                mermaidViews[index] = mermaidView
-
-            case .latexBlock(let code):
-                let latexView = NativeLatexBlockView()
-                let isOpen = config.isStreaming
-                    && index == segments.count - 1
-                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                latexView.configureSelectedTextPi(
-                    router: config.selectedTextPiRouter,
-                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
-                    reviewCommentAnnotations: config.reviewCommentAnnotations
-                )
-                if isOpen {
-                    latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
-                } else {
-                    config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
-                }
-                stackView.addArrangedSubview(latexView)
-                latexViews[index] = latexView
-            }
-        }
+        appendSegmentViews(segments: segments, in: commonPrefix ..< segments.count, config: config)
 
         renderedSegmentSignatures = signatures
 

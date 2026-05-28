@@ -120,15 +120,7 @@ function autoReviewEventFromAudit(
     workspaceId: auditEntry.workspaceId,
     tool: auditEntry.tool,
     displaySummary: auditEntry.displaySummary,
-    outcome: review.outcome,
-    status: review.status,
-    reason: review.reason,
-    ...(review.model ? { model: review.model } : {}),
-    ...(review.riskLevel ? { riskLevel: review.riskLevel } : {}),
-    ...(review.confidence !== undefined ? { confidence: review.confidence } : {}),
-    ...(review.durationMs !== undefined ? { durationMs: review.durationMs } : {}),
-    ...(review.tokens !== undefined ? { tokens: review.tokens } : {}),
-    ...(review.promptHash ? { promptHash: review.promptHash } : {}),
+    ...review,
   };
 }
 

@@ -12,6 +12,9 @@ export interface SessionInputSessionState extends TurnSessionState {
 
 const log = createLogger({ base: { component: "session_input" } });
 
+export type SdkImageInput = { type: "image"; data: string; mimeType: string };
+type StreamingInputKind = "steer" | "follow_up";
+
 export interface SessionInputCoordinatorDeps {
   getActiveSession: (key: string) => SessionInputSessionState | undefined;
   beginTurnIntent: (
@@ -34,11 +37,11 @@ export interface SessionInputCoordinatorDeps {
     key: string,
     kind: "steer" | "follow_up",
     message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    images?: SdkImageInput[],
     attachments?: ChatAttachmentRef[],
     idHint?: string,
     sdkMessage?: string,
-    sdkImages?: Array<{ type: "image"; data: string; mimeType: string }>,
+    sdkImages?: SdkImageInput[],
   ) => void;
   resolveWorkspaceRoot?: (session: Session) => string | null;
   maxTurnAttachmentBytes?: number;
@@ -59,7 +62,7 @@ export class SessionInputCoordinator {
     },
   ): Promise<{
     message: string;
-    images: Array<{ type: "image"; data: string; mimeType: string }>;
+    images: SdkImageInput[];
   }> {
     if (!opts?.attachments?.length) {
       return { message, images: [] };
@@ -95,7 +98,7 @@ export class SessionInputCoordinator {
     key: string,
     message: string,
     opts?: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
@@ -201,70 +204,34 @@ export class SessionInputCoordinator {
     key: string,
     message: string,
     opts?: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },
   ): Promise<void> {
-    const active = this.deps.getActiveSession(key);
-    if (!active) {
-      throw new Error(`Session not active: ${key}`);
-    }
-
-    if (active.session.status !== "busy") {
-      throw new Error("Steer requires an active streaming turn");
-    }
-
-    const turn = this.deps.beginTurnIntent(
-      key,
-      active,
-      "steer",
-      {
-        message,
-        images: opts?.images ?? [],
-        attachments: opts?.attachments ?? [],
-      },
-      opts?.clientTurnId,
-      opts?.requestId,
-    );
-
-    if (turn.duplicate) {
-      return;
-    }
-
-    const prepared = await this.prepareMessageWithAttachments(active, message, {
-      attachments: opts?.attachments,
-      clientTurnId: opts?.clientTurnId,
-      requestId: opts?.requestId,
-    });
-    const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
-    const dispatchMessage = prepared.message;
-
-    const cmd: Record<string, unknown> = { type: "steer", message: dispatchMessage };
-    if (dispatchImages.length) {
-      cmd.images = dispatchImages;
-    }
-
-    this.deps.sendCommand(key, cmd);
-    this.deps.markTurnDispatched(key, active, "steer", turn, opts?.requestId);
-    this.deps.enqueueQueuedMessage?.(
-      key,
-      "steer",
-      message,
-      opts?.images,
-      opts?.attachments,
-      turn.clientTurnId,
-      dispatchMessage,
-      dispatchImages,
-    );
+    await this.sendStreamingInput(key, "steer", message, opts);
   }
 
   async sendFollowUp(
     key: string,
     message: string,
     opts?: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      images?: SdkImageInput[];
+      attachments?: ChatAttachmentRef[];
+      clientTurnId?: string;
+      requestId?: string;
+    },
+  ): Promise<void> {
+    await this.sendStreamingInput(key, "follow_up", message, opts);
+  }
+
+  private async sendStreamingInput(
+    key: string,
+    kind: StreamingInputKind,
+    message: string,
+    opts?: {
+      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -276,13 +243,14 @@ export class SessionInputCoordinator {
     }
 
     if (active.session.status !== "busy") {
-      throw new Error("Follow-up requires an active streaming turn");
+      const label = kind === "steer" ? "Steer" : "Follow-up";
+      throw new Error(`${label} requires an active streaming turn`);
     }
 
     const turn = this.deps.beginTurnIntent(
       key,
       active,
-      "follow_up",
+      kind,
       {
         message,
         images: opts?.images ?? [],
@@ -304,16 +272,16 @@ export class SessionInputCoordinator {
     const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
     const dispatchMessage = prepared.message;
 
-    const cmd: Record<string, unknown> = { type: "follow_up", message: dispatchMessage };
+    const cmd: Record<string, unknown> = { type: kind, message: dispatchMessage };
     if (dispatchImages.length) {
       cmd.images = dispatchImages;
     }
 
     this.deps.sendCommand(key, cmd);
-    this.deps.markTurnDispatched(key, active, "follow_up", turn, opts?.requestId);
+    this.deps.markTurnDispatched(key, active, kind, turn, opts?.requestId);
     this.deps.enqueueQueuedMessage?.(
       key,
-      "follow_up",
+      kind,
       message,
       opts?.images,
       opts?.attachments,

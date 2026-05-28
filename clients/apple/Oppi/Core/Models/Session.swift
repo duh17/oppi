@@ -214,112 +214,132 @@ extension SessionSummary {
     }
 }
 
-extension SessionSummary: Decodable {
-    enum CodingKeys: String, CodingKey {
-        case id, workspaceId, workspaceName
-        case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
-        case model, messageCount, tokens, cost, changeStats
-        case contextTokens, contextWindow, firstMessage, lastMessage
-        case thinkingLevel, ephemeral, parentSessionId
-        case pendingPermissionCount, pendingAskCount
+private enum SessionWireCodingKeys: String, CodingKey {
+    case id, workspaceId, workspaceName
+    case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
+    case model, messageCount, tokens, cost, changeStats
+    case contextTokens, contextWindow, firstMessage, lastMessage
+    case thinkingLevel, ephemeral, parentSessionId
+    case pendingPermissionCount, pendingAskCount
+}
+
+private struct DecodedSessionWireFields {
+    let id: String
+    let workspaceId: String?
+    let workspaceName: String?
+    let name: String?
+    let status: SessionStatus
+    let createdAt: Date
+    let lastActivity: Date
+    let lastAgentReplyAt: Date?
+    let currentTurnStartedAt: Date?
+    let model: String?
+    let messageCount: Int
+    let tokens: TokenUsage
+    let cost: Double
+    let changeStats: SessionChangeStats?
+    let contextTokens: Int?
+    let contextWindow: Int?
+    let firstMessage: String?
+    let lastMessage: String?
+    let thinkingLevel: String?
+    let ephemeral: Bool?
+    let parentSessionId: String?
+
+    init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
+        id = try container.decode(String.self, forKey: .id)
+        workspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceId)
+        workspaceName = try container.decodeIfPresent(String.self, forKey: .workspaceName)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        status = try container.decode(SessionStatus.self, forKey: .status)
+        createdAt = try container.decodeUnixMilliseconds(forKey: .createdAt)
+        lastActivity = try container.decodeUnixMilliseconds(forKey: .lastActivity)
+        lastAgentReplyAt = try container.decodeUnixMillisecondsIfPresent(forKey: .lastAgentReplyAt)
+        currentTurnStartedAt = try container.decodeUnixMillisecondsIfPresent(forKey: .currentTurnStartedAt)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        messageCount = try container.decode(Int.self, forKey: .messageCount)
+        tokens = try container.decode(TokenUsage.self, forKey: .tokens)
+        cost = try container.decode(Double.self, forKey: .cost)
+        changeStats = try container.decodeIfPresent(SessionChangeStats.self, forKey: .changeStats)
+        contextTokens = try container.decodeIfPresent(Int.self, forKey: .contextTokens)
+        contextWindow = try container.decodeIfPresent(Int.self, forKey: .contextWindow)
+        firstMessage = try container.decodeIfPresent(String.self, forKey: .firstMessage)
+        lastMessage = try container.decodeIfPresent(String.self, forKey: .lastMessage)
+        thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
+        parentSessionId = try container.decodeIfPresent(String.self, forKey: .parentSessionId)
+    }
+}
+
+private extension DecodedSessionWireFields {
+    func makeSession() -> Session {
+        Session(
+            id: id,
+            workspaceId: workspaceId,
+            workspaceName: workspaceName,
+            name: name,
+            status: status,
+            createdAt: createdAt,
+            lastActivity: lastActivity,
+            lastAgentReplyAt: lastAgentReplyAt,
+            currentTurnStartedAt: currentTurnStartedAt,
+            model: model,
+            messageCount: messageCount,
+            tokens: tokens,
+            cost: cost,
+            changeStats: changeStats,
+            contextTokens: contextTokens,
+            contextWindow: contextWindow,
+            firstMessage: firstMessage,
+            lastMessage: lastMessage,
+            thinkingLevel: thinkingLevel,
+            ephemeral: ephemeral,
+            parentSessionId: parentSessionId
+        )
     }
 
+    func makeSummary(pendingPermissionCount: Int, pendingAskCount: Int) -> SessionSummary {
+        var summary = SessionSummary(from: makeSession())
+        summary.pendingPermissionCount = pendingPermissionCount
+        summary.pendingAskCount = pendingAskCount
+        return summary
+    }
+}
+
+private extension KeyedDecodingContainer where Key == SessionWireCodingKeys {
+    func decodeUnixMilliseconds(forKey key: Key) throws -> Date {
+        let milliseconds = try decode(Double.self, forKey: key)
+        return Date(timeIntervalSince1970: milliseconds / 1000)
+    }
+
+    func decodeUnixMillisecondsIfPresent(forKey key: Key) throws -> Date? {
+        guard let milliseconds = try decodeIfPresent(Double.self, forKey: key) else { return nil }
+        return Date(timeIntervalSince1970: milliseconds / 1000)
+    }
+}
+
+extension SessionSummary: Decodable {
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
-        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
-        name = try c.decodeIfPresent(String.self, forKey: .name)
-        status = try c.decode(SessionStatus.self, forKey: .status)
-        model = try c.decodeIfPresent(String.self, forKey: .model)
-        messageCount = try c.decode(Int.self, forKey: .messageCount)
-        tokens = try c.decode(TokenUsage.self, forKey: .tokens)
-        cost = try c.decode(Double.self, forKey: .cost)
-        changeStats = try c.decodeIfPresent(SessionChangeStats.self, forKey: .changeStats)
-        contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
-        contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
-        firstMessage = try c.decodeIfPresent(String.self, forKey: .firstMessage)
-        lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
-        thinkingLevel = try c.decodeIfPresent(String.self, forKey: .thinkingLevel)
-        ephemeral = try c.decodeIfPresent(Bool.self, forKey: .ephemeral)
-        parentSessionId = try c.decodeIfPresent(String.self, forKey: .parentSessionId)
-        pendingPermissionCount = try c.decodeIfPresent(Int.self, forKey: .pendingPermissionCount) ?? 0
-        pendingAskCount = try c.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
-
-        let createdMs = try c.decode(Double.self, forKey: .createdAt)
-        createdAt = Date(timeIntervalSince1970: createdMs / 1000)
-
-        let activityMs = try c.decode(Double.self, forKey: .lastActivity)
-        lastActivity = Date(timeIntervalSince1970: activityMs / 1000)
-
-        if let lastAgentReplyMs = try c.decodeIfPresent(Double.self, forKey: .lastAgentReplyAt) {
-            lastAgentReplyAt = Date(timeIntervalSince1970: lastAgentReplyMs / 1000)
-        } else {
-            lastAgentReplyAt = nil
-        }
-
-        if let currentTurnStartedMs = try c.decodeIfPresent(Double.self, forKey: .currentTurnStartedAt) {
-            currentTurnStartedAt = Date(timeIntervalSince1970: currentTurnStartedMs / 1000)
-        } else {
-            currentTurnStartedAt = nil
-        }
+        let container = try decoder.container(keyedBy: SessionWireCodingKeys.self)
+        let fields = try DecodedSessionWireFields(from: container)
+        self = fields.makeSummary(
+            pendingPermissionCount: try container.decodeIfPresent(Int.self, forKey: .pendingPermissionCount) ?? 0,
+            pendingAskCount: try container.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
+        )
     }
 }
 
 // MARK: - Codable (Unix millisecond timestamps)
 
 extension Session: Codable {
-    enum CodingKeys: String, CodingKey {
-        case id, workspaceId, workspaceName
-        case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
-        case model, messageCount, tokens, cost, changeStats
-        case contextTokens, contextWindow, firstMessage, lastMessage
-        case thinkingLevel, ephemeral, parentSessionId
-    }
-
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
-        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
-        name = try c.decodeIfPresent(String.self, forKey: .name)
-        status = try c.decode(SessionStatus.self, forKey: .status)
-        model = try c.decodeIfPresent(String.self, forKey: .model)
-        messageCount = try c.decode(Int.self, forKey: .messageCount)
-        tokens = try c.decode(TokenUsage.self, forKey: .tokens)
-        cost = try c.decode(Double.self, forKey: .cost)
-        changeStats = try c.decodeIfPresent(SessionChangeStats.self, forKey: .changeStats)
-        contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
-        contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
-        firstMessage = try c.decodeIfPresent(String.self, forKey: .firstMessage)
-        lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
-        thinkingLevel = try c.decodeIfPresent(String.self, forKey: .thinkingLevel)
-        ephemeral = try c.decodeIfPresent(Bool.self, forKey: .ephemeral)
-        parentSessionId = try c.decodeIfPresent(String.self, forKey: .parentSessionId)
-
-
-        // Server sends Unix milliseconds
-        let createdMs = try c.decode(Double.self, forKey: .createdAt)
-        createdAt = Date(timeIntervalSince1970: createdMs / 1000)
-
-        let activityMs = try c.decode(Double.self, forKey: .lastActivity)
-        lastActivity = Date(timeIntervalSince1970: activityMs / 1000)
-
-        if let lastAgentReplyMs = try c.decodeIfPresent(Double.self, forKey: .lastAgentReplyAt) {
-            lastAgentReplyAt = Date(timeIntervalSince1970: lastAgentReplyMs / 1000)
-        } else {
-            lastAgentReplyAt = nil
-        }
-
-        if let currentTurnStartedMs = try c.decodeIfPresent(Double.self, forKey: .currentTurnStartedAt) {
-            currentTurnStartedAt = Date(timeIntervalSince1970: currentTurnStartedMs / 1000)
-        } else {
-            currentTurnStartedAt = nil
-        }
+        let container = try decoder.container(keyedBy: SessionWireCodingKeys.self)
+        let fields = try DecodedSessionWireFields(from: container)
+        self = fields.makeSession()
     }
 
     func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
+        var c = encoder.container(keyedBy: SessionWireCodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
         try c.encodeIfPresent(workspaceName, forKey: .workspaceName)
