@@ -629,24 +629,23 @@ struct ServerConnectionStreamTests {
         conn.streamConsumptionTask?.cancel()
     }
 
-    @Test func sessionAudioDictationClientRequiresCapabilityAndFocusedWorkspace() {
+    @Test func dictationClientRequiresServerCapability() {
         let (conn, _) = makeTestConnection(sessionId: "s1")
-        conn.focusedSessionStore.focus(sessionId: "s1", workspaceId: "w1")
 
-        #expect(conn.makeDictationStreamClientForFocusedSession() == nil)
+        #expect(conn.makeDictationStreamClient() == nil)
 
-        conn.sessionAudioStreamAvailable = true
-        #expect(conn.makeDictationStreamClientForFocusedSession() != nil)
+        conn.dictationStreamAvailable = true
+        #expect(conn.makeDictationStreamClient() != nil)
     }
 
-    @Test func sessionAudioDictationClientCanUseExplicitTargetWithoutFocusedSession() {
+    @Test func legacySessionAudioDictationClientCanUseExplicitTargetWithoutFocusedSession() {
         let (conn, _) = makeTestConnection(sessionId: "s1")
 
-        #expect(conn.makeDictationStreamClient(workspaceId: "w1", sessionId: "s1") == nil)
+        #expect(conn.makeLegacyDictationStreamClient(workspaceId: "w1", sessionId: "s1") == nil)
 
         conn.sessionAudioStreamAvailable = true
-        #expect(conn.makeDictationStreamClient(workspaceId: "w1", sessionId: "s1") != nil)
-        #expect(conn.makeDictationStreamClientForFocusedSession() == nil)
+        #expect(conn.makeLegacyDictationStreamClient(workspaceId: "w1", sessionId: "s1") != nil)
+        #expect(conn.makeLegacyDictationStreamClientForFocusedSession() == nil)
     }
 
 }

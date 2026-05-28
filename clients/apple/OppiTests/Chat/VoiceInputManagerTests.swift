@@ -901,7 +901,7 @@ struct VoiceInputManagerTests {
         ))
 
         let conn = ServerConnection()
-        conn.setSplitStreamCapabilitiesForTesting(sessionAudioStream: true)
+        conn.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         manager.setServerConnection(conn)
         manager.setServerDictationTarget(ServerDictationTarget(workspaceId: "ws-1", sessionId: "dictation-1"))
 

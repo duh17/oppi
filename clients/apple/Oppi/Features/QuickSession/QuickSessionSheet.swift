@@ -3,16 +3,6 @@ import SwiftUI
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSession")
 
-private struct QuickSessionDictationContext {
-    let serverId: String
-    let workspaceId: String
-    let sessionId: String
-
-    var pendingCleanup: AppPreferences.QuickSession.PendingDictationCleanup {
-        .init(serverId: serverId, workspaceId: workspaceId, sessionId: sessionId)
-    }
-}
-
 /// Compact sheet for starting a new agent session.
 ///
 /// Presented by the Action Button / Control Center / Spotlight via
@@ -42,7 +32,6 @@ struct QuickSessionSheet: View {
     @State private var isCreating = false
     @State private var error: String?
     @State private var voiceInputManager: VoiceInputManager?
-    @State private var serverDictationContext: QuickSessionDictationContext?
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
 
@@ -100,15 +89,6 @@ struct QuickSessionSheet: View {
         }
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
-        }
-        .onChange(of: voiceInputManager?.state) { _, newState in
-            if newState == .idle || newState?.isError == true {
-                Task { await cleanupServerDictationContext() }
-            }
-        }
-        .onDisappear {
-            guard !showExpandedComposer else { return }
-            Task { await cleanupServerDictationContext() }
         }
     }
 
@@ -236,7 +216,6 @@ struct QuickSessionSheet: View {
             selectedServerId = serverId
             error = nil
             configureVoiceInputForSelectedServer()
-            Task { await cleanupServerDictationContext() }
             AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
         } label: {
             Label {
@@ -304,10 +283,11 @@ struct QuickSessionSheet: View {
         configureVoiceInputForSelectedServer(manager)
         await drainPendingDictationCleanupQueue()
 
-        // On-device mode needs no server-side session. Remote dictation does:
-        // the server endpoint is bound to a workspace/session audio stream.
+        // On-device mode needs no server-side transport. Remote dictation uses
+        // the server-level ASR stream, so quick-session dictation no longer
+        // creates a scratch chat session.
         guard manager.engineMode != .onDevice else { return }
-        guard let workspace = selectedWorkspace else {
+        guard selectedWorkspace != nil else {
             let noWorkspace = QuickSessionError.noWorkspace
             error = noWorkspace.errorDescription
             throw noWorkspace
@@ -323,20 +303,7 @@ struct QuickSessionSheet: View {
             error = unavailable.errorDescription
             throw unavailable
         }
-        do {
-            let context = try await ensureServerDictationContext(
-                workspace: workspace,
-                serverId: serverId,
-                connection: targetConnection
-            )
-            manager.setServerDictationTarget(ServerDictationTarget(
-                workspaceId: context.workspaceId,
-                sessionId: context.sessionId
-            ))
-        } catch {
-            self.error = error.localizedDescription
-            throw error
-        }
+        manager.setServerDictationTarget(nil)
     }
 
     private func selectedServerConnection() -> ServerConnection {
@@ -345,48 +312,6 @@ struct QuickSessionSheet: View {
             return connection
         }
         return coordinator.activeConnection
-    }
-
-    private func ensureServerDictationContext(
-        workspace: Workspace,
-        serverId: String,
-        connection: ServerConnection
-    ) async throws -> QuickSessionDictationContext {
-        if let context = serverDictationContext,
-           context.serverId == serverId,
-           context.workspaceId == workspace.id {
-            return context
-        }
-
-        await cleanupServerDictationContext()
-        guard let api = connection.apiClient else {
-            throw QuickSessionError.noConnection
-        }
-
-        let response = try await api.createWorkspaceSession(
-            workspaceId: workspace.id,
-            name: "Quick Session Dictation",
-            ephemeral: true
-        )
-        let session = response.session
-        connection.sessionStore.upsert(session)
-
-        let context = QuickSessionDictationContext(
-            serverId: serverId,
-            workspaceId: workspace.id,
-            sessionId: session.id
-        )
-        serverDictationContext = context
-        return context
-    }
-
-    private func cleanupServerDictationContext() async {
-        guard let context = serverDictationContext else { return }
-        serverDictationContext = nil
-        voiceInputManager?.setServerDictationTarget(nil)
-        let pendingCleanup = context.pendingCleanup
-        AppPreferences.QuickSession.enqueuePendingDictationCleanup(pendingCleanup)
-        await attemptPendingDictationCleanup(pendingCleanup)
     }
 
     private func drainPendingDictationCleanupQueue() async {
@@ -534,13 +459,6 @@ enum QuickSessionError: LocalizedError {
         case .noConnection: return "Server is offline"
         case .noWorkspace: return "Choose a workspace first."
         }
-    }
-}
-
-private extension VoiceInputManager.State {
-    var isError: Bool {
-        if case .error = self { return true }
-        return false
     }
 }
 

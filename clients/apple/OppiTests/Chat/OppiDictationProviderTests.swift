@@ -483,7 +483,7 @@ struct OppiDictationProviderLifecycleTests {
         let connection = ServerConnection()
         let credentials = makeCredentials()
         _ = connection.configure(credentials: credentials)
-        connection.setSplitStreamCapabilitiesForTesting(sessionAudioStream: true)
+        connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         connection.focusedSessionStore.focus(sessionId: "s1", workspaceId: "w1")
         let context = VoiceProviderContext(
             locale: Locale(identifier: "en-US"),
@@ -535,7 +535,7 @@ struct OppiDictationProviderLifecycleTests {
 
     // MARK: - prepareSession + makeSession happy path
 
-    @Test func prepareSessionRequiresSessionAudioStream() async {
+    @Test func prepareSessionRequiresDictationStream() async {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
         _ = connection.configure(credentials: credentials)
@@ -564,7 +564,7 @@ struct OppiDictationProviderLifecycleTests {
         #expect(preparation.pathTag == "dictation_audio_ws")
         #expect(preparation.audioFormat == nil)
         #expect(preparation.setupMetricTags["dictation_mode"] == "server")
-        #expect(preparation.setupMetricTags["transport"] == "session_audio_stream")
+        #expect(preparation.setupMetricTags["transport"] == "dictation_stream")
         #expect(preparation.setupMetricTags["host"] == "localhost")
         #expect(preparation.setupMetricTags["provider_id"] == "oppi_server_dictation")
         #expect(preparation.setupMetricTags["provider_kind"] == "local_server")

@@ -89,6 +89,7 @@ struct ServerInfoTests {
           "configVersion": 5,
           "capabilities": {
             "sessionStream": { "version": 1 },
+            "dictationStream": { "version": 1 },
             "sessionAudioStream": { "version": 1 }
           },
           "stats": {
@@ -103,6 +104,7 @@ struct ServerInfoTests {
 
         let decoded = try JSONDecoder().decode(ServerInfo.self, from: json)
         #expect(decoded.capabilities?.sessionStream?.version == 1)
+        #expect(decoded.capabilities?.dictationStream?.version == 1)
         #expect(decoded.capabilities?.sessionAudioStream?.version == 1)
         #expect(decoded.capabilities?.hasRequiredSplitStreamCapabilities == true)
     }
@@ -110,6 +112,7 @@ struct ServerInfoTests {
     @Test func requiredSplitStreamCapabilitiesIgnoreOptionalAudio() {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1),
+            dictationStream: nil,
             sessionAudioStream: nil
         )
 
@@ -120,6 +123,7 @@ struct ServerInfoTests {
     @Test func requiredSplitStreamCapabilitiesReportMissingServerUpdatePieces() {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: nil,
+            dictationStream: nil,
             sessionAudioStream: .init(version: 1)
         )
 

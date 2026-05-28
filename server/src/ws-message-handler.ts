@@ -279,7 +279,7 @@ export class WsMessageHandler {
         }
       }
 
-      // Dictation messages are handled on the dedicated session audio stream.
+      // Dictation messages are handled on the dedicated dictation stream.
       case "dictation_start":
       case "dictation_stop":
       case "dictation_cancel":

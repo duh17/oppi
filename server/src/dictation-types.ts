@@ -2,7 +2,7 @@
  * Dictation pipeline types.
  *
  * Defines the WS protocol messages (client/server) and server-side
- * configuration for dictation routed through the session audio stream.
+ * configuration for dictation routed through the server ASR stream.
  */
 
 // ─── Config ───

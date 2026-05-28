@@ -65,6 +65,7 @@ const supervisionOperationIds = [
   "getSessionToolOutput",
   "openSessionStream",
   "openSessionAudioStream",
+  "openDictationStream",
   "searchSessions",
   "listSessions",
   "listRecentSessions",

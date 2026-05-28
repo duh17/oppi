@@ -181,7 +181,7 @@ export type ClientMessage = // ── Prompting ──
         cancelled?: boolean;
         requestId?: string;
       }
-    // ── Dictation (session audio stream) ──
+    // ── Dictation (dedicated ASR stream) ──
     | { type: "dictation_start" }
     | { type: "dictation_stop" }
     | { type: "dictation_cancel" }

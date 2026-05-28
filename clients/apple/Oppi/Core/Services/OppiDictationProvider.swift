@@ -6,7 +6,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Dict
 
 /// Voice transcription provider that streams audio to the Oppi server.
 ///
-/// Dictation uses the session-bound audio stream.
+/// Dictation uses the server-level ASR stream, with a legacy session-bound
+/// fallback for older servers.
 @MainActor
 final class OppiDictationProvider: VoiceTranscriptionProvider {
     nonisolated let id: VoiceProviderID = .oppiServer
@@ -42,7 +43,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
     }
 
     func prewarm(context _: VoiceProviderContext) async throws {
-        // No warm connection: dictation opens its session audio stream on demand.
+        // No warm connection: dictation opens its ASR stream on demand.
     }
 
     func prepareSession(context: VoiceProviderContext) async throws -> VoiceProviderPreparation {
@@ -52,6 +53,8 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         guard let connection = context.serverConnection else {
             throw VoiceInputError.serverNotConnected
         }
+
+        await connection.refreshStreamCapabilitiesIfNeeded()
 
         let transport: any DictationTransport
         let messageStream: AsyncStream<ServerMessage>
@@ -74,7 +77,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         transport = client
         messageStream = client.connect()
 #endif
-        let transportTag = "session_audio_stream"
+        let transportTag = connection.dictationStreamAvailable ? "dictation_stream" : "session_audio_stream"
         stopDictationRouting()
         activeTransport = transport
 
@@ -117,13 +120,21 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         connection: ServerConnection,
         target: ServerDictationTarget?
     ) -> DictationStreamClient? {
+        if let client = connection.makeDictationStreamClient() {
+            return client
+        }
+
+        // TODO(dictation): Remove this legacy fallback after supported servers
+        // all advertise `dictationStream` and expose `/dictation/stream`.
+        // Legacy fallback for older servers that only advertise the old
+        // session-bound ASR endpoint.
         if let target {
-            return connection.makeDictationStreamClient(
+            return connection.makeLegacyDictationStreamClient(
                 workspaceId: target.workspaceId,
                 sessionId: target.sessionId
             )
         }
-        return connection.makeDictationStreamClientForFocusedSession()
+        return connection.makeLegacyDictationStreamClientForFocusedSession()
     }
 
     /// Wait for `dictation_ready` from the server by monitoring the dictation subscription.

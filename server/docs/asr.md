@@ -19,14 +19,14 @@ Older installs that still have a saved Automatic preference are migrated to Serv
 ## Architecture
 
 ```text
-iPhone mic → WSS /workspaces/:workspaceId/sessions/:sessionId/audio/stream → Oppi server → STT backend → transcript
+iPhone mic → WSS /dictation/stream → Oppi server → STT backend → transcript
 ```
 
-On current servers, dictation uses the session audio WebSocket. The stream carries JSON control messages and binary PCM audio frames.
+On current servers, dictation uses the server-level dictation WebSocket. The stream carries JSON control messages and binary PCM audio frames. The legacy session-bound path `/workspaces/:workspaceId/sessions/:sessionId/audio/stream` remains available for older clients.
 
 Message flow:
 
-1. iOS opens the focused session's audio stream.
+1. iOS opens the server dictation stream.
 2. iOS sends `dictation_start` as a text frame.
 3. iOS streams PCM audio frames, 16 kHz, 16-bit mono, as binary WebSocket messages.
 4. Oppi server forwards audio to the STT backend.

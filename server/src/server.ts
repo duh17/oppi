@@ -394,7 +394,7 @@ export class Server {
   private routes!: RouteHandler;
   // WebSocket message command dispatcher for full-session commands
   private wsMessageHandler!: WsMessageHandler;
-  // Dictation pipeline capability source for session audio streams
+  // Dictation pipeline capability source for ASR streams
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
@@ -519,7 +519,7 @@ export class Server {
         this.models.ensureSessionContextWindow(targetSession),
     });
 
-    // Dictation pipeline. Session audio streams create one DictationManager per WebSocket.
+    // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.
     const asrEnabled = !!config.asr?.sttEndpoint;
     if (asrEnabled) {
       this.dictationConfig = { ...DEFAULT_DICTATION_CONFIG, ...config.asr } as DictationConfig;
@@ -1431,10 +1431,13 @@ export class Server {
     const sessionStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
     );
+    // TODO(dictation): Remove this legacy session-bound ASR route after old
+    // iOS clients that do not know `/dictation/stream` are no longer supported.
     const sessionAudioStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/audio\/stream$/,
     );
-    if (!sessionStreamMatch && !sessionAudioStreamMatch) {
+    const dictationStreamMatch = url.pathname === "/dictation/stream";
+    if (!sessionStreamMatch && !sessionAudioStreamMatch && !dictationStreamMatch) {
       // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
@@ -1475,6 +1478,10 @@ export class Server {
           ws,
           upgradeReceivedAt,
         );
+        return;
+      }
+      if (dictationStreamMatch) {
+        this.sessionAudioStreamMux.handleServerWebSocket(ws, upgradeReceivedAt);
         return;
       }
       ws.close(1008, "Unsupported WebSocket endpoint");

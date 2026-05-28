@@ -2,7 +2,7 @@
  * WebSocket stream transports.
  *
  * Split-stream server transports for focused session commands/timeline
- * and per-session audio dictation.
+ * and server-level ASR dictation.
  */
 
 import { WebSocket, type RawData } from "ws";
@@ -477,7 +477,7 @@ export class BoundSessionStreamMux {
               case "dictation_cancel":
                 send({
                   type: "dictation_error",
-                  error: "Dictation uses the session audio stream",
+                  error: "Dictation uses the dedicated dictation stream",
                   fatal: false,
                 } as ServerMessage);
                 return;
@@ -579,7 +579,7 @@ export class BoundSessionStreamMux {
   }
 }
 
-// ─── Session Audio Stream Mux ───
+// ─── Dictation Stream Mux ───
 
 export class SessionAudioStreamMux {
   private connectionSeq = 0;
@@ -591,9 +591,20 @@ export class SessionAudioStreamMux {
     >,
   ) {}
 
-  private nextConnId(): string {
+  private nextConnId(pathTag: string): string {
     this.connectionSeq += 1;
-    return `session_audio_stream_${this.connectionSeq}`;
+    return `${pathTag}_${this.connectionSeq}`;
+  }
+
+  handleServerWebSocket(ws: WebSocket, upgradeReceivedAt?: number): void {
+    this.handleDictationWebSocket({
+      ws,
+      path: "/dictation/stream",
+      pathTag: "dictation_stream",
+      level: "dictation",
+      upgradeReceivedAt,
+      logMetadata: {},
+    });
   }
 
   handleWebSocket(
@@ -608,32 +619,50 @@ export class SessionAudioStreamMux {
       return;
     }
 
+    this.handleDictationWebSocket({
+      ws,
+      path: `/workspaces/${workspaceId}/sessions/${sessionId}/audio/stream`,
+      pathTag: "session_audio_stream",
+      level: "session_audio",
+      upgradeReceivedAt,
+      logMetadata: { workspaceId, sessionId },
+    });
+  }
+
+  private handleDictationWebSocket({
+    ws,
+    path,
+    pathTag,
+    level,
+    upgradeReceivedAt,
+    logMetadata,
+  }: {
+    ws: WebSocket;
+    path: string;
+    pathTag: string;
+    level: string;
+    upgradeReceivedAt?: number;
+    logMetadata: Record<string, unknown>;
+  }): void {
     const dictationManager = this.ctx.createDictationManager?.();
     const connectedAt = Date.now();
     const metrics = this.ctx.metrics;
-    const connId = this.nextConnId();
+    const connId = this.nextConnId(pathTag);
     if (upgradeReceivedAt && metrics) {
       metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
-        path: "session_audio_stream",
+        path: pathTag,
       });
     }
 
-    log.info("ws.session_audio_stream_connected", {
+    log.info(`ws.${pathTag}_connected`, {
       connId,
-      workspaceId,
-      sessionId,
-      path: `/workspaces/${workspaceId}/sessions/${sessionId}/audio/stream`,
+      ...logMetadata,
+      path,
       serverDictationAvailable: Boolean(dictationManager),
     });
 
     this.ctx.trackConnection(ws, { userBroadcast: false });
-    const stopPing = startServerPing(
-      ws,
-      `/workspaces/${workspaceId}/sessions/${sessionId}/audio/stream`,
-      PING_INTERVAL_MS,
-      metrics,
-      connId,
-    );
+    const stopPing = startServerPing(ws, path, PING_INTERVAL_MS, metrics, connId);
 
     let msgSent = 0;
     let msgRecv = 0;
@@ -643,15 +672,15 @@ export class SessionAudioStreamMux {
       ws.send(JSON.stringify(msg));
       metrics?.record("server.ws_message_sent", 1, {
         type: msg.type,
-        level: "session_audio",
-        path: "session_audio_stream",
+        level,
+        path: pathTag,
       });
     };
 
     if (!dictationManager) {
       metrics?.record("server.dictation_error", 1, {
         stage: "audio_stream_connect",
-        path: "session_audio_stream",
+        path: pathTag,
       });
       send({
         type: "dictation_error",
@@ -670,10 +699,10 @@ export class SessionAudioStreamMux {
         const buffer = toBuffer(data);
         metrics?.record("server.ws_message_received", 1, {
           type: "binary_audio",
-          path: "session_audio_stream",
+          path: pathTag,
         });
         metrics?.record("server.ws_binary_received_bytes", buffer.byteLength, {
-          path: "session_audio_stream",
+          path: pathTag,
         });
         dictationManager.handleAudioData(buffer);
         return;
@@ -688,7 +717,7 @@ export class SessionAudioStreamMux {
       const msg = parsed.message;
       metrics?.record("server.ws_message_received", 1, {
         type: msg.type,
-        path: "session_audio_stream",
+        path: pathTag,
       });
       switch (msg.type) {
         case "dictation_start":
@@ -699,7 +728,7 @@ export class SessionAudioStreamMux {
         default:
           metrics?.record("server.dictation_error", 1, {
             stage: "unsupported_audio_stream_message",
-            path: "session_audio_stream",
+            path: pathTag,
           });
           send({
             type: "dictation_error",
@@ -714,18 +743,17 @@ export class SessionAudioStreamMux {
       stopPing();
       this.ctx.untrackConnection(ws);
       metrics?.record("server.ws_session_duration_ms", Date.now() - connectedAt, {
-        path: "session_audio_stream",
+        path: pathTag,
       });
-      metrics?.record("server.ws_messages_sent", msgSent, { path: "session_audio_stream" });
-      metrics?.record("server.ws_messages_received", msgRecv, { path: "session_audio_stream" });
+      metrics?.record("server.ws_messages_sent", msgSent, { path: pathTag });
+      metrics?.record("server.ws_messages_received", msgRecv, { path: pathTag });
       metrics?.record("server.ws_close_code", 1, {
         code: String(code),
-        path: "session_audio_stream",
+        path: pathTag,
       });
-      log.info("ws.session_audio_stream_closed", {
+      log.info(`ws.${pathTag}_closed`, {
         connId,
-        workspaceId,
-        sessionId,
+        ...logMetadata,
         code,
         msgSent,
         msgRecv,
@@ -733,10 +761,9 @@ export class SessionAudioStreamMux {
     });
 
     ws.on("error", (err) => {
-      log.warn("ws.session_audio_stream_error", {
+      log.warn(`ws.${pathTag}_error`, {
         connId,
-        workspaceId,
-        sessionId,
+        ...logMetadata,
         error: safeErrorMessage(err),
       });
     });

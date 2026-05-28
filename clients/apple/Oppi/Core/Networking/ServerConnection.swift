@@ -17,6 +17,7 @@ final class ServerConnection {
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
     var splitSessionStreamAvailable = false
+    var dictationStreamAvailable = false
     var sessionAudioStreamAvailable = false
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
@@ -27,13 +28,13 @@ final class ServerConnection {
     private var focusedSessionStreamURL: URL?
     private(set) var transportPath: ConnectionTransportPath = .paired
 
-    /// True when the server can accept session audio streams for dictation.
+    /// True when the server can accept remote ASR dictation streams.
     ///
     /// `serverDictationAvailable` is normally learned from a focused session
-    /// stream bootstrap. Quick Session has no focused session yet, so it relies
-    /// on the `/server/info` session-audio capability instead.
+    /// stream bootstrap. Pre-session composers rely on `/server/info` stream
+    /// capabilities instead.
     var serverDictationTransportAvailable: Bool {
-        serverDictationAvailable || sessionAudioStreamAvailable
+        serverDictationAvailable || dictationStreamAvailable || sessionAudioStreamAvailable
     }
 
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
@@ -64,6 +65,7 @@ final class ServerConnection {
 
     func disableSplitStreamsForUnsupportedEndpoint() {
         splitSessionStreamAvailable = false
+        dictationStreamAvailable = false
         sessionAudioStreamAvailable = false
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities.requiredSplitStreamCapabilityNames
         streamCapabilitiesRefreshFailed = false
@@ -279,6 +281,7 @@ final class ServerConnection {
         self.currentServerId = credentials.normalizedServerFingerprint
         self.endpointSelection = selection
         self.splitSessionStreamAvailable = false
+        self.dictationStreamAvailable = false
         self.sessionAudioStreamAvailable = false
         self.missingRequiredSplitStreamCapabilities = []
         self.streamCapabilitiesLoaded = false
@@ -522,11 +525,12 @@ final class ServerConnection {
             let info = try await apiClient.serverInfo()
             let capabilities = info.capabilities
             splitSessionStreamAvailable = capabilities?.sessionStream?.version ?? 0 >= 1
+            dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
             sessionAudioStreamAvailable = capabilities?.sessionAudioStream?.version ?? 0 >= 1
             missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
                 .missingRequiredSplitStreamCapabilities(in: capabilities)
             streamCapabilitiesRefreshFailed = false
-            if sessionAudioStreamAvailable {
+            if dictationStreamAvailable || sessionAudioStreamAvailable {
                 setServerDictationAvailableFromCapabilities(true)
             }
             streamCapabilitiesLoaded = true
@@ -538,6 +542,7 @@ final class ServerConnection {
             streamCapabilitiesRefreshFailed = true
             if !hadLoadedCapabilities {
                 splitSessionStreamAvailable = false
+                dictationStreamAvailable = false
                 sessionAudioStreamAvailable = false
                 missingRequiredSplitStreamCapabilities = []
                 streamCapabilitiesLoaded = false
@@ -1185,23 +1190,34 @@ final class ServerConnection {
         serverDictationAvailable = available
     }
 
-    func makeDictationStreamClient(workspaceId: String, sessionId: String) -> DictationStreamClient? {
-        guard sessionAudioStreamAvailable,
+    func makeDictationStreamClient() -> DictationStreamClient? {
+        guard dictationStreamAvailable,
               let selection = endpointSelection,
               let credentials else { return nil }
         return DictationStreamClient(
             baseURL: selection.baseURL,
-            workspaceId: workspaceId,
-            sessionId: sessionId,
             token: credentials.token,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
         )
     }
 
-    func makeDictationStreamClientForFocusedSession() -> DictationStreamClient? {
+    func makeLegacyDictationStreamClient(workspaceId: String, sessionId: String) -> DictationStreamClient? {
+        guard sessionAudioStreamAvailable,
+              let selection = endpointSelection,
+              let credentials else { return nil }
+        return DictationStreamClient(
+            baseURL: selection.baseURL,
+            token: credentials.token,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
+            legacyWorkspaceId: workspaceId,
+            legacySessionId: sessionId
+        )
+    }
+
+    func makeLegacyDictationStreamClientForFocusedSession() -> DictationStreamClient? {
         guard let context = focusedSessionStore.focused,
               let workspaceId = context.workspaceId else { return nil }
-        return makeDictationStreamClient(
+        return makeLegacyDictationStreamClient(
             workspaceId: workspaceId,
             sessionId: context.sessionId
         )
@@ -1251,9 +1267,11 @@ final class ServerConnection {
 
     func setSplitStreamCapabilitiesForTesting(
         sessionStream: Bool = true,
+        dictationStream: Bool? = nil,
         sessionAudioStream: Bool = false
     ) {
         splitSessionStreamAvailable = sessionStream
+        dictationStreamAvailable = dictationStream ?? sessionAudioStream
         sessionAudioStreamAvailable = sessionAudioStream
         var missing: [String] = []
         if !sessionStream { missing.append("sessionStream") }
