@@ -134,7 +134,7 @@ struct PairView: View {
                 let info = try await PairingInviteService.generate()
 
                 let image: NSImage? = if let url = info.inviteURL {
-                    PairView.generateQRCode(from: url)
+                    QRCodeImageGenerator.makeImage(from: url)
                 } else {
                     nil
                 }
@@ -156,10 +156,10 @@ struct PairView: View {
             }
         }
     }
+}
 
-    // MARK: - QR code
-
-    private nonisolated static func generateQRCode(from string: String) -> NSImage? {
+enum QRCodeImageGenerator {
+    static func makeImage(from string: String) -> NSImage? {
         guard let data = string.data(using: .utf8) else { return nil }
 
         let filter = CIFilter.qrCodeGenerator()
@@ -168,12 +168,10 @@ struct PairView: View {
 
         guard let ciImage = filter.outputImage else { return nil }
 
-        let scale = CGAffineTransform(scaleX: 10, y: 10)
-        let scaledImage = ciImage.transformed(by: scale)
-
+        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
         let rep = NSCIImageRep(ciImage: scaledImage)
-        let nsImage = NSImage(size: rep.size)
-        nsImage.addRepresentation(rep)
-        return nsImage
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
     }
 }

@@ -42,6 +42,13 @@ import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
+import type {
+  ListChildSessions,
+  SendSessionMessage,
+  SpawnChildSession,
+  SpawnDetachedSession,
+  SubscribeToSession,
+} from "./session-spawn-types.js";
 
 export type { SessionCatchUpResponse };
 
@@ -95,37 +102,13 @@ export interface SessionCoordinatorBundleDeps {
   stopSession: (sessionId: string) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<Session>;
   // spawn_agent support
-  spawnChildSession: (
-    parentSessionId: string,
-    params: {
-      name?: string;
-      model?: string;
-      thinking?: string;
-      prompt: string;
-      activeTools?: string[];
-      profileName?: string;
-    },
-  ) => Promise<Session>;
-  spawnDetachedSession: (
-    originSessionId: string,
-    params: {
-      name?: string;
-      model?: string;
-      thinking?: string;
-      prompt: string;
-      activeTools?: string[];
-      profileName?: string;
-    },
-  ) => Promise<Session>;
-  listChildSessions: (parentSessionId: string) => Session[];
-  subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
+  spawnChildSession: SpawnChildSession;
+  spawnDetachedSession: SpawnDetachedSession;
+  listChildSessions: ListChildSessions;
+  subscribeToSession: SubscribeToSession;
   getAvailableModelIds: () => string[];
   /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
-  sendMessage: (
-    sessionId: string,
-    message: string,
-    behavior?: "steer" | "followUp",
-  ) => Promise<void>;
+  sendMessage: SendSessionMessage;
   /** Called when a session's firstMessage is first captured. */
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */

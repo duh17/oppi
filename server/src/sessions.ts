@@ -40,6 +40,7 @@ import { type ExtensionUIResponse } from "./session-ui.js";
 import { createLogger } from "./logger.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import { createSubagentToolPolicyFactory } from "../extensions/subagents/index.js";
+import type { SpawnSessionParams } from "./session-spawn-types.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -60,15 +61,6 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
 // ─── Types ───
 
 type ActiveSession = SessionStartActiveSession;
-
-type SpawnSessionParams = {
-  name?: string;
-  model?: string;
-  thinking?: string;
-  prompt: string;
-  activeTools?: string[];
-  profileName?: string;
-};
 
 // ─── Session Manager ───
 

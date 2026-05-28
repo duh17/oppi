@@ -134,45 +134,7 @@ struct WorkspaceStoppedSessionsSection: View {
             Section {
                 if isGroupExpanded(group) {
                     ForEach(group.items) { item in
-                        switch item {
-                        case .session(let session):
-                            Button {
-                                onOpenSession(session)
-                            } label: {
-                                SessionRow(presentation: sessionPresentation(session))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("session.nav.\(session.id)")
-                            .listRowBackground(Color.themeBg)
-                            .swipeActions(edge: .leading) {
-                                if session.ephemeral != true {
-                                    Button {
-                                        onResumeSession(session)
-                                    } label: {
-                                        Label("Resume", systemImage: "play.fill")
-                                    }
-                                    .tint(.themeGreen)
-                                }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
-                                    onDeleteSession(session)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                .accessibilityIdentifier("session.delete.\(session.id)")
-                                .tint(.themeRed)
-                            }
-
-                        case .local(let local):
-                            Button {
-                                onImportLocal(local)
-                            } label: {
-                                LocalSessionRow(session: local)
-                            }
-                            .listRowBackground(Color.themeBg)
-                            .disabled(isImportingLocal)
-                        }
+                        stoppedItemRow(for: item)
                     }
                 }
             } header: {
@@ -206,44 +168,7 @@ struct WorkspaceStoppedSessionsSection: View {
                         .listRowBackground(Color.themeBg)
                     } else {
                         ForEach(archiveItems(for: bucket)) { item in
-                            switch item {
-                            case .session(let session):
-                                Button {
-                                    onOpenSession(session)
-                                } label: {
-                                    SessionRow(presentation: sessionPresentation(session))
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("session.nav.\(session.id)")
-                                .listRowBackground(Color.themeBg)
-                                .swipeActions(edge: .leading) {
-                                    if session.ephemeral != true {
-                                        Button {
-                                            onResumeSession(session)
-                                        } label: {
-                                            Label("Resume", systemImage: "play.fill")
-                                        }
-                                        .tint(.themeGreen)
-                                    }
-                                }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
-                                        onDeleteSession(session)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                    .tint(.themeRed)
-                                }
-
-                            case .local(let local):
-                                Button {
-                                    onImportLocal(local)
-                                } label: {
-                                    LocalSessionRow(session: local)
-                                }
-                                .listRowBackground(Color.themeBg)
-                                .disabled(isImportingLocal)
-                            }
+                            stoppedItemRow(for: item)
                         }
                     }
                 }
@@ -291,6 +216,49 @@ struct WorkspaceStoppedSessionsSection: View {
             return stoppedGroupTitle(.day(bucket.startAt))
         case .month:
             return stoppedGroupTitle(.month(bucket.startAt))
+        }
+    }
+
+    @ViewBuilder
+    private func stoppedItemRow(for item: StoppedItem) -> some View {
+        switch item {
+        case .session(let session):
+            Button {
+                onOpenSession(session)
+            } label: {
+                SessionRow(presentation: sessionPresentation(session))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("session.nav.\(session.id)")
+            .listRowBackground(Color.themeBg)
+            .swipeActions(edge: .leading) {
+                if session.ephemeral != true {
+                    Button {
+                        onResumeSession(session)
+                    } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                    .tint(.themeGreen)
+                }
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
+                    onDeleteSession(session)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .accessibilityIdentifier("session.delete.\(session.id)")
+                .tint(.themeRed)
+            }
+
+        case .local(let local):
+            Button {
+                onImportLocal(local)
+            } label: {
+                LocalSessionRow(session: local)
+            }
+            .listRowBackground(Color.themeBg)
+            .disabled(isImportingLocal)
         }
     }
 

@@ -8,6 +8,19 @@ import Foundation
 /// measurement/drawing. All methods are `nonisolated static`.
 enum MermaidTextUtils {
 
+    static func hexagonPath(_ rect: CGRect) -> CGPath {
+        let path = CGMutablePath()
+        let inset = rect.width * 0.15
+        path.move(to: CGPoint(x: rect.minX + inset, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + inset, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.closeSubpath()
+        return path
+    }
+
     // MARK: - HTML tag normalization
 
     /// Replace `<br>`, `<br/>`, `<br />` with `\n`.

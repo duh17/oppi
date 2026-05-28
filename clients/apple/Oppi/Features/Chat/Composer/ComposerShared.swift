@@ -122,6 +122,84 @@ enum ComposerShared {
         }
     }
 
+    // MARK: - Shared Attachment Views
+
+    static func attachmentStrip(
+        pendingAttachments: Binding<[PendingAttachment]>,
+        horizontalPadding: CGFloat? = nil
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            if let horizontalPadding {
+                attachmentRow(pendingAttachments: pendingAttachments)
+                    .padding(.horizontal, horizontalPadding)
+            } else {
+                attachmentRow(pendingAttachments: pendingAttachments)
+            }
+        }
+    }
+
+    static func filePillStrip(
+        pendingRepoPointers: Binding<[PendingFileReference]>,
+        horizontalPadding: CGFloat? = nil
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            if let horizontalPadding {
+                filePillRow(pendingRepoPointers: pendingRepoPointers)
+                    .padding(.horizontal, horizontalPadding)
+            } else {
+                filePillRow(pendingRepoPointers: pendingRepoPointers)
+            }
+        }
+    }
+
+    private static func attachmentRow(
+        pendingAttachments: Binding<[PendingAttachment]>
+    ) -> some View {
+        HStack(spacing: 8) {
+            ForEach(pendingAttachments.wrappedValue) { attachment in
+                if attachment.source == .image, let thumbnail = attachment.thumbnail {
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: thumbnail)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 56, height: 56)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
+                            )
+
+                        Button {
+                            removeAttachment(attachment.id, from: pendingAttachments)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.themeFg)
+                                .background(Circle().fill(.themeScrim))
+                        }
+                        .offset(x: 4, y: -4)
+                    }
+                } else {
+                    ComposerAttachmentPill(name: attachment.displayName) {
+                        removeAttachment(attachment.id, from: pendingAttachments)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func filePillRow(
+        pendingRepoPointers: Binding<[PendingFileReference]>
+    ) -> some View {
+        HStack(spacing: 6) {
+            ForEach(pendingRepoPointers.wrappedValue) { file in
+                ComposerFilePill(file: file) {
+                    removeFile(file.id, from: pendingRepoPointers)
+                }
+            }
+        }
+    }
+
     // MARK: - Input Manipulation
 
     static func insertSlashCommand(
@@ -181,6 +259,43 @@ enum ComposerShared {
             return storedText
         }
         return prefix + liveTranscript
+    }
+
+    static func visibleComposerText(_ text: String) -> String {
+        if text.hasPrefix("$ ") {
+            return String(text.dropFirst(2))
+        }
+        return text
+    }
+
+    static func textFieldBinding(
+        text: Binding<String>,
+        displayText: @escaping () -> String
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                visibleComposerText(displayText())
+            },
+            set: { newValue in
+                if text.wrappedValue.hasPrefix("$ ") {
+                    text.wrappedValue = newValue.isEmpty ? "" : "$ " + newValue
+                } else {
+                    text.wrappedValue = newValue
+                }
+            }
+        )
+    }
+
+    static func correctionRanges(
+        manager: VoiceInputManager?,
+        textBeforeRecording: String?
+    ) -> [NSRange] {
+        guard let manager,
+              let prefix = textBeforeRecording else { return [] }
+        let offset = (visibleComposerText(prefix) as NSString).length
+        return manager.currentTranscriptCorrectionRanges.map { range in
+            NSRange(location: range.location + offset, length: range.length)
+        }
     }
 
     static func dictationPrefix(for base: String) -> String {

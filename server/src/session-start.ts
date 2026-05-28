@@ -12,6 +12,13 @@ import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
+import type {
+  ListChildSessions,
+  SendSessionMessage,
+  SpawnChildSession,
+  SpawnDetachedSession,
+  SubscribeToSession,
+} from "./session-spawn-types.js";
 
 export interface SessionStartActiveSession {
   session: Session;
@@ -53,40 +60,16 @@ export interface SessionStartCoordinatorDeps {
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
   // subagents extension support
-  spawnChildSession: (
-    parentSessionId: string,
-    params: {
-      name?: string;
-      model?: string;
-      thinking?: string;
-      prompt: string;
-      activeTools?: string[];
-      profileName?: string;
-    },
-  ) => Promise<Session>;
-  spawnDetachedSession: (
-    originSessionId: string,
-    params: {
-      name?: string;
-      model?: string;
-      thinking?: string;
-      prompt: string;
-      activeTools?: string[];
-      profileName?: string;
-    },
-  ) => Promise<Session>;
-  listChildSessions: (parentSessionId: string) => Session[];
-  subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
+  spawnChildSession: SpawnChildSession;
+  spawnDetachedSession: SpawnDetachedSession;
+  listChildSessions: ListChildSessions;
+  subscribeToSession: SubscribeToSession;
   getAvailableModelIds: () => string[];
   stopSession: (sessionId: string) => Promise<void>;
   /** Resume a stopped session (restart its SDK process). */
   resumeSession: (sessionId: string) => Promise<Session>;
   /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
-  sendMessage: (
-    sessionId: string,
-    message: string,
-    behavior?: "steer" | "followUp",
-  ) => Promise<void>;
+  sendMessage: SendSessionMessage;
   metrics?: ServerMetricCollector;
 }
 

@@ -1,5 +1,4 @@
 import SwiftUI
-import CoreImage.CIFilterBuiltins
 
 /// Step 4: Generate a QR code for iPhone pairing via `oppi pair --json`.
 struct PairingView: View {
@@ -108,7 +107,7 @@ struct PairingView: View {
                 let info = try await PairingInviteService.generate()
 
                 let image: NSImage? = if let inviteURL = info.inviteURL {
-                    PairingView.generateQRCode(from: inviteURL)
+                    QRCodeImageGenerator.makeImage(from: inviteURL)
                 } else {
                     nil
                 }
@@ -128,26 +127,5 @@ struct PairingView: View {
                 }
             }
         }
-    }
-
-    // MARK: - QR code generation
-
-    private nonisolated static func generateQRCode(from string: String) -> NSImage? {
-        guard let data = string.data(using: .utf8) else { return nil }
-
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = data
-        filter.correctionLevel = "M"
-
-        guard let ciImage = filter.outputImage else { return nil }
-
-        // Scale up for crisp rendering
-        let scale = CGAffineTransform(scaleX: 10, y: 10)
-        let scaledImage = ciImage.transformed(by: scale)
-
-        let rep = NSCIImageRep(ciImage: scaledImage)
-        let nsImage = NSImage(size: rep.size)
-        nsImage.addRepresentation(rep)
-        return nsImage
     }
 }

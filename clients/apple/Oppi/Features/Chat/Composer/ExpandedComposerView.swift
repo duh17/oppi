@@ -94,34 +94,14 @@ struct ExpandedComposerView: View {
 
     /// Text binding that strips the "$ " prefix for bash mode display.
     private var textFieldBinding: Binding<String> {
-        Binding(
-            get: {
-                Self.visibleComposerText(composerDisplayText)
-            },
-            set: { newValue in
-                if text.hasPrefix("$ ") {
-                    text = newValue.isEmpty ? "" : "$ " + newValue
-                } else {
-                    text = newValue
-                }
-            }
-        )
+        ComposerShared.textFieldBinding(text: $text) { composerDisplayText }
     }
 
     private var correctionRangesForDisplay: [NSRange] {
-        guard let manager = voiceInputManager,
-              let prefix = textBeforeRecording else { return [] }
-        let offset = (Self.visibleComposerText(prefix) as NSString).length
-        return manager.currentTranscriptCorrectionRanges.map { range in
-            NSRange(location: range.location + offset, length: range.length)
-        }
-    }
-
-    private static func visibleComposerText(_ text: String) -> String {
-        if text.hasPrefix("$ ") {
-            return String(text.dropFirst(2))
-        }
-        return text
+        ComposerShared.correctionRanges(
+            manager: voiceInputManager,
+            textBeforeRecording: textBeforeRecording
+        )
     }
 
     private var wordCount: Int {
@@ -300,53 +280,17 @@ struct ExpandedComposerView: View {
     }
 
     private var attachmentStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(pendingAttachments) { attachment in
-                    if attachment.source == .image, let thumbnail = attachment.thumbnail {
-                        ZStack(alignment: .topTrailing) {
-                            Image(uiImage: thumbnail)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 56, height: 56)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
-                                )
-
-                            Button {
-                                ComposerShared.removeAttachment(attachment.id, from: $pendingAttachments)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.themeFg)
-                                    .background(Circle().fill(.themeScrim))
-                            }
-                            .offset(x: 4, y: -4)
-                        }
-                    } else {
-                        ComposerAttachmentPill(name: attachment.displayName) {
-                            ComposerShared.removeAttachment(attachment.id, from: $pendingAttachments)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-        }
+        ComposerShared.attachmentStrip(
+            pendingAttachments: $pendingAttachments,
+            horizontalPadding: 16
+        )
     }
 
     private var filePillStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(pendingRepoPointers) { file in
-                    ComposerFilePill(file: file) {
-                        ComposerShared.removeFile(file.id, from: $pendingRepoPointers)
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-        }
+        ComposerShared.filePillStrip(
+            pendingRepoPointers: $pendingRepoPointers,
+            horizontalPadding: 16
+        )
     }
 
     private var attachMenu: some View {

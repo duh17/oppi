@@ -380,19 +380,12 @@ enum ToolPresentationBuilder {
         case "read":
             if !outputTrimmed.isEmpty || !mediaAttachments.isEmpty {
                 let startLine = ToolCallFormatting.readStartLine(from: args)
-                content = isDone
-                    ? expandedFileContent(
-                        text: outputTrimmed,
-                        metadata: fileMetadata,
-                        startLine: startLine,
-                        attachments: mediaAttachments
-                    )
-                    : expandedStreamingFileContent(
-                        text: outputTrimmed,
-                        metadata: fileMetadata,
-                        startLine: startLine,
-                        attachments: mediaAttachments
-                    )
+                content = expandedFileContent(
+                    text: outputTrimmed,
+                    metadata: fileMetadata,
+                    startLine: startLine,
+                    attachments: mediaAttachments
+                )
             } else if isLoadingOutput {
                 content = .status(message: "Loading read output…")
             } else if isDone {
@@ -403,19 +396,12 @@ enum ToolPresentationBuilder {
             let writeContent = ToolCallFormatting.writeContent(from: args)
             if let writeContent, !writeContent.isEmpty {
                 copyOutput = writeContent
-                content = isDone
-                    ? expandedFileContent(
-                        text: writeContent,
-                        metadata: fileMetadata,
-                        startLine: 1,
-                        attachments: []
-                    )
-                    : expandedStreamingFileContent(
-                        text: writeContent,
-                        metadata: fileMetadata,
-                        startLine: 1,
-                        attachments: []
-                    )
+                content = expandedFileContent(
+                    text: writeContent,
+                    metadata: fileMetadata,
+                    startLine: 1,
+                    attachments: []
+                )
             } else if !outputTrimmed.isEmpty {
                 content = isDone
                     ? expandedFileCodeFallback(
@@ -443,7 +429,7 @@ enum ToolPresentationBuilder {
                     let streamingText = streamingEditText(from: editText)
                     if !streamingText.isEmpty {
                         copyOutput = streamingText
-                        content = expandedStreamingFileContent(
+                        content = expandedFileContent(
                             text: streamingText,
                             metadata: fileMetadata,
                             startLine: 1,
@@ -566,37 +552,6 @@ enum ToolPresentationBuilder {
     ) -> ToolExpandedContent {
         switch metadata.fileType {
         case .markdown:
-            return .markdown(text: text)
-        case .orgMode:
-            return .markdown(text: orgToMarkdown(text))
-        case .image, .audio, .video:
-            return .readMedia(
-                output: text,
-                filePath: metadata.filePath,
-                startLine: startLine,
-                attachments: attachments
-            )
-        case .html, .plain, .code, .json, .pdf, .binary,
-             .latex, .mermaid, .graphviz, .none:
-            return .code(
-                text: text,
-                language: metadata.language,
-                startLine: startLine,
-                filePath: metadata.filePath
-            )
-        }
-    }
-
-    private static func expandedStreamingFileContent(
-        text: String,
-        metadata: FilePresentationMetadata,
-        startLine: Int,
-        attachments: [ToolMediaAttachment]
-    ) -> ToolExpandedContent {
-        switch metadata.fileType {
-        case .markdown:
-            // Incremental markdown pipeline (tail-only CommonMark parse)
-            // handles streaming efficiently. Previously downgraded to .text.
             return .markdown(text: text)
         case .orgMode:
             return .markdown(text: orgToMarkdown(text))
