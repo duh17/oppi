@@ -168,13 +168,13 @@ To add a scenario:
 
 Mock screenshot-preview tests live in `clients/apple/OppiUITests/ScreenshotPreviewUITests.swift` and launch the app with `--screenshot-preview`. They are useful for isolated visual surfaces, not for paired-server workspace behavior.
 
-### Duplication check
+### Duplication and Apple guardrail check
 
 Run after Apple UI or rendering changes:
 
 ```bash
 cd ~/workspace/oppi
-bash clients/apple/scripts/check-duplication.sh
+bun scripts/duplication-scan.ts
 ```
 
 ### Protocol checks

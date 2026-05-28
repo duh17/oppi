@@ -25,7 +25,6 @@ server/scripts/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
 clients/apple/scripts/*
 !clients/apple/scripts/release-mac.sh
-!clients/apple/scripts/check-duplication.sh
 !clients/apple/scripts/periphery-scan.ts
 !server/docker/entrypoint.sh
 

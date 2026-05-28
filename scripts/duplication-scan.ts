@@ -4,7 +4,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -62,12 +64,24 @@ type ScanResult = {
   duplicates: JscpdDuplicate[];
 };
 
+type GuardrailViolation = {
+  title: string;
+  fix: string;
+  details: string[];
+};
+
+type GuardrailResult = {
+  title: string;
+  violations: GuardrailViolation[];
+};
+
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const appleRoot = join(repoRoot, "clients/apple");
 const argv = process.argv.slice(2);
 const argSet = new Set(argv);
 
 function usage(): string {
-  return `Usage: bun scripts/duplication-scan.ts [options]\n\nReport-first copy/paste scan for Oppi. The existing Apple check-duplication.sh\nscript is still the architecture guardrail; this script finds generic code clones.\n\nOptions:\n  --include-tests     Also scan Apple and server test targets with looser thresholds\n  --fail-on-clones    Exit 1 when any configured scan reports clones\n  --output <path>     Report directory, relative to repo root by default\n                     (default: .pi/reports/duplication-scan)\n  --verbose           Print jscpd stdout/stderr for each pass\n  --help              Show this help\n`;
+  return `Usage: bun scripts/duplication-scan.ts [options]\n\nSingle duplication and Apple UI guardrail check for Oppi. Generates a generic\ncopy/paste report with jscpd, then runs the bespoke Apple architecture guardrails\nin the same command.\n\nOptions:\n  --include-tests     Also scan Apple and server test targets with looser thresholds\n  --fail-on-clones    Exit 1 when any configured jscpd scan reports clones\n  --output <path>     Report directory, relative to repo root by default\n                     (default: .pi/reports/duplication-scan)\n  --verbose           Print jscpd stdout/stderr for each pass\n  --help              Show this help\n`;
 }
 
 function argValue(name: string, fallback: string): string {
@@ -266,6 +280,239 @@ function runScan(config: ScanConfig): ScanResult | undefined {
   };
 }
 
+function runCommand(command: string, args: string[], cwd: string): string {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status === 1) {
+    return "";
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit ${result.status}\n${result.stdout}\n${result.stderr}`,
+    );
+  }
+  return result.stdout;
+}
+
+function rgFiles(
+  pattern: string,
+  paths: string[],
+  options: { cwd?: string; pcre2?: boolean; type?: string } = {},
+): string[] {
+  const args: string[] = [];
+  if (options.pcre2) {
+    args.push("--pcre2");
+  }
+  args.push("-l", pattern);
+  if (options.type) {
+    args.push("--type", options.type);
+  }
+  args.push(...paths);
+
+  return runCommand("rg", args, options.cwd ?? repoRoot)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function filterAllowed(files: string[], allowed: RegExp): string[] {
+  return files.filter((file) => !allowed.test(file));
+}
+
+function findNamedFiles(root: string, fileName: string): string[] {
+  if (!existsSync(root)) {
+    return [];
+  }
+
+  const result: string[] = [];
+  for (const entry of readdirSync(root)) {
+    const fullPath = join(root, entry);
+    const stat = statSync(fullPath);
+    if (stat.isDirectory()) {
+      result.push(...findNamedFiles(fullPath, fileName));
+    } else if (entry === fileName) {
+      result.push(fullPath);
+    }
+  }
+  return result;
+}
+
+function privateFunctionNames(relativePath: string): Set<string> {
+  const path = join(appleRoot, relativePath);
+  if (!existsSync(path)) {
+    return new Set();
+  }
+
+  const content = readFileSync(path, "utf8");
+  const names = new Set<string>();
+  for (const match of content.matchAll(/private\s+func\s+(\w+)/g)) {
+    names.add(match[1]);
+  }
+  return names;
+}
+
+function intersectionCount(left: Set<string>, right: Set<string>): number {
+  let count = 0;
+  for (const item of left) {
+    if (right.has(item)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function runAppleGuardrails(): GuardrailResult {
+  const violations: GuardrailViolation[] = [];
+  const err = (title: string, fix: string, details: string[] = []) => {
+    violations.push({ title, fix, details });
+  };
+
+  let hits = filterAllowed(
+    rgFiles("UIActivityViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
+    /FileSharePresenter\.swift|FileShareService\.swift|AssistantMarkdownContentView\.swift/,
+  );
+  if (hits.length > 0) {
+    err(
+      `Raw UIActivityViewController found in: ${hits.join(", ")}`,
+      "Use FileSharePresenter.share() or .makeShareBarButtonItem()",
+      hits,
+    );
+  }
+
+  hits = filterAllowed(
+    rgFiles("(?:\\.sheet.*FullScreenCodeView|FullScreenCodeView.*\\.sheet)", ["Oppi/"], {
+      cwd: appleRoot,
+      type: "swift",
+    }),
+    /FullScreenCodeView\.swift/,
+  );
+  if (hits.length > 0) {
+    err(
+      `Raw .sheet + FullScreenCodeView in: ${hits.join(", ")}`,
+      "Use .fullScreenViewer(isPresented:content:piRouter:) modifier",
+      hits,
+    );
+  }
+
+  hits = filterAllowed(
+    rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
+    /FullScreenCodeView\.swift|FullScreenCodeViewController\.swift|EmbeddedFileViewerView\.swift|ToolTimelineRowHelpers\.swift/,
+  );
+  if (hits.length > 0) {
+    err(
+      `Direct FullScreenCodeViewController creation in: ${hits.join(", ")}`,
+      "Use .fullScreenViewer() (SwiftUI) or ToolTimelineRowPresentationHelpers.presentFullScreenContent() (UIKit)",
+      hits,
+    );
+  }
+
+  hits = filterAllowed(
+    rgFiles("presentationDetents\\(\\[\\.large\\]\\)", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
+    /FullScreenCodeView\.swift/,
+  );
+  if (hits.length > 0) {
+    err(
+      `Manual .presentationDetents([.large]) in: ${hits.join(", ")}`,
+      "Use .fullScreenViewer() modifier — it handles sheet configuration",
+      hits,
+    );
+  }
+
+  for (const view of ["MarkdownFileView", "LaTeXFileView", "MermaidFileView", "OrgModeFileView", "HTMLFileView"]) {
+    const [file] = findNamedFiles(join(appleRoot, "Oppi"), `${view}.swift`);
+    if (file && !readFileSync(file, "utf8").includes("RenderableDocumentWrapper")) {
+      const relativeFile = relative(appleRoot, file);
+      err(
+        `${view} does not use RenderableDocumentWrapper`,
+        "Renderable file views must use RenderableDocumentWrapper for shared chrome",
+        [relativeFile],
+      );
+    }
+  }
+
+  const chatInputFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/ChatInputBar.swift");
+  const expandedComposerFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/ExpandedComposerView.swift");
+  const sharedComposerFunctionCount = intersectionCount(chatInputFunctions, expandedComposerFunctions);
+  if (sharedComposerFunctionCount > 5) {
+    err(
+      `ChatInputBar and ExpandedComposerView share ${sharedComposerFunctionCount} private funcs`,
+      "Extract shared logic to a ComposerShared module",
+    );
+  }
+
+  const askCardFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/AskCard.swift");
+  const askCardExpandedFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/AskCardExpanded.swift");
+  const sharedAskFunctionCount = intersectionCount(askCardFunctions, askCardExpandedFunctions);
+  if (sharedAskFunctionCount > 3) {
+    err(
+      `AskCard and AskCardExpanded share ${sharedAskFunctionCount} private funcs`,
+      "Extract shared AskQuestion logic to AskCardShared",
+    );
+  }
+
+  hits = rgFiles("elapsed\\.components\\.attoseconds", ["Oppi/"], { cwd: appleRoot, type: "swift" });
+  if (hits.length > 1) {
+    err(
+      `elapsedMs(ContinuousClock) duplicated in ${hits.length} files`,
+      "Extract to a shared ContinuousClock extension",
+      hits,
+    );
+  }
+
+  hits = rgFiles("private func formatTokens", ["Oppi/"], { cwd: appleRoot, type: "swift" });
+  if (hits.length > 1) {
+    err(
+      `formatTokens duplicated in ${hits.length} files`,
+      "Extract to a shared formatting extension",
+      hits,
+    );
+  }
+
+  hits = rgFiles("private var statusColor: Color", ["Oppi/Features/Review/"], {
+    cwd: appleRoot,
+    type: "swift",
+  });
+  if (hits.length > 1) {
+    err(
+      `Git statusColor duplicated in ${hits.length} Review files`,
+      "Extract to GitStatusColor.color(for:)",
+      hits,
+    );
+  }
+
+  hits = rgFiles("func nowMs", ["Oppi/"], { cwd: appleRoot, type: "swift" });
+  if (hits.length > 2) {
+    err(`nowMs() duplicated in ${hits.length} files`, "Use a single shared static func", hits);
+  }
+
+  hits = filterAllowed(
+    rgFiles("(?<!Pi)WKWebView\\(frame:", ["Oppi/"], {
+      cwd: appleRoot,
+      pcre2: true,
+      type: "swift",
+    }),
+    /PiWKWebView\.swift|HTMLContentTracker|PDFFileView\.swift/,
+  );
+  if (hits.length > 0) {
+    err(
+      `Plain WKWebView instantiation in: ${hits.join(", ")}`,
+      "Use PiWKWebView so pi quick actions appear on text selection",
+      hits,
+    );
+  }
+
+  return {
+    title: "Apple UI architecture guardrails",
+    violations,
+  };
+}
+
 function number(value: number): string {
   return value.toLocaleString("en-US");
 }
@@ -286,7 +533,7 @@ function markdownEscape(value: string): string {
   return value.replaceAll("|", "\\|");
 }
 
-function renderMarkdown(results: ScanResult[]): string {
+function renderMarkdown(results: ScanResult[], guardrailResult: GuardrailResult): string {
   const generatedAt = new Date().toISOString();
   const allDuplicates = results.flatMap((result) =>
     result.duplicates.map((duplicate) => ({ result, duplicate })),
@@ -299,7 +546,7 @@ function renderMarkdown(results: ScanResult[]): string {
   lines.push(`Generated: ${generatedAt}`);
   lines.push("");
   lines.push(
-    "This is a generic clone detector report. Keep `clients/apple/scripts/check-duplication.sh` for bespoke Apple architecture guardrails.",
+    "This report combines generic jscpd clone detection with Apple UI architecture guardrails in one command.",
   );
   lines.push("");
   lines.push("## Summary");
@@ -331,6 +578,23 @@ function renderMarkdown(results: ScanResult[]): string {
   }
 
   lines.push("");
+  lines.push("## Apple guardrails");
+  lines.push("");
+  if (guardrailResult.violations.length === 0) {
+    lines.push("Apple UI architecture guardrails passed.");
+  } else {
+    lines.push(`Apple UI architecture guardrails found ${guardrailResult.violations.length} violation(s).`);
+    lines.push("");
+    for (const violation of guardrailResult.violations) {
+      lines.push(`- **${markdownEscape(violation.title)}**`);
+      lines.push(`  - Fix: ${markdownEscape(violation.fix)}`);
+      for (const detail of violation.details) {
+        lines.push(`  - \`${markdownEscape(detail)}\``);
+      }
+    }
+  }
+
+  lines.push("");
   lines.push("## Configured passes");
   lines.push("");
   for (const result of results) {
@@ -344,10 +608,17 @@ function renderMarkdown(results: ScanResult[]): string {
     lines.push("");
   }
 
+  lines.push("### Apple UI architecture guardrails");
+  lines.push("");
+  lines.push("- Scope: `clients/apple/Oppi` UI and rendering hot paths");
+  lines.push("- Checks: shared full-screen viewer, file renderer chrome, share sheet helper, WKWebView wrapper, and known duplicated helper patterns");
+  lines.push("");
+
   lines.push("## Gate policy");
   lines.push("");
-  lines.push("- Default mode is report-only and exits 0.");
-  lines.push("- Use `--fail-on-clones` only for an explicit gate.");
+  lines.push("- Default mode always fails on Apple guardrail violations.");
+  lines.push("- Generic jscpd clone detection is report-only by default.");
+  lines.push("- Use `--fail-on-clones` when an explicit clone-free gate is desired.");
   lines.push("- Prefer gating on new clones touching changed production files instead of historical repo-wide debt.");
   lines.push("- Use jscpd ignore blocks only for intentional, documented duplication.");
   lines.push("");
@@ -355,11 +626,29 @@ function renderMarkdown(results: ScanResult[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+function printGuardrailResult(result: GuardrailResult): void {
+  if (result.violations.length === 0) {
+    console.log("Apple guardrails: passed.");
+    return;
+  }
+
+  console.error(`Apple guardrails: ${result.violations.length} violation(s) found.`);
+  for (const violation of result.violations) {
+    console.error(`ERROR: ${violation.title}`);
+    console.error(`  FIX: ${violation.fix}`);
+    for (const detail of violation.details) {
+      console.error(`  ${detail}`);
+    }
+    console.error("");
+  }
+}
+
 rmSync(outputRoot, { recursive: true, force: true });
 mkdirSync(outputRoot, { recursive: true });
 
 const results = scans.map(runScan).filter((result): result is ScanResult => Boolean(result));
-writeFileSync(markdownPath, renderMarkdown(results));
+const guardrailResult = runAppleGuardrails();
+writeFileSync(markdownPath, renderMarkdown(results, guardrailResult));
 
 const totalClones = results.reduce((sum, result) => sum + result.totals.clones, 0);
 const totalDuplicatedLines = results.reduce(
@@ -368,9 +657,14 @@ const totalDuplicatedLines = results.reduce(
 );
 
 console.log(`Duplication scan complete: ${number(totalClones)} clone(s), ${number(totalDuplicatedLines)} duplicated line(s).`);
+printGuardrailResult(guardrailResult);
 console.log(`Markdown: ${rel(markdownPath)}`);
 for (const result of results) {
   console.log(`JSON: ${rel(result.reportPath)}`);
+}
+
+if (guardrailResult.violations.length > 0) {
+  process.exit(1);
 }
 
 if (failOnClones && totalClones > 0) {

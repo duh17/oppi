@@ -134,7 +134,7 @@ Do not wrap performance-critical rendering in SwiftUI when UIKit or AppKit gives
 - SwiftUI owns navigation shells and forms.
 - Do not duplicate logic across frameworks.
 
-Run `bash clients/apple/scripts/check-duplication.sh` before finishing Apple UI changes.
+Run `bun scripts/duplication-scan.ts` before finishing Apple UI changes.
 
 ### Shared structure
 
@@ -166,7 +166,7 @@ Workspace navigation is HTTP-first and time-bounded: workspace home uses summary
 - Coverage/release gates: follow `docs/testing/README.md` and the `oppi-dev` skill; do not invent ad hoc coverage commands.
 - Apple file structure changes: run `cd clients/apple && xcodegen generate`.
 - Apple code changes: run the relevant `sim-pool.sh` build or targeted test from the Core Commands section.
-- Apple UI or rendering changes: also run `bash clients/apple/scripts/check-duplication.sh`.
+- Apple UI or rendering changes: also run `bun scripts/duplication-scan.ts`.
 - Protocol changes: update server types, Apple models, and protocol tests on both sides before finishing.
 
 Fix all errors before handing work back. If a check cannot run, say exactly why and name the next best validation.
