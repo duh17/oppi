@@ -12,6 +12,7 @@ import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
+import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -20,6 +21,7 @@ import { safeErrorMessage } from "./log-utils.js";
 export interface StreamContext {
   storage: Storage;
   sessions: SessionManager;
+  mirrorRuntime?: PiTuiMirrorRuntime;
   gate: GateServer;
   metrics?: ServerMetricCollector;
   ensureSessionContextWindow: (session: Session) => Session;
@@ -360,17 +362,32 @@ export class BoundSessionStreamMux {
     send(streamConnectedMessage(this.ctx, owner));
 
     try {
+      const isMirrorSession = session.runtime === "pi-tui-mirror";
+      const mirrorRuntime = isMirrorSession ? this.ctx.mirrorRuntime : undefined;
       let hydratedSession = this.ctx.ensureSessionContextWindow(session);
-      const hadActiveSession = this.ctx.sessions.getActiveSession(sessionId) !== undefined;
-      const workspace = this.ctx.resolveWorkspaceForSession(session);
-      const started = await this.ctx.sessions.startSession(sessionId, workspace);
-      if (connectionClosed || ws.readyState !== WebSocket.OPEN) return;
-      hydratedSession = this.ctx.ensureSessionContextWindow(started);
+      const hadActiveSession = isMirrorSession
+        ? mirrorRuntime?.getActiveSession(sessionId) !== undefined
+        : this.ctx.sessions.getActiveSession(sessionId) !== undefined;
+
+      if (isMirrorSession) {
+        if (mirrorRuntime) {
+          hydratedSession = this.ctx.ensureSessionContextWindow(
+            mirrorRuntime.getActiveSession(sessionId) ?? session,
+          );
+        }
+      } else {
+        const workspace = this.ctx.resolveWorkspaceForSession(session);
+        const started = await this.ctx.sessions.startSession(sessionId, workspace);
+        if (connectionClosed || ws.readyState !== WebSocket.OPEN) return;
+        hydratedSession = this.ctx.ensureSessionContextWindow(started);
+      }
 
       sendForSession({
         type: "connected",
         session: hydratedSession,
-        currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
+        currentSeq: isMirrorSession
+          ? (mirrorRuntime?.getCurrentSeq(sessionId) ?? 0)
+          : this.ctx.sessions.getCurrentSeq(sessionId),
       });
 
       const callback = (msg: ServerMessage): void => {
@@ -383,27 +400,36 @@ export class BoundSessionStreamMux {
             : msg;
         sendForSession(outbound);
       };
-      unsubscribeBoundSession = this.ctx.sessions.subscribe(sessionId, callback);
+      unsubscribeBoundSession = isMirrorSession
+        ? mirrorRuntime?.subscribe(sessionId, callback)
+        : this.ctx.sessions.subscribe(sessionId, callback);
       unsubscribed = false;
 
+      const activeSession = isMirrorSession
+        ? (mirrorRuntime?.getActiveSession(sessionId) ?? hydratedSession)
+        : (this.ctx.sessions.getActiveSession(sessionId) ?? hydratedSession);
       sendForSession({
         type: "state",
-        session: this.ctx.ensureSessionContextWindow(
-          this.ctx.sessions.getActiveSession(sessionId) ?? hydratedSession,
-        ),
+        session: this.ctx.ensureSessionContextWindow(activeSession),
       });
 
-      const pendingPerms = this.ctx.gate
-        .getPendingForUser()
-        .filter((p: PendingDecision) => p.sessionId === sessionId);
+      const pendingPerms = isMirrorSession
+        ? []
+        : this.ctx.gate
+            .getPendingForUser()
+            .filter((p: PendingDecision) => p.sessionId === sessionId);
       for (const pending of pendingPerms) {
         send(buildPermissionMessage(pending));
       }
 
-      const pendingAskMsg = this.ctx.sessions.getPendingAskMessage(sessionId);
+      const pendingAskMsg = isMirrorSession
+        ? undefined
+        : this.ctx.sessions.getPendingAskMessage(sessionId);
       if (pendingAskMsg) send(pendingAskMsg);
 
-      const pendingUIMsgs = this.ctx.sessions.getPendingUIRequestMessages(sessionId);
+      const pendingUIMsgs = isMirrorSession
+        ? []
+        : this.ctx.sessions.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
         send(pendingUIMsg);
       }
@@ -414,7 +440,7 @@ export class BoundSessionStreamMux {
         path: "bound_session_stream",
         catchup_requested: "false",
         catchup_complete: "true",
-        started_session: hadActiveSession ? "false" : "true",
+        started_session: isMirrorSession ? "false" : hadActiveSession ? "false" : "true",
         pending_permissions: countBucketForTag(pendingPerms.length),
         pending_ui_requests: countBucketForTag((pendingAskMsg ? 1 : 0) + pendingUIMsgs.length),
       });

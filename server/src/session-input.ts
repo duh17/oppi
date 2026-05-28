@@ -1,5 +1,4 @@
 import { appendSessionMessage } from "./session-protocol.js";
-import { computeTurnPayloadHash } from "./turn-cache.js";
 import type { TurnSessionState } from "./session-turns.js";
 import type { ChatAttachmentRef, Session, TurnCommand } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -25,6 +24,12 @@ export interface SessionInputCoordinatorDeps {
     clientTurnId?: string,
     requestId?: string,
   ) => { clientTurnId?: string; duplicate: boolean };
+  isDuplicateTurnIntent: (
+    active: SessionInputSessionState,
+    command: TurnCommand,
+    clientTurnId: string | undefined,
+    payload: unknown,
+  ) => boolean;
   markTurnDispatched: (
     key: string,
     active: SessionInputSessionState,
@@ -118,17 +123,14 @@ export class SessionInputCoordinator {
       streamingBehavior: opts?.streamingBehavior,
     };
 
-    if (active.session.status === "busy" && !opts?.streamingBehavior) {
-      const existingTurn = opts?.clientTurnId ? active.turnCache.get(opts.clientTurnId) : null;
-      const isDuplicateRetry =
-        existingTurn?.command === "prompt" &&
-        existingTurn.payloadHash === computeTurnPayloadHash("prompt", turnPayload);
-
-      if (!isDuplicateRetry) {
-        throw new Error(
-          "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
-        );
-      }
+    if (
+      active.session.status === "busy" &&
+      !opts?.streamingBehavior &&
+      !this.deps.isDuplicateTurnIntent(active, "prompt", opts?.clientTurnId, turnPayload)
+    ) {
+      throw new Error(
+        "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
+      );
     }
 
     const turn = this.deps.beginTurnIntent(

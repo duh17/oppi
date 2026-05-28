@@ -35,7 +35,7 @@ interface ExtensionUIResponseMessage {
   cancelled?: boolean;
 }
 
-interface WsSessionCommands {
+export interface WsSessionCommands {
   sendPrompt: (
     sessionId: string,
     message: string,
@@ -68,7 +68,7 @@ interface WsSessionCommands {
       requestId?: string;
     },
   ) => Promise<void>;
-  getMessageQueue: (sessionId: string) => MessageQueueState;
+  getMessageQueue: (sessionId: string) => MessageQueueState | Promise<MessageQueueState>;
   setMessageQueue: (
     sessionId: string,
     payload: {
@@ -393,7 +393,7 @@ export class WsMessageHandler {
     const requestId = msg.requestId;
 
     try {
-      const queue = this.deps.sessions.getMessageQueue(session.id);
+      const queue = await this.deps.sessions.getMessageQueue(session.id);
       send({ type: "queue_state", queue });
       if (requestId) {
         send({

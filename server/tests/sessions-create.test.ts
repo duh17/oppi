@@ -491,16 +491,79 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("rejects unknown parentSessionId", async () => {
-    const mock = createMockContext();
-    mock.storage.getSession.mockReturnValue(undefined);
+  it("coalesces local JSONL import with an existing Oppi session identity", async () => {
+    const root = getPiSessionsRoot();
+    const dir = mkdtempSync(join(root, "oppi-import-coalesce-"));
+    const jsonl = join(dir, "session.jsonl");
+    const workspace = makeWorkspace({ hostMount: dir });
+    const mock = createMockContext(workspace);
+    const existing = makeSession({
+      id: "existing-session",
+      workspaceId: "old-workspace",
+      piSessionId: "pi-coalesce-1",
+      piSessionFile: jsonl,
+      piSessionFiles: [jsonl],
+    });
 
-    await dispatchCreate(mock, { name: "child", parentSessionId: "missing-parent" });
+    try {
+      writeFileSync(
+        jsonl,
+        [
+          JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "pi-coalesce-1",
+            timestamp: "2026-05-03T00:00:00.000Z",
+            cwd: dir,
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "m1",
+            parentId: null,
+            timestamp: "2026-05-03T00:00:01.000Z",
+            message: { role: "user", content: "existing hello" },
+          }),
+        ].join("\n") + "\n",
+      );
+      mock.storage.listSessions.mockReturnValue([existing]);
 
-    expect(mock.errors).toEqual([{ status: 404, message: "Parent session not found" }]);
-    expect(mock.storage.saveSession).not.toHaveBeenCalled();
-    expect(mock.sessions.startSession).not.toHaveBeenCalled();
-    expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
+      await dispatchCreate(mock, { piSessionFile: jsonl });
+
+      expect(mock.storage.createSession).not.toHaveBeenCalled();
+      expect(mock.responses).toHaveLength(1);
+      expect(mock.responses[0]!.status).toBe(200);
+      const response = mock.responses[0]!.data as { session: Session };
+      expect(response.session.id).toBe("existing-session");
+      expect(existing.workspaceId).toBe("ws-1");
+      expect(existing.workspaceName).toBe("test-workspace");
+      expect(existing.firstMessage).toBe("existing hello");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("persists piSessionId when importing a local JSONL for the first time", async () => {
+    const root = getPiSessionsRoot();
+    const dir = mkdtempSync(join(root, "oppi-import-new-"));
+    const jsonl = join(dir, "session.jsonl");
+    const mock = createMockContext(makeWorkspace({ hostMount: dir }));
+
+    try {
+      writeFileSync(
+        jsonl,
+        `${JSON.stringify({ type: "session", version: 3, id: "pi-new-1", timestamp: "2026-05-03T00:00:00.000Z", cwd: dir })}\n`,
+      );
+
+      await dispatchCreate(mock, { piSessionFile: jsonl });
+
+      expect(mock.responses).toHaveLength(1);
+      expect(mock.responses[0]!.status).toBe(201);
+      const saved = mock.storage.saveSession.mock.calls[0]![0] as Session;
+      expect(saved.piSessionId).toBe("pi-new-1");
+      expect(saved.piSessionFile).toBe(jsonl);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

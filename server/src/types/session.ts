@@ -24,6 +24,25 @@ export interface SessionSummaryChangeStats {
   removedLines: number;
 }
 
+export type SessionRuntimeKind = "managed" | "pi-tui-mirror";
+
+export interface PiTuiMirrorTerminalInfo {
+  bridgeId?: string;
+  hostname?: string;
+  pid?: number;
+  cwd?: string;
+  connectedAt?: number;
+  lastSeenAt?: number;
+  disconnectedAt?: number;
+}
+
+export interface PiTuiMirrorSessionMetadata {
+  status: "connected" | "disconnected";
+  terminal?: PiTuiMirrorTerminalInfo;
+  capabilities?: string[];
+  protocolVersion?: number;
+}
+
 export interface SessionChangeStats extends SessionSummaryChangeStats {
   /**
    * @internal Per-file line count tracking for accurate write deltas.
@@ -75,6 +94,10 @@ export interface Session {
   // Agent config state (synced from pi get_state)
   thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
+  // Runtime ownership. Omitted means a normal server-managed Pi SDK runtime.
+  runtime?: SessionRuntimeKind;
+  mirror?: PiTuiMirrorSessionMetadata;
+
   // Trace metadata (used for trace recovery/replay)
   // Local pi JSONL paths under ~/.pi/agent/sessions are deleted with the Oppi
   // session so deleted sessions are not rediscovered as importable local sessions.
@@ -116,6 +139,8 @@ export interface SessionSummary {
   firstMessage?: string;
   lastMessage?: string;
   thinkingLevel?: string;
+  runtime?: SessionRuntimeKind;
+  mirror?: PiTuiMirrorSessionMetadata;
   ephemeral?: boolean;
   parentSessionId?: string;
   /** Cold-list attention badge count; omitted outside list endpoints. */

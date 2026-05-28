@@ -19,7 +19,7 @@ import {
 } from "./session-repair.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
-const SCHEMA_VERSION = "5";
+const SCHEMA_VERSION = "6";
 
 interface SessionJsonRow {
   session_json: string;
@@ -49,6 +49,8 @@ interface SessionProjectionRow {
   last_message: string | null;
   warnings_json: string | null;
   thinking_level: string | null;
+  runtime: Session["runtime"] | null;
+  mirror_json: string | null;
   pi_session_file: string | null;
   pi_session_files_json: string | null;
   pi_session_id: string | null;
@@ -113,6 +115,8 @@ const SESSION_PROJECTION_COLUMNS = `
   last_message,
   warnings_json,
   thinking_level,
+  runtime,
+  mirror_json,
   pi_session_file,
   pi_session_files_json,
   pi_session_id,
@@ -143,6 +147,8 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["last_message", "TEXT"],
   ["warnings_json", "TEXT"],
   ["thinking_level", "TEXT"],
+  ["runtime", "TEXT"],
+  ["mirror_json", "TEXT"],
   ["pi_session_file", "TEXT"],
   ["pi_session_files_json", "TEXT"],
   ["pi_session_id", "TEXT"],
@@ -248,6 +254,8 @@ export class SessionSqliteStore {
       normalized.lastMessage ?? null,
       normalized.warnings ? JSON.stringify(normalized.warnings) : null,
       normalized.thinkingLevel ?? null,
+      normalized.runtime ?? null,
+      normalized.mirror ? JSON.stringify(normalized.mirror) : null,
       normalized.piSessionFile ?? null,
       normalized.piSessionFiles ? JSON.stringify(normalized.piSessionFiles) : null,
       normalized.piSessionId ?? null,
@@ -550,6 +558,8 @@ export class SessionSqliteStore {
         last_message TEXT,
         warnings_json TEXT,
         thinking_level TEXT,
+        runtime TEXT,
+        mirror_json TEXT,
         pi_session_file TEXT,
         pi_session_files_json TEXT,
         pi_session_id TEXT,
@@ -654,6 +664,8 @@ export class SessionSqliteStore {
         last_message,
         warnings_json,
         thinking_level,
+        runtime,
+        mirror_json,
         pi_session_file,
         pi_session_files_json,
         pi_session_id,
@@ -662,7 +674,7 @@ export class SessionSqliteStore {
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -686,6 +698,8 @@ export class SessionSqliteStore {
         last_message = excluded.last_message,
         warnings_json = excluded.warnings_json,
         thinking_level = excluded.thinking_level,
+        runtime = excluded.runtime,
+        mirror_json = excluded.mirror_json,
         pi_session_file = excluded.pi_session_file,
         pi_session_files_json = excluded.pi_session_files_json,
         pi_session_id = excluded.pi_session_id,
@@ -887,6 +901,9 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   if (row.first_message !== null) session.firstMessage = row.first_message;
   if (row.last_message !== null) session.lastMessage = row.last_message;
   if (row.thinking_level !== null) session.thinkingLevel = row.thinking_level;
+  if (row.runtime === "managed" || row.runtime === "pi-tui-mirror") session.runtime = row.runtime;
+  const mirror = parseJsonValue<Session["mirror"]>(row.mirror_json, row.id, "mirror");
+  if (mirror) session.mirror = mirror;
   if (row.pi_session_file !== null) session.piSessionFile = row.pi_session_file;
   if (row.pi_session_id !== null) session.piSessionId = row.pi_session_id;
   if (row.ephemeral !== 0) session.ephemeral = true;
@@ -1034,6 +1051,12 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.thinkingLevel !== undefined && session.thinkingLevel !== null) {
     normalized.thinkingLevel = session.thinkingLevel;
+  }
+  if (session.runtime === "managed" || session.runtime === "pi-tui-mirror") {
+    normalized.runtime = session.runtime;
+  }
+  if (session.mirror !== undefined && session.mirror !== null) {
+    normalized.mirror = session.mirror;
   }
   if (session.piSessionFile !== undefined && session.piSessionFile !== null) {
     normalized.piSessionFile = session.piSessionFile;

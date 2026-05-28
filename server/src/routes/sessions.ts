@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { existsSync, realpathSync } from "node:fs";
 import { access, readFile, realpath, rm, stat, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -211,17 +212,58 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       }));
   }
 
-  function collectKnownPiSessionFiles(): Set<string> {
-    const knownFiles = new Set<string>();
+  function canonicalSessionFilePath(path: string): string {
+    const resolved = resolve(path);
+    if (!existsSync(resolved)) return resolved;
+    try {
+      return realpathSync(resolved);
+    } catch {
+      return resolved;
+    }
+  }
+
+  function collectKnownPiSessionIdentities(): { files: Set<string>; piSessionIds: Set<string> } {
+    const files = new Set<string>();
+    const piSessionIds = new Set<string>();
     for (const session of ctx.storage.listSessions()) {
+      if (session.piSessionId) {
+        piSessionIds.add(session.piSessionId);
+      }
       if (session.piSessionFile) {
-        knownFiles.add(session.piSessionFile);
+        files.add(canonicalSessionFilePath(session.piSessionFile));
       }
       for (const file of session.piSessionFiles ?? []) {
-        knownFiles.add(file);
+        files.add(canonicalSessionFilePath(file));
       }
     }
-    return knownFiles;
+    return { files, piSessionIds };
+  }
+
+  function sessionMatchesPiIdentity(
+    session: Session,
+    identity: { path: string; piSessionId?: string },
+  ): boolean {
+    if (identity.piSessionId && session.piSessionId === identity.piSessionId) {
+      return true;
+    }
+    if (
+      session.piSessionFile &&
+      canonicalSessionFilePath(session.piSessionFile) === identity.path
+    ) {
+      return true;
+    }
+    return (session.piSessionFiles ?? []).some(
+      (file) => canonicalSessionFilePath(file) === identity.path,
+    );
+  }
+
+  function findSessionByPiIdentity(identity: {
+    path: string;
+    piSessionId?: string;
+  }): Session | undefined {
+    return ctx.storage
+      .listSessions()
+      .find((session) => sessionMatchesPiIdentity(session, identity));
   }
 
   function workspaceAttentionSnapshot(
@@ -240,8 +282,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   function listWorkspaceImportableSessions(workspace: {
     hostMount?: string;
   }): LocalSessionCatalogSnapshot {
-    const knownPiSessionFiles = collectKnownPiSessionFiles();
-    const snapshot = listCatalogedLocalSessions(knownPiSessionFiles, {
+    const knownPiSessionIdentities = collectKnownPiSessionIdentities();
+    const snapshot = listCatalogedLocalSessions(knownPiSessionIdentities, {
       dataDir: ctx.storage.getDataDir(),
     });
     if (!workspace.hostMount) {
@@ -264,8 +306,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const knownPiSessionFiles = collectKnownPiSessionFiles();
-    void discoverLocalSessions(knownPiSessionFiles, {
+    const knownPiSessionIdentities = collectKnownPiSessionIdentities();
+    void discoverLocalSessions(knownPiSessionIdentities, {
       dataDir: ctx.storage.getDataDir(),
     }).catch((error: unknown) => {
       log.warn("local_session_catalog.refresh_failed", {
@@ -847,9 +889,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         return;
       }
 
-      // Read CWD from the JSONL header for alignment check
-      const headerCwd = await readSessionCwd(validation.path);
-      if (!headerCwd) {
+      // Read identity and CWD from the JSONL header for alignment/coalescing.
+      const localHeader = await readLocalSessionHeader(validation.path);
+      if (!localHeader?.cwd) {
         helpers.error(res, 400, "Cannot read session CWD from file");
         return;
       }
@@ -859,17 +901,41 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         return;
       }
 
-      if (!validateCwdAlignment(headerCwd, workspace.hostMount)) {
+      if (!validateCwdAlignment(localHeader.cwd, workspace.hostMount)) {
         helpers.error(
           res,
           400,
-          `Session CWD (${headerCwd}) is not within workspace path (${workspace.hostMount})`,
+          `Session CWD (${localHeader.cwd}) is not within workspace path (${workspace.hostMount})`,
         );
         return;
       }
 
-      // Extract name and first message from the local session JSONL
+      // Extract name and first message from the local session JSONL.
       const localMeta = await readLocalSessionMeta(validation.path);
+      const existingSession = findSessionByPiIdentity({
+        path: validation.path,
+        piSessionId: localHeader.piSessionId,
+      });
+      if (existingSession) {
+        existingSession.workspaceId = workspace.id;
+        existingSession.workspaceName = workspace.name;
+        existingSession.piSessionFile = validation.path;
+        existingSession.piSessionFiles = Array.from(
+          new Set([...(existingSession.piSessionFiles ?? []), validation.path]),
+        );
+        if (localHeader.piSessionId) existingSession.piSessionId = localHeader.piSessionId;
+        if (!existingSession.firstMessage && localMeta?.firstMessage) {
+          existingSession.firstMessage = localMeta.firstMessage.slice(0, 200);
+        }
+        if (!existingSession.name && body.name) {
+          existingSession.name = body.name;
+        }
+        ctx.storage.saveSession(existingSession);
+        invalidateLocalSessionsCache();
+        helpers.json(res, { session: ctx.ensureSessionContextWindow(existingSession) });
+        return;
+      }
+
       let sessionName = body.name;
       if (!sessionName) {
         sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
@@ -891,6 +957,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       }
       session.piSessionFile = validation.path;
       session.piSessionFiles = [validation.path];
+      if (localHeader.piSessionId) session.piSessionId = localHeader.piSessionId;
       ctx.storage.saveSession(session);
       invalidateLocalSessionsCache();
 
@@ -973,14 +1040,21 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.json(res, { session: hydrated }, 201);
   }
 
-  /** Read the CWD from a pi session JSONL header (first line). */
-  async function readSessionCwd(filePath: string): Promise<string | null> {
+  /** Read identity fields from a pi session JSONL header (first line). */
+  async function readLocalSessionHeader(
+    filePath: string,
+  ): Promise<{ cwd: string; piSessionId?: string } | null> {
     try {
       const content = await readFile(filePath, "utf8");
       const firstLine = content.split("\n")[0];
       if (!firstLine) return null;
-      const header = JSON.parse(firstLine);
-      return typeof header.cwd === "string" ? header.cwd : null;
+      const header = JSON.parse(firstLine) as Record<string, unknown>;
+      const cwd = typeof header.cwd === "string" ? header.cwd : "";
+      if (!cwd) return null;
+      return {
+        cwd,
+        ...(typeof header.id === "string" ? { piSessionId: header.id } : {}),
+      };
     } catch {
       return null;
     }

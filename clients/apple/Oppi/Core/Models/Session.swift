@@ -18,6 +18,28 @@ enum SessionStatus: String, Codable, Sendable {
     }
 }
 
+enum SessionRuntimeKind: String, Codable, Sendable {
+    case managed
+    case piTuiMirror = "pi-tui-mirror"
+}
+
+struct PiTuiMirrorTerminalInfo: Codable, Sendable, Equatable {
+    var bridgeId: String?
+    var hostname: String?
+    var pid: Int?
+    var cwd: String?
+    var connectedAt: Double?
+    var lastSeenAt: Double?
+    var disconnectedAt: Double?
+}
+
+struct PiTuiMirrorSessionMetadata: Codable, Sendable, Equatable {
+    var status: String
+    var terminal: PiTuiMirrorTerminalInfo?
+    var capabilities: [String]?
+    var protocolVersion: Int?
+}
+
 /// Session model matching server's `Session` type.
 ///
 /// Server sends timestamps as Unix milliseconds (not ISO 8601).
@@ -48,6 +70,10 @@ struct Session: Identifiable, Sendable, Equatable {
 
     // Agent config state (synced from pi get_state)
     var thinkingLevel: String?
+
+    // Runtime ownership
+    var runtime: SessionRuntimeKind? = nil
+    var mirror: PiTuiMirrorSessionMetadata? = nil
 
     // Privacy / persistence
     var ephemeral: Bool?
@@ -147,6 +173,8 @@ struct SessionSummary: Sendable, Equatable {
     var firstMessage: String?
     var lastMessage: String?
     var thinkingLevel: String?
+    var runtime: SessionRuntimeKind? = nil
+    var mirror: PiTuiMirrorSessionMetadata? = nil
     var ephemeral: Bool?
     var parentSessionId: String?
     var pendingPermissionCount: Int
@@ -180,6 +208,8 @@ struct SessionSummary: Sendable, Equatable {
             firstMessage: firstMessage,
             lastMessage: lastMessage,
             thinkingLevel: thinkingLevel,
+            runtime: runtime,
+            mirror: mirror,
             ephemeral: ephemeral,
             parentSessionId: parentSessionId
         )
@@ -207,6 +237,8 @@ extension SessionSummary {
         self.firstMessage = session.firstMessage
         self.lastMessage = session.lastMessage
         self.thinkingLevel = session.thinkingLevel
+        self.runtime = session.runtime
+        self.mirror = session.mirror
         self.ephemeral = session.ephemeral
         self.parentSessionId = session.parentSessionId
         self.pendingPermissionCount = 0
@@ -219,7 +251,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, ephemeral, parentSessionId
+    case thinkingLevel, runtime, mirror, ephemeral, parentSessionId
     case pendingPermissionCount, pendingAskCount
 }
 
@@ -243,6 +275,8 @@ private struct DecodedSessionWireFields {
     let firstMessage: String?
     let lastMessage: String?
     let thinkingLevel: String?
+    let runtime: SessionRuntimeKind?
+    let mirror: PiTuiMirrorSessionMetadata?
     let ephemeral: Bool?
     let parentSessionId: String?
 
@@ -266,6 +300,8 @@ private struct DecodedSessionWireFields {
         firstMessage = try container.decodeIfPresent(String.self, forKey: .firstMessage)
         lastMessage = try container.decodeIfPresent(String.self, forKey: .lastMessage)
         thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        runtime = try container.decodeIfPresent(SessionRuntimeKind.self, forKey: .runtime)
+        mirror = try container.decodeIfPresent(PiTuiMirrorSessionMetadata.self, forKey: .mirror)
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
         parentSessionId = try container.decodeIfPresent(String.self, forKey: .parentSessionId)
     }
@@ -293,6 +329,8 @@ private extension DecodedSessionWireFields {
             firstMessage: firstMessage,
             lastMessage: lastMessage,
             thinkingLevel: thinkingLevel,
+            runtime: runtime,
+            mirror: mirror,
             ephemeral: ephemeral,
             parentSessionId: parentSessionId
         )
@@ -355,6 +393,8 @@ extension Session: Codable {
         try c.encodeIfPresent(firstMessage, forKey: .firstMessage)
         try c.encodeIfPresent(lastMessage, forKey: .lastMessage)
         try c.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
+        try c.encodeIfPresent(runtime, forKey: .runtime)
+        try c.encodeIfPresent(mirror, forKey: .mirror)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
         try c.encodeIfPresent(parentSessionId, forKey: .parentSessionId)
 

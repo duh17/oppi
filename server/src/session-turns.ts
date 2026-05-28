@@ -82,6 +82,21 @@ export class SessionTurnCoordinator {
     return { clientTurnId, duplicate: false };
   }
 
+  isDuplicateTurnIntent(
+    active: TurnSessionState,
+    command: TurnCommand,
+    clientTurnId: string | undefined,
+    payload: unknown,
+  ): boolean {
+    if (!clientTurnId) return false;
+    const existing = active.turnCache.get(clientTurnId);
+    return Boolean(
+      existing &&
+      existing.command === command &&
+      existing.payloadHash === computeTurnPayloadHash(command, payload),
+    );
+  }
+
   markTurnDispatched(
     key: string,
     active: TurnSessionState,

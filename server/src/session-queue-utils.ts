@@ -63,12 +63,14 @@ function cloneAttachmentRefs(
 }
 
 export function cloneQueueItem(item: MessageQueueItem): MessageQueueItem {
+  const images = cloneImageAttachments(item.images);
+  const attachments = cloneAttachmentRefs(item.attachments);
   return {
     id: item.id,
     message: item.message,
     createdAt: item.createdAt,
-    images: cloneImageAttachments(item.images),
-    attachments: cloneAttachmentRefs(item.attachments),
+    ...(images ? { images } : {}),
+    ...(attachments ? { attachments } : {}),
   };
 }
 
@@ -107,7 +109,9 @@ export function promptImagesFromQueue(
   }));
 }
 
-export function extractQueuedUserText(message: PiMessage): string {
+export function extractQueuedUserText(
+  message: Pick<PiMessage, "content"> | { content?: unknown },
+): string {
   const content = message.content;
 
   if (typeof content === "string") {
