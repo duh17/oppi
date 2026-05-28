@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, realpathSync } from "node:fs";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { resolve } from "node:path";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -199,14 +199,21 @@ function parseBridgeMessage(data: RawData): PiBridgeInboundMessage {
   return record as unknown as PiBridgeInboundMessage;
 }
 
+function expandHomePath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/")) return resolve(homedir(), trimmed.slice(2));
+  return trimmed;
+}
+
 function normalizePath(path: string): string {
-  return resolve(path.trim());
+  return resolve(expandHomePath(path));
 }
 
 function canonicalSessionFilePath(path: string | undefined): string | undefined {
   const trimmed = path?.trim();
   if (!trimmed) return undefined;
-  const resolved = resolve(trimmed);
+  const resolved = normalizePath(trimmed);
   if (!existsSync(resolved)) return resolved;
   try {
     return realpathSync(resolved);
@@ -323,6 +330,9 @@ export class PiTuiMirrorRuntime extends EventEmitter {
         log.warn("mirror_bridge.message_rejected", { error: message });
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "error", error: message }));
+          if (!connection) {
+            ws.close(1008, message);
+          }
         }
       }
     });

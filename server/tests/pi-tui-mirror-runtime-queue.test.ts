@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { homedir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -10,13 +11,17 @@ import type { ServerMessage, Session, Workspace } from "../src/types.js";
 class FakeBridgeWebSocket extends EventEmitter {
   readyState = WebSocket.OPEN;
   sent: Array<Record<string, unknown>> = [];
+  closeCode?: number;
+  closeReason?: string;
 
   send(data: string): void {
     this.sent.push(JSON.parse(data) as Record<string, unknown>);
   }
 
-  close(): void {
+  close(code?: number, reason?: string): void {
     this.readyState = WebSocket.CLOSED;
+    this.closeCode = code;
+    this.closeReason = reason;
   }
 
   receive(message: Record<string, unknown>): void {
@@ -24,14 +29,14 @@ class FakeBridgeWebSocket extends EventEmitter {
   }
 }
 
-function makeRuntime() {
+function makeRuntime(options: { hostMount?: string } = {}) {
   const workspace: Workspace = {
     id: "w1",
     name: "Workspace",
     skills: [],
     allowedPaths: [],
     allowedExecutables: [],
-    hostMount: "/tmp/oppi-mirror-test",
+    hostMount: options.hostMount ?? "/tmp/oppi-mirror-test",
   };
   const sessions = new Map<string, Session>();
   let nextId = 1;
@@ -67,7 +72,10 @@ function makeRuntime() {
   return { runtime: new PiTuiMirrorRuntime(storage), sessions };
 }
 
-function connectBridge(runtime: PiTuiMirrorRuntime): {
+function connectBridge(
+  runtime: PiTuiMirrorRuntime,
+  options: { cwd?: string; workspaceId?: string | null; sessionFile?: string } = {},
+): {
   ws: FakeBridgeWebSocket;
   sessionId: string;
 } {
@@ -77,9 +85,12 @@ function connectBridge(runtime: PiTuiMirrorRuntime): {
     type: "hello",
     protocolVersion: 1,
     bridgeId: "bridge-1",
-    workspaceId: "w1",
-    cwd: "/tmp/oppi-mirror-test",
-    state: { piSessionId: "pi-1", sessionFile: "/tmp/oppi-mirror-test/session.jsonl" },
+    ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
+    cwd: options.cwd ?? "/tmp/oppi-mirror-test",
+    state: {
+      piSessionId: "pi-1",
+      sessionFile: options.sessionFile ?? "/tmp/oppi-mirror-test/session.jsonl",
+    },
   });
   const ack = ws.sent.find((message) => message.type === "hello_ack");
   expect(ack).toBeTruthy();
@@ -93,6 +104,40 @@ function latestCommand(ws: FakeBridgeWebSocket): Record<string, unknown> {
 }
 
 describe("PiTuiMirrorRuntime queue bridge", () => {
+  it("matches home-relative workspace mounts against terminal cwd", () => {
+    const cwd = `${homedir()}/workspace/oppi/server`;
+    const { runtime } = makeRuntime({ hostMount: "~/workspace/oppi" });
+
+    const { sessionId } = connectBridge(runtime, {
+      cwd,
+      workspaceId: null,
+      sessionFile: `${cwd}/session.jsonl`,
+    });
+
+    expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe("w1");
+  });
+
+  it("closes the bridge when hello registration fails", () => {
+    const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-1",
+      cwd: "/tmp/not-in-a-workspace",
+      state: { piSessionId: "pi-1" },
+    });
+
+    expect(ws.sent.at(-1)).toMatchObject({
+      type: "error",
+      error: expect.stringContaining("No Oppi workspace hostMount contains terminal cwd"),
+    });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ws.closeCode).toBe(1008);
+  });
+
   it("hydrates get_queue from the terminal bridge", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
