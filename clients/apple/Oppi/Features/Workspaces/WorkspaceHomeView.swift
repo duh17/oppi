@@ -426,7 +426,7 @@ struct WorkspaceHomeView: View {
         let sessionPreviews = workspaceSessionPreviews(workspaceId: workspace.id, connection: connection)
         let workspaceAccessibilityName = workspace.runtime == .sandbox ? "sandbox workspace \(workspace.name)" : workspace.name
 
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 0) {
             Button {
                 if Self.shouldOpenWorkspaceFromRowBody(isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil) {
                     navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
@@ -455,10 +455,7 @@ struct WorkspaceHomeView: View {
             Button {
                 navigation.workspacePath.append(target)
             } label: {
-                WorkspaceHomeOpenButton()
-                    .onTapGesture {
-                        navigation.workspacePath.append(target)
-                    }
+                WorkspaceHomeNavigationChevron()
             }
             .buttonStyle(.borderless)
             .contentShape(Rectangle())
@@ -971,18 +968,16 @@ private struct ServerSwitcherPill: View {
 
 // MARK: - Workspace Header Chrome
 
-private struct WorkspaceHomeOpenButton: View {
+private struct WorkspaceHomeNavigationChevron: View {
     var body: some View {
-        Text("Open")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.themeBlue)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(.themeBlue.opacity(0.10), in: Capsule())
-            .frame(minWidth: 44, minHeight: 44)
+        Image(systemName: "chevron.forward")
+            .font(.footnote.weight(.semibold))
+            .imageScale(.small)
+            .foregroundStyle(.themeComment)
+            .frame(width: 28, height: 44)
+            .padding(.horizontal, 8)
             .contentShape(Rectangle())
+            .accessibilityHidden(true)
     }
 }
 
@@ -1017,31 +1012,24 @@ private struct WorkspaceHomeRow: View {
     var isUnreachable: Bool = false
 
     var body: some View {
+        let statusPresentation = WorkspaceHomeStatusPresentation(
+            activeCount: activeCount,
+            stoppedCount: stoppedCount,
+            hasAttention: hasAttention
+        )
+
         HStack(alignment: .center, spacing: 10) {
             WorkspaceRuntimeIcon(workspace: workspace, size: 30, frameSize: 34)
                 .opacity(isUnreachable ? 0.55 : 1)
                 .scaleEffect(isExpanded ? 1.03 : 1)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(workspace.name)
-                        .font(.headline)
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .layoutPriority(1)
-
-                    Spacer(minLength: 8)
-
-                    let statusPresentation = WorkspaceHomeStatusPresentation(
-                        activeCount: activeCount,
-                        stoppedCount: stoppedCount,
-                        hasAttention: hasAttention
-                    )
-                    if statusPresentation.isVisible {
-                        WorkspaceHomeStatusIndicator(presentation: statusPresentation)
-                    }
-                }
+                Text(workspace.name)
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
 
                 if let desc = workspace.description, !desc.isEmpty {
                     Text(desc)
@@ -1051,6 +1039,12 @@ private struct WorkspaceHomeRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if statusPresentation.isVisible {
+                WorkspaceHomeStatusIndicator(presentation: statusPresentation)
+                    .frame(width: WorkspaceHomeStatusIndicator.columnWidth, alignment: .trailing)
+                    .padding(.leading, 2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 7)
@@ -1120,6 +1114,14 @@ private struct WorkspaceHomeStatusPresentation: Equatable {
 }
 
 private struct WorkspaceHomeStatusIndicator: View {
+    static let columnWidth: CGFloat = 106
+
+    private static let symbolWidth: CGFloat = 15
+    private static let symbolCountGap: CGFloat = 4
+    private static let metricGap: CGFloat = 8
+    private static let activeCountWidth: CGFloat = 30
+    private static let stoppedCountWidth: CGFloat = 30
+
     let presentation: WorkspaceHomeStatusPresentation
 
     var body: some View {
@@ -1127,33 +1129,51 @@ private struct WorkspaceHomeStatusIndicator: View {
             symbolCluster(showCounts: true)
             symbolCluster(showCounts: false)
         }
-        .font(.caption.weight(.medium))
+        .font(.subheadline.weight(.semibold))
         .imageScale(.medium)
-        .foregroundStyle(presentation.tint)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.accessibilityLabel)
     }
 
     private func symbolCluster(showCounts: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
+        HStack(alignment: .center, spacing: showCounts ? Self.metricGap : 4) {
             switch presentation.kind {
             case .attention:
-                Image(systemName: "exclamationmark.triangle.fill")
+                statusSymbol("exclamationmark.triangle.fill", tint: .themeOrange)
 
             case .active:
-                Image(systemName: "play.circle.fill")
                 if showCounts {
-                    countText(presentation.activeCount)
+                    statusMetric(
+                        symbol: "play.circle.fill",
+                        count: presentation.activeCount,
+                        tint: .themeGreen,
+                        countWidth: Self.activeCountWidth
+                    )
                     if presentation.stoppedCount > 0 {
-                        Image(systemName: "stop.circle")
-                        countText(presentation.stoppedCount)
+                        statusMetric(
+                            symbol: "stop.circle",
+                            count: presentation.stoppedCount,
+                            tint: .themeComment,
+                            countWidth: Self.stoppedCountWidth
+                        )
+                    }
+                } else {
+                    statusSymbol("play.circle.fill", tint: .themeGreen)
+                    if presentation.stoppedCount > 0 {
+                        statusSymbol("stop.circle", tint: .themeComment)
                     }
                 }
 
             case .stopped:
-                Image(systemName: "stop.circle")
                 if showCounts {
-                    countText(presentation.stoppedCount)
+                    statusMetric(
+                        symbol: "stop.circle",
+                        count: presentation.stoppedCount,
+                        tint: .themeComment,
+                        countWidth: Self.stoppedCountWidth
+                    )
+                } else {
+                    statusSymbol("stop.circle", tint: .themeComment)
                 }
 
             case nil:
@@ -1164,14 +1184,27 @@ private struct WorkspaceHomeStatusIndicator: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func countText(_ count: Int) -> some View {
-        Text(compactCount(count))
-            .lineLimit(1)
-            .monospacedDigit()
-            .fixedSize(horizontal: true, vertical: false)
+    private func statusMetric(symbol: String, count: Int, tint: Color, countWidth: CGFloat) -> some View {
+        HStack(alignment: .center, spacing: Self.symbolCountGap) {
+            statusSymbol(symbol, tint: tint)
+            countText(count, tint: tint)
+                .frame(width: countWidth, alignment: .leading)
+        }
+        .frame(width: Self.symbolWidth + Self.symbolCountGap + countWidth, alignment: .leading)
     }
 
-    private func compactCount(_ count: Int) -> String {
-        count > 99 ? "99+" : "\(count)"
+    private func statusSymbol(_ symbol: String, tint: Color) -> some View {
+        Image(systemName: symbol)
+            .foregroundStyle(tint)
+            .frame(width: Self.symbolWidth, alignment: .center)
+    }
+
+    private func countText(_ count: Int, tint: Color) -> some View {
+        Text(SessionFormatting.compactCount(count))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .monospacedDigit()
+            .minimumScaleFactor(0.82)
+            .allowsTightening(true)
     }
 }
