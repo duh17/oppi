@@ -1191,8 +1191,7 @@ final class ServerConnection {
     }
 
     func makeDictationStreamClient() -> DictationStreamClient? {
-        guard dictationStreamAvailable,
-              let selection = endpointSelection,
+        guard let selection = endpointSelection,
               let credentials else { return nil }
         return DictationStreamClient(
             baseURL: selection.baseURL,

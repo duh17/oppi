@@ -851,9 +851,10 @@ struct VoiceInputManagerTests {
         #expect(manager.state == .error("Server dictation is not connected. Connect to an Oppi server first."))
     }
 
-    /// Credentials exist but server dictation is not available — remote mode should fail
-    /// clearly instead of silently dropping to on-device dictation.
-    @Test func remoteModeWithCredentialsButNoAsrFailsClearly() async {
+    /// Credentials + a connection are enough for remote mode to try the server-bound
+    /// `/dictation/stream` endpoint. Availability errors should come from that stream,
+    /// not from a stale capability preflight.
+    @Test func remoteModeWithCredentialsAttemptsServerProviderWithoutCapabilityPreflight() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -865,24 +866,25 @@ struct VoiceInputManagerTests {
             systemAccess: systemAccess
         )
         manager.setEngineMode(.remote)
-        manager.setServerCredentials(ServerCredentials(
+        let credentials = ServerCredentials(
             host: "localhost", port: 7749,
             token: "test-token",
             name: "test-server",
             scheme: .http
-        ))
-        // Connection exists but serverDictationAvailable is false (server has no STT backend)
+        )
+        manager.setServerCredentials(credentials)
         let conn = ServerConnection()
+        _ = conn.configure(credentials: credentials)
         manager.setServerConnection(conn)
 
-        try? await manager.startRecording(source: "test")
+        try await manager.startRecording(source: "test")
 
-        #expect(serverProvider.prepareSessionCallCount == 0)
+        #expect(serverProvider.prepareSessionCallCount == 1)
         #expect(onDeviceProvider.prepareSessionCallCount == 0)
-        #expect(manager.state == .error("Server dictation is unavailable on this server. Check the ASR server and reconnect."))
+        #expect(manager.state == .recording)
     }
 
-    @Test func remoteModeWithExplicitTargetUsesSessionAudioCapability() async throws {
+    @Test func remoteModeWithExplicitTargetStillUsesServerProvider() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -901,7 +903,12 @@ struct VoiceInputManagerTests {
         ))
 
         let conn = ServerConnection()
-        conn.setSplitStreamCapabilitiesForTesting(dictationStream: true)
+        _ = conn.configure(credentials: ServerCredentials(
+            host: "localhost", port: 7749,
+            token: "test-token",
+            name: "test-server",
+            scheme: .http
+        ))
         manager.setServerConnection(conn)
         manager.setServerDictationTarget(ServerDictationTarget(workspaceId: "ws-1", sessionId: "dictation-1"))
 

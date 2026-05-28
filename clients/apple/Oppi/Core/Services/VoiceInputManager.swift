@@ -598,8 +598,7 @@ final class VoiceInputManager {
         serverConnection = connection
     }
 
-    /// Pin server dictation to a specific workspace/session audio stream.
-    /// Chat views leave this nil and use the focused session fallback.
+    /// Legacy session-audio target hook. Server-bound dictation leaves this nil.
     func setServerDictationTarget(_ target: ServerDictationTarget?) {
         serverDictationTarget = target
     }
@@ -641,9 +640,6 @@ final class VoiceInputManager {
         guard engine == .serverDictation else { return }
         guard serverCredentials != nil, serverConnection != nil else {
             throw VoiceInputError.serverNotConnected
-        }
-        guard serverConnection?.serverDictationTransportAvailable == true else {
-            throw VoiceInputError.serverAsrUnavailable
         }
     }
 

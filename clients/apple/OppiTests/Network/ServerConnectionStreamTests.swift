@@ -629,12 +629,9 @@ struct ServerConnectionStreamTests {
         conn.streamConsumptionTask?.cancel()
     }
 
-    @Test func dictationClientRequiresServerCapability() {
+    @Test func dictationClientUsesServerBoundStreamWithoutCapabilityPreflight() {
         let (conn, _) = makeTestConnection(sessionId: "s1")
 
-        #expect(conn.makeDictationStreamClient() == nil)
-
-        conn.dictationStreamAvailable = true
         #expect(conn.makeDictationStreamClient() != nil)
     }
 

@@ -535,12 +535,10 @@ struct OppiDictationProviderLifecycleTests {
 
     // MARK: - prepareSession + makeSession happy path
 
-    @Test func prepareSessionRequiresDictationStream() async {
+    @Test func prepareSessionUsesServerBoundStreamWithoutCapabilityPreflight() async throws {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
         _ = connection.configure(credentials: credentials)
-        connection.setSplitStreamCapabilitiesForTesting(sessionAudioStream: false)
-        connection.focusedSessionStore.focus(sessionId: "s1", workspaceId: "w1")
         let context = VoiceProviderContext(
             locale: Locale(identifier: "en-US"),
             source: "test",
@@ -549,9 +547,11 @@ struct OppiDictationProviderLifecycleTests {
         )
         let provider = OppiDictationProvider()
 
-        await #expect(throws: VoiceInputError.self) {
-            try await provider.prepareSession(context: context)
-        }
+        _ = installTestDictationTransport(on: provider)
+        let preparation = try await provider.prepareSession(context: context)
+
+        #expect(preparation.setupMetricTags["transport"] == "dictation_stream")
+        provider.invalidateCache()
     }
 
     @Test func prepareSessionReturnsPreparationWithCorrectPathTag() async throws {

@@ -281,28 +281,9 @@ struct QuickSessionSheet: View {
 
     private func prepareVoiceInputForSelectedServer(_ manager: VoiceInputManager) async throws {
         configureVoiceInputForSelectedServer(manager)
-        await drainPendingDictationCleanupQueue()
 
-        // On-device mode needs no server-side transport. Remote dictation uses
-        // the server-level ASR stream, so quick-session dictation no longer
-        // creates a scratch chat session.
-        guard manager.engineMode != .onDevice else { return }
-        guard selectedWorkspace != nil else {
-            let noWorkspace = QuickSessionError.noWorkspace
-            error = noWorkspace.errorDescription
-            throw noWorkspace
-        }
-
-        let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
-        let targetConnection = coordinator.connection(for: serverId) ?? coordinator.activeConnection
-        await targetConnection.refreshStreamCapabilitiesIfNeeded()
-        configureVoiceInputForSelectedServer(manager)
-
-        guard targetConnection.serverDictationTransportAvailable else {
-            let unavailable = VoiceInputError.serverAsrUnavailable
-            error = unavailable.errorDescription
-            throw unavailable
-        }
+        // Remote dictation is server-bound: connect directly to `/dictation/stream`.
+        // No workspace session, no capability preflight, no legacy audio target.
         manager.setServerDictationTarget(nil)
     }
 
