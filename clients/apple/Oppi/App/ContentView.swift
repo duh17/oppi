@@ -107,32 +107,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $nav.showQuickSession, onDismiss: {
-            // Navigate to the pending session after the sheet animation completes
-            if let pending = navigation.pendingQuickSessionNav {
-                navigation.pendingQuickSessionNav = nil
-
-                // Switch server FIRST so coordinator.activeConnection (and all
-                // environment-injected stores) reflect the target server by the
-                // time views render. Without this, cross-server quick sessions
-                // capture the OLD connection in ChatView's .task.
-                guard coordinator.switchToServer(pending.target.serverId) else {
-                    return
-                }
-
-                // Unpack auto-send data for ChatView consumption.
-                navigation.pendingQuickSessionMessage = pending.autoSendMessage
-                navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
-
-                // Deep-link directly to the session from the workspace home stack.
-                navigation.selectedTab = .workspaces
-                navigation.workspacePath = NavigationPath()
-                navigation.workspacePath.append(
-                    WorkspaceSessionNavTarget(
-                        serverId: pending.target.serverId,
-                        sessionId: pending.sessionId
-                    )
-                )
-            }
+            completePendingQuickSessionNavigation()
         }, content: {
             QuickSessionSheet()
                 .presentationDetents(quickSessionDetents)
@@ -189,6 +164,37 @@ struct ContentView: View {
         let showingOnboarding = navigation.showOnboarding
         guard shouldPresent, !showingOnboarding else { return }
         navigation.showQuickSession = true
+    }
+
+    private func completePendingQuickSessionNavigation() {
+        guard let pending = navigation.pendingQuickSessionNav else { return }
+        navigation.pendingQuickSessionNav = nil
+
+        // Switch server FIRST so coordinator.activeConnection (and all
+        // environment-injected stores) reflect the target server by the time
+        // ChatView renders. Without this, cross-server quick sessions can
+        // capture the OLD connection in ChatView's .task.
+        guard coordinator.switchToServer(pending.target.serverId) else {
+            return
+        }
+
+        // Keep the existing send path intact. ChatView will upload any pending
+        // local attachments and dispatch the message through the focused stream.
+        navigation.pendingQuickSessionMessage = pending.autoSendMessage
+        navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
+
+        // Quick Session is just "new session from here". Preserve the current
+        // stack and push the new chat route instead of popping to Workspaces
+        // first, which made the transition visibly jump through multiple places.
+        navigation.selectedTab = .workspaces
+        var path = navigation.workspacePath
+        path.append(
+            WorkspaceSessionNavTarget(
+                serverId: pending.target.serverId,
+                sessionId: pending.sessionId
+            )
+        )
+        navigation.workspacePath = path
     }
 
     private func sessionLabel(for sessionId: String) -> String {
