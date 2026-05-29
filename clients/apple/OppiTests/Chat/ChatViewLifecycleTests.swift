@@ -39,6 +39,45 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    @Test func stoppedSessionBecomingBusyReconnectsFocusedStream() async {
+        let sessionId = "parent-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: nil, status: .stopped))
+        connection.disconnectSession()
+        connection.wsClient?._setStatusForTesting(.disconnected)
+        connection.streamConsumptionTask = nil
+
+        let frames = ScriptedFrameStreamFactory()
+        connection._connectStreamForTesting = { [weak connection] in
+            connection?.wsClient?._setStatusForTesting(.connected)
+            return frames.makeStream()
+        }
+
+        let host = makeHost(connection: connection, sessionId: sessionId)
+
+        let enteredStoppedSession = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                connection.sessionStore.activeSessionId == sessionId
+                    && connection.focusedSessionId == sessionId
+                    && frames.streamsCreated == 0
+            }
+        }
+        #expect(enteredStoppedSession, "Stopped re-entry should focus the session without opening a WebSocket")
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(frames.streamsCreated == 0, "The stopped-session connect path must settle without subscribing")
+
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
+
+        #expect(await frames.waitForCreated(1, timeoutMs: 1_000),
+                "When a visible stopped session becomes busy externally, ChatView should reconnect so live parent output is subscribed")
+
+        frames.finish(index: 0)
+        host.teardown()
+        connection.disconnectStream()
+    }
+
     @Test func onDisappearWithoutPlaybackDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: sessionId)

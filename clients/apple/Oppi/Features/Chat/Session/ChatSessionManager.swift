@@ -284,6 +284,14 @@ final class ChatSessionManager {
                 cachedSignature: latestTraceSignature
             )
             await historyReloadTask?.value
+            guard generation == connectionGeneration else {
+                transitionTo(.disconnected(reason: .generationChanged))
+                return
+            }
+            guard !Task.isCancelled else {
+                transitionTo(.disconnected(reason: .cancelled))
+                return
+            }
             transitionTo(.stopped(historyLoaded: true))
             return
         }

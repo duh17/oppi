@@ -1125,6 +1125,24 @@ struct ChatView: View {
             sessionManager.cancelReconciliation()
         }
 
+        let shouldReconnectStoppedSession: Bool
+        if let newStatus, newStatus != .stopped,
+           case .stopped = sessionManager.entryState {
+            shouldReconnectStoppedSession = true
+        } else {
+            shouldReconnectStoppedSession = false
+        }
+
+        if shouldReconnectStoppedSession {
+            // A visible session can enter as stopped, then become busy when a
+            // child/subagent result resumes the parent turn. The stopped entry
+            // path intentionally avoided WSS; restart the connect task now so
+            // live parent output is subscribed. Queue sync runs after the
+            // stream reconnects, so skip the pre-reconnect get_queue request.
+            sessionManager.reconnect()
+            return
+        }
+
         guard newStatus == .busy else { return }
         Task {
             try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
