@@ -1,6 +1,6 @@
 # Oppi architecture
 
-Oppi is an Apple client plus a self-hosted server for supervising pi coding-agent sessions from mobile and desktop surfaces. The server embeds the pi SDK, owns session runtime and protocol translation, and exposes HTTP plus scoped WebSocket transports to the Apple clients.
+Oppi is an Apple client plus a self-hosted server for supervising pi coding-agent sessions from mobile and desktop surfaces. The server embeds the pi SDK for managed sessions, can mirror a live terminal-owned pi TUI session through a pi extension, and exposes HTTP plus scoped WebSocket transports to the Apple clients.
 
 ## Scope
 
@@ -8,7 +8,7 @@ This document explains the current production architecture at a conceptual level
 
 ## Runtime topology
 
-The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, policy decisions, and pi SDK interaction.
+The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, policy decisions, and the mobile-facing session projection. Execution can be owned either by the server's pi SDK runtime or by a terminal pi TUI process connected through the mirror extension.
 
 ```mermaid
 graph TD
@@ -22,9 +22,13 @@ graph TD
   subgraph Server[Self-hosted Oppi server]
     HTTP[REST API]
     Streams[Focused session and audio streams]
-    Sessions[Session manager]
+    Router[Session runtime router]
+    Sessions[Managed SessionManager]
+    Mirror[Pi TUI mirror runtime]
+    Bridge[Mirror bridge WebSocket]
     Policy[Policy and permission gate]
     Storage[SQLite session store and local-session catalog]
+    Project[Shared Pi session projection]
     Pi[pi SDK AgentSession]
   end
 
@@ -36,18 +40,46 @@ graph TD
 
   App --> HTTP
   App --> Streams
-  HTTP --> Sessions
+  HTTP --> Router
   HTTP --> Storage
-  Streams --> Sessions
+  Streams --> Router
+  Router --> Sessions
+  Router --> Mirror
+  Bridge --> Mirror
   Sessions --> Policy
   Sessions --> Pi
+  Sessions --> Project
+  Mirror --> Project
   Pi --> Tools
   Tools --> Files
+  Project --> Storage
   Tools --> Sandbox
   HTTP --> WorkspaceUI
   Streams --> Timeline
   Voice --> Streams
 ```
+
+## Runtime ownership and projection
+
+Oppi treats managed SDK sessions, mirrored terminal sessions, and local JSONL imports as different adapters into one canonical pi-backed session lane.
+
+```mermaid
+graph TD
+  Managed[Managed SDK adapter<br/>server owns execution]
+  Mirror[Mirror bridge adapter<br/>terminal pi owns execution]
+  Local[Local JSONL catalog<br/>cold read-only projection]
+  Projection[Shared Pi session projection<br/>events, media, titles, summaries]
+  Store[SQLite session store]
+  Client[Apple clients]
+
+  Managed --> Projection
+  Mirror --> Projection
+  Local --> Store
+  Projection --> Store
+  Store --> Client
+```
+
+The adapters differ only where ownership semantics differ: start/stop, abort, remote commands, permission gates, queue control, and extension UI response plumbing. Shared projection code owns pi event translation, session state mutation, tool-media materialization, first-message/title policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so a terminal session should not appear as two unrelated rows. See [Pi TUI Mirror mode](pi-mirror.md) for the detailed mirror contract and test map.
 
 ## Live transport and navigation lanes
 
@@ -74,28 +106,31 @@ graph TD
   SessionCatchup --> Replay[Durable focused-session replay]
 ```
 
-| Lane | Transport | Main server owner | Main Apple owner | Carries |
-|------|-----------|-------------------|------------------|---------|
-| Workspace home summaries | HTTP | `routes/workspaces.ts` + `session-sqlite-store.ts` | `WorkspaceStore` / `WorkspaceHomeView` | Per-workspace active/stopped counts, latest activity, attention/error flags |
-| Workspace detail recent lane | HTTP | `routes/sessions.ts` + `session-sqlite-store.ts` + `local-sessions.ts` | `WorkspaceDetailView` + `SessionStore.applyWorkspaceSnapshot(...)` | Recent managed session summaries, attention snapshot, recent importable TUI sessions, archive bucket summaries |
-| Workspace archive bucket | HTTP | `routes/sessions.ts` | `WorkspaceStoppedSessionsSection` | Lazy-loaded stopped/importable rows for one older bucket |
-| Workspace quick actions and review comments | HTTP | `routes/workspaces.ts` + `workspace-quick-action-session.ts` + `review-comment-sqlite-store.ts` | `WorkspaceContextBar`, `WorkspaceReviewFileDetailView`, `ChatView` review comments | Prompt templates exposed as selected-file quick actions, quick-action sessions, and session-scoped review comments |
-| Focused session stream | Bidirectional JSON | `BoundSessionStreamMux` | `WebSocketClient` + `SessionStreamCoordinator` | Timeline events, prompts, commands, queue sync, low-frequency `session_summary` updates |
-| Focused session catch-up | HTTP GET | `SessionManager.getCatchUp()` | `APIClient` + `SessionStreamCoordinator` | Missed durable focused-session events after reconnect |
-| Session audio stream | Bidirectional JSON + binary | `SessionAudioStreamMux` | `DictationStreamClient` | Dictation control messages, transcript events, PCM audio |
+| Lane                                        | Transport                   | Main server owner                                                                               | Main Apple owner                                                                   | Carries                                                                                                            |
+| ------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Workspace home summaries                    | HTTP                        | `routes/workspaces.ts` + `session-sqlite-store.ts`                                              | `WorkspaceStore` / `WorkspaceHomeView`                                             | Per-workspace active/stopped counts, latest activity, attention/error flags                                        |
+| Workspace detail recent lane                | HTTP                        | `routes/sessions.ts` + `session-sqlite-store.ts` + `local-sessions.ts`                          | `WorkspaceDetailView` + `SessionStore.applyWorkspaceSnapshot(...)`                 | Recent managed session summaries, attention snapshot, recent importable TUI sessions, archive bucket summaries     |
+| Workspace archive bucket                    | HTTP                        | `routes/sessions.ts`                                                                            | `WorkspaceStoppedSessionsSection`                                                  | Lazy-loaded stopped/importable rows for one older bucket                                                           |
+| Workspace quick actions and review comments | HTTP                        | `routes/workspaces.ts` + `workspace-quick-action-session.ts` + `review-comment-sqlite-store.ts` | `WorkspaceContextBar`, `WorkspaceReviewFileDetailView`, `ChatView` review comments | Prompt templates exposed as selected-file quick actions, quick-action sessions, and session-scoped review comments |
+| Focused session stream                      | Bidirectional JSON          | `BoundSessionStreamMux` + `SessionRuntimeRouter`                                                | `WebSocketClient` + `SessionStreamCoordinator`                                     | Timeline events, prompts, commands, queue sync, low-frequency `session_summary` updates                            |
+| Focused session catch-up                    | HTTP GET                    | `SessionManager.getCatchUp()`                                                                   | `APIClient` + `SessionStreamCoordinator`                                           | Missed durable focused-session events after reconnect                                                              |
+| Session audio stream                        | Bidirectional JSON + binary | `SessionAudioStreamMux`                                                                         | `DictationStreamClient`                                                            | Dictation control messages, transcript events, PCM audio                                                           |
 
 ## Event flow: prompt to pixel
 
-Most user-visible chat work follows this path.
+Most user-visible chat work follows this path. The managed and mirror runtimes differ in the owner of execution, but converge before projection and broadcast.
 
 ```mermaid
 graph TD
   Prompt[User sends prompt]
   ClientMsg[ClientMessage]
   Handler[ws-message-handler.ts]
+  Router[SessionRuntimeRouter]
   SessionMgr[SessionManager coordinators]
+  Mirror[PiTuiMirrorRuntime]
   SDK[pi SDK AgentSession]
-  Translate[session-protocol.ts<br/>pi event to ServerMessage]
+  Terminal[Terminal pi TUI bridge]
+  Translate[Shared Pi session projection<br/>pi event to ServerMessage]
   Sequence[session-broadcast.ts<br/>durable sequence]
   Stream[Focused session stream]
   Route[ServerConnection.routeStreamMessage]
@@ -106,9 +141,13 @@ graph TD
 
   Prompt --> ClientMsg
   ClientMsg --> Handler
-  Handler --> SessionMgr
+  Handler --> Router
+  Router --> SessionMgr
+  Router --> Mirror
   SessionMgr --> SDK
+  Mirror --> Terminal
   SDK --> Translate
+  Terminal --> Translate
   Translate --> Sequence
   Sequence --> Stream
   Stream --> Route
@@ -228,8 +267,11 @@ graph TD
   end
 
   subgraph Runtime[Session runtime]
+    Router[SessionRuntimeRouter<br/>runtime-router.ts]
     Sessions[SessionManager<br/>sessions.ts]
+    Mirror[PiTuiMirrorRuntime<br/>pi-tui-mirror-runtime.ts]
     Flow[session-* coordinators]
+    Project[shared Pi session projection<br/>session-events.ts + session-protocol.ts]
     Pi[pi SDK bridge<br/>sdk-backend.ts]
   end
 
@@ -249,8 +291,12 @@ graph TD
   REST --> Sessions
   REST --> Sqlite
   REST --> LocalCatalog
-  Live --> Sessions
+  Live --> Router
+  Router --> Sessions
+  Router --> Mirror
   Sessions --> Flow
+  Flow --> Project
+  Mirror --> Project
   Flow --> Pi
   Sessions --> Gate
   Sessions --> Ops
@@ -258,12 +304,13 @@ graph TD
 
 Read the server as four blocks:
 
-| Block | Owns | Does not own |
-|-------|------|--------------|
-| `server.ts` | startup, dependency wiring, HTTP and WS entry | session semantics |
-| `routes/*` | HTTP parsing, auth boundary, workspace summary and session-list response shape | runtime orchestration |
-| `stream.ts` + `ws-message-handler.ts` | focused session and audio WS framing, fan-out, client-message routing | workspace navigation data flow |
-| `sessions.ts` + `session-*` | session lifecycle, queue, stop, event translation, SDK calls | HTTP response shaping |
+| Block                                            | Owns                                                                           | Does not own                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------ |
+| `server.ts`                                      | startup, dependency wiring, HTTP and WS entry                                  | session semantics                    |
+| `routes/*`                                       | HTTP parsing, auth boundary, workspace summary and session-list response shape | runtime orchestration                |
+| `stream.ts` + `ws-message-handler.ts`            | focused session and audio WS framing, fan-out, client-message routing          | workspace navigation data flow       |
+| `sessions.ts` + `session-*`                      | managed session lifecycle, queue, stop, event translation, SDK calls           | HTTP response shaping                |
+| `runtime-router.ts` + `pi-tui-mirror-runtime.ts` | runtime ownership dispatch and terminal-owned mirror bridge control            | shared pi event projection semantics |
 
 ## Protocol boundary
 
@@ -281,6 +328,8 @@ When a message contract changes, update server types, Apple models, and protocol
 - The hot workspace recent lane must be explicitly time-bounded. Older stopped/importable history belongs in archive buckets.
 - Workspace session-list endpoints return **session summaries**, not full `Session` payloads.
 - Hot workspace endpoints must not reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite-backed read models.
+- Runtime adapters must not duplicate pi event projection logic. Managed SDK sessions and terminal mirror sessions should share translation, session mutation, media materialization, title/first-message derivation, summaries, and storage projection.
+- Mirror sessions are terminal-owned. The server must not auto-start a pi SDK runtime for a `runtime == "pi-tui-mirror"` session.
 - Keep hot timeline traffic separate from cold workspace/session projections.
 - Keep workspace quick-action discovery, selected-file prompt-template preparation, and review comments on HTTP routes; only the created/focused session uses the session stream.
 - Apply shared store updates exactly once per inbound live session event on the client.
@@ -289,14 +338,15 @@ When a message contract changes, update server types, Apple models, and protocol
 
 ## Where to look in code
 
-| Concern | Server | Apple |
-|---------|--------|-------|
-| Workspace home summaries | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts` | `WorkspaceStore.swift`, `WorkspaceHomeView.swift` |
-| Workspace detail recent lane | `server/src/routes/sessions.ts`, `server/src/local-sessions.ts` | `WorkspaceDetailView.swift`, `SessionStore.swift` |
-| Lazy stopped archive buckets | `server/src/routes/sessions.ts`, `server/src/storage/session-sqlite-store.ts` | `WorkspaceStoppedSessionsSection.swift`, `WorkspaceDetailView.swift` |
-| Workspace quick actions | `server/src/routes/workspaces.ts`, `server/src/workspace-quick-action-session.ts` | `WorkspaceContextBar.swift`, `WorkspaceReviewFileDetailView.swift`, `WorkspaceReview.swift` |
-| Review comments | `server/src/routes/workspaces.ts`, `server/src/storage/review-comment-sqlite-store.ts` | `ChatView.swift`, `ReviewComments/`, `ReviewCommentStore.swift` |
-| Focused session WebSocket | `server/src/stream.ts`, `server/src/ws-message-handler.ts` | `WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `ServerConnection.swift` |
-| Session runtime | `server/src/sessions.ts`, `server/src/session-*.ts` | `ChatSessionManager.swift`, `ChatActionHandler.swift` |
-| Protocol contract | `server/src/types.ts` | `ClientMessage.swift`, `ServerMessage.swift` |
-| Timeline rendering | `server/src/session-protocol.ts`, `server/src/session-broadcast.ts` | `TimelineReducer.swift`, `ChatTimelineCollectionView.swift` |
+| Concern                                    | Server                                                                                                                                         | Apple                                                                                       |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Workspace home summaries                   | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                | `WorkspaceStore.swift`, `WorkspaceHomeView.swift`                                           |
+| Workspace detail recent lane               | `server/src/routes/sessions.ts`, `server/src/local-sessions.ts`                                                                                | `WorkspaceDetailView.swift`, `SessionStore.swift`                                           |
+| Lazy stopped archive buckets               | `server/src/routes/sessions.ts`, `server/src/storage/session-sqlite-store.ts`                                                                  | `WorkspaceStoppedSessionsSection.swift`, `WorkspaceDetailView.swift`                        |
+| Workspace quick actions                    | `server/src/routes/workspaces.ts`, `server/src/workspace-quick-action-session.ts`                                                              | `WorkspaceContextBar.swift`, `WorkspaceReviewFileDetailView.swift`, `WorkspaceReview.swift` |
+| Review comments                            | `server/src/routes/workspaces.ts`, `server/src/storage/review-comment-sqlite-store.ts`                                                         | `ChatView.swift`, `ReviewComments/`, `ReviewCommentStore.swift`                             |
+| Focused session WebSocket                  | `server/src/stream.ts`, `server/src/ws-message-handler.ts`                                                                                     | `WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `ServerConnection.swift`         |
+| Managed session runtime                    | `server/src/sessions.ts`, `server/src/session-*.ts`                                                                                            | `ChatSessionManager.swift`, `ChatActionHandler.swift`                                       |
+| Terminal mirror runtime                    | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `pi-extensions/oppi-pi-mirror.ts`                                       | `SessionRow.swift`, `ChatActionHandler.swift`                                               |
+| Protocol contract                          | `server/src/types.ts`                                                                                                                          | `ClientMessage.swift`, `ServerMessage.swift`                                                |
+| Pi event projection and timeline rendering | `server/src/session-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`, `server/src/session-broadcast.ts` | `TimelineReducer.swift`, `ChatTimelineCollectionView.swift`                                 |
