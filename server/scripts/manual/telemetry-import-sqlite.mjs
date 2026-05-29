@@ -26,6 +26,7 @@ function parseArgs(argv) {
   const args = {
     watch: false,
     intervalMs: 15000,
+    integrityCheck: "startup",
     telemetryDir: resolve(
       process.env.OPPI_DATA_DIR || join(process.env.HOME || ".", ".config/oppi"),
       "diagnostics/telemetry",
@@ -43,6 +44,8 @@ function parseArgs(argv) {
       args.telemetryDir = resolve(argv[++i] || "");
     } else if (arg === "--db") {
       args.db = resolve(argv[++i] || "");
+    } else if (arg === "--integrity-check") {
+      args.integrityCheck = argv[++i] || "";
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -50,6 +53,12 @@ function parseArgs(argv) {
 
   if (!Number.isFinite(args.intervalMs) || args.intervalMs < 1000) {
     throw new Error(`Invalid --interval-ms: ${args.intervalMs}`);
+  }
+
+  if (!["startup", "always", "never"].includes(args.integrityCheck)) {
+    throw new Error(
+      `Invalid --integrity-check: ${args.integrityCheck}; expected startup, always, or never`,
+    );
   }
 
   if (!args.db) {
@@ -712,19 +721,22 @@ function backupBrokenDb(dbPath, reason) {
   return backupPath;
 }
 
-function openDbWithRecovery(dbPath) {
+function openDbWithRecovery(dbPath, options = {}) {
+  const { integrityCheck = true } = options;
   pruneBrokenDbBackups(dbPath);
   try {
     const db = new DatabaseSync(dbPath);
     ensureSchema(db);
-    const row = db.prepare("PRAGMA integrity_check").get();
-    const verdict = row ? Object.values(row)[0] : "ok";
-    if (verdict !== "ok") {
-      db.close();
-      backupBrokenDb(dbPath, String(verdict));
-      const freshDb = new DatabaseSync(dbPath);
-      ensureSchema(freshDb);
-      return freshDb;
+    if (integrityCheck) {
+      const row = db.prepare("PRAGMA integrity_check").get();
+      const verdict = row ? Object.values(row)[0] : "ok";
+      if (verdict !== "ok") {
+        db.close();
+        backupBrokenDb(dbPath, String(verdict));
+        const freshDb = new DatabaseSync(dbPath);
+        ensureSchema(freshDb);
+        return freshDb;
+      }
     }
     return db;
   } catch (error) {
@@ -782,6 +794,15 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   mkdirSync(dirname(args.db), { recursive: true });
 
+  let startupIntegrityCheckDone = false;
+  const shouldRunIntegrityCheck = () => {
+    if (args.integrityCheck === "never") return false;
+    if (args.integrityCheck === "always") return true;
+    if (startupIntegrityCheckDone) return false;
+    startupIntegrityCheckDone = true;
+    return true;
+  };
+
   const run = () => {
     const lockPath = acquireImportLock(args.db, args.intervalMs);
     if (!lockPath) {
@@ -790,13 +811,15 @@ async function main() {
     }
 
     const startedAt = Date.now();
+    const integrityCheck = shouldRunIntegrityCheck();
     let db = null;
     try {
-      db = openDbWithRecovery(args.db);
+      db = openDbWithRecovery(args.db, { integrityCheck });
       const summary = ingestOnce(db, args.telemetryDir);
       console.log("[telemetry-import]", {
         telemetryDir: args.telemetryDir,
         db: args.db,
+        integrityCheck,
         durationMs: Date.now() - startedAt,
         ...summary,
       });
@@ -810,11 +833,13 @@ async function main() {
       }
       db = null;
       backupBrokenDb(args.db, message);
-      db = openDbWithRecovery(args.db);
+      const recoveryIntegrityCheck = args.integrityCheck !== "never";
+      db = openDbWithRecovery(args.db, { integrityCheck: recoveryIntegrityCheck });
       const summary = ingestOnce(db, args.telemetryDir);
       console.log("[telemetry-import]", {
         telemetryDir: args.telemetryDir,
         db: args.db,
+        integrityCheck: recoveryIntegrityCheck,
         durationMs: Date.now() - startedAt,
         recovered: true,
         ...summary,

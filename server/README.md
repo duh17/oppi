@@ -276,6 +276,7 @@ Importer behavior:
 - reads telemetry JSONL from `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
 - writes SQLite into a Docker-managed volume mounted at `/var/lib/oppi-telemetry-db/telemetry.db`
 - runs one import immediately on startup
+- runs SQLite integrity checks on startup/recovery only by default, not on every watch tick
 - continues in watch mode (poll interval: `OPPI_TELEMETRY_IMPORT_INTERVAL_MS`, default `15000`)
 - ingests incrementally for append-only daily JSONL files instead of reimporting the whole hot file each cycle
 - normalizes source file keys so Docker and host imports target the same rows
@@ -315,6 +316,7 @@ Notes:
 - Services are defined in `server/docker-compose.telemetry.yml`.
 - The Docker stack keeps SQLite inside a named volume instead of the host-mounted telemetry directory. This avoids SQLite corruption on macOS bind mounts while still reading host JSONL input files.
 - Manual `telemetry:import` runs still write `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db` on the host, share the same normalized file keys as the Docker watcher, and skip if another importer run currently holds the lock.
+- Importer integrity-check mode is `startup` by default; use `--integrity-check always` for old every-run checking or `--integrity-check never` for trusted throwaway databases.
 - If you use a non-default data dir, export `OPPI_DATA_DIR` before running commands.
 
 ## License

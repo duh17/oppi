@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,65 @@ const scriptPath = join(process.cwd(), "scripts/manual/telemetry-import-sqlite.m
 function runImport(telemetryDir: string, dbPath: string): void {
   execFileSync(process.execPath, [scriptPath, "--telemetry-dir", telemetryDir, "--db", dbPath], {
     stdio: "pipe",
+  });
+}
+
+async function runWatchUntilImportLogs(
+  telemetryDir: string,
+  dbPath: string,
+  importLogCount: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        scriptPath,
+        "--watch",
+        "--interval-ms",
+        "1000",
+        "--telemetry-dir",
+        telemetryDir,
+        "--db",
+        dbPath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    let output = "";
+    let timedOutError: Error | null = null;
+    const timeout = setTimeout(() => {
+      timedOutError = new Error(
+        `timed out waiting for ${importLogCount} importer logs:\n${output}`,
+      );
+      child.kill("SIGTERM");
+    }, 8000);
+
+    const appendOutput = (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      const count = output.match(/\[telemetry-import\] \{/g)?.length ?? 0;
+      if (count >= importLogCount) {
+        child.kill("SIGTERM");
+      }
+    };
+
+    child.stdout.on("data", appendOutput);
+    child.stderr.on("data", appendOutput);
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timeout);
+      if (timedOutError) {
+        reject(timedOutError);
+        return;
+      }
+      if (code === 0 || signal === "SIGTERM") {
+        resolve(output);
+        return;
+      }
+      reject(new Error(`watch importer exited with code ${code ?? signal}:\n${output}`));
+    });
   });
 }
 
@@ -185,6 +244,26 @@ describe("telemetry SQLite importer", () => {
     }
   });
 
+  it("runs SQLite integrity checks only once in watch mode by default", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    writeFileSync(
+      join(tempDir, "server-metrics-2026-05-28.jsonl"),
+      JSON.stringify({
+        ts: 1,
+        cpu: { user: 1, system: 2, total: 3 },
+        memory: { heapUsed: 4, heapTotal: 5, rss: 6, external: 7 },
+        sessions: { busy: 0, ready: 1, starting: 0, total: 1 },
+        wsConnections: 1,
+      }) + "\n",
+    );
+
+    const output = await runWatchUntilImportLogs(tempDir, dbPath, 3);
+
+    expect(output.match(/integrityCheck: true/g)?.length ?? 0).toBe(1);
+    expect(output.match(/integrityCheck: false/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
   it("uses normalized source file keys so host and container imports do not duplicate rows", () => {
     tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
     const dbPath = join(tempDir, "telemetry.db");
@@ -255,7 +334,7 @@ describe("telemetry SQLite importer", () => {
             ts: 1,
             metric: "server.ws_handshake_ms",
             value: 12,
-            tags: { path: "bound_session_stream" }
+            tags: { path: "bound_session_stream" },
           },
         ],
       }) + "\n",
@@ -292,7 +371,7 @@ describe("telemetry SQLite importer", () => {
             ts: 1_778_254_400_002,
             metric: "server.catchup_events",
             value: 3,
-            tags: { lane: "session", ring: "session", outcome: "success" }
+            tags: { lane: "session", ring: "session", outcome: "success" },
           },
           {
             ts: 1_778_254_400_003,
