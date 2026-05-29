@@ -267,16 +267,49 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   let connectedSessionId: string | null = null;
   let connectedWorkspaceId: string | null = null;
   let queue: MessageQueueState = { version: 0, steering: [], followUp: [] };
+  let runtimeActive = true;
+  let connectionSerial = 0;
 
   let settings = loadSettings();
+
+  function isStaleExtensionContextError(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message.includes("extension ctx is stale")
+    );
+  }
+
+  function logCallbackError(scope: string, error: unknown) {
+    if (isStaleExtensionContextError(error)) return;
+    console.error(`[oppi-mirror] ${scope}`, error);
+  }
+
+  function safeSetStatus(
+    ctx: ExtensionContext,
+    key: string,
+    label: string | undefined,
+  ) {
+    try {
+      ctx.ui.setStatus(key, label);
+    } catch (error) {
+      logCallbackError("failed to update status", error);
+    }
+  }
 
   function notify(
     ctx: ExtensionContext | null,
     message: string,
     type: "info" | "warning" | "error" = "info",
   ) {
-    ctx?.ui.notify(message, type);
-    if (!ctx) console.log(`[oppi-mirror] ${message}`);
+    if (!ctx) {
+      console.log(`[oppi-mirror] ${message}`);
+      return;
+    }
+    try {
+      ctx.ui.notify(message, type);
+    } catch (error) {
+      logCallbackError("failed to notify", error);
+    }
   }
 
   function send(payload: unknown) {
@@ -286,7 +319,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function renderIndicator(ctx: ExtensionContext | null = latestCtx) {
-    if (!ctx || !indicatorMode) return;
+    if (!runtimeActive || !ctx || !indicatorMode) return;
     const frame = INDICATOR_FRAMES[indicatorFrame % INDICATOR_FRAMES.length];
     indicatorFrame += 1;
     const pendingCount = queue.steering.length + queue.followUp.length;
@@ -299,10 +332,11 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
           : indicatorMode === "reconnecting"
             ? `Mirror ${frame} reconnecting`
             : "Mirror offline";
-    ctx.ui.setStatus("oppi-mirror", label);
+    safeSetStatus(ctx, "oppi-mirror", label);
   }
 
   function startIndicator(ctx: ExtensionContext, mode: MirrorIndicatorMode) {
+    if (!runtimeActive) return;
     latestCtx = ctx;
     indicatorMode = mode;
     renderIndicator(ctx);
@@ -311,6 +345,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function setIndicatorMode(mode: MirrorIndicatorMode) {
+    if (!runtimeActive) return;
     indicatorMode = mode;
     renderIndicator();
   }
@@ -320,7 +355,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     indicatorTimer = null;
     indicatorMode = null;
     indicatorFrame = 0;
-    ctx?.ui.setStatus("oppi-mirror", undefined);
+    if (ctx) safeSetStatus(ctx, "oppi-mirror", undefined);
   }
 
   function sendQueueState() {
@@ -413,15 +448,22 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     heartbeatTimer = null;
   }
 
-  function startHeartbeat() {
+  function startHeartbeat(socket: WebSocket, serial: number) {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = setInterval(() => {
+      if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
+        return;
+      }
       if (!latestCtx) return;
-      send({
-        type: "heartbeat",
-        state: stateSnapshot(pi, latestCtx),
-        queue: cloneQueueState(queue),
-      });
+      try {
+        send({
+          type: "heartbeat",
+          state: stateSnapshot(pi, latestCtx),
+          queue: cloneQueueState(queue),
+        });
+      } catch (error) {
+        logCallbackError("heartbeat failed", error);
+      }
     }, 10_000);
   }
 
@@ -431,6 +473,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function connect(ctx: ExtensionContext) {
+    if (!runtimeActive) return;
     latestCtx = ctx;
     settings = loadSettings();
     const config = configured();
@@ -455,75 +498,127 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     manualStop = false;
     startIndicator(ctx, "connecting");
     const url = bridgeUrl(config.serverUrl);
-    ws = new WebSocket(url, {
+    const serial = ++connectionSerial;
+    const socket = new WebSocket(url, {
       headers: { Authorization: `Bearer ${config.token}` },
       perMessageDeflate: false,
       // Auto-discovery reads the local Oppi config/token from the same user account.
       // Local self-signed HTTPS is expected; do not require manual cert pairing for this path.
       rejectUnauthorized: !isLocalUrl(config.serverUrl),
     });
+    ws = socket;
 
-    ws.on("open", () => {
-      send({
-        type: "hello",
-        protocolVersion: 1,
-        bridgeId: `pi-tui-${process.pid}`,
-        pid: process.pid,
-        hostname: hostname(),
-        cwd: ctx.cwd,
-        capabilities: [
-          "prompt",
-          "steer",
-          "follow_up",
-          "abort",
-          "model",
-          "thinking",
-          "session_name",
-          "compact",
-          "state",
-        ],
-        state: stateSnapshot(pi, ctx),
+    socket.on("open", () => {
+      if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
+        return;
+      }
+      try {
+        send({
+          type: "hello",
+          protocolVersion: 1,
+          bridgeId: `pi-tui-${process.pid}`,
+          pid: process.pid,
+          hostname: hostname(),
+          cwd: ctx.cwd,
+          capabilities: [
+            "prompt",
+            "steer",
+            "follow_up",
+            "abort",
+            "model",
+            "thinking",
+            "session_name",
+            "compact",
+            "state",
+          ],
+          state: stateSnapshot(pi, ctx),
+        });
+        sendQueueState();
+        startHeartbeat(socket, serial);
+        setIndicatorMode("connecting");
+      } catch (error) {
+        logCallbackError("websocket open handler failed", error);
+      }
+    });
+
+    socket.on("message", (raw) => {
+      if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
+        return;
+      }
+      void handleServerMessage(raw.toString()).catch((error: unknown) => {
+        logCallbackError("websocket message handler failed", error);
       });
-      sendQueueState();
-      startHeartbeat();
-      setIndicatorMode("connecting");
     });
 
-    ws.on("message", (raw) => {
-      void handleServerMessage(raw.toString());
-    });
-
-    ws.on("close", () => {
+    socket.on("close", () => {
+      if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
+        return;
+      }
       clearTimers();
+      ws = null;
       if (!manualStop) {
         setIndicatorMode("reconnecting");
-        reconnectTimer = setTimeout(() => connect(ctx), 2_000);
+        reconnectTimer = setTimeout(() => {
+          if (!runtimeActive || connectionSerial !== serial || manualStop) {
+            return;
+          }
+          connect(ctx);
+        }, 2_000);
       } else {
         stopIndicator(ctx);
       }
     });
 
-    ws.on("error", (error) => {
+    socket.on("error", (error) => {
+      if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
+        return;
+      }
       setIndicatorMode("error");
       console.error("[oppi-mirror] websocket error", error);
     });
   }
 
-  function stop(ctx: ExtensionContext | null, reason = "stopped") {
+  function stop(
+    ctx: ExtensionContext | null,
+    reason = "stopped",
+    options: { notify?: boolean } = {},
+  ) {
+    const shouldNotify = options.notify ?? true;
     manualStop = true;
+    connectionSerial += 1;
     clearTimers();
-    if (ws?.readyState === WebSocket.OPEN && latestCtx) {
-      send({ type: "goodbye", reason, state: stateSnapshot(pi, latestCtx) });
+    const socket = ws;
+    const stateCtx = ctx ?? latestCtx;
+    if (socket?.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(
+          JSON.stringify({
+            type: "goodbye",
+            reason,
+            ...(stateCtx ? { state: stateSnapshot(pi, stateCtx) } : {}),
+          }),
+        );
+      } catch (error) {
+        logCallbackError("failed to send goodbye", error);
+      }
     }
-    ws?.close();
+    if (
+      socket &&
+      (socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING)
+    ) {
+      socket.close();
+    }
     ws = null;
     connectedSessionId = null;
     connectedWorkspaceId = null;
-    stopIndicator(ctx);
-    notify(ctx, "Oppi Mirror stopped");
+    stopIndicator(stateCtx);
+    latestCtx = null;
+    if (shouldNotify) notify(ctx, "Oppi Mirror stopped");
   }
 
   async function handleServerMessage(raw: string) {
+    if (!runtimeActive) return;
     const ctx = latestCtx;
     if (!ctx) return;
 
@@ -539,7 +634,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         connectedWorkspaceId =
           (message as { workspaceId?: string }).workspaceId ?? null;
         setIndicatorMode("live");
-        ctx.ui.notify("Oppi Mirror is live", "info");
+        notify(ctx, "Oppi Mirror is live", "info");
         return;
 
       case "command":
@@ -550,7 +645,8 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
       case "error":
         setIndicatorMode("error");
-        ctx.ui.notify(
+        notify(
+          ctx,
           `Oppi Mirror error: ${(message as { error?: string }).error ?? "unknown"}`,
           "error",
         );
@@ -832,8 +928,9 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     if (settings.autoStart) connect(ctx);
   });
 
-  pi.on("session_shutdown", () => {
-    stop(latestCtx, "session_shutdown");
+  pi.on("session_shutdown", (_event, ctx) => {
+    runtimeActive = false;
+    stop(ctx, "session_shutdown", { notify: false });
   });
 
   pi.registerCommand("oppi-mirror", {
@@ -848,7 +945,8 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
           stop(ctx);
           return;
         case "status":
-          ctx.ui.notify(
+          notify(
+            ctx,
             ws?.readyState === WebSocket.OPEN
               ? `Oppi Mirror live: workspace=${connectedWorkspaceId ?? "?"} session=${connectedSessionId ?? "?"}`
               : "Oppi Mirror is not connected",
@@ -856,7 +954,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
           );
           return;
         default:
-          ctx.ui.notify("Usage: /oppi-mirror start|stop|status", "warning");
+          notify(ctx, "Usage: /oppi-mirror start|stop|status", "warning");
       }
     },
   });
