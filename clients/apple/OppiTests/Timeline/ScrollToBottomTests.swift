@@ -150,6 +150,65 @@ struct ScrollToBottomTests {
         windowed.coordinator.apply(configuration: configWithSameScroll, to: windowed.collectionView)
     }
 
+    @MainActor
+    @Test func busyStructuralAppendKeepsAttachedTimelineAtBottom() {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-review-many-files",
+            useAnchoredCollectionView: true
+        )
+        let initialItems = (0..<70).map { index in
+            ChatItem.toolCall(
+                id: "review-tool-\(index)",
+                tool: "read",
+                argsSummary: "clients/apple/File\(index).swift",
+                outputPreview: "Review clients/apple/File\(index).swift",
+                outputByteCount: 256,
+                isError: false,
+                isDone: true
+            )
+        }
+
+        windowed.applyItems(initialItems, isBusy: true)
+        windowed.collectionView.layoutIfNeeded()
+        windowed.collectionView.scrollToItem(
+            at: IndexPath(item: windowed.coordinator.currentIDs.count - 1, section: 0),
+            at: .bottom,
+            animated: false
+        )
+        windowed.collectionView.layoutIfNeeded()
+        windowed.scrollController.updateNearBottom(true)
+        windowed.coordinator.updateScrollState(windowed.collectionView)
+
+        let beforeOffsetY = windowed.collectionView.contentOffset.y
+        let appendedItems = initialItems + [
+            .toolCall(
+                id: "review-tool-new",
+                tool: "read",
+                argsSummary: "clients/apple/NewFile.swift",
+                outputPreview: "Review clients/apple/NewFile.swift",
+                outputByteCount: 256,
+                isError: false,
+                isDone: false
+            ),
+        ]
+
+        windowed.applyItems(appendedItems, isBusy: true)
+        windowed.collectionView.layoutIfNeeded()
+
+        let insets = windowed.collectionView.adjustedContentInset
+        let maxOffsetY = max(
+            -insets.top,
+            windowed.collectionView.contentSize.height
+                - windowed.collectionView.bounds.height
+                + insets.bottom
+        )
+        let distanceFromBottom = maxOffsetY - windowed.collectionView.contentOffset.y
+
+        #expect(windowed.collectionView.contentOffset.y > beforeOffsetY - 80)
+        #expect(distanceFromBottom < 12, "expected attached append to stay at bottom, distance=\(distanceFromBottom)")
+        #expect(windowed.scrollController.isCurrentlyNearBottom)
+    }
+
     // MARK: - Full chain: detach → requestScrollToBottom → scroll command
 
     @MainActor

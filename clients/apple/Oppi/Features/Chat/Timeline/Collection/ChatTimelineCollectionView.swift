@@ -752,6 +752,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let previousIDs = currentIDs
             currentIDs = applyPlan.nextIDs
             currentItemByID = applyPlan.nextItemByID
+            let wasAttachedToBottom = scrollController?.isCurrentlyNearBottom ?? true
 
             // Enable passive anchoring before snapshot apply so layout passes
             // during reconfigure preserve scroll position for detached users.
@@ -811,6 +812,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
                 collectionView.layoutIfNeeded()
                 ChatTimelinePerf.endLayoutPass(layoutToken)
+            } else if wasAttachedToBottom,
+                      configuration.scrollCommand?.anchor != .top {
+                correctAttachedBottomAfterStructuralApply(
+                    collectionView,
+                    itemCount: applyPlan.nextIDs.count,
+                    sessionId: configuration.sessionId
+                )
             }
             var didScroll = false
             if let scrollCommand = configuration.scrollCommand,
@@ -1179,6 +1187,31 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 currentIDs: currentIDs,
                 sessionId: sessionId
             )
+        }
+
+        private func correctAttachedBottomAfterStructuralApply(
+            _ collectionView: UICollectionView,
+            itemCount: Int,
+            sessionId: String
+        ) {
+            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: itemCount, sessionId: sessionId)
+            collectionView.layoutIfNeeded()
+            ChatTimelinePerf.endLayoutPass(layoutToken)
+
+            let insets = collectionView.adjustedContentInset
+            let targetOffsetY = max(
+                -insets.top,
+                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+            )
+            guard abs(collectionView.contentOffset.y - targetOffsetY) > 0.5 else { return }
+
+            if let anchoredCV = collectionView as? AnchoredCollectionView {
+                anchoredCV.applyOffsetCorrection(targetOffsetY)
+            } else {
+                collectionView.contentOffset.y = targetOffsetY
+            }
+            scrollController?.updateNearBottom(true)
+            lastDistanceFromBottom = 0
         }
 
         private func performScroll(
