@@ -222,6 +222,36 @@ struct WorkspaceHomeRootCountTests {
     }
 }
 
+@Suite("Workspace Home Preview Planner")
+struct WorkspaceHomePreviewPlannerTests {
+    @Test func fillsRemainingSlotsWithActiveYourTurnBeforeStoppedRows() {
+        let rows = WorkspaceHomePreviewPlanner.activeRows(
+            yourTurn: ["y1", "y2", "y3", "y4", "y5"],
+            working: []
+        )
+
+        #expect(rows == ["y1", "y2", "y3", "y4", "y5"])
+    }
+
+    @Test func keepsWorkingRowsVisibleBeforeOverflowYourTurnRows() {
+        let rows = WorkspaceHomePreviewPlanner.activeRows(
+            yourTurn: ["y1", "y2", "y3", "y4", "y5"],
+            working: ["w1", "w2"]
+        )
+
+        #expect(rows == ["y1", "y2", "y3", "w1", "w2"])
+    }
+
+    @Test func backfillsExtraYourTurnAfterWorkingRowsWhenSpaceRemains() {
+        let rows = WorkspaceHomePreviewPlanner.activeRows(
+            yourTurn: ["y1", "y2", "y3", "y4", "y5"],
+            working: ["w1"]
+        )
+
+        #expect(rows == ["y1", "y2", "y3", "w1", "y4"])
+    }
+}
+
 @Suite("Workspace Home Refresh", .serialized)
 @MainActor
 struct WorkspaceHomeRefreshTests {

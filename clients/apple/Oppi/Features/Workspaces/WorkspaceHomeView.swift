@@ -134,6 +134,34 @@ private struct WorkspaceHomeSessionPreview: Identifiable {
     var id: String { presentation.session.id }
 }
 
+enum WorkspaceHomePreviewPlanner {
+    static let maxRows = 5
+    static let preferredYourTurnRows = 3
+
+    static func activeRows<T>(
+        yourTurn: [T],
+        working: [T],
+        maxRows: Int = Self.maxRows,
+        preferredYourTurnRows: Int = Self.preferredYourTurnRows
+    ) -> [T] {
+        guard maxRows > 0 else { return [] }
+
+        var rows: [T] = []
+        let firstYourTurnCount = min(preferredYourTurnRows, maxRows, yourTurn.count)
+        rows.append(contentsOf: yourTurn.prefix(firstYourTurnCount))
+
+        let workingCount = min(maxRows - rows.count, working.count)
+        rows.append(contentsOf: working.prefix(workingCount))
+
+        let remainingCount = maxRows - rows.count
+        if remainingCount > 0 {
+            rows.append(contentsOf: yourTurn.dropFirst(firstYourTurnCount).prefix(remainingCount))
+        }
+
+        return rows
+    }
+}
+
 /// Tracks whether app launch metric has been recorded this process.
 /// Only fires once — on the first appearance of WorkspaceHomeView.
 nonisolated(unsafe) private var appLaunchMetricRecorded = false
@@ -609,14 +637,18 @@ struct WorkspaceHomeView: View {
             }
         }
 
-        let maxPreviewRows = 5
+        let maxPreviewRows = WorkspaceHomePreviewPlanner.maxRows
         var previews: [WorkspaceHomeSessionPreview] = []
         let sortedYourTurn = SessionListPresentation.sortYourTurn(yourTurn) { sessionId in
             attentionBySessionId[sessionId] ?? .none
         }
         let sortedWorking = SessionListPresentation.sortWorking(working)
 
-        let yourTurnRows = sortedYourTurn.prefix(3).map {
+        let activePreviewRows = WorkspaceHomePreviewPlanner.activeRows(
+            yourTurn: sortedYourTurn,
+            working: sortedWorking,
+            maxRows: maxPreviewRows
+        ).map {
             previewRow(
                 session: $0,
                 attention: attentionBySessionId[$0.id] ?? .none,
@@ -624,17 +656,7 @@ struct WorkspaceHomeView: View {
                 connection: connection
             )
         }
-        previews.append(contentsOf: yourTurnRows)
-
-        let workingRows = sortedWorking.prefix(max(0, maxPreviewRows - previews.count)).map {
-            previewRow(
-                session: $0,
-                attention: attentionBySessionId[$0.id] ?? .none,
-                childIndex: allChildIndex,
-                connection: connection
-            )
-        }
-        previews.append(contentsOf: workingRows)
+        previews.append(contentsOf: activePreviewRows)
 
         let remainingRecentSlots = max(0, maxPreviewRows - previews.count)
         if remainingRecentSlots > 0 {
@@ -1114,13 +1136,13 @@ private struct WorkspaceHomeStatusPresentation: Equatable {
 }
 
 private struct WorkspaceHomeStatusIndicator: View {
-    static let columnWidth: CGFloat = 106
+    static let columnWidth: CGFloat = 98
 
     private static let symbolWidth: CGFloat = 15
     private static let symbolCountGap: CGFloat = 4
-    private static let metricGap: CGFloat = 8
-    private static let activeCountWidth: CGFloat = 30
-    private static let stoppedCountWidth: CGFloat = 30
+    private static let metricGap: CGFloat = 6
+    private static let activeCountMinWidth: CGFloat = 16
+    private static let stoppedCountMinWidth: CGFloat = 30
 
     let presentation: WorkspaceHomeStatusPresentation
 
@@ -1147,14 +1169,14 @@ private struct WorkspaceHomeStatusIndicator: View {
                         symbol: "play.circle.fill",
                         count: presentation.activeCount,
                         tint: .themeGreen,
-                        countWidth: Self.activeCountWidth
+                        minimumCountWidth: Self.activeCountMinWidth
                     )
                     if presentation.stoppedCount > 0 {
                         statusMetric(
                             symbol: "stop.circle",
                             count: presentation.stoppedCount,
                             tint: .themeComment,
-                            countWidth: Self.stoppedCountWidth
+                            minimumCountWidth: Self.stoppedCountMinWidth
                         )
                     }
                 } else {
@@ -1170,7 +1192,7 @@ private struct WorkspaceHomeStatusIndicator: View {
                         symbol: "stop.circle",
                         count: presentation.stoppedCount,
                         tint: .themeComment,
-                        countWidth: Self.stoppedCountWidth
+                        minimumCountWidth: Self.stoppedCountMinWidth
                     )
                 } else {
                     statusSymbol("stop.circle", tint: .themeComment)
@@ -1184,13 +1206,13 @@ private struct WorkspaceHomeStatusIndicator: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func statusMetric(symbol: String, count: Int, tint: Color, countWidth: CGFloat) -> some View {
+    private func statusMetric(symbol: String, count: Int, tint: Color, minimumCountWidth: CGFloat) -> some View {
         HStack(alignment: .center, spacing: Self.symbolCountGap) {
             statusSymbol(symbol, tint: tint)
             countText(count, tint: tint)
-                .frame(width: countWidth, alignment: .leading)
+                .frame(minWidth: minimumCountWidth, alignment: .leading)
         }
-        .frame(width: Self.symbolWidth + Self.symbolCountGap + countWidth, alignment: .leading)
+        .frame(minWidth: Self.symbolWidth + Self.symbolCountGap + minimumCountWidth, alignment: .leading)
     }
 
     private func statusSymbol(_ symbol: String, tint: Color) -> some View {

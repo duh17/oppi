@@ -426,7 +426,9 @@ struct WorkspaceDetailView: View {
             if !data.yourTurnRoots.isEmpty {
                 Section("Your Turn") {
                     ForEach(data.yourTurnRoots) { session in
-                        NavigationLink(value: session.id) {
+                        Button {
+                            openSession(session)
+                        } label: {
                             sessionRow(for: session, using: data.childIndex)
                         }
                         .accessibilityIdentifier("session.nav.\(session.id)")
@@ -448,7 +450,9 @@ struct WorkspaceDetailView: View {
             if !data.workingRoots.isEmpty {
                 Section("Working") {
                     ForEach(data.workingRoots) { session in
-                        NavigationLink(value: session.id) {
+                        Button {
+                            openSession(session)
+                        } label: {
                             sessionRow(for: session, using: data.childIndex)
                         }
                         .accessibilityIdentifier("session.nav.\(session.id)")
@@ -476,7 +480,7 @@ struct WorkspaceDetailView: View {
                     rowPresentation(for: session, using: data.childIndex)
                 },
                 onOpenSession: { session in
-                    openStoppedSession(session)
+                    openSession(session)
                 },
                 onResumeSession: { session in
                     Task { await resumeSession(session) }
@@ -829,7 +833,7 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    private func openStoppedSession(_ session: Session) {
+    private func openSession(_ session: Session) {
         var normalized = session
         if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
             normalized.workspaceId = currentWorkspace.id

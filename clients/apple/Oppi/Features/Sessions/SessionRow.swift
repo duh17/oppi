@@ -139,12 +139,12 @@ struct SessionRow: View {
         session.ephemeral == true
     }
 
-    private var terminalMirrorBadge: (label: String, color: Color)? {
+    private var terminalMirrorIndicator: (accessibilityLabel: String, color: Color, isAnimated: Bool)? {
         guard session.runtime == .piTuiMirror else { return nil }
         if session.mirror?.status == "connected" {
-            return ("Terminal Live", .themeGreen)
+            return ("Terminal mirror live", .themeGreen, true)
         }
-        return ("Terminal unavailable", .themeComment)
+        return ("Terminal mirror offline", .themeComment, false)
     }
 
     private var currentTurnStartedAt: Date? {
@@ -210,6 +210,16 @@ struct SessionRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+
+                Spacer(minLength: 8)
+
+                if let terminalMirrorIndicator {
+                    TerminalMirrorIndicatorView(
+                        accessibilityLabel: terminalMirrorIndicator.accessibilityLabel,
+                        color: terminalMirrorIndicator.color,
+                        isAnimated: terminalMirrorIndicator.isAnimated
+                    )
+                }
             }
 
             // Row 3: compact metrics on the left, status pinned right.
@@ -220,10 +230,6 @@ struct SessionRow: View {
 
                 if isIncognito {
                     incognitoBadge
-                }
-
-                if let terminalMirrorBadge {
-                    terminalBadge(label: terminalMirrorBadge.label, color: terminalMirrorBadge.color)
                 }
 
                 let displayCost = children?.aggregateCost ?? session.cost
@@ -295,15 +301,41 @@ struct SessionRow: View {
             .accessibilityLabel("Incognito session")
     }
 
-    private func terminalBadge(label: String, color: Color) -> some View {
-        Label(label, systemImage: "terminal.fill")
-            .font(.caption2.weight(.medium))
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.14), in: Capsule())
-            .accessibilityLabel(label)
+    private struct TerminalMirrorIndicatorView: View {
+        let accessibilityLabel: String
+        let color: Color
+        let isAnimated: Bool
+
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var breathing = false
+
+        private var shouldAnimate: Bool {
+            isAnimated && !reduceMotion
+        }
+
+        var body: some View {
+            Image(systemName: "terminal.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(color)
+                .opacity(shouldAnimate && breathing ? 1 : 0.82)
+                .frame(width: 18, height: 16, alignment: .trailing)
+                .accessibilityLabel(accessibilityLabel)
+                .onAppear(perform: updateBreathing)
+                .onChange(of: shouldAnimate) { _, _ in
+                    updateBreathing()
+                }
+        }
+
+        private func updateBreathing() {
+            guard shouldAnimate else {
+                breathing = false
+                return
+            }
+            breathing = false
+            withAnimation(ThemeMotion.animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true), reduceMotion: reduceMotion)) {
+                breathing = true
+            }
+        }
     }
 
     // MARK: - Model Summary

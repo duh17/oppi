@@ -70,7 +70,7 @@ enum SessionPillVariant: Equatable {
     }
 }
 
-/// Compact text+color pill indicating session status.
+/// Compact text status aligned to the row's trailing edge.
 struct SessionStatusPill: View {
     let variant: SessionPillVariant
 
@@ -82,8 +82,6 @@ struct SessionStatusPill: View {
         Text(variant.label)
             .font(.caption2.weight(.medium))
             .foregroundStyle(variant.foregroundColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(variant.backgroundColor, in: Capsule())
+            .multilineTextAlignment(.trailing)
     }
 }
