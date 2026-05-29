@@ -542,10 +542,36 @@ function extractMediaOutputs(
  */
 const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
 
+function audioPresentationText(root: Record<string, unknown>): string | undefined {
+  const candidates = [root.text, root.message, root.transcript];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const text = candidate.trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function normalizeAudioPresentationDetails(details: unknown): unknown {
+  const root = asRecord(details);
+  if (!root || Array.isArray(root)) return details;
+  if (root.kind === "audio_presentation") return details;
+
+  const audio = asRecord(root.audio);
+  if (!audio || Array.isArray(audio) || audio.kind !== "audio") return details;
+
+  const text = audioPresentationText(root);
+  return {
+    ...root,
+    kind: "audio_presentation",
+    ...(text ? { text } : {}),
+  };
+}
+
 function audioPresentationDetails(
   details: unknown,
 ): { text?: string; playbackBehavior?: string } | null {
-  const root = asRecord(details);
+  const root = asRecord(normalizeAudioPresentationDetails(details));
   if (root?.kind !== "audio_presentation") {
     return null;
   }
@@ -861,8 +887,8 @@ export function translatePiEvent(
       const contents = Array.isArray(event.partialResult?.content)
         ? event.partialResult.content
         : [];
-      const updateDetails = stripImageMediaFromDetails(
-        sanitizedUpdateDetails(event.partialResult?.details),
+      const updateDetails = normalizeAudioPresentationDetails(
+        stripImageMediaFromDetails(sanitizedUpdateDetails(event.partialResult?.details)),
       );
 
       const toolCallId = resolveToolCallId(event);
@@ -1041,9 +1067,11 @@ export function translatePiEvent(
         });
       }
 
-      const details = mergeAttachmentMediaIntoDetails(
-        detailsResult.details,
-        Array.isArray(resultContents) ? extractAttachmentMedia(resultContents) : [],
+      const details = normalizeAudioPresentationDetails(
+        mergeAttachmentMediaIntoDetails(
+          detailsResult.details,
+          Array.isArray(resultContents) ? extractAttachmentMedia(resultContents) : [],
+        ),
       );
       const resultSegments = ctx.mobileRenderers?.renderResult(
         event.toolName,

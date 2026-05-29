@@ -1,27 +1,30 @@
 import { EventEmitter } from "node:events";
-import { existsSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, realpathSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 
+import { materializeChatAttachments } from "./chat-attachments.js";
 import { EventRing } from "./event-ring.js";
+import { materializeAgentEventMedia } from "./session-agent-event-media.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
+  extractAssistantText,
   normalizeCommandError,
   translatePiEvent,
-  applyMessageEndToSession,
-  updateSessionChangeStats,
 } from "./session-protocol.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
+import { SessionEventProcessor, type EventProcessorSessionState } from "./session-events.js";
 import { cloneQueueItem, cloneQueueState, extractQueuedUserText } from "./session-queue-utils.js";
 import { SessionTurnCoordinator, type TurnSessionState } from "./session-turns.js";
 import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
+import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type {
   ChatAttachmentRef,
   MessageQueueDraftItem,
@@ -141,7 +144,7 @@ interface PiBridgeOutboundCommand {
   command: Record<string, unknown>;
 }
 
-interface MirrorActiveSession extends TurnSessionState {
+interface MirrorActiveSession extends EventProcessorSessionState, TurnSessionState {
   session: Session;
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
@@ -183,11 +186,58 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function trustedSessionAttachmentSourceRoots(): string[] {
+  return [join(homedir(), "Library/Application Support/Yuwp/Audio/pi-voice")];
+}
+
 function rawDataToText(data: RawData): string {
   if (typeof data === "string") return data;
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
   return Buffer.from(data).toString("utf8");
+}
+
+function isTerminalStoppedReason(reason: string): boolean {
+  const normalized = reason.trim().toLowerCase();
+  return normalized === "stopped" || normalized === "session_shutdown";
+}
+
+function meaningfulSessionName(name: string | undefined, sessionId?: string): string | undefined {
+  const trimmed = name?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "Session") return undefined;
+  if (sessionId && trimmed === `Session ${sessionId}`) return undefined;
+  if (/^Session\s+[A-Za-z0-9_-]{4,}$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function firstUserMessageFromSessionFile(path: string | undefined): string | undefined {
+  const file = canonicalSessionFilePath(path);
+  if (!file || !existsSync(file)) return undefined;
+
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, "r");
+    const buffer = Buffer.alloc(1024 * 1024);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+      const parsed = JSON.parse(trimmedLine) as unknown;
+      const record = asRecord(parsed);
+      const message = asRecord(record?.message) ?? record;
+      if (message?.role !== "user") continue;
+      const text = extractQueuedUserText(message).trim();
+      if (text) return text.slice(0, 200);
+    }
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+
+  return undefined;
 }
 
 function parseBridgeMessage(data: RawData): PiBridgeInboundMessage {
@@ -280,6 +330,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
   private readonly bridges = new Map<string, BridgeConnection>();
   private readonly bridgeBySession = new Map<string, string>();
   private readonly broadcaster: SessionBroadcaster;
+  private readonly eventProcessor: SessionEventProcessor;
   private readonly turnCoordinator: SessionTurnCoordinator;
 
   constructor(
@@ -291,6 +342,17 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       getActiveSession: (sessionId) => this.active.get(sessionId),
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       saveSession: (session) => this.storage.saveSession(session),
+    });
+    this.eventProcessor = new SessionEventProcessor({
+      storage: this.storage,
+      broadcast: (sessionId, message) => this.broadcast(sessionId, message),
+      persistSessionNow: (_sessionId, session) => this.storage.saveSession(session),
+      markSessionDirty: (sessionId) => {
+        const active = this.active.get(sessionId);
+        if (active) this.storage.saveSession(active.session);
+      },
+      respondToUIRequest: () => false,
+      recordUserMessagesFromEvents: true,
     });
     this.turnCoordinator = new SessionTurnCoordinator({
       broadcast: (sessionId, message) => this.broadcast(sessionId, message),
@@ -352,6 +414,12 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     return this.active.get(sessionId)?.session ?? this.storage.getSession(sessionId);
   }
 
+  isSessionConnected(sessionId: string): boolean {
+    const bridgeId = this.bridgeBySession.get(sessionId);
+    const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
+    return connection?.ws.readyState === WebSocket.OPEN;
+  }
+
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
     this.ensureActiveFromStorage(sessionId);
     return this.broadcaster.subscribe(sessionId, callback);
@@ -373,6 +441,52 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     return [];
   }
 
+  private resolveWorkspaceRoot(session: Session): string | null {
+    if (!session.workspaceId) return null;
+    const workspace = this.storage.getWorkspace(session.workspaceId);
+    if (!workspace?.hostMount) return null;
+    return normalizePath(workspace.hostMount);
+  }
+
+  private async prepareMessageWithAttachments(
+    active: MirrorActiveSession,
+    message: string,
+    opts: {
+      attachments?: ChatAttachmentRef[];
+      clientTurnId?: string;
+      requestId?: string;
+    },
+  ): Promise<{
+    message: string;
+    images: Array<{ type: "image"; data: string; mimeType: string }>;
+  }> {
+    if (!opts.attachments?.length) {
+      return { message, images: [] };
+    }
+
+    const workspaceRoot = this.resolveWorkspaceRoot(active.session);
+    if (!workspaceRoot || !active.session.workspaceId) {
+      throw new Error("Attachments require a workspace-backed terminal mirror session");
+    }
+
+    const uploadStoreConfig = resolveUploadStoreConfig(this.storage.getConfig());
+    const materialized = await materializeChatAttachments({
+      workspaceRoot,
+      workspaceId: active.session.workspaceId,
+      sessionId: active.session.id,
+      turnId: opts.clientTurnId ?? opts.requestId,
+      message,
+      attachments: opts.attachments,
+      maxTurnBytes: uploadStoreConfig.maxTurnBytes,
+      uploadStore: uploadStoreConfig,
+    });
+
+    return {
+      message: materialized.message,
+      images: materialized.imageInputs,
+    };
+  }
+
   async sendPrompt(
     sessionId: string,
     message: string,
@@ -386,9 +500,6 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     },
   ): Promise<void> {
     const active = this.requireActive(sessionId);
-    if (opts.attachments?.length) {
-      throw new Error("Terminal mirror does not support file attachments yet");
-    }
     if (active.session.status === "busy" && !opts.streamingBehavior) {
       const duplicate = this.turnCoordinator.isDuplicateTurnIntent(
         active,
@@ -423,10 +534,16 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     );
     if (turn.duplicate) return;
 
+    const prepared = await this.prepareMessageWithAttachments(active, message, {
+      attachments: opts.attachments,
+      clientTurnId: opts.clientTurnId,
+      requestId: opts.requestId,
+    });
+    const dispatchImages = [...(opts.images ?? []), ...prepared.images];
     const data = await this.dispatchBridgeCommand(sessionId, {
       type: "prompt",
-      message,
-      images: opts.images,
+      message: prepared.message,
+      ...(dispatchImages.length ? { images: dispatchImages } : {}),
       streamingBehavior: opts.streamingBehavior,
     });
     this.applyQueueFromCommandData(sessionId, data);
@@ -470,19 +587,13 @@ export class PiTuiMirrorRuntime extends EventEmitter {
 
   async getMessageQueue(sessionId: string): Promise<MessageQueueState> {
     const active = this.requireActive(sessionId);
-    try {
-      const data = await this.dispatchBridgeCommand(sessionId, { type: "get_queue" });
-      const queue = parseQueueState(data);
-      if (queue) {
-        active.messageQueue = cloneQueueState(queue);
-        this.broadcast(sessionId, { type: "queue_state", queue: active.messageQueue });
-      }
-    } catch (error) {
-      log.warn("mirror_runtime.get_queue.failed", {
-        sessionId,
-        error: safeErrorMessage(error),
-      });
+    const data = await this.dispatchBridgeCommand(sessionId, { type: "get_queue" });
+    const queue = parseQueueState(data);
+    if (!queue) {
+      throw new Error("Terminal mirror did not return queue state");
     }
+    active.messageQueue = cloneQueueState(queue);
+    this.broadcast(sessionId, { type: "queue_state", queue: active.messageQueue });
     return cloneQueueState(active.messageQueue);
   }
 
@@ -575,9 +686,6 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     },
   ): Promise<void> {
     const active = this.requireActive(sessionId);
-    if (opts.attachments?.length) {
-      throw new Error("Terminal mirror does not support file attachments yet");
-    }
     if (active.session.status !== "busy") {
       const label = kind === "steer" ? "Steer" : "Follow-up";
       throw new Error(`${label} requires an active streaming terminal turn`);
@@ -593,10 +701,16 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     );
     if (turn.duplicate) return;
 
+    const prepared = await this.prepareMessageWithAttachments(active, message, {
+      attachments: opts.attachments,
+      clientTurnId: opts.clientTurnId,
+      requestId: opts.requestId,
+    });
+    const dispatchImages = [...(opts.images ?? []), ...prepared.images];
     const data = await this.dispatchBridgeCommand(sessionId, {
       type: kind,
-      message,
-      images: opts.images,
+      message: prepared.message,
+      ...(dispatchImages.length ? { images: dispatchImages } : {}),
     });
     this.applyQueueFromCommandData(sessionId, data);
     this.turnCoordinator.markTurnDispatched(active.session.id, active, kind, turn, opts.requestId);
@@ -813,6 +927,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
 
     const active = this.active.get(connection.sessionId);
     if (active) {
+      const disconnectedAt = Date.now();
       active.session.mirror = {
         ...(active.session.mirror ?? { status: "disconnected" }),
         status: "disconnected",
@@ -820,12 +935,18 @@ export class PiTuiMirrorRuntime extends EventEmitter {
           ...(active.session.mirror?.terminal ?? {}),
           bridgeId: connection.bridgeId,
           cwd: connection.cwd ?? active.session.mirror?.terminal?.cwd,
-          disconnectedAt: Date.now(),
+          disconnectedAt,
           lastSeenAt: connection.lastSeenAt,
         },
       };
+      if (isTerminalStoppedReason(reason)) {
+        active.session.status = "stopped";
+        active.session.currentTurnStartedAt = undefined;
+        active.session.lastActivity = disconnectedAt;
+      }
       this.storage.saveSession(active.session);
       this.broadcast(connection.sessionId, { type: "state", session: active.session });
+      this.broadcastSessionSummaryIfChanged(active, `mirror_${reason}`);
     }
 
     log.info("mirror_bridge.disconnected", {
@@ -836,12 +957,23 @@ export class PiTuiMirrorRuntime extends EventEmitter {
   }
 
   private resolveWorkspace(hello: PiBridgeHelloMessage): Workspace {
+    const cwd = hello.cwd ?? hello.state?.cwd;
     if (hello.workspaceId) {
       const workspace = this.storage.getWorkspace(hello.workspaceId);
-      if (workspace) return workspace;
+      if (workspace) {
+        if (!cwd) {
+          throw new Error("Bridge hello must include cwd when workspaceId is supplied");
+        }
+        if (!workspace.hostMount) {
+          throw new Error(`Oppi workspace ${workspace.id} has no hostMount for terminal mirror`);
+        }
+        if (!pathContains(workspace.hostMount, cwd)) {
+          throw new Error(`Terminal cwd is outside Oppi workspace hostMount: ${cwd}`);
+        }
+        return workspace;
+      }
     }
 
-    const cwd = hello.cwd ?? hello.state?.cwd;
     if (!cwd) {
       throw new Error("Bridge hello must include cwd or workspaceId");
     }
@@ -891,16 +1023,24 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     }
 
     const model = normalizeModelId(state.model);
-    const session = existing ?? this.storage.createSession(state.sessionName, model);
+    const sessionName = meaningfulSessionName(state.sessionName);
+    const session = existing ?? this.storage.createSession(sessionName, model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
     session.runtime = "pi-tui-mirror";
     session.status = state.isIdle === false ? "busy" : "ready";
-    if (state.sessionName?.trim()) session.name = state.sessionName.trim();
+    const nextName = meaningfulSessionName(state.sessionName, session.id);
+    if (nextName) session.name = nextName;
+    else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     if (piSessionId) session.piSessionId = piSessionId;
     mergePiSessionFile(session, piSessionFile);
+    if (!session.firstMessage) {
+      session.firstMessage = firstUserMessageFromSessionFile(
+        piSessionFile ?? session.piSessionFile ?? session.piSessionFiles?.[0],
+      );
+    }
     this.applyContextUsage(session, state.contextUsage);
     session.lastActivity = Date.now();
     this.storage.saveSession(session);
@@ -927,6 +1067,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       subscribers: new Set(),
       seq: 0,
       eventRing: new EventRing(EVENT_RING_CAPACITY),
+      pendingUIRequests: new Map(),
       partialResults: new Map(),
       streamedAssistantText: "",
       hasStreamedThinking: false,
@@ -978,12 +1119,19 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     const session = active.session;
     const now = Date.now();
     session.runtime = "pi-tui-mirror";
-    if (state.sessionName?.trim()) session.name = state.sessionName.trim();
+    const nextName = meaningfulSessionName(state.sessionName, session.id);
+    if (nextName) session.name = nextName;
+    else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
     const model = normalizeModelId(state.model);
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     if (state.piSessionId?.trim()) session.piSessionId = state.piSessionId.trim();
     mergePiSessionFile(session, state.sessionFile);
+    if (!session.firstMessage) {
+      session.firstMessage = firstUserMessageFromSessionFile(
+        session.piSessionFile ?? state.sessionFile ?? session.piSessionFiles?.[0],
+      );
+    }
     this.applyContextUsage(session, state.contextUsage);
     if (
       state.isIdle !== undefined &&
@@ -1025,18 +1173,16 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     }
   }
 
-  private ingestAgentEvent(active: MirrorActiveSession, event: AgentSessionEvent): void {
+  private ingestAgentEvent(active: MirrorActiveSession, rawEvent: AgentSessionEvent): void {
     const sessionId = active.session.id;
-    const ctx = {
+    const dataDir = (this.storage as { getDataDir?: () => string }).getDataDir?.();
+    const event = materializeAgentEventMedia({
+      event: rawEvent,
+      dataDir,
       sessionId,
-      partialResults: active.partialResults,
-      streamedAssistantText: active.streamedAssistantText,
-      hasStreamedThinking: active.hasStreamedThinking,
-      toolNames: active.toolNames,
-      shellPreviewLastSent: active.shellPreviewLastSent,
-      streamingArgPreviews: active.streamingArgPreviews,
-      streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
-    };
+      trustedSourceRoots: trustedSessionAttachmentSourceRoots(),
+    });
+    const ctx = this.eventProcessor.translationContext(active);
 
     const messages = translatePiEvent(event, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
@@ -1046,38 +1192,36 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       this.broadcast(sessionId, message);
     }
 
+    if (event.type === "message_end") {
+      const role = event.message.role;
+      if (role === "assistant") {
+        this.broadcast(sessionId, {
+          type: "message_end",
+          role,
+          content: extractAssistantText(event.message),
+        });
+      } else if (role === "user") {
+        const content = extractQueuedUserText(event.message).trim();
+        if (content) {
+          this.broadcast(sessionId, { type: "message_end", role, content });
+        }
+      }
+    }
+
     if (event.type === "message_start" && event.message.role === "user") {
       this.markQueuedMessageStarted(active, extractQueuedUserText(event.message));
     }
 
-    this.updateSessionFromEvent(active, event);
+    if (event.type === "agent_start") {
+      this.turnCoordinator.markNextTurnStarted(sessionId, active);
+    }
+
+    this.eventProcessor.updateSessionFromEvent(sessionId, active, event);
 
     if (event.type === "agent_start" || event.type === "agent_end") {
       this.broadcastSessionSummaryIfChanged(active, event.type);
       this.broadcast(sessionId, { type: "state", session: active.session });
     }
-  }
-
-  private updateSessionFromEvent(active: MirrorActiveSession, event: AgentSessionEvent): void {
-    const session = active.session;
-    switch (event.type) {
-      case "agent_start":
-        session.status = "busy";
-        session.currentTurnStartedAt = Date.now();
-        break;
-      case "agent_end":
-        session.status = "ready";
-        session.currentTurnStartedAt = undefined;
-        break;
-      case "message_end":
-        applyMessageEndToSession(session, event.message);
-        break;
-      case "tool_execution_start":
-        updateSessionChangeStats(session, event.toolName, event.args);
-        break;
-    }
-    session.lastActivity = Date.now();
-    this.storage.saveSession(session);
   }
 
   private broadcast(sessionId: string, message: ServerMessage): number {

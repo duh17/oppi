@@ -8,6 +8,7 @@ import {
   normalizeUserFacingError,
   translatePiEvent,
 } from "./session-protocol.js";
+import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import type {
   EventProcessorSessionState,
   ExtensionUIRequest,
@@ -15,12 +16,8 @@ import type {
 } from "./session-events.js";
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
-import {
-  materializeToolMediaContentBlocks,
-  materializeToolMediaDetails,
-} from "./session-attachments.js";
+import { materializeToolMediaDetails } from "./session-attachments.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
-import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState
@@ -30,40 +27,6 @@ export interface SessionAgentEventState
 }
 
 const log = createLogger({ base: { component: "session_agent_events" } });
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function hasToolMediaDetails(details: unknown): boolean {
-  if (!details || typeof details !== "object" || Array.isArray(details)) {
-    return false;
-  }
-  const root = details as { audio?: unknown; image?: unknown };
-  return [root.audio, root.image].some((media) =>
-    Boolean(
-      media &&
-      typeof media === "object" &&
-      !Array.isArray(media) &&
-      ((media as { kind?: unknown }).kind === "audio" ||
-        (media as { kind?: unknown }).kind === "image"),
-    ),
-  );
-}
-
-function fallbackFileNameFromArgs(args: unknown): string | undefined {
-  if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
-  const path = (args as { path?: unknown }).path;
-  return typeof path === "string" && path.trim() ? path : undefined;
-}
-
-function stripPartialImageContent(contents: unknown[] | undefined): unknown[] | undefined {
-  if (!contents) return undefined;
-  const filtered = contents.filter((block) => asRecord(block)?.type !== "image");
-  return filtered.length === contents.length ? contents : filtered;
-}
 
 export interface SessionAgentEventCoordinatorDeps {
   getActiveSession: (key: string) => SessionAgentEventState | undefined;
@@ -155,7 +118,12 @@ export class SessionAgentEventCoordinator {
       return;
     }
 
-    const event = this.materializeMediaEvent(active, data);
+    const event = materializeAgentEventMedia({
+      event: data,
+      dataDir: this.deps.dataDir,
+      sessionId: active.session.id,
+      trustedSourceRoots: this.deps.trustedAttachmentSourceRoots,
+    });
 
     if (SessionAgentEventCoordinator.INFO_LOGGED_EVENT_TYPES.has(event.type)) {
       this.logPiEvent("info", active, event);
@@ -268,88 +236,6 @@ export class SessionAgentEventCoordinator {
 
     const toolName = typeof event.toolName === "string" ? event.toolName.toLowerCase() : "";
     return SessionAgentEventCoordinator.CHANGE_SUMMARY_TOOL_NAMES.has(toolName);
-  }
-
-  private materializeMediaEvent(
-    active: SessionAgentEventState,
-    event: AgentSessionEvent,
-  ): AgentSessionEvent {
-    if (!this.deps.dataDir) return event;
-
-    if (event.type === "tool_execution_update") {
-      const rawContent = Array.isArray(event.partialResult?.content)
-        ? event.partialResult.content
-        : undefined;
-      const content = stripPartialImageContent(rawContent);
-      const rawDetails = event.partialResult?.details;
-      const strippedDetails = stripImageMediaFromDetails(rawDetails);
-      const details = materializeToolMediaDetails({
-        dataDir: this.deps.dataDir,
-        sessionId: active.session.id,
-        toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
-        details: strippedDetails,
-        trustedSourceRoots: this.deps.trustedAttachmentSourceRoots,
-      });
-      const contentChanged = content !== rawContent;
-      const detailsChanged = strippedDetails !== rawDetails || details !== strippedDetails;
-      if (!contentChanged && !detailsChanged) return event;
-
-      const partialResult = { ...event.partialResult } as Record<string, unknown>;
-      if (contentChanged || content) {
-        partialResult.content = content
-          ? materializeToolMediaContentBlocks({
-              dataDir: this.deps.dataDir,
-              sessionId: active.session.id,
-              toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
-              contents: content,
-              fallbackFileName: fallbackFileNameFromArgs(event.args),
-            })
-          : content;
-      }
-      if (detailsChanged) {
-        if (details !== undefined) {
-          partialResult.details = details;
-        } else {
-          delete partialResult.details;
-        }
-      }
-
-      return {
-        ...event,
-        partialResult,
-      } as AgentSessionEvent;
-    }
-
-    if (event.type === "tool_execution_end") {
-      const content = Array.isArray(event.result?.content) ? event.result.content : undefined;
-      const details = materializeToolMediaDetails({
-        dataDir: this.deps.dataDir,
-        sessionId: active.session.id,
-        toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
-        details: event.result?.details,
-        trustedSourceRoots: this.deps.trustedAttachmentSourceRoots,
-      });
-      if (!content && details === event.result?.details) return event;
-      return {
-        ...event,
-        result: {
-          ...event.result,
-          ...(content
-            ? {
-                content: materializeToolMediaContentBlocks({
-                  dataDir: this.deps.dataDir,
-                  sessionId: active.session.id,
-                  toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
-                  contents: content,
-                }),
-              }
-            : {}),
-          ...(details !== undefined ? { details } : {}),
-        },
-      } as AgentSessionEvent;
-    }
-
-    return event;
   }
 
   private logPiEvent(

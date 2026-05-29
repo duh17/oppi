@@ -73,6 +73,32 @@ function createHarness(): {
 }
 
 describe("direct ask flow", () => {
+  it("clears terminal-only mirror status instead of surfacing it to clients", () => {
+    const { key, active, processor, broadcast } = createHarness();
+
+    processor.handleExtensionUIRequest(key, active, {
+      type: "extension_ui_request",
+      id: "mirror-status-1",
+      method: "setStatus",
+      statusKey: "oppi-mirror",
+      statusText: "Mirror | live",
+    });
+
+    expect(broadcast).toHaveBeenCalledWith(key, {
+      type: "extension_ui_notification",
+      method: "setStatus",
+      message: undefined,
+      notifyType: undefined,
+      statusKey: "oppi-mirror",
+      statusText: undefined,
+      title: undefined,
+      text: undefined,
+      widgetKey: undefined,
+      widgetLines: undefined,
+      widgetPlacement: undefined,
+    });
+  });
+
   it("forwards a single ask request to the phone", () => {
     const { key, active, processor, broadcast } = createHarness();
 

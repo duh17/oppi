@@ -682,6 +682,7 @@ export class Server {
     this.routes = new RouteHandler({
       storage: this.storage,
       sessions: this.sessions,
+      mirrorRuntime: this.mirrorRuntime,
       gate: this.gate,
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,

@@ -41,6 +41,7 @@ import {
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { prepareDisconnectedMirrorForManagedResume } from "../runtime-router.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { buildSessionSummary } from "../session-summary.js";
 import {
@@ -1138,6 +1139,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       const hydrated = active ? ctx.ensureSessionContextWindow(active) : session;
       helpers.json(res, { session: hydrated });
       return;
+    }
+
+    if (session.runtime === "pi-tui-mirror") {
+      if (ctx.mirrorRuntime?.isSessionConnected(sessionId)) {
+        const active = ctx.mirrorRuntime.getActiveSession(sessionId) ?? session;
+        helpers.json(res, { session: ctx.ensureSessionContextWindow(active) });
+        return;
+      }
+      if (!session.piSessionFile) {
+        helpers.error(res, 400, "Terminal mirror session has no pi session file to resume");
+        return;
+      }
+      prepareDisconnectedMirrorForManagedResume(ctx.storage, session);
     }
 
     try {

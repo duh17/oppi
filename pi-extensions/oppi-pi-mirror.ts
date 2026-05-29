@@ -138,6 +138,10 @@ function isLocalUrl(urlText: string): boolean {
   }
 }
 
+function isInteractiveTerminalProcess(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
 function bridgeUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -249,6 +253,37 @@ function commandError(message: string, id: string, error: unknown) {
     success: false,
     error: error instanceof Error ? error.message : String(error),
   };
+}
+
+function imagesFromCommand(value: unknown): QueueImageContent[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((image) => {
+    const item = image as { data?: unknown; mimeType?: unknown };
+    return typeof item.data === "string"
+      ? [
+          {
+            data: item.data,
+            mimeType:
+              typeof item.mimeType === "string" ? item.mimeType : "image/png",
+          },
+        ]
+      : [];
+  });
+}
+
+function contentForMessage(message: string, images: QueueImageContent[]) {
+  if (!images.length) return message;
+  return [
+    {
+      type: "text" as const,
+      text: message || "(see attached image)",
+    },
+    ...images.map((image) => ({
+      type: "image" as const,
+      data: image.data,
+      mimeType: image.mimeType,
+    })),
+  ];
 }
 
 type MirrorIndicatorMode = "connecting" | "live" | "reconnecting" | "error";
@@ -475,6 +510,14 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   function connect(ctx: ExtensionContext) {
     if (!runtimeActive) return;
     latestCtx = ctx;
+    if (!isInteractiveTerminalProcess()) {
+      notify(
+        ctx,
+        "Oppi Mirror only starts from an interactive Pi TUI terminal",
+        "warning",
+      );
+      return;
+    }
     settings = loadSettings();
     const config = configured();
     if (!config) {
@@ -682,51 +725,15 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       case "prompt": {
         const message =
           typeof command.message === "string" ? command.message : "";
-        const images = Array.isArray(command.images) ? command.images : [];
-        const content = images.length
-          ? [
-              {
-                type: "text" as const,
-                text: message || "(see attached image)",
-              },
-              ...images.flatMap((image) => {
-                const item = image as { data?: unknown; mimeType?: unknown };
-                return typeof item.data === "string"
-                  ? [
-                      {
-                        type: "image" as const,
-                        data: item.data,
-                        mimeType:
-                          typeof item.mimeType === "string"
-                            ? item.mimeType
-                            : "image/png",
-                      },
-                    ]
-                  : [];
-              }),
-            ]
-          : message;
+        const images = imagesFromCommand(command.images);
+        const content = contentForMessage(message, images);
         const streamingBehavior = command.streamingBehavior;
-        const queueImages = images.flatMap((image) => {
-          const item = image as { data?: unknown; mimeType?: unknown };
-          return typeof item.data === "string"
-            ? [
-                {
-                  data: item.data,
-                  mimeType:
-                    typeof item.mimeType === "string"
-                      ? item.mimeType
-                      : "image/png",
-                },
-              ]
-            : [];
-        });
         if (streamingBehavior === "steer") {
           pi.sendUserMessage(content, { deliverAs: "steer" });
-          enqueueShadow("steer", message, queueImages);
+          enqueueShadow("steer", message, images);
         } else if (streamingBehavior === "followUp") {
           pi.sendUserMessage(content, { deliverAs: "followUp" });
-          enqueueShadow("followUp", message, queueImages);
+          enqueueShadow("followUp", message, images);
         } else {
           pi.sendUserMessage(content);
         }
@@ -735,19 +742,21 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
       case "steer": {
         const message = String(command.message ?? "");
-        pi.sendUserMessage(message, {
+        const images = imagesFromCommand(command.images);
+        pi.sendUserMessage(contentForMessage(message, images), {
           deliverAs: "steer",
         });
-        enqueueShadow("steer", message);
+        enqueueShadow("steer", message, images);
         return { dispatched: true, queue: cloneQueueState(queue) };
       }
 
       case "follow_up": {
         const message = String(command.message ?? "");
-        pi.sendUserMessage(message, {
+        const images = imagesFromCommand(command.images);
+        pi.sendUserMessage(contentForMessage(message, images), {
           deliverAs: "followUp",
         });
-        enqueueShadow("followUp", message);
+        enqueueShadow("followUp", message, images);
         return { dispatched: true, queue: cloneQueueState(queue) };
       }
 
@@ -925,7 +934,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
-    if (settings.autoStart) connect(ctx);
+    if (settings.autoStart && isInteractiveTerminalProcess()) connect(ctx);
   });
 
   pi.on("session_shutdown", (_event, ctx) => {

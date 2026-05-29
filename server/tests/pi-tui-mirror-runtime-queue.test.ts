@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
-import { homedir } from "node:os";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -29,7 +31,7 @@ class FakeBridgeWebSocket extends EventEmitter {
   }
 }
 
-function makeRuntime(options: { hostMount?: string } = {}) {
+function makeRuntime(options: { hostMount?: string; dataDir?: string } = {}) {
   const workspace: Workspace = {
     id: "w1",
     name: "Workspace",
@@ -67,6 +69,8 @@ function makeRuntime(options: { hostMount?: string } = {}) {
     saveSession: (session: Session) => {
       sessions.set(session.id, session);
     },
+    getConfig: () => ({ dataDir: options.dataDir ?? "/tmp/oppi-mirror-test-config" }),
+    getDataDir: () => options.dataDir ?? "/tmp/oppi-mirror-test-config",
   } as unknown as Storage;
 
   return { runtime: new PiTuiMirrorRuntime(storage), sessions };
@@ -74,7 +78,12 @@ function makeRuntime(options: { hostMount?: string } = {}) {
 
 function connectBridge(
   runtime: PiTuiMirrorRuntime,
-  options: { cwd?: string; workspaceId?: string | null; sessionFile?: string } = {},
+  options: {
+    cwd?: string;
+    workspaceId?: string | null;
+    sessionFile?: string;
+    sessionName?: string;
+  } = {},
 ): {
   ws: FakeBridgeWebSocket;
   sessionId: string;
@@ -90,6 +99,7 @@ function connectBridge(
     state: {
       piSessionId: "pi-1",
       sessionFile: options.sessionFile ?? "/tmp/oppi-mirror-test/session.jsonl",
+      sessionName: options.sessionName,
     },
   });
   const ack = ws.sent.find((message) => message.type === "hello_ack");
@@ -101,6 +111,15 @@ function latestCommand(ws: FakeBridgeWebSocket): Record<string, unknown> {
   const command = ws.sent.findLast((message) => message.type === "command");
   expect(command).toBeTruthy();
   return command!;
+}
+
+async function waitForLatestCommand(ws: FakeBridgeWebSocket): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const command = ws.sent.findLast((message) => message.type === "command");
+    if (command) return command;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return latestCommand(ws);
 }
 
 describe("PiTuiMirrorRuntime queue bridge", () => {
@@ -115,6 +134,28 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
 
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe("w1");
+  });
+
+  it("rejects workspaceId bridge hellos when cwd is outside the workspace mount", () => {
+    const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-1",
+      workspaceId: "w1",
+      cwd: "/tmp/not-in-a-workspace",
+      state: { piSessionId: "pi-1" },
+    });
+
+    expect(ws.sent.at(-1)).toMatchObject({
+      type: "error",
+      error: expect.stringContaining("Terminal cwd is outside Oppi workspace hostMount"),
+    });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ws.closeCode).toBe(1008);
   });
 
   it("closes the bridge when hello registration fails", () => {
@@ -136,6 +177,120 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1008);
+  });
+
+  it("marks the iOS mirror session stopped when the terminal session shuts down", () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error("expected mirrored session");
+    session.status = "busy";
+    session.currentTurnStartedAt = Date.now();
+
+    ws.receive({
+      type: "goodbye",
+      reason: "session_shutdown",
+      state: { isIdle: true },
+    });
+
+    const stopped = sessions.get(sessionId);
+    expect(stopped?.status).toBe("stopped");
+    expect(stopped?.currentTurnStartedAt).toBeUndefined();
+    expect(stopped?.mirror?.status).toBe("disconnected");
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ws.closeCode).toBe(1000);
+  });
+
+  it("backfills the first user message from the terminal session file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-title-"));
+    const sessionFile = join(root, "session.jsonl");
+    await writeFile(
+      sessionFile,
+      `${JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "review mirror mode titles" },
+      })}\n`,
+    );
+    const { runtime } = makeRuntime({ hostMount: root });
+
+    const { sessionId } = connectBridge(runtime, {
+      cwd: root,
+      sessionFile,
+      sessionName: "Session LyOQX5NA",
+    });
+
+    const session = runtime.getActiveSession(sessionId);
+    expect(session?.name).toBeUndefined();
+    expect(session?.firstMessage).toBe("review mirror mode titles");
+  });
+
+  it("captures terminal-origin user messages as the first message", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "message_end",
+        message: { role: "user", content: "terminal asks from the TUI" },
+      },
+    });
+
+    const session = runtime.getActiveSession(sessionId);
+    expect(session?.firstMessage).toBe("terminal asks from the TUI");
+    expect(session?.messageCount).toBe(1);
+  });
+
+  it("broadcasts terminal-origin user message_end events to live subscribers", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "message_end",
+        message: { role: "user", content: "typed directly in the TUI" },
+      },
+    });
+
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "message_end",
+        role: "user",
+        content: "typed directly in the TUI",
+      }),
+    );
+  });
+
+  it("broadcasts terminal-origin assistant message_end events to finalize thinking blocks", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "plan before tool" },
+            { type: "text", text: "done" },
+          ],
+        },
+      },
+    });
+
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "message_end",
+        role: "assistant",
+        content: "done",
+      }),
+    );
   });
 
   it("hydrates get_queue from the terminal bridge", async () => {
@@ -164,6 +319,33 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       steering: [{ id: "s1", message: "steer", createdAt: 1 }],
       followUp: [{ id: "f1", message: "follow", createdAt: 2 }],
     });
+  });
+
+  it("rejects get_queue bridge failures instead of returning stale cached queue", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+
+    ws.receive({
+      type: "queue_state",
+      queue: {
+        version: 9,
+        steering: [{ id: "stale", message: "stale steer", createdAt: 1 }],
+        followUp: [],
+      },
+    });
+
+    const queuePromise = runtime.getMessageQueue(sessionId);
+    const command = latestCommand(ws);
+    expect(command.command).toMatchObject({ type: "get_queue" });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: false,
+      error: "bridge queue unavailable",
+    });
+
+    await expect(queuePromise).rejects.toThrow("bridge queue unavailable");
   });
 
   it("forwards set_queue and broadcasts the returned queue state", async () => {
@@ -241,5 +423,149 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       type: "queue_state",
       queue: { version: 3, steering: [], followUp: [] },
     });
+  });
+
+  it("materializes workspace attachments before forwarding a prompt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-attachments-"));
+    await writeFile(join(root, "note.txt"), "hello from attachment");
+    const { runtime } = makeRuntime({ hostMount: root });
+    const { ws, sessionId } = connectBridge(runtime, {
+      cwd: root,
+      sessionFile: join(root, "session.jsonl"),
+    });
+
+    const promptPromise = runtime.sendPrompt(sessionId, "read this", {
+      attachments: [
+        {
+          type: "attachment",
+          id: "att-1",
+          source: "workspace",
+          name: "note.txt",
+          mimeType: "text/plain",
+          sizeBytes: 21,
+          workspacePath: "note.txt",
+        },
+      ],
+      clientTurnId: "turn-attachment",
+      requestId: "req-attachment",
+      timestamp: Date.now(),
+    });
+
+    const command = await waitForLatestCommand(ws);
+    const forwarded = command.command as Record<string, unknown>;
+    expect(forwarded).toEqual({
+      type: "prompt",
+      message: `read this\n\nAttached files:\n- note.txt: .pi/attachments/${sessionId}/turn-attachment/note.txt`,
+      streamingBehavior: undefined,
+    });
+    await expect(
+      readFile(join(root, ".pi", "attachments", sessionId, "turn-attachment", "note.txt"), "utf8"),
+    ).resolves.toBe("hello from attachment");
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { queue: { version: 0, steering: [], followUp: [] } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it("materializes legacy voice audio details from mirrored tool events", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "oppi-mirror-audio-"));
+    const { runtime } = makeRuntime({ dataDir });
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "tool_execution_end",
+        toolCallId: "voice-tool-1",
+        toolName: "voice_speak",
+        result: {
+          content: [{ type: "text", text: "Phone playback should work." }],
+          details: {
+            serverUrl: "http://127.0.0.1:7937",
+            message: "Phone playback should work.",
+            audio: {
+              kind: "audio",
+              mimeType: "audio/wav",
+              base64: Buffer.from("RIFFtest-audio").toString("base64"),
+              fileName: "reply.wav",
+            },
+          },
+        },
+        isError: false,
+      },
+    });
+
+    const toolEnd = received.find((message) => message.type === "tool_end") as Extract<
+      ServerMessage,
+      { type: "tool_end" }
+    >;
+    expect(toolEnd?.details).toMatchObject({
+      kind: "audio_presentation",
+      text: "Phone playback should work.",
+      message: "Phone playback should work.",
+      audio: {
+        kind: "audio",
+        mimeType: "audio/wav",
+        id: expect.stringContaining("att_voice-tool-1_"),
+        storageKey: expect.stringContaining(`${sessionId}/`),
+      },
+    });
+    expect(
+      (toolEnd.details as { audio?: { base64?: string; path?: string } }).audio?.base64,
+    ).toBeUndefined();
+    expect(
+      (toolEnd.details as { audio?: { base64?: string; path?: string } }).audio?.path,
+    ).toBeUndefined();
+  });
+
+  it("forwards materialized image attachments with streaming input", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-image-"));
+    const imageBytes = Buffer.from("fake image bytes");
+    await writeFile(join(root, "shot.png"), imageBytes);
+    const { runtime } = makeRuntime({ hostMount: root });
+    const { ws, sessionId } = connectBridge(runtime, {
+      cwd: root,
+      sessionFile: join(root, "session.jsonl"),
+    });
+    const session = runtime.getActiveSession(sessionId);
+    if (!session) throw new Error("expected active mirror session");
+    session.status = "busy";
+
+    const steerPromise = runtime.sendSteer(sessionId, "look at this", {
+      attachments: [
+        {
+          type: "attachment",
+          id: "att-image",
+          source: "workspace",
+          name: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: imageBytes.length,
+          workspacePath: "shot.png",
+        },
+      ],
+      clientTurnId: "turn-image",
+      requestId: "req-image",
+    });
+
+    const command = await waitForLatestCommand(ws);
+    expect(command.command).toEqual({
+      type: "steer",
+      message: `look at this\n\nAttached files:\n- shot.png: .pi/attachments/${sessionId}/turn-image/shot.png`,
+      images: [{ type: "image", data: imageBytes.toString("base64"), mimeType: "image/png" }],
+    });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { queue: { version: 0, steering: [], followUp: [] } },
+    });
+    await expect(steerPromise).resolves.toBeUndefined();
   });
 });

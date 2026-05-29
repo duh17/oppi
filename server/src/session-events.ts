@@ -4,11 +4,13 @@ import { getGitStatus } from "./git-status.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
+  appendSessionMessage,
   applyMessageEndToSession,
   incrementSessionCompactionCount,
   updateSessionChangeStats,
   type TranslationContext,
 } from "./session-protocol.js";
+import { extractQueuedUserText } from "./session-queue-utils.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
 import type { AskQuestion, Session, ServerMessage } from "./types.js";
@@ -44,6 +46,15 @@ const FIRE_AND_FORGET_METHODS = new Set([
   "setTitle",
   "set_editor_text",
 ]);
+
+const TERMINAL_ONLY_STATUS_KEYS = new Set(["oppi-mirror"]);
+
+function terminalOnlyStatusText(req: ExtensionUIRequest): string | undefined {
+  if (req.method === "setStatus" && req.statusKey && TERMINAL_ONLY_STATUS_KEYS.has(req.statusKey)) {
+    return undefined;
+  }
+  return req.statusText;
+}
 
 /** Server-side state for a pending first-class ask request. */
 export interface PendingAskState {
@@ -84,7 +95,7 @@ export interface EventProcessorSessionState {
 
 export interface SessionEventProcessorDeps {
   storage: Storage;
-  mobileRenderers: MobileRendererRegistry;
+  mobileRenderers?: MobileRendererRegistry;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
@@ -95,6 +106,8 @@ export interface SessionEventProcessorDeps {
   ) => boolean;
   /** Server operational metric collector (metrics silently skipped when absent). */
   metrics?: ServerMetricCollector;
+  /** Mirror mode receives terminal-origin user messages as pi events. */
+  recordUserMessagesFromEvents?: boolean;
 }
 
 export class SessionEventProcessor {
@@ -139,7 +152,7 @@ export class SessionEventProcessor {
         message: req.message,
         notifyType: req.notifyType,
         statusKey: req.statusKey,
-        statusText: req.statusText,
+        statusText: terminalOnlyStatusText(req),
         title: req.title,
         text: req.text,
         widgetKey: req.widgetKey,
@@ -255,7 +268,18 @@ export class SessionEventProcessor {
         break;
 
       case "message_end":
-        applyMessageEndToSession(session, event.message);
+        if (event.message.role === "user" && this.deps.recordUserMessagesFromEvents) {
+          const content = extractQueuedUserText(event.message).trim();
+          if (content) {
+            appendSessionMessage(session, {
+              role: "user",
+              content,
+              timestamp: Date.now(),
+            });
+          }
+        } else {
+          applyMessageEndToSession(session, event.message);
+        }
 
         // Record token usage and cost from message_end
         if (metrics && event.message) {

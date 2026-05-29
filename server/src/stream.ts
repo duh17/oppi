@@ -13,6 +13,7 @@ import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.j
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
+import { prepareDisconnectedMirrorForManagedResume } from "./runtime-router.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -362,19 +363,29 @@ export class BoundSessionStreamMux {
     send(streamConnectedMessage(this.ctx, owner));
 
     try {
-      const isMirrorSession = session.runtime === "pi-tui-mirror";
-      const mirrorRuntime = isMirrorSession ? this.ctx.mirrorRuntime : undefined;
+      const isStoredMirrorSession = session.runtime === "pi-tui-mirror";
+      const mirrorRuntime = isStoredMirrorSession ? this.ctx.mirrorRuntime : undefined;
+      const isMirrorSession =
+        isStoredMirrorSession && mirrorRuntime?.isSessionConnected(sessionId) === true;
+      if (isStoredMirrorSession && !isMirrorSession) {
+        if (session.ephemeral) {
+          throw new Error("Incognito terminal mirror sessions cannot be resumed");
+        }
+        if (!session.piSessionFile) {
+          throw new Error("Terminal mirror session has no pi session file to resume");
+        }
+        prepareDisconnectedMirrorForManagedResume(this.ctx.storage, session);
+      }
+
       let hydratedSession = this.ctx.ensureSessionContextWindow(session);
       const hadActiveSession = isMirrorSession
         ? mirrorRuntime?.getActiveSession(sessionId) !== undefined
         : this.ctx.sessions.getActiveSession(sessionId) !== undefined;
 
       if (isMirrorSession) {
-        if (mirrorRuntime) {
-          hydratedSession = this.ctx.ensureSessionContextWindow(
-            mirrorRuntime.getActiveSession(sessionId) ?? session,
-          );
-        }
+        hydratedSession = this.ctx.ensureSessionContextWindow(
+          mirrorRuntime?.getActiveSession(sessionId) ?? session,
+        );
       } else {
         const workspace = this.ctx.resolveWorkspaceForSession(session);
         const started = await this.ctx.sessions.startSession(sessionId, workspace);
@@ -399,6 +410,10 @@ export class BoundSessionStreamMux {
               }
             : msg;
         sendForSession(outbound);
+
+        if (isMirrorSession && msg.type === "state" && msg.session.mirror?.status !== "connected") {
+          ws.close(1012, "Terminal mirror disconnected");
+        }
       };
       unsubscribeBoundSession = isMirrorSession
         ? mirrorRuntime?.subscribe(sessionId, callback)

@@ -2561,6 +2561,39 @@ describe("translatePiEvent", () => {
       expect(execEnd[0]!.type).toBe("tool_end");
     });
 
+    it("normalizes legacy audio tool details into audio presentation details", () => {
+      const ctx = makeCtx();
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_end",
+          toolCallId: "voice-legacy-1",
+          toolName: "voice_speak",
+          result: {
+            content: [{ type: "text", text: "Legacy voice transcript." }],
+            details: {
+              serverUrl: "http://127.0.0.1:7937",
+              message: "Legacy voice transcript.",
+              audio: { kind: "audio", mimeType: "audio/wav", id: "att-legacy-1" },
+            },
+          },
+          isError: false,
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      const toolEnd = result.find((message) => message.type === "tool_end") as Extract<
+        ServerMessage,
+        { type: "tool_end" }
+      >;
+      expect(toolEnd.details).toEqual({
+        serverUrl: "http://127.0.0.1:7937",
+        message: "Legacy voice transcript.",
+        kind: "audio_presentation",
+        text: "Legacy voice transcript.",
+        audio: { kind: "audio", mimeType: "audio/wav", id: "att-legacy-1" },
+      });
+    });
+
     it("emits a details-only tool output for generic audio presentation updates without content text", () => {
       const ctx = makeCtx();
       const result = translatePiEvent(
