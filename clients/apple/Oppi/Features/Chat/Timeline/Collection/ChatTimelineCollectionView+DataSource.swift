@@ -127,6 +127,11 @@ final class SafeSizingCell: UICollectionViewCell {
         ensureNavigationHighlightOverlayFrontmost()
     }
 
+    func invalidateStreamingHeightCache() {
+        cachedStreamingHeight = nil
+        lastFullSizeComputeNs = 0
+    }
+
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
@@ -191,8 +196,7 @@ extension ChatTimelineCollectionHost.Controller {
             let isStreaming = self?.streamingAssistantID == itemID
             cell.isStreamingAssistant = isStreaming
             if !isStreaming {
-                cell.cachedStreamingHeight = nil
-                cell.lastFullSizeComputeNs = 0
+                cell.invalidateStreamingHeightCache()
             }
             self?.configureNativeCell(
                 cell,
@@ -449,6 +453,7 @@ extension ChatTimelineCollectionHost.Controller {
         builder: (ChatItem) -> (any UIContentConfiguration)?
     ) {
         let configureStartNs = ChatTimelinePerf.timestampNs()
+        cell.accessibilityIdentifier = "chat.timeline.row.\(itemID)"
 
         guard let item = currentItemByID[itemID],
               toolOutputStore != nil,

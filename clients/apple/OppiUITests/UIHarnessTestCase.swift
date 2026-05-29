@@ -16,7 +16,8 @@ class UIHarnessTestCase: XCTestCase {
         includeVisualFixtures: Bool = false,
         mixedContent: Bool = false,
         queueHarness: Bool = false,
-        includeWriteMarkdownFixture: Bool = false
+        includeWriteMarkdownFixture: Bool = false,
+        assistantOverlapFixture: Bool = false
     ) {
         app = XCUIApplication()
         app.launchArguments.append(contentsOf: [
@@ -31,6 +32,7 @@ class UIHarnessTestCase: XCTestCase {
         app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = includeVisualFixtures ? "1" : "0"
         app.launchEnvironment["PI_UI_HANG_INCLUDE_WRITE_MD_FIXTURE"] = includeWriteMarkdownFixture ? "1" : "0"
         app.launchEnvironment["PI_UI_HANG_QUEUE_HARNESS"] = queueHarness ? "1" : "0"
+        app.launchEnvironment["PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE"] = assistantOverlapFixture ? "1" : "0"
         app.launch()
 
         XCTAssertTrue(

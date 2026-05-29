@@ -456,6 +456,164 @@ struct AssistantMarkdownLayoutTests {
         )
     }
 
+    @Test func streamingStructuralMarkdownRebuildBustsCachedCollectionHeight() async throws {
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-streaming-structural-cache",
+            useAnchoredCollectionView: true
+        )
+        let itemID = "assistant-streaming-structural-cache"
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let initialText = "Overlap repro fixture.\n\nShort intro before the rich markdown arrives."
+        let updatedText = """
+        Overlap repro fixture.
+
+        This paragraph stays short at first, then the renderer suddenly has to fit multiple rich blocks in one assistant row.
+
+        ```swift
+        enum TimelineScrollIntent {
+            case none
+            case initialBottom(id: String)
+            case jumpToBottom(id: String, animated: Bool)
+            case navigateTo(id: String)
+        }
+        ```
+
+        ```swift
+        if explicitIntent {
+            performExplicitScroll()
+        } else if detached {
+            preserveViewport()
+        } else if isBusy {
+            keepTailVisibleWithinComfortBand()
+        } else {
+            settleToExactBottomIfStillAttached()
+        }
+        ```
+
+        The key simplification: streaming is not a scroll animation anymore. Streaming is content appearing, scrolling only nudges.
+        """
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: itemID, text: initialText, timestamp: timestamp),
+            ],
+            isBusy: false,
+            streamingID: itemID
+        )
+
+        let indexPath = IndexPath(item: 0, section: 0)
+        let initialCell = try #require(try configuredTimelineCell(in: wh.collectionView, item: 0) as? SafeSizingCell)
+        let initialHeight = initialCell.frame.height
+        initialCell.cachedStreamingHeight = initialHeight
+        initialCell.lastFullSizeComputeNs = DispatchTime.now().uptimeNanoseconds
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: itemID, text: updatedText, timestamp: timestamp),
+            ],
+            isBusy: false,
+            streamingID: itemID
+        )
+
+        let reflowed = await waitForTimelineCondition(timeoutMs: 500) {
+            await MainActor.run {
+                wh.collectionView.layoutIfNeeded()
+                guard let cell = wh.collectionView.cellForItem(at: indexPath) as? SafeSizingCell,
+                      let row = timelineFirstView(ofType: AssistantTimelineRowContentView.self, in: cell.contentView) else {
+                    return false
+                }
+
+                return cell.frame.height > initialHeight + 120
+                    && row.debugMarkdownOverflowPoints < 1
+                    && row.debugMarkdownRenderedOverlapPoints < 1
+            }
+        }
+
+        let finalHeight = await MainActor.run {
+            (wh.collectionView.cellForItem(at: indexPath) as? SafeSizingCell)?.frame.height ?? -1
+        }
+
+        #expect(
+            reflowed,
+            "Streaming structural markdown rebuild should invalidate cached assistant height (initial=\(initialHeight), final=\(finalHeight))"
+        )
+    }
+
+    @Test func streamingOpenCodeBlockGrowthBustsCachedCollectionHeight() async throws {
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-streaming-code-cache",
+            useAnchoredCollectionView: true
+        )
+        let itemID = "assistant-streaming-code-cache"
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let phase1 = """
+        Streaming code-block growth fixture.
+
+        ```swift
+        let first = 1
+        """
+        let phase2 = """
+        Streaming code-block growth fixture.
+
+        ```swift
+        let first = 1
+        let second = 2
+        let third = 3
+        let fourth = 4
+        let fifth = 5
+        let sixth = 6
+        let seventh = 7
+        let eighth = 8
+        let ninth = 9
+        let tenth = 10
+        """
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: itemID, text: phase1, timestamp: timestamp),
+            ],
+            isBusy: false,
+            streamingID: itemID
+        )
+
+        let indexPath = IndexPath(item: 0, section: 0)
+        let initialCell = try #require(try configuredTimelineCell(in: wh.collectionView, item: 0) as? SafeSizingCell)
+        let initialHeight = initialCell.frame.height
+        initialCell.cachedStreamingHeight = initialHeight
+        initialCell.lastFullSizeComputeNs = DispatchTime.now().uptimeNanoseconds
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: itemID, text: phase2, timestamp: timestamp),
+            ],
+            isBusy: false,
+            streamingID: itemID
+        )
+
+        let reflowed = await waitForTimelineCondition(timeoutMs: 500) {
+            await MainActor.run {
+                wh.collectionView.layoutIfNeeded()
+                guard let cell = wh.collectionView.cellForItem(at: indexPath) as? SafeSizingCell,
+                      let row = timelineFirstView(ofType: AssistantTimelineRowContentView.self, in: cell.contentView) else {
+                    return false
+                }
+
+                return cell.frame.height > initialHeight + 80
+                    && row.debugMarkdownOverflowPoints < 1
+                    && row.debugMarkdownRenderedOverlapPoints < 1
+            }
+        }
+
+        let finalHeight = await MainActor.run {
+            (wh.collectionView.cellForItem(at: indexPath) as? SafeSizingCell)?.frame.height ?? -1
+        }
+
+        #expect(
+            reflowed,
+            "Streaming code block growth should invalidate cached assistant height (initial=\(initialHeight), final=\(finalHeight))"
+        )
+    }
+
     @Test func detachedStreamingAssistantHeadingStaysStableOnScreen() throws {
         let wh = makeWindowedTimelineHarness(
             sessionId: "assistant-md-stability",

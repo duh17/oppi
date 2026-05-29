@@ -126,6 +126,21 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         }
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        #if DEBUG
+            if let itemID = currentConfiguration.itemID {
+                AssistantMarkdownDebugRegistry.update(
+                    itemID: itemID,
+                    frameHeight: bounds.height,
+                    overlapPoints: markdownView.debugMaxRenderedSegmentOverlapPoints,
+                    overflowPoints: markdownView.debugRenderedContentOverflowPoints
+                )
+            }
+        #endif
+    }
+
     override func systemLayoutSizeFitting(
         _ targetSize: CGSize,
         withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
@@ -147,7 +162,20 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             rawHeight = 44
         }
 
-        return CGSize(width: width, height: min(rawHeight, Self.maxValidHeight))
+        let size = CGSize(width: width, height: min(rawHeight, Self.maxValidHeight))
+
+        #if DEBUG
+            if let itemID = currentConfiguration.itemID {
+                AssistantMarkdownDebugRegistry.update(
+                    itemID: itemID,
+                    frameHeight: size.height,
+                    overlapPoints: markdownView.debugMaxRenderedSegmentOverlapPoints,
+                    overflowPoints: markdownView.debugRenderedContentOverflowPoints
+                )
+            }
+        #endif
+
+        return size
     }
 
     private func setupViews() {
@@ -193,6 +221,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
 
     private func apply(configuration: AssistantTimelineRowConfiguration) {
         currentConfiguration = configuration
+        accessibilityIdentifier = configuration.itemID.map { "chat.timeline.assistant.\($0)" }
 
         let palette = ThemeRuntimeState.currentPalette()
         iconBadge.sessionId = configuration.sessionId
@@ -225,3 +254,43 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         ))
     }
 }
+
+#if DEBUG
+@MainActor
+struct AssistantMarkdownDebugSnapshot {
+    let frameHeight: CGFloat
+    let overlapPoints: CGFloat
+    let overflowPoints: CGFloat
+}
+
+@MainActor
+private enum AssistantMarkdownDebugRegistry {
+    private static var snapshots: [String: AssistantMarkdownDebugSnapshot] = [:]
+
+    static func update(itemID: String, frameHeight: CGFloat, overlapPoints: CGFloat, overflowPoints: CGFloat) {
+        snapshots[itemID] = AssistantMarkdownDebugSnapshot(
+            frameHeight: frameHeight,
+            overlapPoints: overlapPoints,
+            overflowPoints: overflowPoints
+        )
+    }
+
+    static func snapshot(for itemID: String) -> AssistantMarkdownDebugSnapshot? {
+        snapshots[itemID]
+    }
+}
+
+extension AssistantTimelineRowContentView {
+    var debugMarkdownRenderedOverlapPoints: CGFloat {
+        markdownView.debugMaxRenderedSegmentOverlapPoints
+    }
+
+    var debugMarkdownOverflowPoints: CGFloat {
+        markdownView.debugRenderedContentOverflowPoints
+    }
+
+    static func debugSnapshot(for itemID: String) -> AssistantMarkdownDebugSnapshot? {
+        AssistantMarkdownDebugRegistry.snapshot(for: itemID)
+    }
+}
+#endif

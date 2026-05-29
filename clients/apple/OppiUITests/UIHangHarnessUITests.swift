@@ -64,6 +64,13 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
     }
 
+    func testAssistantRichMarkdownStreamingCanClipAfterCachedHeightReuse() throws {
+        throw XCTSkip(
+            "WIP: assistant overlap UI harness fixture exists, but the XCUITest debug-surface assertion path is still unstable. " +
+                "Coverage currently lives in AssistantMarkdownLayoutTests for the streaming cached-height regression."
+        )
+    }
+
     func testStreamingKeepsBottomPinnedWhenNearBottom() throws {
         if ProcessInfo.processInfo.environment["PI_UI_HANG_LONG"] != "1" {
             throw XCTSkip("Long streaming pin test disabled by default")

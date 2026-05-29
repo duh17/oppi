@@ -293,6 +293,8 @@ final class AssistantMarkdownSegmentApplier {
             let fullText = tv.attributedText ?? NSAttributedString()
             cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullText)
         }
+
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: stackView)
     }
 
     private func updateInPlace(
@@ -411,6 +413,9 @@ final class AssistantMarkdownSegmentApplier {
                             reviewCommentAnnotations: config.reviewCommentAnnotations
                         )
                         codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
+                        if isOpen {
+                            ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: codeView)
+                        }
                         if !isOpen && highlightTasks[index] == nil {
                             applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
                         }
@@ -454,6 +459,7 @@ final class AssistantMarkdownSegmentApplier {
                     )
                     if isOpen {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
+                        ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: mermaidView)
                     } else {
                         config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
                     }
@@ -471,6 +477,7 @@ final class AssistantMarkdownSegmentApplier {
                     )
                     if isOpen {
                         latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+                        ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: latexView)
                     } else {
                         config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
                     }

@@ -208,6 +208,7 @@ final class NativeLatexBlockView: UIView {
         setNeedsLayout()
         superview?.setNeedsLayout()
         superview?.layoutIfNeeded()
+        invalidateTimelineLayout()
     }
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
@@ -216,6 +217,11 @@ final class NativeLatexBlockView: UIView {
         formulaHeightConstraint?.isActive = false
         isShowingFormula = false
         codeBlockView.apply(language: "latex", code: code, palette: palette, isOpen: false)
+        invalidateTimelineLayout()
+    }
+
+    private func invalidateTimelineLayout() {
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     @objc private func handleTap() {

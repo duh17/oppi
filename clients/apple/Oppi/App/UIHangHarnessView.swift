@@ -13,6 +13,7 @@ enum UIHangHarnessConfig {
         let includeWriteMarkdownFixture: Bool
         let mixedContentFixtures: Bool
         let queueHarnessEnabled: Bool
+        let assistantOverlapFixture: Bool
     }
 
     // periphery:ignore - debug harness state container
@@ -22,6 +23,7 @@ enum UIHangHarnessConfig {
         let includeWriteMarkdownFixture: Bool
         let mixedContentFixtures: Bool
         let queueHarnessEnabled: Bool
+        let assistantOverlapFixture: Bool
     }
 
     // XCTest repeat mode can transiently reinstall/relaunch the app without
@@ -39,6 +41,8 @@ enum UIHangHarnessConfig {
     private static let stickyMixedContentKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.mixedContent"
     // periphery:ignore - debug harness persistence keys
     private static let stickyQueueHarnessKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.queueHarness"
+    // periphery:ignore - debug harness persistence keys
+    private static let stickyAssistantOverlapFixtureKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.assistantOverlapFixture"
     // Keep sticky harness launch knobs alive long enough for long-running UI
     // suites where CoreSimulator may relaunch the app mid-run.
     // periphery:ignore - debug harness TTL constant
@@ -110,6 +114,14 @@ enum UIHangHarnessConfig {
 #endif
     }
 
+    static var assistantOverlapFixture: Bool {
+#if DEBUG
+        launchContext.assistantOverlapFixture
+#else
+        false
+#endif
+    }
+
 #if DEBUG
 #if targetEnvironment(simulator)
     private static func resolveLaunchContext() -> LaunchContext {
@@ -123,6 +135,7 @@ enum UIHangHarnessConfig {
         let explicitWriteMarkdownFixture = environment["PI_UI_HANG_INCLUDE_WRITE_MD_FIXTURE"] == "1"
         let explicitMixedContent = environment["PI_UI_HANG_MIXED_CONTENT"] == "1"
         let explicitQueueHarness = environment["PI_UI_HANG_QUEUE_HARNESS"] == "1"
+        let explicitAssistantOverlapFixture = environment["PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE"] == "1"
 
         if explicitHarness {
             persistStickyState(
@@ -130,7 +143,8 @@ enum UIHangHarnessConfig {
                 includeVisualFixtures: explicitVisualFixtures,
                 includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
                 mixedContentFixtures: explicitMixedContent,
-                queueHarnessEnabled: explicitQueueHarness
+                queueHarnessEnabled: explicitQueueHarness,
+                assistantOverlapFixture: explicitAssistantOverlapFixture
             )
             return LaunchContext(
                 isEnabled: true,
@@ -138,7 +152,8 @@ enum UIHangHarnessConfig {
                 includeVisualFixtures: explicitVisualFixtures,
                 includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
                 mixedContentFixtures: explicitMixedContent,
-                queueHarnessEnabled: explicitQueueHarness
+                queueHarnessEnabled: explicitQueueHarness,
+                assistantOverlapFixture: explicitAssistantOverlapFixture
             )
         }
 
@@ -150,7 +165,8 @@ enum UIHangHarnessConfig {
                 includeVisualFixtures: stickyState.includeVisualFixtures,
                 includeWriteMarkdownFixture: stickyState.includeWriteMarkdownFixture,
                 mixedContentFixtures: stickyState.mixedContentFixtures,
-                queueHarnessEnabled: stickyState.queueHarnessEnabled
+                queueHarnessEnabled: stickyState.queueHarnessEnabled,
+                assistantOverlapFixture: stickyState.assistantOverlapFixture
             )
         }
 
@@ -164,7 +180,8 @@ enum UIHangHarnessConfig {
             includeVisualFixtures: explicitVisualFixtures,
             includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
             mixedContentFixtures: explicitMixedContent,
-            queueHarnessEnabled: explicitQueueHarness
+            queueHarnessEnabled: explicitQueueHarness,
+            assistantOverlapFixture: explicitAssistantOverlapFixture
         )
     }
 
@@ -187,7 +204,8 @@ enum UIHangHarnessConfig {
         includeVisualFixtures: Bool,
         includeWriteMarkdownFixture: Bool,
         mixedContentFixtures: Bool,
-        queueHarnessEnabled: Bool
+        queueHarnessEnabled: Bool,
+        assistantOverlapFixture: Bool
     ) {
         let now = Date().timeIntervalSince1970
         stickyDefaults.set(now, forKey: stickyTimestampKey)
@@ -196,6 +214,7 @@ enum UIHangHarnessConfig {
         stickyDefaults.set(includeWriteMarkdownFixture, forKey: stickyWriteMarkdownFixtureKey)
         stickyDefaults.set(mixedContentFixtures, forKey: stickyMixedContentKey)
         stickyDefaults.set(queueHarnessEnabled, forKey: stickyQueueHarnessKey)
+        stickyDefaults.set(assistantOverlapFixture, forKey: stickyAssistantOverlapFixtureKey)
     }
 
     private static func loadStickyState(now: Date = Date()) -> StickyState? {
@@ -214,7 +233,8 @@ enum UIHangHarnessConfig {
             includeVisualFixtures: defaults.bool(forKey: stickyVisualFixturesKey),
             includeWriteMarkdownFixture: defaults.bool(forKey: stickyWriteMarkdownFixtureKey),
             mixedContentFixtures: defaults.bool(forKey: stickyMixedContentKey),
-            queueHarnessEnabled: defaults.bool(forKey: stickyQueueHarnessKey)
+            queueHarnessEnabled: defaults.bool(forKey: stickyQueueHarnessKey),
+            assistantOverlapFixture: defaults.bool(forKey: stickyAssistantOverlapFixtureKey)
         )
     }
 
@@ -226,6 +246,7 @@ enum UIHangHarnessConfig {
         defaults.removeObject(forKey: stickyWriteMarkdownFixtureKey)
         defaults.removeObject(forKey: stickyMixedContentKey)
         defaults.removeObject(forKey: stickyQueueHarnessKey)
+        defaults.removeObject(forKey: stickyAssistantOverlapFixtureKey)
     }
 #else
     private static func resolveLaunchContext() -> LaunchContext {
@@ -235,7 +256,8 @@ enum UIHangHarnessConfig {
             includeVisualFixtures: false,
             includeWriteMarkdownFixture: false,
             mixedContentFixtures: false,
-            queueHarnessEnabled: false
+            queueHarnessEnabled: false,
+            assistantOverlapFixture: false
         )
     }
 #endif
@@ -247,7 +269,8 @@ enum UIHangHarnessConfig {
             includeVisualFixtures: false,
             includeWriteMarkdownFixture: false,
             mixedContentFixtures: false,
-            queueHarnessEnabled: false
+            queueHarnessEnabled: false,
+            assistantOverlapFixture: false
         )
     }
 #endif
@@ -510,11 +533,57 @@ struct UIHangHarnessView: View {
                 ))
             }
 
+            if UIHangHarnessConfig.assistantOverlapFixture {
+                items.append(.assistantMessage(
+                    id: "\(session.rawValue)-assistant-overlap",
+                    text: Self.assistantOverlapFixtureText(phase: 0, session: session),
+                    timestamp: baseDate.addingTimeInterval(Double((sessionIndex * 10_000) + turnsPerSession + 900))
+                ))
+            }
+
             result[session] = items
         }
 
         return result
     }()
+
+    private static let assistantOverlapLastPhase = 1
+
+    private static func assistantOverlapFixtureText(phase: Int, session: HarnessSession) -> String {
+        switch phase {
+        case 0:
+            return "Overlap repro fixture — \(session.title).\n\nShort intro before the rich markdown arrives."
+        default:
+            return """
+            Overlap repro fixture — \(session.title).
+
+            This paragraph stays short at first, then the renderer suddenly has to fit multiple rich blocks in one assistant row.
+
+            ```swift
+            enum TimelineScrollIntent {
+                case none
+                case initialBottom(id: String)
+                case jumpToBottom(id: String, animated: Bool)
+                case navigateTo(id: String)
+            }
+            ```
+
+            ```swift
+            if explicitIntent {
+                performExplicitScroll()
+            } else if detached {
+                preserveViewport()
+            } else if isBusy {
+                keepTailVisibleWithinComfortBand()
+            } else {
+                settleToExactBottomIfStillAttached()
+            }
+            ```
+
+            The key simplification: streaming is not a scroll animation anymore. Streaming is content appearing, scrolling only nudges.
+            """
+        }
+    }
 
     @State private var connection = ServerConnection()
     @State private var harnessReducer = TimelineReducer()
@@ -543,6 +612,11 @@ struct UIHangHarnessView: View {
     @State private var queueStates: [HarnessSession: MessageQueueState] = [:]
     @State private var queueBusyStreamingBehavior: StreamingBehavior = .steer
     @State private var queueSystemEventSerial = 0
+    @State private var assistantOverlapPhaseBySession: [HarnessSession: Int] = [:]
+    @State private var assistantOverlapReadySnapshot = 0
+    @State private var assistantRowHeightSnapshot = -1
+    @State private var assistantRenderedOverlapSnapshot = -1
+    @State private var assistantOverflowSnapshot = -1
 
     private var currentItems: [ChatItem] {
         sessionItems[selectedSession] ?? []
@@ -595,9 +669,38 @@ struct UIHangHarnessView: View {
         streamItemID(for: selectedSession)
     }
 
+    private var assistantOverlapItemID: String {
+        "\(selectedSession.rawValue)-assistant-overlap"
+    }
+
+    private var assistantOverlapPhaseValue: Int {
+        assistantOverlapPhaseBySession[selectedSession] ?? 0
+    }
+
+    private var assistantOverlapReadyValue: Int {
+        assistantOverlapReadySnapshot
+    }
+
+    private var assistantRowHeightValue: Int {
+        assistantRowHeightSnapshot
+    }
+
+    private var assistantOverlapRenderedValue: Int {
+        assistantRenderedOverlapSnapshot
+    }
+
+    private var assistantOverflowValue: Int {
+        assistantOverflowSnapshot
+    }
+
     /// For UI test harness mode, disable busy cursor/working indicator animations
     /// so XCUITest can reach idle between interactions.
     private var collectionStreamingAssistantID: String? {
+        if UIHangHarnessConfig.assistantOverlapFixture,
+           currentItems.contains(where: { $0.id == assistantOverlapItemID }) {
+            return assistantOverlapItemID
+        }
+
         guard streamEnabled, !UIHangHarnessConfig.uiTestMode else { return nil }
         return streamTargetID
     }
@@ -849,6 +952,20 @@ struct UIHangHarnessView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("harness.readMarkdown.focus")
 
+                if UIHangHarnessConfig.assistantOverlapFixture {
+                    Button("Assistant Overlap") {
+                        focusAssistantOverlapFixture()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.assistantOverlap.focus")
+
+                    Button("Advance Overlap") {
+                        advanceAssistantOverlapFixture()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.assistantOverlap.advance")
+                }
+
                 Button("Visual Image") {
                     scrollToVisualUserImage(animated: false)
                 }
@@ -940,6 +1057,11 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.extensionTextExpanded", value: extensionTextIsExpandedValue)
             diagnosticValue(id: "diag.writeMarkdownExpanded", value: writeMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.readMarkdownExpanded", value: readMarkdownIsExpandedValue)
+            diagnosticValue(id: "diag.assistantOverlapReady", value: assistantOverlapReadyValue)
+            diagnosticValue(id: "diag.assistantOverlapPhase", value: assistantOverlapPhaseValue)
+            diagnosticValue(id: "diag.assistantRowHeightPx", value: assistantRowHeightValue)
+            diagnosticValue(id: "diag.assistantRenderedOverlapPx", value: assistantOverlapRenderedValue)
+            diagnosticValue(id: "diag.assistantOverflowPx", value: assistantOverflowValue)
             diagnosticValue(id: "diag.extensionTop", value: extensionMarkdownIsTopVisibleValue)
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
@@ -1294,6 +1416,80 @@ struct UIHangHarnessView: View {
         issueScrollCommand(id: itemID, anchor: .top, animated: animated)
     }
 
+    private func focusAssistantOverlapFixture() {
+        guard currentItems.contains(where: { $0.id == assistantOverlapItemID }) else { return }
+        renderWindow = currentItems.count
+        heartbeat &+= 1
+        issueScrollCommand(id: assistantOverlapItemID, anchor: .top, animated: false)
+        scheduleAssistantOverlapDiagnosticsRefresh()
+    }
+
+    private func advanceAssistantOverlapFixture() {
+        guard UIHangHarnessConfig.assistantOverlapFixture,
+              assistantOverlapPhaseValue < Self.assistantOverlapLastPhase,
+              let index = currentItems.firstIndex(where: { $0.id == assistantOverlapItemID }),
+              case .assistantMessage(_, _, let timestamp) = currentItems[index] else {
+            return
+        }
+
+        let nextPhase = assistantOverlapPhaseValue + 1
+        var items = currentItems
+        items[index] = .assistantMessage(
+            id: assistantOverlapItemID,
+            text: Self.assistantOverlapFixtureText(phase: nextPhase, session: selectedSession),
+            timestamp: timestamp
+        )
+        sessionItems[selectedSession] = items
+        assistantOverlapPhaseBySession[selectedSession] = nextPhase
+        heartbeat &+= 1
+        scheduleAssistantOverlapDiagnosticsRefresh()
+    }
+
+    private func debugAssistantOverlapRowView(itemID: String) -> AssistantTimelineRowContentView? {
+        let cellIdentifier = "chat.timeline.row.\(itemID)"
+
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows.reversed() {
+                guard let cell = debugFindTimelineCell(in: window, identifier: cellIdentifier) else { continue }
+                if let row = debugFindAssistantOverlapRow(in: cell) {
+                    return row
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func debugFindTimelineCell(in root: UIView, identifier: String) -> SafeSizingCell? {
+        if let cell = root as? SafeSizingCell,
+           cell.accessibilityIdentifier == identifier {
+            return cell
+        }
+
+        for subview in root.subviews {
+            if let cell = debugFindTimelineCell(in: subview, identifier: identifier) {
+                return cell
+            }
+        }
+
+        return nil
+    }
+
+    private func debugFindAssistantOverlapRow(in root: UIView) -> AssistantTimelineRowContentView? {
+        if let row = root as? AssistantTimelineRowContentView {
+            return row
+        }
+
+        for subview in root.subviews {
+            if let row = debugFindAssistantOverlapRow(in: subview) {
+                return row
+            }
+        }
+
+        return nil
+    }
+
     private func setCurrentQueueState(_ state: MessageQueueState) {
         queueStates[selectedSession] = state
     }
@@ -1412,7 +1608,52 @@ struct UIHangHarnessView: View {
     }
 
     private func refreshDiagnostics() {
+        captureAssistantOverlapDiagnostics()
         heartbeat &+= 1
+    }
+
+    private func scheduleAssistantOverlapDiagnosticsRefresh(retriesRemaining: Int = 12) {
+        guard UIHangHarnessConfig.assistantOverlapFixture, retriesRemaining > 0 else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            captureAssistantOverlapDiagnostics()
+            heartbeat &+= 1
+
+            if assistantOverlapReadySnapshot == 0 || assistantOverlapPhaseValue < Self.assistantOverlapLastPhase {
+                scheduleAssistantOverlapDiagnosticsRefresh(retriesRemaining: retriesRemaining - 1)
+            }
+        }
+    }
+
+    private func captureAssistantOverlapDiagnostics() {
+        guard UIHangHarnessConfig.assistantOverlapFixture else {
+            assistantOverlapReadySnapshot = 0
+            assistantRowHeightSnapshot = -1
+            assistantRenderedOverlapSnapshot = -1
+            assistantOverflowSnapshot = -1
+            return
+        }
+
+        if let row = debugAssistantOverlapRowView(itemID: assistantOverlapItemID) {
+            assistantOverlapReadySnapshot = 1
+            assistantRowHeightSnapshot = Int(row.bounds.height.rounded())
+            assistantRenderedOverlapSnapshot = Int(row.debugMarkdownRenderedOverlapPoints.rounded())
+            assistantOverflowSnapshot = Int(row.debugMarkdownOverflowPoints.rounded())
+            return
+        }
+
+        guard let snapshot = AssistantTimelineRowContentView.debugSnapshot(for: assistantOverlapItemID) else {
+            assistantOverlapReadySnapshot = 0
+            assistantRowHeightSnapshot = -1
+            assistantRenderedOverlapSnapshot = -1
+            assistantOverflowSnapshot = -1
+            return
+        }
+
+        assistantOverlapReadySnapshot = 1
+        assistantRowHeightSnapshot = Int(snapshot.frameHeight.rounded())
+        assistantRenderedOverlapSnapshot = Int(snapshot.overlapPoints.rounded())
+        assistantOverflowSnapshot = Int(snapshot.overflowPoints.rounded())
     }
 
     private func scrollToTop(animated: Bool) {

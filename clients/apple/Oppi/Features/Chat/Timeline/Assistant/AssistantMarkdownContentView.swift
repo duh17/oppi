@@ -361,3 +361,32 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         return value
     }
 }
+
+#if DEBUG
+extension AssistantMarkdownContentView {
+    var debugMaxRenderedSegmentOverlapPoints: CGFloat {
+        let frames = stackView.arrangedSubviews
+            .filter { !$0.isHidden && $0.alpha > 0.01 }
+            .map { $0.convert($0.bounds, to: self) }
+            .sorted { $0.minY < $1.minY }
+
+        guard frames.count >= 2 else { return 0 }
+
+        var maxOverlap: CGFloat = 0
+        for index in 0..<(frames.count - 1) {
+            maxOverlap = max(maxOverlap, frames[index].maxY - frames[index + 1].minY)
+        }
+
+        return max(0, maxOverlap)
+    }
+
+    var debugRenderedContentOverflowPoints: CGFloat {
+        let maxRenderedY = stackView.arrangedSubviews
+            .filter { !$0.isHidden && $0.alpha > 0.01 }
+            .map { $0.convert($0.bounds, to: self).maxY }
+            .max() ?? 0
+
+        return max(0, maxRenderedY - bounds.maxY)
+    }
+}
+#endif

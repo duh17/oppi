@@ -123,6 +123,27 @@ enum ToolTimelineRowPresentationHelpers {
         return false
     }
 
+    /// Clear any streaming self-sizing cache on the enclosing timeline cell.
+    ///
+    /// Assistant rows throttle `preferredLayoutAttributesFitting` during
+    /// streaming by reusing the last measured height for a short window. When a
+    /// markdown update suddenly adds a tall block (code fence, table, image,
+    /// mermaid, etc.), that cached compact height must be busted before the
+    /// next sizing pass or UIKit can keep the stale height long enough to clip
+    /// the new content.
+    static func invalidateEnclosingStreamingHeightCache(startingAt sourceView: UIView) {
+        var view: UIView? = sourceView
+        while let current = view {
+            if let cell = current as? SafeSizingCell {
+                cell.invalidateStreamingHeightCache()
+                cell.setNeedsLayout()
+                cell.contentView.setNeedsLayout()
+                return
+            }
+            view = current.superview
+        }
+    }
+
     /// Walk up the view hierarchy to find the enclosing UICollectionView and
     /// invalidate its layout so self-sizing cells get re-measured.
     ///
@@ -132,6 +153,8 @@ enum ToolTimelineRowPresentationHelpers {
     /// blocks (e.g. from `installExpandedEmbeddedView` and the end-of-`apply`
     /// expanding-transition path) land in the same dispatch drain.
     static func invalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
+        invalidateEnclosingStreamingHeightCache(startingAt: sourceView)
+
         var view: UIView? = sourceView.superview
         while let current = view {
             guard let collectionView = current as? UICollectionView else {
