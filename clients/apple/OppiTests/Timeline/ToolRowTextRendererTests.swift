@@ -279,6 +279,21 @@ struct DiffHelperTests {
         #expect(ToolRowTextRenderer.diffLanguage(for: "") == nil)
     }
 
+    @Test func diffUsesAbsoluteLineNumbersFromDiffLines() {
+        let lines = DiffEngine.compute(
+            old: "var body: some View {\n    HStack(spacing: 5) {\n        if isAnimated {",
+            new: "var body: some View {\n    HStack(spacing: 5) {\n        Image(systemName: \"terminal.fill\")\n        if isAnimated {",
+            oldStartLine: 314,
+            newStartLine: 314
+        )
+
+        let rendered = renderDiff(lines)
+
+        #expect(rendered.contains("314 var body: some View"))
+        #expect(rendered.contains("316         Image(systemName:"))
+        #expect(!rendered.contains(" 1 var body: some View"))
+    }
+
     @Test func largeDiffWindowIncludesChangedLines() {
         let leadingContextCount = ToolRowTextRenderer.maxRenderedDiffLines + 60
         var lines = makeContextLines(count: leadingContextCount)

@@ -348,14 +348,18 @@ enum ToolRowTextRenderer {
             let lineNumber: Int?
             switch line.kind {
             case .context:
-                lineNumber = newLineNumber
+                if let explicitOld = line.oldLineNumber { oldLineNumber = explicitOld }
+                if let explicitNew = line.newLineNumber { newLineNumber = explicitNew }
+                lineNumber = line.newLineNumber ?? line.oldLineNumber ?? newLineNumber
                 oldLineNumber += 1
                 newLineNumber += 1
             case .removed:
-                lineNumber = oldLineNumber
+                if let explicitOld = line.oldLineNumber { oldLineNumber = explicitOld }
+                lineNumber = line.oldLineNumber ?? oldLineNumber
                 oldLineNumber += 1
             case .added:
-                lineNumber = newLineNumber
+                if let explicitNew = line.newLineNumber { newLineNumber = explicitNew }
+                lineNumber = line.newLineNumber ?? newLineNumber
                 newLineNumber += 1
             }
 
@@ -561,17 +565,27 @@ enum ToolRowTextRenderer {
         var newLine = 1
 
         guard index > 0 else {
+            if let first = lines.first {
+                return (
+                    first.oldLineNumber ?? oldLine,
+                    first.newLineNumber ?? newLine
+                )
+            }
             return (oldLine, newLine)
         }
 
         for line in lines[..<index] {
             switch line.kind {
             case .context:
+                if let explicitOld = line.oldLineNumber { oldLine = explicitOld }
+                if let explicitNew = line.newLineNumber { newLine = explicitNew }
                 oldLine += 1
                 newLine += 1
             case .removed:
+                if let explicitOld = line.oldLineNumber { oldLine = explicitOld }
                 oldLine += 1
             case .added:
+                if let explicitNew = line.newLineNumber { newLine = explicitNew }
                 newLine += 1
             }
         }
@@ -596,13 +610,17 @@ enum ToolRowTextRenderer {
         for line in lines {
             switch line.kind {
             case .context:
+                if let explicitOld = line.oldLineNumber { oldNumber = explicitOld }
+                if let explicitNew = line.newLineNumber { newNumber = explicitNew }
                 maxSeen = max(maxSeen, oldNumber, newNumber)
                 oldNumber += 1
                 newNumber += 1
             case .removed:
+                if let explicitOld = line.oldLineNumber { oldNumber = explicitOld }
                 maxSeen = max(maxSeen, oldNumber)
                 oldNumber += 1
             case .added:
+                if let explicitNew = line.newLineNumber { newNumber = explicitNew }
                 maxSeen = max(maxSeen, newNumber)
                 newNumber += 1
             }

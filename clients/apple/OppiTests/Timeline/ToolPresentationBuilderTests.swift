@@ -105,6 +105,22 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == "JavaScript")
     }
 
+    @Test("bash heredoc badge still detects when marker appears after 200-char title limit")
+    func bashHeredocLanguageBadgePastCollapsedLimit() {
+        let padding = String(repeating: "x", count: 210)
+        let command = "printf '%@' '\(padding)' && python3 - <<'PY'\nprint('hello')\nPY"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: \(command)",
+            outputPreview: "hello",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string(command)])
+        )
+
+        #expect(ToolCallFormatting.bashCommand(args: ["command": .string(command)], argsSummary: "").count == 200)
+        #expect(config.languageBadge == "Python")
+    }
+
     @Test("bash with python inline flag shows language badge")
     func bashPythonInlineBadge() {
         let command = "python3 -c 'print(42)'"
@@ -828,6 +844,48 @@ struct ToolPresentationBuilderTests {
 
         #expect(modeName(editDiff.expandedContent) == "diff")
         #expect(modeName(extensionDiff.expandedContent) == "diff")
+    }
+
+    @Test("edit diff uses pi patch absolute line numbers")
+    func editDiffUsesPiPatchLineNumbers() throws {
+        let config = ToolPresentationBuilder.build(
+            itemID: "edit-diff-lines", tool: "edit",
+            argsSummary: "path: App.swift",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("App.swift"),
+                    "edits": .array([
+                        .object([
+                            "oldText": .string("var body: some View {\n    HStack(spacing: 5) {\n        if isAnimated {"),
+                            "newText": .string("var body: some View {\n    HStack(spacing: 5) {\n        Image(systemName: \"terminal.fill\")\n        if isAnimated {"),
+                        ]),
+                    ]),
+                ],
+                details: .object([
+                    "patch": .string("""
+                    --- App.swift
+                    +++ App.swift
+                    @@ -314,3 +314,4 @@
+                     var body: some View {
+                         HStack(spacing: 5) {
+                    +        Image(systemName: \"terminal.fill\")
+                         if isAnimated {
+                    """),
+                ]),
+                expanded: ["edit-diff-lines"]
+            )
+        )
+
+        guard case .diff(let lines, _) = config.expandedContent else {
+            Issue.record("Expected edit diff content")
+            return
+        }
+
+        let rendered = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: nil).string
+        #expect(rendered.contains("314 var body: some View"))
+        #expect(rendered.contains("316         Image(systemName:"))
     }
 
     // MARK: - Extension tools

@@ -66,6 +66,17 @@ struct DiffEngineTests {
         #expect(added.count == 2)   // B, D
     }
 
+    @Test func absoluteLineNumbersStartAtProvidedOffsets() {
+        let result = DiffEngine.compute(old: "a\nc", new: "a\nb\nc", oldStartLine: 314, newStartLine: 314)
+
+        #expect(result[0].oldLineNumber == 314)
+        #expect(result[0].newLineNumber == 314)
+        #expect(result[1].oldLineNumber == nil)
+        #expect(result[1].newLineNumber == 315)
+        #expect(result[2].oldLineNumber == 315)
+        #expect(result[2].newLineNumber == 316)
+    }
+
     @Test func insertedLines() {
         let old = "a\nc"
         let new = "a\nb\nc"

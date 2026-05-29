@@ -243,9 +243,9 @@ enum ToolPresentationBuilder {
             result.toolNameColor = UIColor(Color.themeGreen)
 
             // Detect embedded languages (heredocs, inline flags) for badge.
-            // Use the raw command (not compactCommand) because heredoc detection
-            // relies on newlines that whitespace compaction strips.
-            let rawCommand = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
+            // Use the full raw command because heredoc detection relies on
+            // newlines and may appear after the 200-char collapsed title limit.
+            let rawCommand = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
             if !rawCommand.isEmpty {
                 let segments = BashEmbeddedLanguageDetector.detect(rawCommand)
                 if let embedded = segments.first(where: {
@@ -416,7 +416,10 @@ enum ToolPresentationBuilder {
             if !isError,
                let editText = ToolCallFormatting.editOldAndNewText(from: args) {
                 if isDone {
-                    let lines = DiffEngine.compute(old: editText.oldText, new: editText.newText)
+                    let changes = ToolCallFormatting.editTextChanges(from: args)
+                    let lines = ToolCallFormatting.editResultDiffLines(from: details) ?? changes.flatMap { change in
+                        DiffEngine.compute(old: change.oldText, new: change.newText)
+                    }
                     // Use the raw file path (not displayFilePath) so downstream consumers
                     // can fetch the file via API. Display views apply shortenedPath as needed.
                     let diffPath = fileMetadata.filePath

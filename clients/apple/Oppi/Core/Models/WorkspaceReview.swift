@@ -127,6 +127,17 @@ enum ReviewCommentReferenceSource: String, Codable, Sendable, Equatable {
     case terminalOutput = "terminal_output"
     case image
     case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 struct ReviewCommentReference: Codable, Sendable, Equatable {
@@ -302,6 +313,8 @@ enum WorkspaceReviewDiffHunkBuilder {
         return lines.map { line in
             switch line.kind {
             case .context:
+                if let explicitOld = line.oldLineNumber { oldLine = explicitOld }
+                if let explicitNew = line.newLineNumber { newLine = explicitNew }
                 let numbered = WorkspaceReviewDiffLine(
                     kind: .context,
                     text: line.text,
@@ -313,6 +326,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                 newLine += 1
                 return numbered
             case .removed:
+                if let explicitOld = line.oldLineNumber { oldLine = explicitOld }
                 let numbered = WorkspaceReviewDiffLine(
                     kind: .removed,
                     text: line.text,
@@ -323,6 +337,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                 oldLine += 1
                 return numbered
             case .added:
+                if let explicitNew = line.newLineNumber { newLine = explicitNew }
                 let numbered = WorkspaceReviewDiffLine(
                     kind: .added,
                     text: line.text,

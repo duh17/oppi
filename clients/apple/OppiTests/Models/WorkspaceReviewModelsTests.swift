@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -87,6 +88,17 @@ struct WorkspaceReviewModelsTests {
         )
 
         #expect(option.progressTitle == "Starting /grill-me…")
+    }
+
+    @Test func reviewCommentReferenceSourceDecodesUnknownRawValueAsUnknown() throws {
+        let decoded = try JSONDecoder().decode(
+            ReviewCommentReferenceSource.self,
+            from: Data(#""mystery_source""#.utf8)
+        )
+
+        #expect(decoded == .unknown)
+        let encoded = try JSONEncoder().encode(decoded)
+        #expect(String(decoding: encoded, as: UTF8.self) == #""unknown""#)
     }
 
     @Test func treePathCompareUsesDirectoryHierarchy() {

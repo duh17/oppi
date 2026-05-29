@@ -5,6 +5,15 @@ import Foundation
 struct DiffLine: Sendable {
     let kind: Kind
     let text: String
+    let oldLineNumber: Int?
+    let newLineNumber: Int?
+
+    init(kind: Kind, text: String, oldLineNumber: Int? = nil, newLineNumber: Int? = nil) {
+        self.kind = kind
+        self.text = text
+        self.oldLineNumber = oldLineNumber
+        self.newLineNumber = newLineNumber
+    }
 
     enum Kind: Sendable {
         case context
@@ -36,16 +45,26 @@ enum DiffEngine {
     private static let maxLcsCells = 250_000
 
     /// Compute a unified diff between old and new text.
-    static func compute(old: String, new: String) -> [DiffLine] {
+    static func compute(
+        old: String,
+        new: String,
+        oldStartLine: Int = 1,
+        newStartLine: Int? = nil
+    ) -> [DiffLine] {
         let oldTrimmed = splitLines(old)
         let newTrimmed = splitLines(new)
+        let startOldLine = max(1, oldStartLine)
+        let startNewLine = max(1, newStartLine ?? oldStartLine)
 
         let cellCount = oldTrimmed.count * newTrimmed.count
+        let unnumberedLines: [DiffLine]
         if cellCount > maxLcsCells {
-            return fallbackDiff(old: oldTrimmed, new: newTrimmed)
+            unnumberedLines = fallbackDiff(old: oldTrimmed, new: newTrimmed)
+        } else {
+            unnumberedLines = lcs(old: oldTrimmed, new: newTrimmed)
         }
 
-        return lcs(old: oldTrimmed, new: newTrimmed)
+        return number(unnumberedLines, oldStartLine: startOldLine, newStartLine: startNewLine)
     }
 
     /// Format diff lines as unified diff text.
@@ -113,6 +132,48 @@ enum DiffEngine {
         }
 
         return result.reversed()
+    }
+
+    private static func number(
+        _ lines: [DiffLine],
+        oldStartLine: Int,
+        newStartLine: Int
+    ) -> [DiffLine] {
+        var oldLineNumber = oldStartLine
+        var newLineNumber = newStartLine
+
+        return lines.map { line in
+            switch line.kind {
+            case .context:
+                let numbered = DiffLine(
+                    kind: .context,
+                    text: line.text,
+                    oldLineNumber: oldLineNumber,
+                    newLineNumber: newLineNumber
+                )
+                oldLineNumber += 1
+                newLineNumber += 1
+                return numbered
+            case .removed:
+                let numbered = DiffLine(
+                    kind: .removed,
+                    text: line.text,
+                    oldLineNumber: oldLineNumber,
+                    newLineNumber: nil
+                )
+                oldLineNumber += 1
+                return numbered
+            case .added:
+                let numbered = DiffLine(
+                    kind: .added,
+                    text: line.text,
+                    oldLineNumber: nil,
+                    newLineNumber: newLineNumber
+                )
+                newLineNumber += 1
+                return numbered
+            }
+        }
     }
 
     /// Linear-time fallback used when LCS would be too expensive.

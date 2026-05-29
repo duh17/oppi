@@ -423,11 +423,16 @@ enum ToolCallFormatting {
         let removed: Int
     }
 
-    static func editOldAndNewText(from args: [String: JSONValue]?) -> (oldText: String, newText: String)? {
-        guard let editsArray = args?["edits"]?.arrayValue, !editsArray.isEmpty else { return nil }
+    struct EditTextChange {
+        let oldText: String
+        let newText: String
+    }
 
-        var olds: [String] = []
-        var news: [String] = []
+    static func editTextChanges(from args: [String: JSONValue]?) -> [EditTextChange] {
+        guard let editsArray = args?["edits"]?.arrayValue, !editsArray.isEmpty else { return [] }
+
+        var changes: [EditTextChange] = []
+        changes.reserveCapacity(editsArray.count)
 
         for edit in editsArray {
             guard let editObj = edit.objectValue,
@@ -435,12 +440,190 @@ enum ToolCallFormatting {
                   let new = editObj["newText"]?.stringValue else {
                 continue
             }
-            olds.append(old)
-            news.append(new)
+            changes.append(EditTextChange(oldText: old, newText: new))
         }
 
-        guard !olds.isEmpty else { return nil }
-        return (oldText: olds.joined(separator: "\n"), newText: news.joined(separator: "\n"))
+        return changes
+    }
+
+    static func editOldAndNewText(from args: [String: JSONValue]?) -> (oldText: String, newText: String)? {
+        let changes = editTextChanges(from: args)
+        guard !changes.isEmpty else { return nil }
+
+        return (
+            oldText: changes.map(\.oldText).joined(separator: "\n"),
+            newText: changes.map(\.newText).joined(separator: "\n")
+        )
+    }
+
+    static func editResultDiffLines(from details: JSONValue?) -> [DiffLine]? {
+        guard let object = details?.objectValue else { return nil }
+
+        if let patch = object["patch"]?.stringValue,
+           let lines = parseUnifiedPatch(patch), !lines.isEmpty {
+            return lines
+        }
+
+        if let diff = object["diff"]?.stringValue,
+           let lines = parsePiNumberedDiff(diff), !lines.isEmpty {
+            return lines
+        }
+
+        return nil
+    }
+
+    private static func parseUnifiedPatch(_ text: String) -> [DiffLine]? {
+        let rawLines = normalizedDiffLines(text)
+        var lines: [DiffLine] = []
+        lines.reserveCapacity(rawLines.count)
+
+        var oldLineNumber: Int?
+        var newLineNumber: Int?
+        var sawHunk = false
+
+        for rawLine in rawLines {
+            if rawLine.hasPrefix("@@") {
+                guard let starts = parseUnifiedHunkHeader(rawLine) else { continue }
+                oldLineNumber = starts.old
+                newLineNumber = starts.new
+                sawHunk = true
+                continue
+            }
+
+            guard sawHunk, let prefix = rawLine.first else { continue }
+            if rawLine.hasPrefix("\\ No newline") { continue }
+
+            let text = String(rawLine.dropFirst())
+            switch prefix {
+            case " ":
+                guard let currentOldLine = oldLineNumber,
+                      let currentNewLine = newLineNumber else { continue }
+                lines.append(DiffLine(
+                    kind: .context,
+                    text: text,
+                    oldLineNumber: positiveLineNumber(currentOldLine),
+                    newLineNumber: positiveLineNumber(currentNewLine)
+                ))
+                Self.increment(&oldLineNumber)
+                Self.increment(&newLineNumber)
+            case "-":
+                guard let currentOldLine = oldLineNumber else { continue }
+                lines.append(DiffLine(
+                    kind: .removed,
+                    text: text,
+                    oldLineNumber: positiveLineNumber(currentOldLine),
+                    newLineNumber: nil
+                ))
+                Self.increment(&oldLineNumber)
+            case "+":
+                guard let currentNewLine = newLineNumber else { continue }
+                lines.append(DiffLine(
+                    kind: .added,
+                    text: text,
+                    oldLineNumber: nil,
+                    newLineNumber: positiveLineNumber(currentNewLine)
+                ))
+                Self.increment(&newLineNumber)
+            default:
+                continue
+            }
+        }
+
+        return lines.isEmpty ? nil : lines
+    }
+
+    private static func parseUnifiedHunkHeader(_ line: String) -> (old: Int, new: Int)? {
+        let pattern = #"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.firstMatch(in: line, range: range), match.numberOfRanges >= 3,
+              let oldRange = Range(match.range(at: 1), in: line),
+              let newRange = Range(match.range(at: 2), in: line),
+              let old = Int(String(line[oldRange])),
+              let new = Int(String(line[newRange])) else {
+            return nil
+        }
+        return (old, new)
+    }
+
+    private static func parsePiNumberedDiff(_ text: String) -> [DiffLine]? {
+        let rawLines = normalizedDiffLines(text)
+        var lines: [DiffLine] = []
+        lines.reserveCapacity(rawLines.count)
+
+        for rawLine in rawLines {
+            guard let prefix = rawLine.first,
+                  prefix == "+" || prefix == "-" || prefix == " " else {
+                continue
+            }
+
+            guard let parsed = parsePiNumberedDiffBody(rawLine.dropFirst()) else { continue }
+            let text = parsed.text
+            switch prefix {
+            case "+":
+                guard let number = parsed.lineNumber else { continue }
+                lines.append(DiffLine(
+                    kind: .added,
+                    text: text,
+                    oldLineNumber: nil,
+                    newLineNumber: number
+                ))
+            case "-":
+                guard let number = parsed.lineNumber else { continue }
+                lines.append(DiffLine(
+                    kind: .removed,
+                    text: text,
+                    oldLineNumber: number,
+                    newLineNumber: nil
+                ))
+            default:
+                lines.append(DiffLine(
+                    kind: .context,
+                    text: text,
+                    oldLineNumber: parsed.lineNumber,
+                    newLineNumber: parsed.lineNumber
+                ))
+            }
+        }
+
+        return lines.isEmpty ? nil : lines
+    }
+
+    private static func parsePiNumberedDiffBody(_ body: Substring) -> (lineNumber: Int?, text: String)? {
+        var cursor = body.startIndex
+        while cursor < body.endIndex, body[cursor] == " " {
+            cursor = body.index(after: cursor)
+        }
+
+        let numberStart = cursor
+        while cursor < body.endIndex, body[cursor].isNumber {
+            cursor = body.index(after: cursor)
+        }
+
+        let lineNumber = numberStart == cursor ? nil : Int(String(body[numberStart..<cursor]))
+        if cursor < body.endIndex, body[cursor] == " " {
+            cursor = body.index(after: cursor)
+        }
+
+        let text = String(body[cursor...])
+        if lineNumber == nil && text != "..." {
+            return nil
+        }
+        return (lineNumber, text)
+    }
+
+    private static func normalizedDiffLines(_ text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+    }
+
+    private static func positiveLineNumber(_ value: Int) -> Int? {
+        value > 0 ? value : nil
+    }
+
+    private static func increment(_ value: inout Int?) {
+        value = (value ?? 0) + 1
     }
 
     static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {

@@ -329,6 +329,47 @@ struct ToolCallFormattingTests {
         #expect(ToolCallFormatting.editOldAndNewText(from: args) == nil)
     }
 
+    @Test func editResultDiffLinesParsesPiPatchLineNumbers() throws {
+        let details: JSONValue = .object([
+            "patch": .string("""
+            --- App.swift
+            +++ App.swift
+            @@ -314,3 +314,4 @@
+             var body: some View {
+                 HStack(spacing: 5) {
+            +        Image(systemName: \"terminal.fill\")
+                 if isAnimated {
+            """),
+        ])
+
+        let lines = try #require(ToolCallFormatting.editResultDiffLines(from: details))
+        #expect(lines.map(\.kind) == [.context, .context, .added, .context])
+        #expect(lines[0].oldLineNumber == 314)
+        #expect(lines[0].newLineNumber == 314)
+        #expect(lines[2].oldLineNumber == nil)
+        #expect(lines[2].newLineNumber == 316)
+        #expect(lines[2].text == "        Image(systemName: \"terminal.fill\")")
+    }
+
+    @Test func editResultDiffLinesFallsBackToPiNumberedDiff() throws {
+        let details: JSONValue = .object([
+            "diff": .string("""
+              314 var body: some View {
+              315     HStack(spacing: 5) {
+            + 316         Image(systemName: \"terminal.fill\")
+              317         if isAnimated {
+            """),
+        ])
+
+        let lines = try #require(ToolCallFormatting.editResultDiffLines(from: details))
+        #expect(lines.map(\.kind) == [.context, .context, .added, .context])
+        #expect(lines[0].oldLineNumber == 314)
+        #expect(lines[0].newLineNumber == 314)
+        #expect(lines[2].oldLineNumber == nil)
+        #expect(lines[2].newLineNumber == 316)
+        #expect(lines[2].text == "        Image(systemName: \"terminal.fill\")")
+    }
+
     // MARK: - Format Bytes
 
     @Test func formatBytesSmall() {
