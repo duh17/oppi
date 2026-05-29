@@ -70,6 +70,11 @@ enum ToolTimelineRowLayoutBuilder {
         )
 
         let expandedViewportHeight = expandedContainer.heightAnchor.constraint(equalToConstant: minDiffViewportHeight)
+        // Self-sizing collection cells can temporarily hand the content view a
+        // stale/taller frame while UIKit settles estimated heights. Keep the
+        // viewport height soft so read-media fallback labels do not stretch into
+        // giant blank cards while the next sizing pass catches up.
+        expandedViewportHeight.priority = .defaultHigh
 
         let all: [NSLayoutConstraint] = [
             borderView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),

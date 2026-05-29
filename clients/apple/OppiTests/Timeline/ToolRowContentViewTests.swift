@@ -87,6 +87,35 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedReadMediaFallbackTextDoesNotStretchInsideTemporarilyTallCell() throws {
+        let path = "/tmp/oppi-screenshots/workspace-home-dense-counts-e2e.png"
+        let config = makeTimelineToolConfiguration(
+            title: path,
+            expandedContent: .readMedia(
+                output: "Read image file [image/png]\n[Image: original 1206x2622, displayed at 920x2000.]",
+                filePath: path,
+                startLine: 1,
+                attachments: []
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(x: 0, y: 0, width: 370, height: 620)
+
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let fallbackLabel = try #require(timelineAllLabels(in: view).first {
+            timelineRenderedText(of: $0).contains("Read image file [image/png]")
+        })
+        let fallbackRect = fallbackLabel.convert(fallbackLabel.bounds, to: view)
+
+        #expect(fallbackRect.minY < 120, "Read-media fallback text should stay near the top; got frame \(fallbackRect)")
+        #expect(fallbackRect.height < 96, "Read-media fallback text should not stretch into a blank card; got frame \(fallbackRect)")
+    }
+
+    @MainActor
     @Test func trailingByteCountAlignsWithCollapsedTitleRow() throws {
         let config = makeTimelineToolConfiguration(
             title: "$ pwd",

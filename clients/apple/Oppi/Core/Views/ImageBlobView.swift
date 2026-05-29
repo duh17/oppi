@@ -16,6 +16,7 @@ struct ImageBlobView: View {
     let mimeType: String?
 
     @State private var phase: Phase = .loading
+    @State private var staticImageWidth: CGFloat = 0
 
     var body: some View {
         Group {
@@ -29,14 +30,7 @@ struct ImageBlobView: View {
                             .controlSize(.small)
                     }
             case .staticImage(let image):
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(
-                        maxWidth: .infinity,
-                        maxHeight: ImageViewportSizing.maxHeight(for: .singleScreenFit, screenHeight: UIScreen.main.bounds.height)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                renderedStaticImage(image)
                     .onTapGesture { FullScreenImageViewController.present(image: image) }
                     .contextMenu {
                         Button("Copy", systemImage: "doc.on.doc") {
@@ -98,6 +92,45 @@ struct ImageBlobView: View {
 
                 return .failure
             }.value
+        }
+    }
+
+    @ViewBuilder
+    private func renderedStaticImage(_ image: UIImage) -> some View {
+        let maxHeight = ImageViewportSizing.maxHeight(for: .primaryMedia, screenHeight: UIScreen.main.bounds.height)
+        let targetHeight = staticImageTargetHeight(for: image, maxHeight: maxHeight)
+
+        Image(uiImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .frame(height: targetHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(key: StaticImageWidthPreferenceKey.self, value: proxy.size.width)
+                }
+            }
+            .onPreferenceChange(StaticImageWidthPreferenceKey.self) { width in
+                guard width.isFinite, width > 1, abs(width - staticImageWidth) > 0.5 else { return }
+                staticImageWidth = width
+            }
+    }
+
+    private func staticImageTargetHeight(for image: UIImage, maxHeight: CGFloat?) -> CGFloat? {
+        guard image.size.width > 0, image.size.height > 0, staticImageWidth > 1 else { return nil }
+        let naturalHeight = staticImageWidth * image.size.height / image.size.width
+        return min(maxHeight ?? naturalHeight, naturalHeight)
+    }
+}
+
+private struct StaticImageWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 1 {
+            value = next
         }
     }
 }

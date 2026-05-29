@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 import WebKit
@@ -68,6 +69,43 @@ struct ToolExpandedSurfaceHostTests {
         )
 
         #expect(height <= 516, "Square read-tool images in landscape should stay near one screen tall; got \(height)")
+    }
+
+    @Test func base64ImageBlobDoesNotSingleScreenCapPortraitScreenshotPreview() async throws {
+        let previewWidth: CGFloat = 300
+        let image = makeReadToolTestImage(size: CGSize(width: 300, height: 648))
+        let imageData = try #require(image.pngData())
+        let decodedImage = try #require(ImageDecodeCache.decode(base64: imageData.base64EncodedString(), maxPixelSize: 1600))
+        #expect(decodedImage.size.height > decodedImage.size.width)
+        let controller = UIHostingController(
+            rootView: ImageBlobView(
+                base64: imageData.base64EncodedString(),
+                mimeType: "image/png"
+            )
+        )
+        controller.view.backgroundColor = .clear
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: previewWidth, height: 900))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let singleScreenCap = try #require(ImageViewportSizing.maxHeight(
+            for: .singleScreenFit,
+            screenHeight: UIScreen.main.bounds.height
+        ))
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            return controller.sizeThatFits(in: CGSize(width: previewWidth, height: 2_000)).height > singleScreenCap + 24
+        }
+        #expect(decoded)
+
+        let fitted = controller.sizeThatFits(in: CGSize(width: previewWidth, height: 2_000))
+        #expect(
+            fitted.height > singleScreenCap + 24,
+            "Portrait image output should not be height-capped like inline prose, because that creates horizontal empty space; fitted=\(fitted.height), singleScreenCap=\(singleScreenCap)"
+        )
     }
 
     @Test func readMediaTallInlineImageUsesNaturalAspectHeight() async throws {
