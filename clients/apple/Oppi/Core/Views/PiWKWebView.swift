@@ -22,6 +22,9 @@ final class PiWKWebView: WKWebView {
     /// the edit menu itself always shows one Comment action.
     var piActionStore: PiQuickActionStore?
 
+    /// Whether the selection menu should expose the Review Comment action.
+    var piAllowsReviewComments = true
+
     override init(frame: CGRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
     }
@@ -34,7 +37,7 @@ final class PiWKWebView: WKWebView {
     override func buildMenu(with builder: any UIMenuBuilder) {
         super.buildMenu(with: builder)
 
-        guard piActionHandler != nil else { return }
+        guard piAllowsReviewComments, piActionHandler != nil else { return }
 
         let quickAction = PiQuickAction.reviewCommentAction
         let commentAction = UIAction(
@@ -81,12 +84,14 @@ extension PiWKWebView {
         sourceContext: SelectedTextSourceContext?,
         actionStore: PiQuickActionStore? = nil
     ) {
-        guard let router, let sourceContext else {
+        guard let router, let sourceContext, router.allowsReviewComments else {
             piActionHandler = nil
             piActionStore = nil
+            piAllowsReviewComments = false
             return
         }
         piActionStore = actionStore
+        piAllowsReviewComments = true
         piActionHandler = { text, quickAction, presentingViewController in
             router.dispatch(
                 SelectedTextPiRequest(

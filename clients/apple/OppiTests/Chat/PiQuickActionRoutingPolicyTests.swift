@@ -76,8 +76,8 @@ struct PiQuickActionRoutingPolicyTests {
     }
 
     @Test(arguments: SelectedTextSurfaceKind.representativeSurfaces)
-    func nonChatSurfacesRouteActionsToQuickSession(surface: SelectedTextSurfaceKind) throws {
-        for action in [PiQuickAction.explainAction, PiQuickAction.addToPromptAction, PiQuickAction.newSessionAction, PiQuickAction.reviewCommentAction] {
+    func nonChatSurfacesRoutePromptActionsToQuickSession(surface: SelectedTextSurfaceKind) throws {
+        for action in [PiQuickAction.explainAction, PiQuickAction.addToPromptAction, PiQuickAction.newSessionAction] {
             let request = SelectedTextPiRequest(
                 action: action,
                 selectedText: "selected text",
@@ -90,6 +90,29 @@ struct PiQuickActionRoutingPolicyTests {
             }
             #expect(draft.contains("selected text"))
         }
+    }
+
+    @Test(arguments: SelectedTextSurfaceKind.representativeSurfaces)
+    func nonChatSurfacesDoNotFallbackReviewCommentsToDrafts(surface: SelectedTextSurfaceKind) throws {
+        let request = SelectedTextPiRequest(
+            action: PiQuickAction.reviewCommentAction,
+            selectedText: "selected text",
+            source: Self.source(surface: surface)
+        )
+
+        #expect(SelectedTextPiRouterPolicy.route(request: request, context: .nonChat) == nil)
+    }
+
+    @MainActor
+    @Test func quickSessionRouterDoesNotExposeReviewCommentActions() throws {
+        let router = SelectedTextPiActionRouter(dispatch: { _ in }, allowsReviewComments: false)
+        let action = SelectedTextPiMenuBuilder.commentAction(
+            selectedText: "let value = 42",
+            sourceContext: Self.source(surface: .fullScreenCode),
+            router: router
+        )
+
+        #expect(action == nil)
     }
 
     static let routingCases: [Case] = [
@@ -115,11 +138,11 @@ struct PiQuickActionRoutingPolicyTests {
             expected: .quickSessionDraftContains("let value = 42")
         ),
         Case(
-            name: "non-chat comment opens Quick Session instead of staging locally",
+            name: "non-chat comment does not fallback to a draft",
             context: .nonChat,
             action: PiQuickAction.reviewCommentAction,
             source: source(surface: .fullScreenSource),
-            expected: .quickSessionDraftContains("let value = 42")
+            expected: .none
         ),
         Case(
             name: "non-chat current-session action opens Quick Session",

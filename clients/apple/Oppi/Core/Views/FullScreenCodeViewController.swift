@@ -780,7 +780,7 @@ final class FullScreenCodeViewController: UIViewController {
         router: SelectedTextPiActionRouter?,
         sourceContext: SelectedTextSourceContext?
     ) -> ((String, PiQuickAction, UIViewController?) -> Void)? {
-        guard let router, let sourceContext else { return nil }
+        guard let router, let sourceContext, router.allowsReviewComments else { return nil }
         return { text, quickAction, presentingViewController in
             router.dispatch(
                 SelectedTextPiRequest(

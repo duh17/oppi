@@ -1687,6 +1687,7 @@ struct ChatView: View {
                 }
             }
         }
+        .environment(\.selectedTextActionScope, .activeSession(selectedTextPiRouter))
         .presentationDetents([.medium, .large])
     }
 

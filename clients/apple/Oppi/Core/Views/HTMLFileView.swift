@@ -28,8 +28,9 @@ struct HTMLFileView: View {
                     surface: .fullScreenSource,
                     filePath: filePath
                 )
-                let piHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = piRouter.map { router in
-                    { text, action, presentingViewController in
+                let piHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = piRouter.flatMap { router in
+                    guard router.allowsReviewComments else { return nil }
+                    return { text, action, presentingViewController in
                         router.dispatch(
                             SelectedTextPiRequest(
                                 action: action,

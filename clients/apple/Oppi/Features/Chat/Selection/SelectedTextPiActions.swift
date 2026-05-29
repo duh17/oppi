@@ -4,12 +4,21 @@ import UIKit
 @MainActor
 final class SelectedTextPiActionRouter {
     private let dispatchClosure: (SelectedTextPiRequest, UIViewController?) -> Void
+    let allowsReviewComments: Bool
 
-    init(dispatch: @escaping (SelectedTextPiRequest) -> Void) {
+    init(
+        dispatch: @escaping (SelectedTextPiRequest) -> Void,
+        allowsReviewComments: Bool = true
+    ) {
+        self.allowsReviewComments = allowsReviewComments
         dispatchClosure = { request, _ in dispatch(request) }
     }
 
-    init(dispatchWithPresentation: @escaping (SelectedTextPiRequest, UIViewController?) -> Void) {
+    init(
+        dispatchWithPresentation: @escaping (SelectedTextPiRequest, UIViewController?) -> Void,
+        allowsReviewComments: Bool = true
+    ) {
+        self.allowsReviewComments = allowsReviewComments
         dispatchClosure = dispatchWithPresentation
     }
 
@@ -260,7 +269,7 @@ enum SelectedTextPiMenuBuilder {
         presentingViewController: UIViewController? = nil
     ) -> UIAction? {
         let normalized = SelectedTextPiPromptFormatter.normalizedSelectedText(selectedText)
-        guard !normalized.isEmpty else { return nil }
+        guard router.allowsReviewComments, !normalized.isEmpty else { return nil }
 
         let quickAction = PiQuickAction.reviewCommentAction
         return UIAction(
@@ -427,8 +436,7 @@ enum SelectedTextPiRouterPolicy {
             case .activeChat:
                 return .reviewComment(request)
             case .nonChat:
-                let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-                return addition.isEmpty ? nil : .quickSessionDraft(addition)
+                return nil
             }
         case .newSession:
             let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)

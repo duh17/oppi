@@ -99,7 +99,7 @@ final class AppNavigation {
 
     /// Creates the default non-chat selected-text routing scope.
     func makeQuickSessionActionScope() -> SelectedTextActionScope {
-        .quickSession(SelectedTextPiActionRouter { [weak self] request in
+        .quickSession(SelectedTextPiActionRouter(dispatch: { [weak self] request in
             guard let self,
                   case .quickSessionDraft(let draft) = SelectedTextPiRouterPolicy.route(
                     request: request,
@@ -107,7 +107,7 @@ final class AppNavigation {
                   ) else { return }
             self.pendingQuickSessionDraft = draft
             self.showQuickSession = true
-        })
+        }, allowsReviewComments: false))
     }
 }
 

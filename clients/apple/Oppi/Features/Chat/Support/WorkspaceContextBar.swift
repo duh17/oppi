@@ -283,15 +283,15 @@ struct WorkspaceContextBar: View {
         if let parentScope {
             switch parentScope {
             case .activeSession(let router):
-                return .activeSession(SelectedTextPiActionRouter { request in
+                return .activeSession(SelectedTextPiActionRouter(dispatch: { request in
                     dismissFileDetail()
                     router.dispatch(request)
-                })
+                }, allowsReviewComments: router.allowsReviewComments))
             case .quickSession(let router):
-                return .quickSession(SelectedTextPiActionRouter { request in
+                return .quickSession(SelectedTextPiActionRouter(dispatch: { request in
                     dismissFileDetail()
                     router.dispatch(request)
-                })
+                }, allowsReviewComments: router.allowsReviewComments))
             }
         }
 
