@@ -49,7 +49,7 @@ export interface SpawnAgentDetails {
 
 export interface InspectAgentDetails {
   sessionId: string;
-  level: "overview" | "turn" | "tool";
+  level: "response" | "overview" | "turn" | "tool";
   turnCount?: number;
   toolCount?: number;
   errorCount?: number;

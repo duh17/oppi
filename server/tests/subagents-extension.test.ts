@@ -572,8 +572,8 @@ describe("inspect_agent", () => {
     const { inspect } = setup({ sessions: [child] });
 
     const result = await inspect.execute("tc-1", { id: "my-child" });
-    expect(result.content[0].text).toContain("1 turns");
-    expect(result.details.level).toBe("overview");
+    expect(result.content[0].text).toBe("hi there");
+    expect(result.details.level).toBe("response");
   });
 
   it("allows inspection of grandchildren in the tree", async () => {
@@ -589,8 +589,8 @@ describe("inspect_agent", () => {
     const { inspect } = setup({ sessions: [child, grandchild] });
 
     const result = await inspect.execute("tc-1", { id: "my-grandchild" });
-    expect(result.details.level).toBe("overview");
-    expect(result.content[0].text).toContain("1 turns");
+    expect(result.details.level).toBe("response");
+    expect(result.content[0].text).toBe("done");
   });
 
   it("returns error when trace file is missing", async () => {
@@ -638,7 +638,7 @@ describe("inspect_agent", () => {
       });
       const { inspect } = setup({ sessions: [child] });
 
-      const result = await inspect.execute("tc-1", { id: "my-child" });
+      const result = await inspect.execute("tc-1", { id: "my-child", response: false });
       const text = result.content[0].text;
 
       expect(text).toContain("1 turns");
@@ -674,7 +674,7 @@ describe("inspect_agent", () => {
       });
       const { inspect } = setup({ sessions: [child] });
 
-      const result = await inspect.execute("tc-1", { id: "my-child" });
+      const result = await inspect.execute("tc-1", { id: "my-child", response: false });
       const text = result.content[0].text;
 
       expect(text).toContain("Tools:");
@@ -697,7 +697,7 @@ describe("inspect_agent", () => {
       });
       const { inspect } = setup({ sessions: [child] });
 
-      const result = await inspect.execute("tc-1", { id: "my-child" });
+      const result = await inspect.execute("tc-1", { id: "my-child", response: false });
       expect(result.content[0].text).toContain("Last response:");
       expect(result.content[0].text).toContain("detailed explanation");
     });

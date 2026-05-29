@@ -131,7 +131,8 @@ const inspectAgentParams = Type.Object({
     Type.Boolean({
       description:
         "If true, return the full assistant response text (no truncation). " +
-        "With turn: returns that turn's response. Without turn: returns the last turn's response.",
+        "With turn: returns that turn's response. Without turn: returns the last turn's response. " +
+        "Defaults to true when no turn or tool is specified; set false for the overview.",
     }),
   ),
 });
@@ -952,17 +953,17 @@ export function createSubagentsFactory(
       name: "inspect_agent",
       label: "Inspect Agent",
       description:
-        "Inspect a child agent's execution trace with progressive disclosure. " +
-        "Three levels: (1) overview — all turns with tool counts and error markers, " +
-        "(2) turn detail — tool list with condensed args and error previews, " +
-        "(3) tool detail — full arguments and output. Works on active or stopped sessions.",
+        "Inspect a child agent's execution trace. By default, inspect_agent(id) returns " +
+        "the full last assistant response. Set response: false for the overview with tool " +
+        "counts and error markers, then drill into turns or tools for details.",
       promptSnippet:
-        "inspect_agent(id) overview | inspect_agent(id, turn) drill into turn | inspect_agent(id, turn, tool) full output | inspect_agent(id, response) full last response",
+        "inspect_agent(id) full last response | inspect_agent(id, response:false) overview | inspect_agent(id, turn) drill into turn | inspect_agent(id, turn, tool) full output",
       promptGuidelines: [
-        "Start with inspect_agent(id) to get the overview. Look for error markers to find problems.",
+        "Use inspect_agent(id) to get the full last response from a child agent with no truncation.",
+        "Use inspect_agent(id, response: false) to get the overview with turn counts, tool counts, and error markers.",
         "Drill into specific turns with inspect_agent(id, turn: N) only when you need details.",
         "Use inspect_agent(id, turn: N, tool: M) to see full tool output — only when investigating a specific issue.",
-        "Use inspect_agent(id, response: true) to get the full last response text with no truncation. Add turn: N to get a specific turn's response.",
+        "Use inspect_agent(id, turn: N, response: true) to get a specific turn's response text.",
         "The trace is live — you can inspect active sessions to see progress so far.",
       ],
       parameters: inspectAgentParams,
@@ -1018,13 +1019,17 @@ export function createSubagentsFactory(
           };
         }
 
-        // Render at the appropriate level
+        // Render at the appropriate level. A bare inspect_agent(id) is optimized
+        // for the common handoff path: show the child's final answer first.
+        // Agents can still request the summarized trace with response: false.
         let text: string;
-        let level: "overview" | "turn" | "tool";
+        let level: InspectAgentDetails["level"];
+        const wantsDefaultResponse =
+          params.response !== false && params.turn === undefined && params.tool === undefined;
 
-        if (params.response) {
+        if (params.response === true || wantsDefaultResponse) {
           text = renderFullResponse(turns, params.turn);
-          level = params.turn !== undefined ? "turn" : "overview";
+          level = "response";
         } else if (params.turn !== undefined && params.tool !== undefined) {
           text = renderToolDetail(turns, params.turn, params.tool);
           level = "tool";

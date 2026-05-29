@@ -73,15 +73,16 @@ Use wait mode for sequential dependencies, not for long-running background work.
 
 ## inspect_agent
 
-`inspect_agent` reads a session's JSONL trace and returns progressively more detail.
+`inspect_agent` reads a session's JSONL trace.
 
-Levels:
+Default and detail views:
 
-1. **Overview**: `inspect_agent(id)`
-2. **Turn detail**: `inspect_agent(id, turn: N)`
-3. **Tool detail**: `inspect_agent(id, turn: N, tool: M)`
+1. **Full last response**: `inspect_agent(id)`
+2. **Overview**: `inspect_agent(id, response: false)`
+3. **Turn detail**: `inspect_agent(id, turn: N)`
+4. **Tool detail**: `inspect_agent(id, turn: N, tool: M)`
 
-Set `response: true` to return the full assistant response text instead of the summarized trace view.
+Set `response: true` with `turn: N` to return that turn's assistant response text instead of the summarized turn view.
 
 Works for both active and stopped sessions.
 

@@ -1387,7 +1387,7 @@ describe("subagents-extension", () => {
       );
 
       const result = await tool("inspect_agent").execute("tc1", { id: "c1" });
-      expect(result.content[0].text).toContain("1 turns");
+      expect(result.content[0].text).toBe("hi there");
     });
 
     it("allows inspecting grandchild (descendant in tree)", async () => {
@@ -1407,7 +1407,7 @@ describe("subagents-extension", () => {
       );
 
       const result = await tool("inspect_agent").execute("tc1", { id: "gc1" });
-      expect(result.content[0].text).toContain("1 turns");
+      expect(result.content[0].text).toBe("done");
     });
 
     it("returns error when no trace file available", async () => {
@@ -1471,7 +1471,10 @@ describe("subagents-extension", () => {
         }),
       );
 
-      const result = await tool("inspect_agent").execute("tc1", { id: "c1" });
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        response: false,
+      });
       const text = result.content[0].text;
 
       // Summary line
@@ -1517,7 +1520,10 @@ describe("subagents-extension", () => {
         }),
       );
 
-      const result = await tool("inspect_agent").execute("tc1", { id: "c1" });
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        response: false,
+      });
       // 2 unique files changed
       expect(result.content[0].text).toContain("2 files changed");
     });
@@ -1537,7 +1543,10 @@ describe("subagents-extension", () => {
         }),
       );
 
-      const result = await tool("inspect_agent").execute("tc1", { id: "c1" });
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        response: false,
+      });
       expect(result.content[0].text).toContain("text only");
     });
 
@@ -1758,7 +1767,10 @@ describe("subagents-extension", () => {
         }),
       );
 
-      const result = await tool("inspect_agent").execute("tc1", { id: "c1" });
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        response: false,
+      });
       // Should still parse the valid lines
       expect(result.content[0].text).toContain("1 turns");
     });
@@ -2076,7 +2088,7 @@ describe("subagents-extension", () => {
       );
 
       const result = await tool("inspect_agent").execute("tc1", { id: "detached-1" });
-      expect(result.content[0].text).toContain("1 turns");
+      expect(result.content[0].text).toBe("found issues");
     });
 
     it("rejects sessions not in the workspace", async () => {
@@ -2160,7 +2172,7 @@ describe("subagents-extension", () => {
       );
 
       const result = await tool("inspect_agent").execute("tc1", { id: "child-2" });
-      expect(result.content[0].text).toContain("1 turns");
+      expect(result.content[0].text).toBe("done");
     });
   });
 });
