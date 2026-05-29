@@ -2,6 +2,7 @@ import Foundation
 import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Connection")
+private let terminalOnlyExtensionStatusKeys: Set<String> = ["oppi-mirror"]
 
 // MARK: - Message Router
 
@@ -187,6 +188,11 @@ extension ServerConnection {
         case "setStatus":
             guard let statusKey else { return }
             var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            if terminalOnlyExtensionStatusKeys.contains(statusKey) {
+                surface.statuses.removeValue(forKey: statusKey)
+                storeExtensionSurface(surface, for: sessionId)
+                return
+            }
             let normalized = statusText?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let normalized, !normalized.isEmpty {
                 surface.statuses[statusKey] = normalized

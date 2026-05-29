@@ -425,6 +425,57 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"] == "running")
     }
 
+    @Test func routeOppiMirrorStatusStaysOutOfChatSurface() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setStatus",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: "oppi-mirror",
+                    statusText: "Mirror \\ live",
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+    }
+
+    @Test func routeOppiMirrorStatusClearsExistingChatSurfaceEntry() {
+        let (conn, pipe) = makeTestConnection()
+        conn.extensionSurfaceBySession["s1"] = ExtensionSurfaceState(
+            statuses: ["oppi-mirror": "Mirror | live"]
+        )
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setStatus",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: "oppi-mirror",
+                    statusText: "Mirror / live",
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+    }
+
     @Test func routeExtensionSetEditorTextUpdatesComposerState() {
         let (conn, pipe) = makeTestConnection()
 
