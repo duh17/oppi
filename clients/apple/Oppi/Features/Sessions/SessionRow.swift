@@ -313,11 +313,16 @@ struct SessionRow: View {
             isAnimated && !reduceMotion
         }
 
+        private var iconOpacity: Double {
+            guard shouldAnimate else { return 0.88 }
+            return breathing ? 0.98 : 0.90
+        }
+
         var body: some View {
             Image(systemName: "terminal.fill")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(color)
-                .opacity(shouldAnimate && breathing ? 1 : 0.82)
+                .opacity(iconOpacity)
                 .frame(width: 18, height: 16, alignment: .trailing)
                 .accessibilityLabel(accessibilityLabel)
                 .onAppear(perform: updateBreathing)
@@ -332,7 +337,7 @@ struct SessionRow: View {
                 return
             }
             breathing = false
-            withAnimation(ThemeMotion.animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true), reduceMotion: reduceMotion)) {
+            withAnimation(ThemeMotion.animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), reduceMotion: reduceMotion)) {
                 breathing = true
             }
         }

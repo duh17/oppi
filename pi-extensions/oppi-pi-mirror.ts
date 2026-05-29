@@ -1,10 +1,12 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  AgentSession,
+  type AgentSessionEvent,
+  type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { WebSocket } from "ws";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { WebSocket, type RawData } from "ws";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
 interface OppiMirrorSettings {
@@ -12,6 +14,8 @@ interface OppiMirrorSettings {
   token?: string;
   autoStart?: boolean;
 }
+
+type MirrorLogLevel = "debug" | "info" | "warn" | "error";
 
 interface QueueImageContent {
   data: string;
@@ -38,6 +42,70 @@ interface MessageQueueState {
   followUp: MessageQueueItem[];
 }
 
+interface EditableAgentSession {
+  sessionId?: string;
+  sessionManager?: { getSessionId?: () => string };
+  _steeringMessages?: string[];
+  _followUpMessages?: string[];
+  _emitQueueUpdate?: () => void;
+  agent?: {
+    clearAllQueues?: () => void;
+    clearSteeringQueue?: () => void;
+    clearFollowUpQueue?: () => void;
+    steer?: (message: unknown) => void;
+    followUp?: (message: unknown) => void;
+  };
+  reload?: () => Promise<void>;
+  abortCompaction?: () => void;
+  abortRetry?: () => void;
+  abortBash?: () => void;
+  setAutoCompactionEnabled?: (enabled: boolean) => void;
+  setAutoRetryEnabled?: (enabled: boolean) => void;
+  setSteeringMode?: (mode: "all" | "one-at-a-time") => void;
+  setFollowUpMode?: (mode: "all" | "one-at-a-time") => void;
+  getUserMessagesForForking?: () => Array<{ entryId: string; text: string }>;
+  navigateTree?: (
+    targetId: string,
+    options?: {
+      summarize?: boolean;
+      customInstructions?: string;
+      replaceInstructions?: boolean;
+      label?: string;
+    },
+  ) => Promise<unknown>;
+}
+
+interface QueueUpdateEvent {
+  steering: readonly string[];
+  followUp: readonly string[];
+  session?: EditableAgentSession;
+  sessionId?: string;
+}
+
+type QueueUpdateListener = (event: QueueUpdateEvent) => void;
+type InternalAgentSessionEvent = Extract<
+  AgentSessionEvent,
+  | { type: "compaction_start" }
+  | { type: "compaction_end" }
+  | { type: "auto_retry_start" }
+  | { type: "auto_retry_end" }
+>;
+type InternalAgentSessionEventListener = (
+  event: InternalAgentSessionEvent,
+) => void;
+
+interface QueueUpdateBridge {
+  listeners: Set<QueueUpdateListener>;
+  internalEventListeners: Set<InternalAgentSessionEventListener>;
+  sessions: Map<string, EditableAgentSession>;
+  installed: boolean;
+  internalEventInstalled?: boolean;
+  last?: QueueUpdateEvent;
+  lastSession?: EditableAgentSession;
+}
+
+const QUEUE_UPDATE_BRIDGE_KEY = "__oppiMirrorQueueUpdateBridge";
+
 const EVENT_TYPES = [
   "agent_start",
   "agent_end",
@@ -49,11 +117,14 @@ const EVENT_TYPES = [
   "tool_execution_start",
   "tool_execution_update",
   "tool_execution_end",
+] as const;
+
+const INTERNAL_AGENT_SESSION_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
   "compaction_start",
   "compaction_end",
   "auto_retry_start",
   "auto_retry_end",
-] as const;
+]);
 
 function settingsPath(): string {
   return join(process.env.HOME || "", ".pi/agent/settings.json");
@@ -71,6 +142,121 @@ function readJsonFile(path: string): Record<string, unknown> {
     return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   } catch {
     return {};
+  }
+}
+
+function expandHomePath(path: string): string {
+  const home = process.env.HOME || "";
+  if (path === "~") return home;
+  if (path.startsWith("~/")) return join(home, path.slice(2));
+  return path;
+}
+
+function oppiDataDir(): string {
+  const configured = process.env.OPPI_DATA_DIR?.trim();
+  if (configured) return resolve(expandHomePath(configured));
+
+  const config = readJsonFile(oppiConfigPath()) as { dataDir?: unknown };
+  const dataDir =
+    typeof config.dataDir === "string" ? config.dataDir.trim() : "";
+  if (dataDir) return resolve(expandHomePath(dataDir));
+
+  return resolve(join(process.env.HOME || "", ".config/oppi"));
+}
+
+function mirrorLogPath(): string {
+  const configured = process.env.OPPI_MIRROR_LOG_PATH?.trim();
+  return resolve(
+    expandHomePath(configured || join(oppiDataDir(), "pi-mirror.log")),
+  );
+}
+
+function redactLogText(text: string): string {
+  return text
+    .replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]")
+    .replace(/\bsk_[A-Za-z0-9._-]+\b/g, "[REDACTED_TOKEN]");
+}
+
+function sanitizedLogValue(
+  value: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet<object>(),
+): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return redactLogText(value).slice(0, 4_000);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "symbol" || typeof value === "function")
+    return String(value);
+  if (value instanceof Error) return errorLogValue(value, seen);
+  if (depth >= 4) return "[truncated]";
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 25)
+      .map((item) => sanitizedLogValue(item, depth + 1, seen));
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const lower = key.toLowerCase();
+    if (
+      lower.includes("token") ||
+      lower.includes("authorization") ||
+      lower === "data" ||
+      lower === "images"
+    ) {
+      out[key] = "[REDACTED]";
+      continue;
+    }
+    out[key] = sanitizedLogValue(item, depth + 1, seen);
+  }
+  return out;
+}
+
+function errorLogValue(
+  error: Error,
+  seen: WeakSet<object>,
+): Record<string, unknown> {
+  const record = error as Error & Record<string, unknown>;
+  return sanitizedLogValue(
+    {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      code: record.code,
+      errno: record.errno,
+      syscall: record.syscall,
+      address: record.address,
+      port: record.port,
+    },
+    0,
+    seen,
+  ) as Record<string, unknown>;
+}
+
+function writeMirrorLog(
+  level: MirrorLogLevel,
+  event: string,
+  details: Record<string, unknown> = {},
+) {
+  try {
+    const path = mirrorLogPath();
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    appendFileSync(
+      path,
+      `${JSON.stringify({
+        ts: new Date().toISOString(),
+        level,
+        event,
+        ...(sanitizedLogValue(details) as Record<string, unknown>),
+      })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+  } catch {
+    // Logging must never leak into the TUI or affect the Pi session.
   }
 }
 
@@ -200,7 +386,7 @@ function draftToItem(item: MessageQueueDraftItem): MessageQueueItem {
 }
 
 function itemsFromTexts(
-  texts: string[],
+  texts: readonly string[],
   previous: MessageQueueItem[],
 ): MessageQueueItem[] {
   const used = new Set<number>();
@@ -214,6 +400,194 @@ function itemsFromTexts(
     }
     return draftToItem({ message });
   });
+}
+
+function queueTextMatches(
+  queue: MessageQueueState,
+  steering: readonly string[],
+  followUp: readonly string[],
+): boolean {
+  const messagesMatch = (items: MessageQueueItem[], texts: readonly string[]) =>
+    items.length === texts.length &&
+    items.every((item, index) => item.message === texts[index]);
+  return (
+    messagesMatch(queue.steering, steering) &&
+    messagesMatch(queue.followUp, followUp)
+  );
+}
+
+function getQueueUpdateBridge(): QueueUpdateBridge {
+  const globalRecord = globalThis as typeof globalThis & {
+    [QUEUE_UPDATE_BRIDGE_KEY]?: QueueUpdateBridge;
+  };
+  globalRecord[QUEUE_UPDATE_BRIDGE_KEY] ??= {
+    listeners: new Set<QueueUpdateListener>(),
+    internalEventListeners: new Set<InternalAgentSessionEventListener>(),
+    sessions: new Map<string, EditableAgentSession>(),
+    installed: false,
+  };
+  const bridge = globalRecord[QUEUE_UPDATE_BRIDGE_KEY];
+  bridge.internalEventListeners ??=
+    new Set<InternalAgentSessionEventListener>();
+  return bridge;
+}
+
+function sessionIdFromAgentSession(
+  session: EditableAgentSession,
+): string | undefined {
+  return session.sessionId ?? session.sessionManager?.getSessionId?.();
+}
+
+function rememberAgentSession(
+  bridge: QueueUpdateBridge,
+  session: EditableAgentSession,
+): string | undefined {
+  bridge.lastSession = session;
+  const sessionId = sessionIdFromAgentSession(session);
+  if (sessionId) bridge.sessions.set(sessionId, session);
+  return sessionId;
+}
+
+function isInternalAgentSessionEvent(
+  event: unknown,
+): event is InternalAgentSessionEvent {
+  if (!event || typeof event !== "object") return false;
+  const type = (event as { type?: AgentSessionEvent["type"] }).type;
+  return type !== undefined && INTERNAL_AGENT_SESSION_EVENT_TYPES.has(type);
+}
+
+function userMessageFromQueueItem(item: MessageQueueItem) {
+  const text = item.message || "(empty queued message)";
+  return {
+    role: "user" as const,
+    content: [
+      { type: "text" as const, text },
+      ...(item.images ?? []).map((image) => ({
+        type: "image" as const,
+        data: image.data,
+        mimeType: image.mimeType,
+      })),
+    ],
+    timestamp: item.createdAt || Date.now(),
+  };
+}
+
+function replaceAgentSessionQueue(
+  session: EditableAgentSession,
+  nextQueue: MessageQueueState,
+) {
+  const agent = session.agent;
+  const canClear =
+    agent?.clearAllQueues ||
+    (agent?.clearSteeringQueue && agent.clearFollowUpQueue);
+  if (!agent || !canClear || !agent.steer || !agent.followUp) {
+    throw new Error("Terminal Pi runtime queue is not editable");
+  }
+
+  if (agent.clearAllQueues) {
+    agent.clearAllQueues();
+  } else {
+    agent.clearSteeringQueue?.();
+    agent.clearFollowUpQueue?.();
+  }
+
+  session._steeringMessages = nextQueue.steering.map((item) => item.message);
+  session._followUpMessages = nextQueue.followUp.map((item) => item.message);
+  for (const item of nextQueue.steering) {
+    agent.steer(userMessageFromQueueItem(item));
+  }
+  for (const item of nextQueue.followUp) {
+    agent.followUp(userMessageFromQueueItem(item));
+  }
+
+  session._emitQueueUpdate?.();
+}
+
+function installQueueUpdateBridge() {
+  const bridge = getQueueUpdateBridge();
+
+  // Pi updates the TUI queue through AgentSession listeners, but does not yet
+  // expose queue_update as an extension event. Patch the internal emitter so
+  // terminal-origin follow-up/steering edits reach the Oppi mirror immediately.
+  const prototype = AgentSession.prototype as unknown as {
+    bindExtensions?: (this: unknown, ...args: unknown[]) => unknown;
+    _emit?: (this: unknown, event: unknown, ...args: unknown[]) => unknown;
+    _emitQueueUpdate?: (this: unknown, ...args: unknown[]) => unknown;
+  };
+
+  if (!bridge.installed) {
+    const originalBindExtensions = prototype.bindExtensions;
+    if (typeof originalBindExtensions === "function") {
+      prototype.bindExtensions = function patchedBindExtensions(
+        this: unknown,
+        ...args: unknown[]
+      ) {
+        rememberAgentSession(bridge, this as EditableAgentSession);
+        return originalBindExtensions.apply(this, args);
+      };
+    }
+
+    const original = prototype._emitQueueUpdate;
+    if (typeof original === "function") {
+      prototype._emitQueueUpdate = function patchedEmitQueueUpdate(
+        this: unknown,
+        ...args: unknown[]
+      ) {
+        const result = original.apply(this, args);
+        const record = this as EditableAgentSession & {
+          getSteeringMessages?: () => readonly string[];
+          getFollowUpMessages?: () => readonly string[];
+        };
+        const steering = Array.from(
+          record.getSteeringMessages?.() ?? record._steeringMessages ?? [],
+        );
+        const followUp = Array.from(
+          record.getFollowUpMessages?.() ?? record._followUpMessages ?? [],
+        );
+        const sessionId = rememberAgentSession(bridge, record);
+        const event = { steering, followUp, session: record, sessionId };
+        bridge.last = event;
+        for (const listener of bridge.listeners) {
+          try {
+            listener(event);
+          } catch (error) {
+            writeMirrorLog("warn", "queue_update_listener_failed", { error });
+          }
+        }
+        return result;
+      };
+    }
+    bridge.installed = true;
+  }
+
+  if (!bridge.internalEventInstalled) {
+    const originalEmit = prototype._emit;
+    if (typeof originalEmit === "function") {
+      prototype._emit = function patchedEmit(
+        this: unknown,
+        event: unknown,
+        ...args: unknown[]
+      ) {
+        const result = originalEmit.apply(this, [event, ...args]);
+        if (isInternalAgentSessionEvent(event)) {
+          rememberAgentSession(bridge, this as EditableAgentSession);
+          for (const listener of bridge.internalEventListeners) {
+            try {
+              listener(event);
+            } catch (error) {
+              writeMirrorLog("warn", "internal_event_listener_failed", {
+                error,
+              });
+            }
+          }
+        }
+        return result;
+      };
+    }
+    bridge.internalEventInstalled = true;
+  }
+
+  return bridge;
 }
 
 function textFromUserMessage(message: unknown): string | undefined {
@@ -286,46 +660,133 @@ function contentForMessage(message: string, images: QueueImageContent[]) {
   ];
 }
 
-type MirrorIndicatorMode = "connecting" | "live" | "reconnecting" | "error";
+type MirrorIndicatorMode =
+  | "connecting"
+  | "live"
+  | "reconnecting"
+  | "blocked"
+  | "error";
+type MirrorIndicatorColor = "success" | "error" | "warning" | "muted";
 
-const INDICATOR_FRAMES = ["-", "\\", "|", "/"];
+const DEFAULT_RECONNECT_DELAY_MS = 2_000;
+const MANAGED_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
 
 export default function oppiPiMirror(pi: ExtensionAPI) {
   let latestCtx: ExtensionContext | null = null;
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  let indicatorTimer: ReturnType<typeof setInterval> | null = null;
-  let indicatorFrame = 0;
   let indicatorMode: MirrorIndicatorMode | null = null;
+  let indicatorLabel: string | undefined;
+  let indicatorWidgetMounted = false;
+  let requestIndicatorRender: (() => void) | null = null;
   let manualStop = false;
   let connectedSessionId: string | null = null;
   let connectedWorkspaceId: string | null = null;
   let queue: MessageQueueState = { version: 0, steering: [], followUp: [] };
   let runtimeActive = true;
   let connectionSerial = 0;
+  let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+  let lastManagedConflictSessionId: string | null = null;
+  let lastManagedConflictNotifiedAt = 0;
 
   let settings = loadSettings();
 
+  const queueUpdateBridge = (() => {
+    try {
+      return installQueueUpdateBridge();
+    } catch (error) {
+      writeMirrorLog("error", "queue_update_bridge_install_failed", { error });
+      return getQueueUpdateBridge();
+    }
+  })();
+  const queueUpdateListener: QueueUpdateListener = ({ steering, followUp }) => {
+    publishQueueIfChanged(steering, followUp);
+  };
+  const internalAgentEventListener: InternalAgentSessionEventListener = (
+    event,
+  ) => {
+    const includeState =
+      event.type === "compaction_end" || event.type === "auto_retry_end";
+    send({
+      type: "event",
+      event,
+      ...(includeState && latestCtx
+        ? { state: stateSnapshot(pi, latestCtx) }
+        : {}),
+    });
+  };
+  queueUpdateBridge.listeners.add(queueUpdateListener);
+  queueUpdateBridge.internalEventListeners.add(internalAgentEventListener);
+  if (queueUpdateBridge.last) {
+    publishQueueIfChanged(
+      queueUpdateBridge.last.steering,
+      queueUpdateBridge.last.followUp,
+    );
+  }
+
   function isStaleExtensionContextError(error: unknown): boolean {
     return (
-      error instanceof Error &&
-      error.message.includes("extension ctx is stale")
+      error instanceof Error && error.message.includes("extension ctx is stale")
     );
   }
 
   function logCallbackError(scope: string, error: unknown) {
     if (isStaleExtensionContextError(error)) return;
-    console.error(`[oppi-mirror] ${scope}`, error);
+    writeMirrorLog("warn", "callback_error", { scope, error });
   }
 
-  function safeSetStatus(
-    ctx: ExtensionContext,
-    key: string,
-    label: string | undefined,
-  ) {
+  function truncatePlain(text: string, width: number): string {
+    if (width <= 0) return "";
+    return text.length > width ? text.slice(0, width) : text;
+  }
+
+  function indicatorColor(): MirrorIndicatorColor {
+    if (indicatorMode === "live") return "success";
+    if (indicatorMode === "error") return "error";
+    if (indicatorMode === "reconnecting" || indicatorMode === "blocked") {
+      return "warning";
+    }
+    return "muted";
+  }
+
+  function mountIndicatorWidget(ctx: ExtensionContext) {
+    ctx.ui.setWidget(
+      "oppi-mirror",
+      (tui, theme) => {
+        requestIndicatorRender = () => tui.requestRender();
+        return {
+          render(width: number): string[] {
+            if (!indicatorLabel) return [];
+            const maxTextWidth = Math.max(0, width - 2);
+            const text = truncatePlain(indicatorLabel, maxTextWidth);
+            const visibleWidth = text.length === 0 ? 1 : text.length + 2;
+            const padding = " ".repeat(Math.max(0, width - visibleWidth));
+            const dot = theme.fg(indicatorColor(), "●");
+            return [`${padding}${text.length === 0 ? dot : `${dot} ${text}`}`];
+          },
+          invalidate(): void {},
+        };
+      },
+      { placement: "belowEditor" },
+    );
+    indicatorWidgetMounted = true;
+  }
+
+  function safeSetIndicator(ctx: ExtensionContext, label: string | undefined) {
+    indicatorLabel = label;
     try {
-      ctx.ui.setStatus(key, label);
+      if (!label) {
+        ctx.ui.setWidget("oppi-mirror", undefined);
+        indicatorWidgetMounted = false;
+        requestIndicatorRender = null;
+        return;
+      }
+      if (!indicatorWidgetMounted) {
+        mountIndicatorWidget(ctx);
+        return;
+      }
+      requestIndicatorRender?.();
     } catch (error) {
       logCallbackError("failed to update status", error);
     }
@@ -336,8 +797,8 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     message: string,
     type: "info" | "warning" | "error" = "info",
   ) {
-    if (!ctx) {
-      console.log(`[oppi-mirror] ${message}`);
+    if (!ctx || !ctx.hasUI) {
+      writeMirrorLog("info", "notification_skipped", { message, type });
       return;
     }
     try {
@@ -348,26 +809,29 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function send(payload: unknown) {
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    try {
       ws.send(JSON.stringify(payload));
+    } catch (error) {
+      writeMirrorLog("warn", "websocket_send_failed", { error });
     }
   }
 
   function renderIndicator(ctx: ExtensionContext | null = latestCtx) {
     if (!runtimeActive || !ctx || !indicatorMode) return;
-    const frame = INDICATOR_FRAMES[indicatorFrame % INDICATOR_FRAMES.length];
-    indicatorFrame += 1;
     const pendingCount = queue.steering.length + queue.followUp.length;
     const queued = pendingCount > 0 ? ` q:${pendingCount}` : "";
     const label =
       indicatorMode === "live"
-        ? `Mirror ${frame} live${queued}`
+        ? `Oppi mirroring live${queued}`
         : indicatorMode === "connecting"
-          ? `Mirror ${frame} connecting`
+          ? "Oppi mirror connecting"
           : indicatorMode === "reconnecting"
-            ? `Mirror ${frame} reconnecting`
-            : "Mirror offline";
-    safeSetStatus(ctx, "oppi-mirror", label);
+            ? "Oppi mirror reconnecting"
+            : indicatorMode === "blocked"
+              ? "Oppi mirror waiting"
+              : "Oppi mirror offline";
+    safeSetIndicator(ctx, label);
   }
 
   function startIndicator(ctx: ExtensionContext, mode: MirrorIndicatorMode) {
@@ -375,8 +839,6 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     latestCtx = ctx;
     indicatorMode = mode;
     renderIndicator(ctx);
-    if (indicatorTimer) return;
-    indicatorTimer = setInterval(() => renderIndicator(), 650);
   }
 
   function setIndicatorMode(mode: MirrorIndicatorMode) {
@@ -386,15 +848,77 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function stopIndicator(ctx: ExtensionContext | null = latestCtx) {
-    if (indicatorTimer) clearInterval(indicatorTimer);
-    indicatorTimer = null;
     indicatorMode = null;
-    indicatorFrame = 0;
-    if (ctx) safeSetStatus(ctx, "oppi-mirror", undefined);
+    if (ctx) safeSetIndicator(ctx, undefined);
   }
 
   function sendQueueState() {
     send({ type: "queue_state", queue: cloneQueueState(queue) });
+  }
+
+  function syncQueueFromTexts(
+    steering: readonly string[],
+    followUp: readonly string[],
+  ): boolean {
+    if (queueTextMatches(queue, steering, followUp)) return false;
+    queue = {
+      version: queue.version + 1,
+      steering: itemsFromTexts(steering, queue.steering),
+      followUp: itemsFromTexts(followUp, queue.followUp),
+    };
+    return true;
+  }
+
+  function publishQueueIfChanged(
+    steering: readonly string[],
+    followUp: readonly string[],
+  ) {
+    if (!runtimeActive) return;
+    if (!syncQueueFromTexts(steering, followUp)) return;
+    sendQueueState();
+    renderIndicator();
+  }
+
+  function findEditableAgentSession(
+    ctx: ExtensionContext,
+  ): EditableAgentSession | undefined {
+    const sessionId = ctx.sessionManager.getSessionId();
+    return (
+      queueUpdateBridge.sessions.get(sessionId) ?? queueUpdateBridge.lastSession
+    );
+  }
+
+  function requireEditableAgentSession(
+    ctx: ExtensionContext,
+  ): EditableAgentSession {
+    const session = findEditableAgentSession(ctx);
+    if (!session) {
+      throw new Error(
+        "Terminal Pi runtime session control is not attached yet",
+      );
+    }
+    return session;
+  }
+
+  function replaceLocalQueue(
+    ctx: ExtensionContext,
+    nextQueue: MessageQueueState,
+  ) {
+    const session = requireEditableAgentSession(ctx);
+    queue = cloneQueueState(nextQueue);
+    replaceAgentSessionQueue(session, nextQueue);
+  }
+
+  function scheduleRuntimeReload(ctx: ExtensionContext) {
+    const session = findEditableAgentSession(ctx);
+    if (!session?.reload) {
+      throw new Error("Terminal Pi runtime reload is not attached yet");
+    }
+    setTimeout(() => {
+      session.reload?.().catch((error) => {
+        logCallbackError("remote reload failed", error);
+      });
+    }, 0);
   }
 
   async function refreshQueueFromRuntime(
@@ -416,11 +940,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         api.getSteeringMessages(),
         api.getFollowUpMessages(),
       ]);
-      queue = {
-        version: queue.version + 1,
-        steering: itemsFromTexts(steering, queue.steering),
-        followUp: itemsFromTexts(followUp, queue.followUp),
-      };
+      syncQueueFromTexts(steering, followUp);
       return cloneQueueState(queue);
     }
 
@@ -431,6 +951,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     kind: "steer" | "followUp",
     message: string,
     images?: QueueImageContent[],
+    options: { previousMatchingCount?: number } = {},
   ) {
     const item: MessageQueueItem = {
       id: queueId(),
@@ -440,8 +961,24 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         : {}),
       createdAt: Date.now(),
     };
-    if (kind === "steer") queue.steering.push(item);
-    else queue.followUp.push(item);
+    const list = kind === "steer" ? queue.steering : queue.followUp;
+    const matchingItems = list.filter(
+      (candidate) => candidate.message === message,
+    );
+    const queueUpdateAlreadyAddedItem =
+      options.previousMatchingCount !== undefined &&
+      matchingItems.length > options.previousMatchingCount;
+    if (queueUpdateAlreadyAddedItem) {
+      const existing = matchingItems.at(-1);
+      if (existing && images?.length && !existing.images?.length) {
+        existing.images = images.map((image) => ({ ...image }));
+        queue.version += 1;
+        sendQueueState();
+        renderIndicator();
+      }
+      return;
+    }
+    list.push(item);
     queue.version += 1;
     sendQueueState();
     renderIndicator();
@@ -540,15 +1077,23 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
     manualStop = false;
     startIndicator(ctx, "connecting");
-    const url = bridgeUrl(config.serverUrl);
+    let url: string;
+    let socket: WebSocket;
+    try {
+      url = bridgeUrl(config.serverUrl);
+      socket = new WebSocket(url, {
+        headers: { Authorization: `Bearer ${config.token}` },
+        perMessageDeflate: false,
+        // Auto-discovery reads the local Oppi config/token from the same user account.
+        // Local self-signed HTTPS is expected; do not require manual cert pairing for this path.
+        rejectUnauthorized: !isLocalUrl(config.serverUrl),
+      });
+    } catch (error) {
+      logCallbackError("websocket setup failed", error);
+      setIndicatorMode("error");
+      return;
+    }
     const serial = ++connectionSerial;
-    const socket = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${config.token}` },
-      perMessageDeflate: false,
-      // Auto-discovery reads the local Oppi config/token from the same user account.
-      // Local self-signed HTTPS is expected; do not require manual cert pairing for this path.
-      rejectUnauthorized: !isLocalUrl(config.serverUrl),
-    });
     ws = socket;
 
     socket.on("open", () => {
@@ -572,6 +1117,11 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
             "thinking",
             "session_name",
             "compact",
+            "queue",
+            "tree_navigation",
+            "runtime_modes",
+            "retry",
+            "bash_abort",
             "state",
           ],
           state: stateSnapshot(pi, ctx),
@@ -584,7 +1134,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       }
     });
 
-    socket.on("message", (raw) => {
+    socket.on("message", (raw: RawData) => {
       if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
         return;
       }
@@ -600,24 +1150,31 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       clearTimers();
       ws = null;
       if (!manualStop) {
-        setIndicatorMode("reconnecting");
+        const delayMs = Math.max(
+          DEFAULT_RECONNECT_DELAY_MS,
+          nextReconnectDelayMs,
+        );
+        setIndicatorMode(
+          delayMs > DEFAULT_RECONNECT_DELAY_MS ? "blocked" : "reconnecting",
+        );
         reconnectTimer = setTimeout(() => {
           if (!runtimeActive || connectionSerial !== serial || manualStop) {
             return;
           }
           connect(ctx);
-        }, 2_000);
+        }, delayMs);
       } else {
         stopIndicator(ctx);
       }
     });
 
-    socket.on("error", (error) => {
+    socket.on("error", (error: Error) => {
       if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
         return;
       }
-      setIndicatorMode("error");
-      console.error("[oppi-mirror] websocket error", error);
+      nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+      setIndicatorMode("reconnecting");
+      writeMirrorLog("warn", "websocket_error", { url, error });
     });
   }
 
@@ -676,8 +1233,10 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
           (message as { sessionId?: string }).sessionId ?? null;
         connectedWorkspaceId =
           (message as { workspaceId?: string }).workspaceId ?? null;
+        nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+        lastManagedConflictSessionId = null;
+        lastManagedConflictNotifiedAt = 0;
         setIndicatorMode("live");
-        notify(ctx, "Oppi Mirror is live", "info");
         return;
 
       case "command":
@@ -686,14 +1245,58 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         }
         return;
 
-      case "error":
+      case "error": {
+        const err = message as {
+          code?: string;
+          error?: string;
+          retryAfterMs?: number;
+          sessionId?: string;
+        };
+        const errorText = err.error ?? "unknown";
+        if (
+          err.code === "managed_runtime_active" ||
+          errorText.includes("already owned by the managed Oppi runtime")
+        ) {
+          const sessionId = err.sessionId ?? "this session";
+          nextReconnectDelayMs =
+            typeof err.retryAfterMs === "number" &&
+            Number.isFinite(err.retryAfterMs)
+              ? Math.max(DEFAULT_RECONNECT_DELAY_MS, err.retryAfterMs)
+              : 10_000;
+          setIndicatorMode("blocked");
+
+          const now = Date.now();
+          const shouldNotify =
+            lastManagedConflictSessionId !== sessionId ||
+            now - lastManagedConflictNotifiedAt >
+              MANAGED_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS;
+          if (shouldNotify) {
+            lastManagedConflictSessionId = sessionId;
+            lastManagedConflictNotifiedAt = now;
+            notify(
+              ctx,
+              `Oppi Mirror is waiting for Oppi session ${sessionId} to stop before taking over this terminal session.`,
+              "warning",
+            );
+          }
+          return;
+        }
+
+        nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
         setIndicatorMode("error");
+        writeMirrorLog("warn", "server_error_message", {
+          code: err.code,
+          error: errorText,
+          retryAfterMs: err.retryAfterMs,
+          sessionId: err.sessionId,
+        });
         notify(
           ctx,
-          `Oppi Mirror error: ${(message as { error?: string }).error ?? "unknown"}`,
-          "error",
+          "Oppi Mirror reported a bridge error; details were logged.",
+          "warning",
         );
         return;
+      }
     }
   }
 
@@ -712,6 +1315,11 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         state: stateSnapshot(pi, ctx),
       });
     } catch (error) {
+      writeMirrorLog("warn", "command_failed", {
+        id,
+        commandType: command.type,
+        error,
+      });
       send(commandError("command_result", id, error));
     }
   }
@@ -725,15 +1333,25 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       case "prompt": {
         const message =
           typeof command.message === "string" ? command.message : "";
+        if (message.trim() === "/reload") {
+          scheduleRuntimeReload(ctx);
+          return { reloading: true };
+        }
         const images = imagesFromCommand(command.images);
         const content = contentForMessage(message, images);
         const streamingBehavior = command.streamingBehavior;
         if (streamingBehavior === "steer") {
+          const previousMatchingCount = queue.steering.filter(
+            (item) => item.message === message,
+          ).length;
           pi.sendUserMessage(content, { deliverAs: "steer" });
-          enqueueShadow("steer", message, images);
+          enqueueShadow("steer", message, images, { previousMatchingCount });
         } else if (streamingBehavior === "followUp") {
+          const previousMatchingCount = queue.followUp.filter(
+            (item) => item.message === message,
+          ).length;
           pi.sendUserMessage(content, { deliverAs: "followUp" });
-          enqueueShadow("followUp", message, images);
+          enqueueShadow("followUp", message, images, { previousMatchingCount });
         } else {
           pi.sendUserMessage(content);
         }
@@ -743,29 +1361,40 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       case "steer": {
         const message = String(command.message ?? "");
         const images = imagesFromCommand(command.images);
+        const previousMatchingCount = queue.steering.filter(
+          (item) => item.message === message,
+        ).length;
         pi.sendUserMessage(contentForMessage(message, images), {
           deliverAs: "steer",
         });
-        enqueueShadow("steer", message, images);
+        enqueueShadow("steer", message, images, { previousMatchingCount });
         return { dispatched: true, queue: cloneQueueState(queue) };
       }
 
       case "follow_up": {
         const message = String(command.message ?? "");
         const images = imagesFromCommand(command.images);
+        const previousMatchingCount = queue.followUp.filter(
+          (item) => item.message === message,
+        ).length;
         pi.sendUserMessage(contentForMessage(message, images), {
           deliverAs: "followUp",
         });
-        enqueueShadow("followUp", message, images);
+        enqueueShadow("followUp", message, images, { previousMatchingCount });
         return { dispatched: true, queue: cloneQueueState(queue) };
       }
 
       case "abort":
+        findEditableAgentSession(ctx)?.abortCompaction?.();
         ctx.abort();
         queue = { version: queue.version + 1, steering: [], followUp: [] };
         sendQueueState();
         renderIndicator();
         return { aborted: true, queue: cloneQueueState(queue) };
+
+      case "reload":
+        scheduleRuntimeReload(ctx);
+        return { reloading: true };
 
       case "get_queue": {
         const latestQueue = await refreshQueueFromRuntime(ctx);
@@ -782,29 +1411,33 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
             followUp: MessageQueueDraftItem[];
           }) => Promise<MessageQueueState | void> | MessageQueueState | void;
         };
-        if (!api.setMessageQueue) {
-          throw new Error(
-            "Terminal Pi runtime does not expose queue editing yet",
-          );
-        }
+        const baseVersion = Number(command.baseVersion);
         const steering = Array.isArray(command.steering)
           ? (command.steering as MessageQueueDraftItem[])
           : [];
         const followUp = Array.isArray(command.followUp)
           ? (command.followUp as MessageQueueDraftItem[])
           : [];
-        const nextQueue = await api.setMessageQueue({
-          baseVersion: Number(command.baseVersion),
-          steering,
-          followUp,
-        });
-        queue = nextQueue
-          ? cloneQueueState(nextQueue)
-          : {
-              version: queue.version + 1,
-              steering: steering.map(draftToItem),
-              followUp: followUp.map(draftToItem),
-            };
+        const requestedQueue: MessageQueueState = {
+          version:
+            Math.max(
+              queue.version,
+              Number.isFinite(baseVersion) ? baseVersion : 0,
+            ) + 1,
+          steering: steering.map(draftToItem),
+          followUp: followUp.map(draftToItem),
+        };
+
+        const nextQueue = api.setMessageQueue
+          ? await api.setMessageQueue({ baseVersion, steering, followUp })
+          : undefined;
+        if (nextQueue) {
+          queue = cloneQueueState(nextQueue);
+        } else if (api.setMessageQueue) {
+          queue = requestedQueue;
+        } else {
+          replaceLocalQueue(ctx, requestedQueue);
+        }
         sendQueueState();
         renderIndicator();
         return { queue: cloneQueueState(queue) };
@@ -815,6 +1448,41 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
       case "get_messages":
         return { entries: ctx.sessionManager.getEntries() };
+
+      case "get_fork_messages": {
+        const messages =
+          requireEditableAgentSession(ctx).getUserMessagesForForking?.();
+        if (!messages)
+          throw new Error(
+            "Terminal Pi runtime fork messages are not attached yet",
+          );
+        return { messages };
+      }
+
+      case "navigate_tree": {
+        const targetId = String(command.targetId ?? "").trim();
+        if (!targetId) throw new Error("Invalid payload: expected targetId");
+        const navigateTree = requireEditableAgentSession(ctx).navigateTree;
+        if (!navigateTree)
+          throw new Error(
+            "Terminal Pi runtime tree navigation is not attached yet",
+          );
+        return await navigateTree(targetId, {
+          summarize:
+            typeof command.summarize === "boolean"
+              ? command.summarize
+              : undefined,
+          customInstructions:
+            typeof command.customInstructions === "string"
+              ? command.customInstructions
+              : undefined,
+          replaceInstructions:
+            typeof command.replaceInstructions === "boolean"
+              ? command.replaceInstructions
+              : undefined,
+          label: typeof command.label === "string" ? command.label : undefined,
+        });
+      }
 
       case "get_session_stats": {
         const entries = ctx.sessionManager.getEntries();
@@ -902,68 +1570,196 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         });
         return { compacting: true };
 
-      case "set_auto_compaction":
-        return { unsupported: true };
+      case "set_auto_compaction": {
+        const enabled = !!command.enabled;
+        const session = requireEditableAgentSession(ctx);
+        if (!session.setAutoCompactionEnabled) {
+          throw new Error(
+            "Terminal Pi runtime auto-compaction control is not attached yet",
+          );
+        }
+        session.setAutoCompactionEnabled(enabled);
+        return { enabled };
+      }
+
+      case "set_steering_mode": {
+        const mode = String(command.mode ?? "");
+        if (mode !== "all" && mode !== "one-at-a-time") {
+          throw new Error(
+            "Invalid set_steering_mode payload: expected all or one-at-a-time",
+          );
+        }
+        const session = requireEditableAgentSession(ctx);
+        if (!session.setSteeringMode) {
+          throw new Error(
+            "Terminal Pi runtime steering mode control is not attached yet",
+          );
+        }
+        session.setSteeringMode(mode);
+        return { mode };
+      }
+
+      case "set_follow_up_mode": {
+        const mode = String(command.mode ?? "");
+        if (mode !== "all" && mode !== "one-at-a-time") {
+          throw new Error(
+            "Invalid set_follow_up_mode payload: expected all or one-at-a-time",
+          );
+        }
+        const session = requireEditableAgentSession(ctx);
+        if (!session.setFollowUpMode) {
+          throw new Error(
+            "Terminal Pi runtime follow-up mode control is not attached yet",
+          );
+        }
+        session.setFollowUpMode(mode);
+        return { mode };
+      }
+
+      case "set_auto_retry": {
+        const enabled = !!command.enabled;
+        const session = requireEditableAgentSession(ctx);
+        if (!session.setAutoRetryEnabled) {
+          throw new Error(
+            "Terminal Pi runtime auto-retry control is not attached yet",
+          );
+        }
+        session.setAutoRetryEnabled(enabled);
+        return { enabled };
+      }
+
+      case "abort_retry": {
+        const session = requireEditableAgentSession(ctx);
+        if (!session.abortRetry) {
+          throw new Error(
+            "Terminal Pi runtime retry abort is not attached yet",
+          );
+        }
+        session.abortRetry();
+        return { success: true };
+      }
+
+      case "abort_bash": {
+        const session = requireEditableAgentSession(ctx);
+        if (!session.abortBash) {
+          throw new Error("Terminal Pi runtime bash abort is not attached yet");
+        }
+        session.abortBash();
+        return { success: true };
+      }
 
       default:
         throw new Error(`Unsupported Oppi Mirror command: ${String(type)}`);
     }
   }
 
-  for (const eventType of EVENT_TYPES) {
-    pi.on(eventType as never, (event: unknown, ctx: ExtensionContext) => {
-      latestCtx = ctx;
-      if (eventType === "message_start") {
-        markQueueItemStarted(
-          textFromUserMessage((event as { message?: unknown }).message),
-        );
+  function guardExtensionCallback<T extends unknown[]>(
+    scope: string,
+    callback: (...args: T) => void | Promise<void>,
+  ) {
+    return (...args: T) => {
+      try {
+        const result = callback(...args);
+        if (result && typeof (result as Promise<void>).catch === "function") {
+          void (result as Promise<void>).catch((error: unknown) => {
+            logCallbackError(scope, error);
+          });
+        }
+      } catch (error) {
+        logCallbackError(scope, error);
       }
-      const includeState =
-        eventType === "agent_start" ||
-        eventType === "agent_end" ||
-        eventType === "turn_start" ||
-        eventType === "turn_end" ||
-        eventType === "message_end";
-      send({
-        type: "event",
-        event: { ...(event as object), type: eventType },
-        ...(includeState ? { state: stateSnapshot(pi, ctx) } : {}),
-      });
-    });
+    };
   }
 
-  pi.on("session_start", (_event, ctx) => {
-    latestCtx = ctx;
-    if (settings.autoStart && isInteractiveTerminalProcess()) connect(ctx);
-  });
+  for (const eventType of EVENT_TYPES) {
+    pi.on(
+      eventType as never,
+      guardExtensionCallback(
+        `event:${eventType}`,
+        (event: unknown, ctx: ExtensionContext) => {
+          latestCtx = ctx;
+          if (eventType === "message_start") {
+            markQueueItemStarted(
+              textFromUserMessage((event as { message?: unknown }).message),
+            );
+          }
+          const includeState =
+            eventType === "agent_start" ||
+            eventType === "agent_end" ||
+            eventType === "turn_start" ||
+            eventType === "turn_end" ||
+            eventType === "message_end";
+          send({
+            type: "event",
+            event: { ...(event as object), type: eventType },
+            ...(includeState ? { state: stateSnapshot(pi, ctx) } : {}),
+          });
+        },
+      ) as never,
+    );
+  }
 
-  pi.on("session_shutdown", (_event, ctx) => {
-    runtimeActive = false;
-    stop(ctx, "session_shutdown", { notify: false });
-  });
+  pi.on(
+    "session_start",
+    guardExtensionCallback(
+      "session_start",
+      (_event: unknown, ctx: ExtensionContext) => {
+        latestCtx = ctx;
+        if (settings.autoStart && isInteractiveTerminalProcess()) connect(ctx);
+      },
+    ),
+  );
+
+  pi.on(
+    "session_shutdown",
+    guardExtensionCallback(
+      "session_shutdown",
+      (event: unknown, ctx: ExtensionContext) => {
+        runtimeActive = false;
+        queueUpdateBridge.listeners.delete(queueUpdateListener);
+        queueUpdateBridge.internalEventListeners.delete(
+          internalAgentEventListener,
+        );
+        const reason =
+          (event as { reason?: unknown }).reason === "reload"
+            ? "reload"
+            : "session_shutdown";
+        stop(ctx, reason, { notify: false });
+      },
+    ),
+  );
 
   pi.registerCommand("oppi-mirror", {
     description: "Mirror this live Pi TUI session into Oppi",
     handler: async (args, ctx) => {
-      const [subcommand] = args.trim().split(/\s+/).filter(Boolean);
-      switch (subcommand || "status") {
-        case "start":
-          connect(ctx);
-          return;
-        case "stop":
-          stop(ctx);
-          return;
-        case "status":
-          notify(
-            ctx,
-            ws?.readyState === WebSocket.OPEN
-              ? `Oppi Mirror live: workspace=${connectedWorkspaceId ?? "?"} session=${connectedSessionId ?? "?"}`
-              : "Oppi Mirror is not connected",
-            ws?.readyState === WebSocket.OPEN ? "info" : "warning",
-          );
-          return;
-        default:
-          notify(ctx, "Usage: /oppi-mirror start|stop|status", "warning");
+      try {
+        const [subcommand] = args.trim().split(/\s+/).filter(Boolean);
+        switch (subcommand || "status") {
+          case "start":
+            connect(ctx);
+            return;
+          case "stop":
+            stop(ctx);
+            return;
+          case "status":
+            notify(
+              ctx,
+              ws?.readyState === WebSocket.OPEN
+                ? `Oppi mirroring live: workspace=${connectedWorkspaceId ?? "?"} session=${connectedSessionId ?? "?"}`
+                : "Oppi mirror offline",
+              ws?.readyState === WebSocket.OPEN ? "info" : "warning",
+            );
+            return;
+          default:
+            notify(ctx, "Usage: /oppi-mirror start|stop|status", "warning");
+        }
+      } catch (error) {
+        logCallbackError("command:oppi-mirror", error);
+        notify(
+          ctx,
+          "Oppi Mirror command failed; details were logged.",
+          "warning",
+        );
       }
     },
   });
