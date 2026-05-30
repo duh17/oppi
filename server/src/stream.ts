@@ -12,6 +12,10 @@ import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
+import {
+  canResumeStoppedMirrorAsManaged,
+  promoteStoppedMirrorToManaged,
+} from "./mirror-session-resume.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
@@ -364,10 +368,17 @@ export class BoundSessionStreamMux {
     try {
       const isStoredMirrorSession = session.runtime === "pi-tui-mirror";
       const mirrorRuntime = isStoredMirrorSession ? this.ctx.mirrorRuntime : undefined;
-      if (isStoredMirrorSession && !mirrorRuntime) {
+      const mirrorConnected = isStoredMirrorSession
+        ? mirrorRuntime?.isSessionConnected(sessionId) === true
+        : false;
+      const shouldResumeMirrorAsManaged = canResumeStoppedMirrorAsManaged(session, mirrorConnected);
+      if (shouldResumeMirrorAsManaged) {
+        promoteStoppedMirrorToManaged(session);
+        this.ctx.storage.saveSession(session);
+      } else if (isStoredMirrorSession && !mirrorRuntime) {
         throw new Error("Terminal mirror runtime is not available");
       }
-      const isMirrorSession = isStoredMirrorSession;
+      const isMirrorSession = isStoredMirrorSession && !shouldResumeMirrorAsManaged;
 
       let hydratedSession = this.ctx.ensureSessionContextWindow(session);
       const hadActiveSession = isMirrorSession
