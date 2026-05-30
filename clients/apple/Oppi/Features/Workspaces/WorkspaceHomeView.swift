@@ -453,28 +453,38 @@ struct WorkspaceHomeView: View {
         let isExpanded = isWorkspaceExpanded(key: key, summary: summary)
         let sessionPreviews = workspaceSessionPreviews(workspaceId: workspace.id, connection: connection)
         let workspaceAccessibilityName = workspace.runtime == .sandbox ? "sandbox workspace \(workspace.name)" : workspace.name
+        let opensWorkspaceFromRowBody = Self.shouldOpenWorkspaceFromRowBody(
+            isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
+        )
+        let rowBodyAction = {
+            if opensWorkspaceFromRowBody {
+                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+            } else {
+                toggleWorkspaceExpansion(key: key, summary: summary)
+            }
+        }
+        let statusPresentation = WorkspaceHomeStatusPresentation(
+            activeCount: summary.activeCount,
+            stoppedCount: summary.stoppedCount,
+            hasAttention: summary.hasAttention
+        )
 
         HStack(alignment: .center, spacing: 0) {
-            Button {
-                if Self.shouldOpenWorkspaceFromRowBody(isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil) {
-                    navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
-                } else {
-                    toggleWorkspaceExpansion(key: key, summary: summary)
-                }
-            } label: {
+            Button(action: rowBodyAction) {
                 WorkspaceHomeRow(
                     workspace: workspace,
                     activeCount: summary.activeCount,
                     stoppedCount: summary.stoppedCount,
                     hasAttention: summary.hasAttention,
                     isExpanded: isExpanded,
-                    isUnreachable: isUnreachable
+                    isUnreachable: isUnreachable,
+                    showsStatus: false
                 )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
+            .layoutPriority(0)
             .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspaceAccessibilityName)" : "Expand sessions for \(workspaceAccessibilityName)")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Shows or hides the workspace session preview")
@@ -483,19 +493,30 @@ struct WorkspaceHomeView: View {
             Button {
                 navigation.workspacePath.append(target)
             } label: {
-                WorkspaceHomeNavigationChevron()
+                HStack(alignment: .center, spacing: 4) {
+                    if statusPresentation.isVisible {
+                        WorkspaceHomeStatusIndicator(presentation: statusPresentation)
+                            .fixedSize()
+                    }
+
+                    WorkspaceHomeNavigationChevron()
+                }
+                .frame(minWidth: 44, minHeight: 44, maxHeight: 44, alignment: .trailing)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .contentShape(Rectangle())
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(2)
             .accessibilityIdentifier(Self.workspaceOpenAccessibilityIdentifier(workspaceName: workspace.name))
             .accessibilityLabel("Open \(workspaceAccessibilityName)")
             .accessibilityHint("Opens the workspace session list")
             .accessibilityRespondsToUserInteraction(true)
             .zIndex(1)
         }
-        .padding(.horizontal, 6)
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
         .onTapGesture {
-            if Self.shouldOpenWorkspaceFromRowBody(isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil) {
+            if opensWorkspaceFromRowBody {
                 navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
             }
         }
@@ -996,9 +1017,7 @@ private struct WorkspaceHomeNavigationChevron: View {
             .font(.footnote.weight(.semibold))
             .imageScale(.small)
             .foregroundStyle(.themeComment)
-            .frame(width: 28, height: 44)
-            .padding(.horizontal, 8)
-            .contentShape(Rectangle())
+            .frame(width: 8, height: 44, alignment: .trailing)
             .accessibilityHidden(true)
     }
 }
@@ -1032,6 +1051,7 @@ private struct WorkspaceHomeRow: View {
     let hasAttention: Bool
     let isExpanded: Bool
     var isUnreachable: Bool = false
+    var showsStatus: Bool = true
 
     var body: some View {
         let statusPresentation = WorkspaceHomeStatusPresentation(
@@ -1062,7 +1082,7 @@ private struct WorkspaceHomeRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if statusPresentation.isVisible {
+            if showsStatus && statusPresentation.isVisible {
                 WorkspaceHomeStatusIndicator(presentation: statusPresentation)
                     .frame(width: WorkspaceHomeStatusIndicator.columnWidth, alignment: .trailing)
                     .padding(.leading, 2)
@@ -1141,8 +1161,8 @@ private struct WorkspaceHomeStatusIndicator: View {
     private static let symbolWidth: CGFloat = 15
     private static let symbolCountGap: CGFloat = 4
     private static let metricGap: CGFloat = 6
-    private static let activeCountMinWidth: CGFloat = 16
-    private static let stoppedCountMinWidth: CGFloat = 30
+    private static let activeCountMinWidth: CGFloat = 12
+    private static let stoppedCountMinWidth: CGFloat = 18
 
     let presentation: WorkspaceHomeStatusPresentation
 
@@ -1210,7 +1230,7 @@ private struct WorkspaceHomeStatusIndicator: View {
         HStack(alignment: .center, spacing: Self.symbolCountGap) {
             statusSymbol(symbol, tint: tint)
             countText(count, tint: tint)
-                .frame(minWidth: minimumCountWidth, alignment: .leading)
+                .frame(minWidth: minimumCountWidth, alignment: .trailing)
         }
         .frame(minWidth: Self.symbolWidth + Self.symbolCountGap + minimumCountWidth, alignment: .leading)
     }
