@@ -79,7 +79,7 @@ graph TD
   Store --> Client
 ```
 
-The adapters differ only where ownership semantics differ: start/stop, abort, remote commands, permission gates, queue control, and extension UI response plumbing. Shared projection code owns pi event translation, session state mutation, tool-media materialization, first-message/title policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so a terminal session should not appear as two unrelated rows. See [Pi TUI Mirror mode](pi-mirror.md) for the detailed mirror contract and test map.
+The adapters differ only where ownership semantics differ: start/stop, abort, remote commands, permission gates, queue control, and extension UI response plumbing. Shared projection code owns pi event translation, session state mutation, tool-media materialization, first-message/title policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so a terminal session should not appear as two unrelated rows. See [Oppi Mirror mode](oppi-mirror.md) for the detailed mirror contract and test map.
 
 ## Live transport and navigation lanes
 
@@ -347,6 +347,6 @@ When a message contract changes, update server types, Apple models, and protocol
 | Review comments                            | `server/src/routes/workspaces.ts`, `server/src/storage/review-comment-sqlite-store.ts`                                                         | `ChatView.swift`, `ReviewComments/`, `ReviewCommentStore.swift`                             |
 | Focused session WebSocket                  | `server/src/stream.ts`, `server/src/ws-message-handler.ts`                                                                                     | `WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `ServerConnection.swift`         |
 | Managed session runtime                    | `server/src/sessions.ts`, `server/src/session-*.ts`                                                                                            | `ChatSessionManager.swift`, `ChatActionHandler.swift`                                       |
-| Terminal mirror runtime                    | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `pi-extensions/oppi-pi-mirror.ts`                                       | `SessionRow.swift`, `ChatActionHandler.swift`                                               |
+| Terminal mirror runtime                    | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `pi-extensions/oppi-mirror.ts`                                          | `SessionRow.swift`, `ChatActionHandler.swift`                                               |
 | Protocol contract                          | `server/src/types.ts`                                                                                                                          | `ClientMessage.swift`, `ServerMessage.swift`                                                |
 | Pi event projection and timeline rendering | `server/src/session-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`, `server/src/session-broadcast.ts` | `TimelineReducer.swift`, `ChatTimelineCollectionView.swift`                                 |

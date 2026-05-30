@@ -1,8 +1,8 @@
 > Mirror a live terminal Pi TUI session into Oppi.
 
-# Oppi Pi Mirror Extension
+# Oppi Mirror Extension
 
-The Oppi Pi Mirror extension lets an interactive terminal `pi` TUI session appear as a live Oppi session.
+The Oppi Mirror extension lets an interactive terminal `pi` TUI session appear as a live Oppi session.
 
 The terminal still owns execution. Oppi clients can observe the session and send prompts, steer messages, follow-ups, and abort requests through the extension bridge.
 
@@ -15,7 +15,7 @@ Do not use mirror mode for server-owned SDK sessions, print mode, JSON mode, or 
 Install the extension with Pi’s package installer:
 
 ```bash
-pi install ./pi-extensions/oppi-pi-mirror.ts
+pi install ./pi-extensions/oppi-mirror.ts
 ```
 
 That records the local extension in Pi settings so Pi loads it automatically on startup.
@@ -26,7 +26,7 @@ If Pi is already running, reload extensions:
 /reload
 ```
 
-`pi install npm:...` is not available for this extension yet because `oppi-pi-mirror` is not currently published as a Pi package on npm. Right now this repo ships the extension as a local TypeScript file, so the supported install path is local-file installation.
+`pi install npm:...` is not available for this extension yet because `oppi-mirror` is not currently published as a Pi package on npm. Right now this repo ships the extension as a local TypeScript file, so the supported install path is local-file installation.
 
 Start the Oppi server once so the extension can discover the local server URL and token from:
 
@@ -165,7 +165,7 @@ Mirror mode intentionally supports only commands that can run safely against a t
 When changing this matrix, update all three places together:
 
 1. `server/src/pi-tui-mirror-runtime.ts` command allowlist and unsupported reasons.
-2. `pi-extensions/oppi-pi-mirror.ts` bridge command handlers.
+2. `pi-extensions/oppi-mirror.ts` bridge command handlers.
 3. This documentation and the mirror runtime tests.
 
 ## Queue Behavior
@@ -202,7 +202,7 @@ Session rows ignore generic Pi names such as `Session <id>` so they can fall bac
 Mirror diagnostics are structured JSON lines.
 
 - Server mirror/runtime logs: `~/.config/oppi/server.log`
-- Terminal extension logs: `~/.config/oppi/pi-mirror.log`
+- Terminal extension logs: `~/.config/oppi/oppi-mirror.log`
 
 Useful fields: `runtime`, `sessionId`, `bridgeId`, `commandId`, `requestId`, `clientTurnId`, `command`, `outcome`, `durationMs`, `queueVersion`, `steeringCount`, and `followUpCount`. Server-owned Oppi sessions log `runtime: "oppi"`; mirrored terminal sessions log `runtime: "pi-tui"`.
 

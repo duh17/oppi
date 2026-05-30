@@ -169,7 +169,7 @@ function oppiDataDir(): string {
 function mirrorLogPath(): string {
   const configured = process.env.OPPI_MIRROR_LOG_PATH?.trim();
   return resolve(
-    expandHomePath(configured || join(oppiDataDir(), "pi-mirror.log")),
+    expandHomePath(configured || join(oppiDataDir(), "oppi-mirror.log")),
   );
 }
 

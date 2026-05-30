@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  MirrorQueueProjection,
-  type MessageQueueState,
-} from "../../pi-extensions/oppi-pi-mirror.ts";
+import { MirrorQueueProjection, type MessageQueueState } from "../../pi-extensions/oppi-mirror.ts";
 
 function queue(
   version: number,
