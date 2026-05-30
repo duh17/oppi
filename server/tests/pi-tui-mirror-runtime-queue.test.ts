@@ -536,7 +536,12 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       timestamp: Date.now(),
     });
     const command = await waitForLatestCommand(ws);
-    expect(command.command).toEqual({ type: "prompt", message: "hello from phone" });
+    expect(command.command).toEqual({
+      type: "prompt",
+      message: "hello from phone",
+      requestId: "req-phone",
+      clientTurnId: "turn-phone",
+    });
     expect(runtime.getActiveSession(sessionId)?.messageCount).toBe(0);
 
     ws.receive({
@@ -758,6 +763,8 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(forwarded).toEqual({
       type: "prompt",
       message: `read this\n\nAttached files:\n- note.txt: .pi/attachments/${sessionId}/turn-attachment/note.txt`,
+      requestId: "req-attachment",
+      clientTurnId: "turn-attachment",
     });
     await expect(
       readFile(join(root, ".pi", "attachments", sessionId, "turn-attachment", "note.txt"), "utf8"),
@@ -858,6 +865,8 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(command.command).toEqual({
       type: "steer",
       message: `look at this\n\nAttached files:\n- shot.png: .pi/attachments/${sessionId}/turn-image/shot.png`,
+      requestId: "req-image",
+      clientTurnId: "turn-image",
       images: [{ type: "image", data: imageBytes.toString("base64"), mimeType: "image/png" }],
     });
 

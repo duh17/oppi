@@ -105,7 +105,7 @@ Mirror mode uses the same Oppi session projection as managed Pi sessions. Mirror
 
 The terminal Pi process remains the execution source of truth. Oppi observes and steers the terminal runtime; it does not replace it.
 
-Mirror mode is modeled as a remote transport for the same AgentSession event/command contract used by managed sessions. On the server, `server/src/agent-runtime-transport.ts` defines the runtime contract, `server/src/session-input.ts` owns shared prompt/steer/follow-up delivery policy, and `server/src/runtime-command-coordinator.ts` owns forwarded-command orchestration shared by managed and mirror runtimes. `server/src/mirror-bridge-command-driver.ts` owns only bridge command serialization, pending-command timeouts, and disconnect rejection. The bridge should forward canonical `AgentSessionEvent` payloads and execute canonical commands; shared server projection code owns timeline messages, session mutation, compaction rows, titles, stats, command results, and queue state.
+Mirror mode is modeled as a remote transport for the same AgentSession event/command contract used by managed sessions. On the server, `server/src/agent-runtime-transport.ts` defines the runtime contract, `server/src/session-input.ts` owns shared prompt/steer/follow-up delivery policy, and `server/src/runtime-command-coordinator.ts` owns forwarded-command orchestration shared by managed and mirror runtimes. `server/src/mirror-bridge-command-driver.ts` owns only bridge command serialization, pending-command timeouts, and disconnect rejection. In the terminal extension, `MirrorQueueProjection` makes Pi's runtime queue snapshot authoritative while preserving Oppi item IDs and image metadata for iOS. The bridge should forward canonical `AgentSessionEvent` payloads and execute canonical commands; shared server projection code owns timeline messages, session mutation, compaction rows, titles, stats, command results, and queue state.
 
 Mirror sessions use:
 
@@ -179,9 +179,9 @@ Oppi can forward:
 - follow-up messages
 - image attachments
 
-The bridge reports queue state and can apply queue replacements through the terminal `AgentSession`. This currently uses Pi runtime internals, so keep queue behavior covered by mirror tests and prefer a public Pi queue replacement API when one exists.
+The bridge reports queue state and can apply queue replacements through the terminal `AgentSession`. `MirrorQueueProjection` is only a projection layer: it reconciles from Pi's runtime queue snapshot, preserves Oppi queue item IDs and image metadata, and drops stale items when the terminal queue shrinks or clears. This currently uses Pi runtime internals, so keep queue behavior covered by mirror tests and prefer a public Pi queue replacement API when one exists.
 
-Oppi must not create a separate editable queue model for mirrored sessions. The terminal queue remains authoritative.
+Oppi must not create a separate source-of-truth editable queue model for mirrored sessions. The terminal queue remains authoritative.
 
 ## Session Identity
 
@@ -196,6 +196,15 @@ This prevents the same terminal session from appearing twice: once as a live mir
 Session rows ignore generic Pi names such as `Session <id>` so they can fall back to the first real user message.
 
 ## Troubleshooting
+
+### Debug logs
+
+Mirror diagnostics are structured JSON lines.
+
+- Server mirror/runtime logs: `~/.config/oppi/server.log`
+- Terminal extension logs: `~/.config/oppi/pi-mirror.log`
+
+Useful fields: `runtime`, `sessionId`, `bridgeId`, `commandId`, `requestId`, `clientTurnId`, `command`, `outcome`, `durationMs`, `queueVersion`, `steeringCount`, and `followUpCount`. Managed-session server logs use `runtime: "managed"`; mirrored-session logs use `runtime: "pi-tui-mirror"`.
 
 ### The bridge does not start
 

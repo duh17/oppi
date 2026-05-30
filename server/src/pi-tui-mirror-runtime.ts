@@ -16,6 +16,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import {
   MirrorBridgeCommandDriver,
   type MirrorBridgeCommandConnection,
+  type MirrorBridgeCommandDriverEvent,
 } from "./mirror-bridge-command-driver.js";
 import {
   RuntimeCommandCoordinator,
@@ -60,6 +61,7 @@ const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 const BRIDGE_PROTOCOL_VERSION = 1;
 const EVENT_RING_CAPACITY = 500;
 const MANAGED_RUNTIME_CONFLICT_RETRY_MS = 10_000;
+const MIRROR_RUNTIME_LOG_TAG = "pi-tui-mirror";
 
 class BridgeRegistrationError extends Error {
   constructor(
@@ -353,6 +355,26 @@ function emptyQueue(): MessageQueueState {
   return { version: 0, steering: [], followUp: [] };
 }
 
+function queueCounts(queue: MessageQueueState): {
+  version: number;
+  steeringCount: number;
+  followUpCount: number;
+} {
+  return {
+    version: queue.version,
+    steeringCount: queue.steering.length,
+    followUpCount: queue.followUp.length,
+  };
+}
+
+function queueShapeChanged(previous: MessageQueueState, next: MessageQueueState): boolean {
+  return (
+    previous.version !== next.version ||
+    previous.steering.length !== next.steering.length ||
+    previous.followUp.length !== next.followUp.length
+  );
+}
+
 export interface PiTuiMirrorRuntimeOptions {
   isManagedSessionActive?: (sessionId: string) => boolean;
 }
@@ -367,13 +389,16 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private readonly agentEventCoordinator: SessionAgentEventCoordinator;
   private readonly inputCoordinator: SessionInputCoordinator;
   private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
-  private readonly bridgeCommandDriver = new MirrorBridgeCommandDriver();
+  private readonly bridgeCommandDriver: MirrorBridgeCommandDriver;
 
   constructor(
     private readonly storage: Storage,
     private readonly options: PiTuiMirrorRuntimeOptions = {},
   ) {
     super();
+    this.bridgeCommandDriver = new MirrorBridgeCommandDriver(undefined, {
+      onCommandEvent: (event) => this.logBridgeCommandEvent(event),
+    });
     this.broadcaster = new SessionBroadcaster({
       getActiveSession: (sessionId) => this.active.get(sessionId),
       emitSessionEvent: (payload) => this.emit("session_event", payload),
@@ -428,8 +453,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       markTurnDispatched: (sessionId, active, command, turn, requestId) =>
         this.turnCoordinator.markTurnDispatched(sessionId, active, command, turn, requestId),
       sendCommand: (sessionId, command) => this.dispatchBridgeCommand(sessionId, command),
-      onCommandResult: (sessionId, _command, data) => {
-        this.applyQueueFromCommandData(sessionId, data);
+      onCommandResult: (sessionId, command, data) => {
+        const commandType = typeof command.type === "string" ? command.type : "unknown";
+        this.applyQueueFromCommandData(sessionId, data, `command_result:${commandType}`);
       },
       resolveWorkspaceRoot: (session) => this.resolveWorkspaceRoot(session),
       maxTurnAttachmentBytes: uploadStoreConfig.maxTurnBytes,
@@ -493,6 +519,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         const message = safeErrorMessage(error);
         const details = error instanceof BridgeRegistrationError ? error.details : {};
         log.warn("mirror_bridge.message_rejected", {
+          runtime: MIRROR_RUNTIME_LOG_TAG,
           error: message,
           ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
         });
@@ -519,7 +546,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
 
     ws.on("error", (error) => {
-      log.warn("mirror_bridge.ws_error", { error: safeErrorMessage(error) });
+      log.warn("mirror_bridge.ws_error", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        error: safeErrorMessage(error),
+      });
     });
   }
 
@@ -639,7 +669,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   async sendAbort(sessionId: string): Promise<void> {
     const data = await this.dispatchBridgeCommand(sessionId, { type: "abort" });
-    this.applyQueueFromCommandData(sessionId, data);
+    this.applyQueueFromCommandData(sessionId, data, "command_result:abort");
   }
 
   async stopSession(_sessionId: string): Promise<void> {
@@ -669,7 +699,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     sessionId: string,
     context: RuntimeCommandExecutionContext,
   ): void {
-    this.applyQueueFromCommandData(sessionId, context.data);
+    this.applyQueueFromCommandData(
+      sessionId,
+      context.data,
+      `command_result:${context.commandType}`,
+    );
     this.applyCommandResult(sessionId, context.commandType, context.request, context.data);
   }
 
@@ -718,11 +752,15 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     this.broadcast(session.id, { type: "state", session: active.session });
     log.info("mirror_bridge.connected", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
       bridgeId,
       sessionId: session.id,
       workspaceId: workspace.id,
       cwd: hello.cwd,
+      terminalPid: hello.pid,
+      terminalHostname: hello.hostname,
       protocolVersion,
+      capabilityCount: connection.capabilities.length,
     });
 
     return connection;
@@ -747,6 +785,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
           this.applyBridgeQueueState(
             active,
             requireQueueState(message.queue, "Terminal mirror sent invalid heartbeat queue state"),
+            "heartbeat",
           );
         }
         this.broadcast(connection.sessionId, { type: "state", session: active.session });
@@ -756,6 +795,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         this.applyBridgeQueueState(
           active,
           requireQueueState(message.queue, "Terminal mirror sent invalid queue state"),
+          "queue_state",
         );
         return;
 
@@ -788,20 +828,23 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): Promise<MessageQueueState> {
     const active = this.requireActive(sessionId);
     const data = await this.dispatchBridgeCommand(sessionId, command);
+    const commandType = typeof command.type === "string" ? command.type : "unknown";
     return this.applyBridgeQueueState(
       active,
       requireQueueState(data, "Terminal mirror did not return queue state"),
+      `command_result:${commandType}`,
     );
   }
 
   private applyQueueFromCommandData(
     sessionId: string,
     data: unknown,
+    source = "command_result",
   ): MessageQueueState | undefined {
     const queue = parseQueueState(data);
     if (!queue) return undefined;
     const active = this.requireActive(sessionId);
-    return this.applyBridgeQueueState(active, queue);
+    return this.applyBridgeQueueState(active, queue, source);
   }
 
   private markQueuedMessageStarted(active: MirrorActiveSession, text: string | undefined): void {
@@ -815,8 +858,26 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private applyBridgeQueueState(
     active: MirrorActiveSession,
     queue: MessageQueueState,
+    source: string,
   ): MessageQueueState {
+    const previousQueue = active.messageQueue;
+    const changed = queueShapeChanged(previousQueue, queue);
     active.messageQueue = cloneQueueState(queue);
+    if (changed) {
+      const previous = queueCounts(previousQueue);
+      const next = queueCounts(active.messageQueue);
+      log.info("mirror_bridge.queue_state_applied", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        sessionId: active.session.id,
+        source,
+        previousVersion: previous.version,
+        version: next.version,
+        previousSteeringCount: previous.steeringCount,
+        steeringCount: next.steeringCount,
+        previousFollowUpCount: previous.followUpCount,
+        followUpCount: next.followUpCount,
+      });
+    }
     this.broadcast(active.session.id, queueStateMessage(active.messageQueue));
     return cloneQueueState(active.messageQueue);
   }
@@ -825,6 +886,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     active: MirrorActiveSession,
     message: PiBridgeQueueItemStartedMessage,
   ): void {
+    const previousQueue = active.messageQueue;
     if (message.queue) {
       active.messageQueue = cloneQueueState(
         requireQueueState(message.queue, "Terminal mirror sent invalid started-item queue state"),
@@ -837,6 +899,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         message.queueVersion,
       );
     }
+    const next = queueCounts(active.messageQueue);
+    log.info("mirror_bridge.queue_item_started", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
+      sessionId: active.session.id,
+      kind: message.kind,
+      itemId: message.item.id,
+      previousVersion: previousQueue.version,
+      version: next.version,
+      steeringCount: next.steeringCount,
+      followUpCount: next.followUpCount,
+      hasQueueSnapshot: Boolean(message.queue),
+    });
     this.broadcast(
       active.session.id,
       queueItemStartedMessage({
@@ -860,6 +934,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (matched) return;
 
     log.warn("mirror_bridge.command_result_unmatched", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
       bridgeId: connection.bridgeId,
       sessionId: connection.sessionId,
       commandId: message.id,
@@ -869,6 +944,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private detachBridge(connection: BridgeConnection, reason: string): void {
     if (this.bridges.get(connection.bridgeId) !== connection) return;
 
+    const pendingCommandCount = connection.pendingCommands.size;
     this.bridges.delete(connection.bridgeId);
     this.bridgeBySession.delete(connection.sessionId);
 
@@ -911,9 +987,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
 
     log.info("mirror_bridge.disconnected", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
       bridgeId: connection.bridgeId,
       sessionId: connection.sessionId,
       reason,
+      pendingCommandCount,
     });
   }
 
@@ -1153,11 +1231,56 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (active.lastSummaryFingerprint === fingerprint) return;
     active.lastSummaryFingerprint = fingerprint;
     log.info("mirror_runtime.summary_update", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
       sessionId: active.session.id,
       status: summary.status,
       reason,
     });
     this.broadcast(active.session.id, { type: "session_summary", summary });
+  }
+
+  private logBridgeCommandEvent(event: MirrorBridgeCommandDriverEvent): void {
+    const base = {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
+      bridgeId: event.bridgeId,
+      sessionId: event.sessionId,
+      commandId: event.commandId,
+      command: event.commandType,
+      requestId: event.requestId,
+      clientTurnId: event.clientTurnId,
+    };
+
+    switch (event.phase) {
+      case "sent":
+        log.info("mirror_bridge.command_sent", {
+          ...base,
+          sendDurationMs: event.sendDurationMs,
+        });
+        return;
+
+      case "result": {
+        const payload = {
+          ...base,
+          outcome: event.success ? "success" : "error",
+          durationMs: event.durationMs,
+          ...(event.error ? { error: event.error } : {}),
+        };
+        if (event.success) log.info("mirror_bridge.command_result", payload);
+        else log.warn("mirror_bridge.command_result", payload);
+        return;
+      }
+
+      case "timeout":
+      case "send_failed":
+      case "rejected":
+        log.warn("mirror_bridge.command_result", {
+          ...base,
+          outcome: event.phase,
+          durationMs: event.durationMs,
+          error: event.error,
+        });
+        return;
+    }
   }
 
   private dispatchBridgeCommand(

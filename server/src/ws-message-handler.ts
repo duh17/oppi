@@ -16,6 +16,10 @@ import type {
 
 const log = createLogger({ base: { component: "ws_message_handler" } });
 
+function runtimeLogTag(session: Session): "managed" | "pi-tui-mirror" {
+  return session.runtime ?? "managed";
+}
+
 interface TurnCommandMessage {
   message: string;
   images?: ImageAttachment[];
@@ -118,12 +122,12 @@ export class WsMessageHandler {
       }
 
       case "get_queue": {
-        await this.handleGetQueueCommand(session, msg, send);
+        await this.handleGetQueueCommand(session, msg, send, meta);
         return;
       }
 
       case "set_queue": {
-        await this.handleSetQueueCommand(session, msg, send);
+        await this.handleSetQueueCommand(session, msg, send, meta);
         return;
       }
 
@@ -181,6 +185,7 @@ export class WsMessageHandler {
         log.info("ws.command.received", {
           connId: meta.connId,
           sessionId: session.id,
+          runtime: runtimeLogTag(session),
           command: msg.type,
           requestId: msg.requestId,
         });
@@ -191,6 +196,7 @@ export class WsMessageHandler {
           log.info("ws.command.completed", {
             connId: meta.connId,
             sessionId: session.id,
+            runtime: runtimeLogTag(session),
             command: msg.type,
             requestId: msg.requestId,
             durationMs: Date.now() - commandStart,
@@ -203,6 +209,7 @@ export class WsMessageHandler {
           log.warn("ws.command.failed", {
             connId: meta.connId,
             sessionId: session.id,
+            runtime: runtimeLogTag(session),
             command: msg.type,
             requestId: msg.requestId,
             durationMs: Date.now() - commandStart,
@@ -278,8 +285,10 @@ export class WsMessageHandler {
     log.info("ws.turn_command.received", {
       connId: meta.connId,
       sessionId: session.id,
+      runtime: runtimeLogTag(session),
       command,
       requestId,
+      clientTurnId: msg.clientTurnId,
       chars,
       imageCount,
       attachmentCount,
@@ -300,8 +309,10 @@ export class WsMessageHandler {
       log.info("ws.turn_command.completed", {
         connId: meta.connId,
         sessionId: session.id,
+        runtime: runtimeLogTag(session),
         command,
         requestId,
+        clientTurnId: msg.clientTurnId,
         durationMs: Date.now() - startedAt,
       });
     } catch (err: unknown) {
@@ -310,8 +321,10 @@ export class WsMessageHandler {
       log.warn("ws.turn_command.failed", {
         connId: meta.connId,
         sessionId: session.id,
+        runtime: runtimeLogTag(session),
         command,
         requestId,
+        clientTurnId: msg.clientTurnId,
         durationMs: Date.now() - startedAt,
         error: message,
       });
@@ -328,8 +341,18 @@ export class WsMessageHandler {
     session: Session,
     msg: Extract<ClientMessage, { type: "get_queue" }>,
     send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta,
   ): Promise<void> {
+    const startedAt = Date.now();
     const requestId = msg.requestId;
+
+    log.info("ws.queue_command.received", {
+      connId: meta.connId,
+      sessionId: session.id,
+      runtime: runtimeLogTag(session),
+      command: "get_queue",
+      requestId,
+    });
 
     try {
       const queue = await this.deps.sessions.getMessageQueue(session.id);
@@ -337,8 +360,28 @@ export class WsMessageHandler {
       if (requestId) {
         send(runtimeCommandSuccess("get_queue", requestId, queue));
       }
+      log.info("ws.queue_command.completed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        runtime: runtimeLogTag(session),
+        command: "get_queue",
+        requestId,
+        durationMs: Date.now() - startedAt,
+        queueVersion: queue.version,
+        steeringCount: queue.steering.length,
+        followUpCount: queue.followUp.length,
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeErrorMessage(err);
+      log.warn("ws.queue_command.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        runtime: runtimeLogTag(session),
+        command: "get_queue",
+        requestId,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      });
       if (requestId) {
         send(runtimeCommandFailure("get_queue", requestId, message));
         return;
@@ -351,8 +394,21 @@ export class WsMessageHandler {
     session: Session,
     msg: SetQueueMessage,
     send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta,
   ): Promise<void> {
+    const startedAt = Date.now();
     const requestId = msg.requestId;
+
+    log.info("ws.queue_command.received", {
+      connId: meta.connId,
+      sessionId: session.id,
+      runtime: runtimeLogTag(session),
+      command: "set_queue",
+      requestId,
+      baseVersion: msg.baseVersion,
+      steeringCount: msg.steering.length,
+      followUpCount: msg.followUp.length,
+    });
 
     try {
       const queue = await this.deps.sessions.setMessageQueue(session.id, {
@@ -363,8 +419,28 @@ export class WsMessageHandler {
       if (requestId) {
         send(runtimeCommandSuccess("set_queue", requestId, queue));
       }
+      log.info("ws.queue_command.completed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        runtime: runtimeLogTag(session),
+        command: "set_queue",
+        requestId,
+        durationMs: Date.now() - startedAt,
+        queueVersion: queue.version,
+        steeringCount: queue.steering.length,
+        followUpCount: queue.followUp.length,
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeErrorMessage(err);
+      log.warn("ws.queue_command.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        runtime: runtimeLogTag(session),
+        command: "set_queue",
+        requestId,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      });
       if (requestId) {
         send(runtimeCommandFailure("set_queue", requestId, message));
         return;
@@ -386,6 +462,7 @@ export class WsMessageHandler {
     log.info("ws.stop.received", {
       connId: meta.connId,
       sessionId: session.id,
+      runtime: runtimeLogTag(session),
       command,
       requestId,
     });
@@ -399,6 +476,7 @@ export class WsMessageHandler {
       log.info("ws.stop.completed", {
         connId: meta.connId,
         sessionId: session.id,
+        runtime: runtimeLogTag(session),
         command,
         requestId,
         durationMs: Date.now() - startedAt,
@@ -409,6 +487,7 @@ export class WsMessageHandler {
       log.warn("ws.stop.failed", {
         connId: meta.connId,
         sessionId: session.id,
+        runtime: runtimeLogTag(session),
         command,
         requestId,
         durationMs: Date.now() - startedAt,
@@ -435,6 +514,7 @@ export class WsMessageHandler {
     log.info("ws.stop_session.received", {
       connId: meta.connId,
       sessionId: session.id,
+      runtime: runtimeLogTag(session),
       requestId,
     });
 
@@ -447,6 +527,7 @@ export class WsMessageHandler {
       log.info("ws.stop_session.completed", {
         connId: meta.connId,
         sessionId: session.id,
+        runtime: runtimeLogTag(session),
         requestId,
         durationMs: Date.now() - startedAt,
       });
@@ -456,6 +537,7 @@ export class WsMessageHandler {
       log.warn("ws.stop_session.failed", {
         connId: meta.connId,
         sessionId: session.id,
+        runtime: runtimeLogTag(session),
         requestId,
         durationMs: Date.now() - startedAt,
         error: message,

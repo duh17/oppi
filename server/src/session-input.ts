@@ -11,6 +11,10 @@ export interface SessionInputSessionState extends TurnSessionState {
 
 const log = createLogger({ base: { component: "session_input" } });
 
+function runtimeLogTag(session: Session): "managed" | "pi-tui-mirror" {
+  return session.runtime ?? "managed";
+}
+
 export type SdkImageInput = { type: "image"; data: string; mimeType: string };
 type StreamingInputKind = "steer" | "follow_up";
 
@@ -191,6 +195,8 @@ export class SessionInputCoordinator {
     const cmd: Record<string, unknown> = {
       type: "prompt",
       message: dispatchMessage,
+      ...(opts?.requestId ? { requestId: opts.requestId } : {}),
+      ...(turn.clientTurnId ? { clientTurnId: turn.clientTurnId } : {}),
     };
 
     // SDK image format: {type:"image", data:"base64...", mimeType:"image/png"}
@@ -205,7 +211,15 @@ export class SessionInputCoordinator {
 
     log.info("session_input.prompt_sent", {
       sessionId: active.session.id,
+      runtime: runtimeLogTag(active.session),
       status: active.session.status,
+      requestId: opts?.requestId,
+      clientTurnId: turn.clientTurnId,
+      chars: dispatchMessage.length,
+      imageCount: dispatchImages.length,
+      attachmentCount: opts?.attachments?.length ?? 0,
+      streamingBehavior: cmd.streamingBehavior as string | undefined,
+      recordPromptLocally: this.deps.recordPromptLocally !== false,
     });
 
     const commandResult = this.deps.sendCommand(key, cmd);
@@ -309,10 +323,27 @@ export class SessionInputCoordinator {
     const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
     const dispatchMessage = prepared.message;
 
-    const cmd: Record<string, unknown> = { type: kind, message: dispatchMessage };
+    const cmd: Record<string, unknown> = {
+      type: kind,
+      message: dispatchMessage,
+      ...(opts?.requestId ? { requestId: opts.requestId } : {}),
+      ...(turn.clientTurnId ? { clientTurnId: turn.clientTurnId } : {}),
+    };
     if (dispatchImages.length) {
       cmd.images = dispatchImages;
     }
+
+    log.info("session_input.streaming_sent", {
+      sessionId: active.session.id,
+      runtime: runtimeLogTag(active.session),
+      status: active.session.status,
+      command: kind,
+      requestId: opts?.requestId,
+      clientTurnId: turn.clientTurnId,
+      chars: dispatchMessage.length,
+      imageCount: dispatchImages.length,
+      attachmentCount: opts?.attachments?.length ?? 0,
+    });
 
     const commandResult = this.deps.sendCommand(key, cmd);
     if (isPromiseLike(commandResult)) {

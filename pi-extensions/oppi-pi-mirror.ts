@@ -17,26 +17,26 @@ interface OppiMirrorSettings {
 
 type MirrorLogLevel = "debug" | "info" | "warn" | "error";
 
-interface QueueImageContent {
+export interface QueueImageContent {
   data: string;
   mimeType: string;
 }
 
-interface MessageQueueDraftItem {
+export interface MessageQueueDraftItem {
   id?: string;
   message: string;
   images?: QueueImageContent[];
   createdAt?: number;
 }
 
-interface MessageQueueItem {
+export interface MessageQueueItem {
   id: string;
   message: string;
   images?: QueueImageContent[];
   createdAt: number;
 }
 
-interface MessageQueueState {
+export interface MessageQueueState {
   version: number;
   steering: MessageQueueItem[];
   followUp: MessageQueueItem[];
@@ -418,6 +418,146 @@ function queueTextMatches(
   );
 }
 
+type RuntimeQueueSnapshot = {
+  steering: readonly string[];
+  followUp: readonly string[];
+};
+
+type ProjectionChange = {
+  changed: boolean;
+  queue: MessageQueueState;
+};
+
+type ProjectionStartedItem = {
+  kind: "steer" | "follow_up";
+  item: MessageQueueItem;
+  queueVersion: number;
+  queue: MessageQueueState;
+};
+
+export class MirrorQueueProjection {
+  private queue: MessageQueueState;
+
+  constructor(
+    initialQueue: MessageQueueState = {
+      version: 0,
+      steering: [],
+      followUp: [],
+    },
+  ) {
+    this.queue = cloneQueueState(initialQueue);
+  }
+
+  snapshot(): MessageQueueState {
+    return cloneQueueState(this.queue);
+  }
+
+  pendingCount(): number {
+    return this.queue.steering.length + this.queue.followUp.length;
+  }
+
+  reconcileRuntimeSnapshot(snapshot: RuntimeQueueSnapshot): ProjectionChange {
+    if (queueTextMatches(this.queue, snapshot.steering, snapshot.followUp)) {
+      return { changed: false, queue: this.snapshot() };
+    }
+
+    this.queue = {
+      version: this.queue.version + 1,
+      steering: itemsFromTexts(snapshot.steering, this.queue.steering),
+      followUp: itemsFromTexts(snapshot.followUp, this.queue.followUp),
+    };
+    return { changed: true, queue: this.snapshot() };
+  }
+
+  replace(nextQueue: MessageQueueState): ProjectionChange {
+    const changed = JSON.stringify(this.queue) !== JSON.stringify(nextQueue);
+    this.queue = cloneQueueState(nextQueue);
+    return { changed, queue: this.snapshot() };
+  }
+
+  queueFromDrafts(
+    baseVersion: number,
+    steering: MessageQueueDraftItem[],
+    followUp: MessageQueueDraftItem[],
+  ): MessageQueueState {
+    return {
+      version:
+        Math.max(
+          this.queue.version,
+          Number.isFinite(baseVersion) ? baseVersion : 0,
+        ) + 1,
+      steering: steering.map(draftToItem),
+      followUp: followUp.map(draftToItem),
+    };
+  }
+
+  enqueueOptimistic(
+    kind: "steer" | "follow_up",
+    message: string,
+    images?: QueueImageContent[],
+    options: { previousMatchingCount?: number } = {},
+  ): ProjectionChange {
+    const item: MessageQueueItem = {
+      id: queueId(),
+      message,
+      ...(images?.length
+        ? { images: images.map((image) => ({ ...image })) }
+        : {}),
+      createdAt: Date.now(),
+    };
+    const list = kind === "steer" ? this.queue.steering : this.queue.followUp;
+    const matchingItems = list.filter(
+      (candidate) => candidate.message === message,
+    );
+    const runtimeUpdateAlreadyAddedItem =
+      options.previousMatchingCount !== undefined &&
+      matchingItems.length > options.previousMatchingCount;
+
+    if (runtimeUpdateAlreadyAddedItem) {
+      const existing = matchingItems.at(-1);
+      if (existing && images?.length && !existing.images?.length) {
+        existing.images = images.map((image) => ({ ...image }));
+        this.queue.version += 1;
+        return { changed: true, queue: this.snapshot() };
+      }
+      return { changed: false, queue: this.snapshot() };
+    }
+
+    list.push(item);
+    this.queue.version += 1;
+    return { changed: true, queue: this.snapshot() };
+  }
+
+  markStarted(message: string | undefined): ProjectionStartedItem | null {
+    const normalized = message?.trim();
+    if (!normalized) return null;
+
+    const dequeue = (
+      kind: "steer" | "follow_up",
+      list: MessageQueueItem[],
+    ): ProjectionStartedItem | null => {
+      const index = list.findIndex(
+        (item) => item.message.trim() === normalized,
+      );
+      if (index === -1) return null;
+      const [item] = list.splice(index, 1);
+      if (!item) return null;
+      this.queue.version += 1;
+      return {
+        kind,
+        item: cloneQueueItem(item),
+        queueVersion: this.queue.version,
+        queue: this.snapshot(),
+      };
+    };
+
+    return (
+      dequeue("steer", this.queue.steering) ??
+      dequeue("follow_up", this.queue.followUp)
+    );
+  }
+}
+
 function getQueueUpdateBridge(): QueueUpdateBridge {
   const globalRecord = globalThis as typeof globalThis & {
     [QUEUE_UPDATE_BRIDGE_KEY]?: QueueUpdateBridge;
@@ -631,6 +771,28 @@ function commandError(message: string, id: string, error: unknown) {
   };
 }
 
+function commandLogDetails(
+  command: Record<string, unknown>,
+): Record<string, unknown> {
+  const images = Array.isArray(command.images) ? command.images : [];
+  return {
+    commandType: typeof command.type === "string" ? command.type : "unknown",
+    requestId:
+      typeof command.requestId === "string" ? command.requestId : undefined,
+    clientTurnId:
+      typeof command.clientTurnId === "string"
+        ? command.clientTurnId
+        : undefined,
+    messageChars:
+      typeof command.message === "string" ? command.message.length : undefined,
+    imageCount: images.length,
+    streamingBehavior:
+      typeof command.streamingBehavior === "string"
+        ? command.streamingBehavior
+        : undefined,
+  };
+}
+
 function imagesFromCommand(value: unknown): QueueImageContent[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((image) => {
@@ -683,9 +845,10 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   let indicatorWidgetMounted = false;
   let requestIndicatorRender: (() => void) | null = null;
   let manualStop = false;
+  const bridgeId = `pi-tui-${process.pid}`;
   let connectedSessionId: string | null = null;
   let connectedWorkspaceId: string | null = null;
-  let queue: MessageQueueState = { version: 0, steering: [], followUp: [] };
+  const queueProjection = new MirrorQueueProjection();
   let runtimeActive = true;
   let connectionSerial = 0;
   let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
@@ -821,7 +984,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
   function renderIndicator(ctx: ExtensionContext | null = latestCtx) {
     if (!runtimeActive || !ctx || !indicatorMode) return;
-    const pendingCount = queue.steering.length + queue.followUp.length;
+    const pendingCount = queueProjection.pendingCount();
     const queued = pendingCount > 0 ? ` q:${pendingCount}` : "";
     const label =
       indicatorMode === "live"
@@ -855,20 +1018,35 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function sendQueueState() {
-    send({ type: "queue_state", queue: cloneQueueState(queue) });
+    send({ type: "queue_state", queue: queueProjection.snapshot() });
   }
 
   function syncQueueFromTexts(
     steering: readonly string[],
     followUp: readonly string[],
+    source = "runtime_snapshot",
   ): boolean {
-    if (queueTextMatches(queue, steering, followUp)) return false;
-    queue = {
-      version: queue.version + 1,
-      steering: itemsFromTexts(steering, queue.steering),
-      followUp: itemsFromTexts(followUp, queue.followUp),
-    };
-    return true;
+    const previous = queueProjection.snapshot();
+    const result = queueProjection.reconcileRuntimeSnapshot({
+      steering,
+      followUp,
+    });
+    if (result.changed) {
+      writeMirrorLog("info", "queue_projection_reconciled", {
+        runtime: "pi-tui-mirror",
+        bridgeId,
+        sessionId: connectedSessionId,
+        workspaceId: connectedWorkspaceId,
+        source,
+        previousVersion: previous.version,
+        version: result.queue.version,
+        previousSteeringCount: previous.steering.length,
+        steeringCount: result.queue.steering.length,
+        previousFollowUpCount: previous.followUp.length,
+        followUpCount: result.queue.followUp.length,
+      });
+    }
+    return result.changed;
   }
 
   function publishQueueIfChanged(
@@ -876,7 +1054,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     followUp: readonly string[],
   ) {
     if (!runtimeActive) return;
-    if (!syncQueueFromTexts(steering, followUp)) return;
+    if (!syncQueueFromTexts(steering, followUp, "queue_update")) return;
     sendQueueState();
     renderIndicator();
   }
@@ -906,7 +1084,14 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   function syncQueueFromEditableSession(ctx: ExtensionContext): boolean {
     const texts = queueTextsFromAgentSession(findEditableAgentSession(ctx));
     if (!texts) return false;
-    if (!syncQueueFromTexts(texts.steering, texts.followUp)) return false;
+    if (
+      !syncQueueFromTexts(
+        texts.steering,
+        texts.followUp,
+        "agent_session_snapshot",
+      )
+    )
+      return false;
     sendQueueState();
     renderIndicator();
     return true;
@@ -938,7 +1123,23 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     nextQueue: MessageQueueState,
   ) {
     const session = requireEditableAgentSession(ctx);
-    queue = cloneQueueState(nextQueue);
+    const previous = queueProjection.snapshot();
+    const result = queueProjection.replace(nextQueue);
+    if (result.changed) {
+      writeMirrorLog("info", "queue_projection_replaced", {
+        runtime: "pi-tui-mirror",
+        bridgeId,
+        sessionId: connectedSessionId,
+        workspaceId: connectedWorkspaceId,
+        source: "set_queue",
+        previousVersion: previous.version,
+        version: result.queue.version,
+        previousSteeringCount: previous.steering.length,
+        steeringCount: result.queue.steering.length,
+        previousFollowUpCount: previous.followUp.length,
+        followUpCount: result.queue.followUp.length,
+      });
+    }
     replaceAgentSessionQueue(session, nextQueue);
   }
 
@@ -964,8 +1165,9 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     };
 
     if (api.getMessageQueue) {
-      queue = cloneQueueState(await api.getMessageQueue());
-      return cloneQueueState(queue);
+      const latestQueue = await api.getMessageQueue();
+      queueProjection.replace(latestQueue);
+      return queueProjection.snapshot();
     }
 
     if (api.getSteeringMessages && api.getFollowUpMessages) {
@@ -973,11 +1175,11 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         api.getSteeringMessages(),
         api.getFollowUpMessages(),
       ]);
-      syncQueueFromTexts(steering, followUp);
-      return cloneQueueState(queue);
+      syncQueueFromTexts(steering, followUp, "extension_context_api");
+      return queueProjection.snapshot();
     }
 
-    return cloneQueueState(queue);
+    return queueProjection.snapshot();
   }
 
   function enqueueShadow(
@@ -986,64 +1188,29 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     images?: QueueImageContent[],
     options: { previousMatchingCount?: number } = {},
   ) {
-    const item: MessageQueueItem = {
-      id: queueId(),
+    const result = queueProjection.enqueueOptimistic(
+      kind === "steer" ? "steer" : "follow_up",
       message,
-      ...(images?.length
-        ? { images: images.map((image) => ({ ...image })) }
-        : {}),
-      createdAt: Date.now(),
-    };
-    const list = kind === "steer" ? queue.steering : queue.followUp;
-    const matchingItems = list.filter(
-      (candidate) => candidate.message === message,
+      images,
+      options,
     );
-    const queueUpdateAlreadyAddedItem =
-      options.previousMatchingCount !== undefined &&
-      matchingItems.length > options.previousMatchingCount;
-    if (queueUpdateAlreadyAddedItem) {
-      const existing = matchingItems.at(-1);
-      if (existing && images?.length && !existing.images?.length) {
-        existing.images = images.map((image) => ({ ...image }));
-        queue.version += 1;
-        sendQueueState();
-        renderIndicator();
-      }
-      return;
-    }
-    list.push(item);
-    queue.version += 1;
+    if (!result.changed) return;
     sendQueueState();
     renderIndicator();
   }
 
   function markQueueItemStarted(message: string | undefined) {
-    const normalized = message?.trim();
-    if (!normalized) return;
-    const dequeue = (
-      kind: "steer" | "follow_up",
-      list: MessageQueueItem[],
-    ): MessageQueueItem | null => {
-      const index = list.findIndex(
-        (item) => item.message.trim() === normalized,
-      );
-      if (index === -1) return null;
-      const [item] = list.splice(index, 1);
-      if (!item) return null;
-      queue.version += 1;
-      send({
-        type: "queue_item_started",
-        kind,
-        item: cloneQueueItem(item),
-        queueVersion: queue.version,
-        queue: cloneQueueState(queue),
-      });
-      sendQueueState();
-      renderIndicator();
-      return item;
-    };
-    if (dequeue("steer", queue.steering)) return;
-    dequeue("follow_up", queue.followUp);
+    const started = queueProjection.markStarted(message);
+    if (!started) return;
+    send({
+      type: "queue_item_started",
+      kind: started.kind,
+      item: started.item,
+      queueVersion: started.queueVersion,
+      queue: started.queue,
+    });
+    sendQueueState();
+    renderIndicator();
   }
 
   function clearTimers() {
@@ -1065,7 +1232,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         send({
           type: "heartbeat",
           state: stateSnapshot(pi, latestCtx),
-          queue: cloneQueueState(queue),
+          queue: queueProjection.snapshot(),
         });
       } catch (error) {
         logCallbackError("heartbeat failed", error);
@@ -1138,7 +1305,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         send({
           type: "hello",
           protocolVersion: 1,
-          bridgeId: `pi-tui-${process.pid}`,
+          bridgeId,
           pid: process.pid,
           hostname: hostname(),
           cwd: ctx.cwd,
@@ -1177,10 +1344,19 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       });
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code: number, reason: Buffer) => {
       if (!runtimeActive || connectionSerial !== serial || ws !== socket) {
         return;
       }
+      writeMirrorLog("info", "bridge_disconnected", {
+        runtime: "pi-tui-mirror",
+        bridgeId,
+        sessionId: connectedSessionId,
+        workspaceId: connectedWorkspaceId,
+        code,
+        reason: reason.toString("utf8"),
+        manualStop,
+      });
       clearTimers();
       ws = null;
       if (!manualStop) {
@@ -1270,6 +1446,12 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
         lastManagedConflictSessionId = null;
         lastManagedConflictNotifiedAt = 0;
+        writeMirrorLog("info", "bridge_connected", {
+          runtime: "pi-tui-mirror",
+          bridgeId,
+          sessionId: connectedSessionId,
+          workspaceId: connectedWorkspaceId,
+        });
         setIndicatorMode("live");
         return;
 
@@ -1339,8 +1521,28 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     id: string,
     command: Record<string, unknown>,
   ) {
+    const startedAt = Date.now();
+    const details = commandLogDetails(command);
+    writeMirrorLog("info", "command_received", {
+      runtime: "pi-tui-mirror",
+      bridgeId,
+      sessionId: connectedSessionId,
+      workspaceId: connectedWorkspaceId,
+      commandId: id,
+      ...details,
+    });
     try {
       const data = await runCommand(ctx, command);
+      writeMirrorLog("info", "command_completed", {
+        runtime: "pi-tui-mirror",
+        bridgeId,
+        sessionId: connectedSessionId,
+        workspaceId: connectedWorkspaceId,
+        commandId: id,
+        ...details,
+        outcome: "success",
+        durationMs: Date.now() - startedAt,
+      });
       send({
         type: "command_result",
         id,
@@ -1349,9 +1551,15 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         state: stateSnapshot(pi, ctx),
       });
     } catch (error) {
-      writeMirrorLog("warn", "command_failed", {
-        id,
-        commandType: command.type,
+      writeMirrorLog("warn", "command_completed", {
+        runtime: "pi-tui-mirror",
+        bridgeId,
+        sessionId: connectedSessionId,
+        workspaceId: connectedWorkspaceId,
+        commandId: id,
+        ...details,
+        outcome: "error",
+        durationMs: Date.now() - startedAt,
         error,
       });
       send(commandError("command_result", id, error));
@@ -1375,47 +1583,47 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         const content = contentForMessage(message, images);
         const streamingBehavior = command.streamingBehavior;
         if (streamingBehavior === "steer") {
-          const previousMatchingCount = queue.steering.filter(
-            (item) => item.message === message,
-          ).length;
+          const previousMatchingCount = queueProjection
+            .snapshot()
+            .steering.filter((item) => item.message === message).length;
           pi.sendUserMessage(content, { deliverAs: "steer" });
           enqueueShadow("steer", message, images, { previousMatchingCount });
         } else if (streamingBehavior === "followUp") {
-          const previousMatchingCount = queue.followUp.filter(
-            (item) => item.message === message,
-          ).length;
+          const previousMatchingCount = queueProjection
+            .snapshot()
+            .followUp.filter((item) => item.message === message).length;
           pi.sendUserMessage(content, { deliverAs: "followUp" });
           enqueueShadow("followUp", message, images, { previousMatchingCount });
         } else {
           pi.sendUserMessage(content);
         }
-        return { dispatched: true, queue: cloneQueueState(queue) };
+        return { dispatched: true, queue: queueProjection.snapshot() };
       }
 
       case "steer": {
         const message = String(command.message ?? "");
         const images = imagesFromCommand(command.images);
-        const previousMatchingCount = queue.steering.filter(
-          (item) => item.message === message,
-        ).length;
+        const previousMatchingCount = queueProjection
+          .snapshot()
+          .steering.filter((item) => item.message === message).length;
         pi.sendUserMessage(contentForMessage(message, images), {
           deliverAs: "steer",
         });
         enqueueShadow("steer", message, images, { previousMatchingCount });
-        return { dispatched: true, queue: cloneQueueState(queue) };
+        return { dispatched: true, queue: queueProjection.snapshot() };
       }
 
       case "follow_up": {
         const message = String(command.message ?? "");
         const images = imagesFromCommand(command.images);
-        const previousMatchingCount = queue.followUp.filter(
-          (item) => item.message === message,
-        ).length;
+        const previousMatchingCount = queueProjection
+          .snapshot()
+          .followUp.filter((item) => item.message === message).length;
         pi.sendUserMessage(contentForMessage(message, images), {
           deliverAs: "followUp",
         });
         enqueueShadow("followUp", message, images, { previousMatchingCount });
-        return { dispatched: true, queue: cloneQueueState(queue) };
+        return { dispatched: true, queue: queueProjection.snapshot() };
       }
 
       case "abort":
@@ -1426,7 +1634,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         // messages. Terminal Escape still owns its native clear-and-restore path.
         sendQueueState();
         renderIndicator();
-        return { aborted: true, queue: cloneQueueState(queue) };
+        return { aborted: true, queue: queueProjection.snapshot() };
 
       case "reload":
         scheduleRuntimeReload(ctx);
@@ -1454,29 +1662,25 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         const followUp = Array.isArray(command.followUp)
           ? (command.followUp as MessageQueueDraftItem[])
           : [];
-        const requestedQueue: MessageQueueState = {
-          version:
-            Math.max(
-              queue.version,
-              Number.isFinite(baseVersion) ? baseVersion : 0,
-            ) + 1,
-          steering: steering.map(draftToItem),
-          followUp: followUp.map(draftToItem),
-        };
+        const requestedQueue = queueProjection.queueFromDrafts(
+          baseVersion,
+          steering,
+          followUp,
+        );
 
         const nextQueue = api.setMessageQueue
           ? await api.setMessageQueue({ baseVersion, steering, followUp })
           : undefined;
         if (nextQueue) {
-          queue = cloneQueueState(nextQueue);
+          queueProjection.replace(nextQueue);
         } else if (api.setMessageQueue) {
-          queue = requestedQueue;
+          queueProjection.replace(requestedQueue);
         } else {
           replaceLocalQueue(ctx, requestedQueue);
         }
         sendQueueState();
         renderIndicator();
-        return { queue: cloneQueueState(queue) };
+        return { queue: queueProjection.snapshot() };
       }
 
       case "get_state":
