@@ -7,8 +7,8 @@ import type { Session } from "./types.js";
 /**
  * Routes client commands to the runtime that owns a session.
  *
- * Managed sessions continue through the in-process Pi SDK SessionManager.
- * Terminal mirror sessions stay terminal-owned until an explicit future
+ * Oppi-managed sessions continue through the in-process Pi SDK SessionManager.
+ * Terminal pi-tui sessions stay terminal-owned until an explicit future
  * "resume as managed" flow is added. This avoids split-brain behavior where
  * the server silently starts an SDK runtime while a terminal bridge is only
  * reloading or temporarily disconnected.
@@ -26,7 +26,7 @@ export class SessionRuntimeRouter implements AgentRuntimeCommandTransport {
   }
 
   private isMirror(session: Session | undefined): session is Session {
-    return session?.runtime === "pi-tui-mirror";
+    return session?.runtime === "pi-tui";
   }
 
   sendPrompt: AgentRuntimeCommandTransport["sendPrompt"] = (sessionId, message, opts) =>

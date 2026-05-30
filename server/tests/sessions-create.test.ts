@@ -661,7 +661,7 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
     const mirrorSession = makeSession({
       id: "sess-1",
       workspaceId: "ws-1",
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       mirror: { status: "disconnected" },
       status: "ready",
     });
@@ -684,7 +684,7 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
     expect(mock.responses).toHaveLength(1);
     expect((mock.responses[0]!.data as { session: Session }).session).toMatchObject({
       id: "sess-1",
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       mirror: { status: "connected" },
     });
   });
@@ -694,7 +694,7 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
     const mirrorSession = makeSession({
       id: "sess-1",
       workspaceId: "ws-1",
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       mirror: { status: "disconnected" },
       status: "stopped",
       piSessionFile: "/tmp/stopped-mirror.jsonl",
@@ -706,13 +706,13 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
       isSessionConnected: vi.fn(() => false),
     };
     mock.sessions.startSession.mockResolvedValue(
-      makeSession({ id: "sess-1", workspaceId: "ws-1", runtime: "managed", status: "ready" }),
+      makeSession({ id: "sess-1", workspaceId: "ws-1", runtime: "oppi", status: "ready" }),
     );
 
     await dispatchResume(mock);
 
     expect(mock.storage.saveSession).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "sess-1", runtime: "managed", mirror: undefined }),
+      expect.objectContaining({ id: "sess-1", runtime: "oppi", mirror: undefined }),
     );
     expect(mock.sessions.startSession).toHaveBeenCalledWith(
       "sess-1",
@@ -721,9 +721,73 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
     expect(mock.responses).toHaveLength(1);
     expect((mock.responses[0]!.data as { session: Session }).session).toMatchObject({
       id: "sess-1",
-      runtime: "managed",
+      runtime: "oppi",
       status: "ready",
     });
+  });
+});
+
+describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
+  async function dispatchStop(mock: MockRouteContext, sessionId = "sess-1"): Promise<boolean> {
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+    const req = new PassThrough() as unknown as IncomingMessage;
+    const res = {} as ServerResponse;
+    const url = new URL(`https://localhost/workspaces/ws-1/sessions/${sessionId}/stop`);
+    return dispatcher({
+      method: "POST",
+      path: `/workspaces/ws-1/sessions/${sessionId}/stop`,
+      url,
+      req,
+      res,
+    });
+  }
+
+  it("stops connected pi-tui sessions through the mirror runtime", async () => {
+    const mock = createMockContext();
+    const session = makeSession({
+      id: "sess-1",
+      workspaceId: "ws-1",
+      runtime: "pi-tui",
+      status: "busy",
+    });
+    mock.storage.getSession.mockReturnValue(session);
+    (mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } })
+      .mirrorRuntime = {
+      stopSession: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchStop(mock);
+
+    expect(mock.sessions.stopSession).not.toHaveBeenCalled();
+    expect(
+      (mock.ctx as RouteContext & {
+        mirrorRuntime?: { stopSession: ReturnType<typeof vi.fn> };
+      }).mirrorRuntime?.stopSession,
+    ).toHaveBeenCalledWith("sess-1");
+    expect(mock.responses).toHaveLength(1);
+    expect((mock.responses[0]!.data as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("fails fast when a pi-tui session is no longer connected", async () => {
+    const mock = createMockContext();
+    const session = makeSession({
+      id: "sess-1",
+      workspaceId: "ws-1",
+      runtime: "pi-tui",
+      status: "busy",
+    });
+    mock.storage.getSession.mockReturnValue(session);
+    (mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } })
+      .mirrorRuntime = {
+      stopSession: vi.fn().mockRejectedValue(new Error("pi-tui is not connected; stop it from the terminal")),
+    };
+
+    await dispatchStop(mock);
+
+    expect(mock.responses).toHaveLength(0);
+    expect(mock.errors).toEqual([
+      { status: 409, message: "pi-tui is not connected; stop it from the terminal" },
+    ]);
   });
 });
 

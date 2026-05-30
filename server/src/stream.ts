@@ -366,7 +366,7 @@ export class BoundSessionStreamMux {
     send(streamConnectedMessage(this.ctx, owner));
 
     try {
-      const isStoredMirrorSession = session.runtime === "pi-tui-mirror";
+      const isStoredMirrorSession = session.runtime === "pi-tui";
       const mirrorRuntime = isStoredMirrorSession ? this.ctx.mirrorRuntime : undefined;
       const mirrorConnected = isStoredMirrorSession
         ? mirrorRuntime?.isSessionConnected(sessionId) === true
@@ -376,7 +376,7 @@ export class BoundSessionStreamMux {
         promoteStoppedMirrorToManaged(session);
         this.ctx.storage.saveSession(session);
       } else if (isStoredMirrorSession && !mirrorRuntime) {
-        throw new Error("Terminal mirror runtime is not available");
+        throw new Error("pi-tui runtime is not available");
       }
       const isMirrorSession = isStoredMirrorSession && !shouldResumeMirrorAsManaged;
 

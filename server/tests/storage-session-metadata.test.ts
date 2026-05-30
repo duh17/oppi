@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { openDatabase } from "../src/sqlite-compat.js";
 import { Storage } from "../src/storage.js";
 
 describe("storage session metadata format", () => {
@@ -26,10 +27,10 @@ describe("storage session metadata format", () => {
     expect(new Storage(dir).getSession(session.id)?.status).toBe("ready");
   });
 
-  it("persists terminal mirror runtime metadata", () => {
+  it("persists pi-tui runtime metadata", () => {
     const storage = new Storage(dir);
     const session = storage.createSession("terminal live", "openai/gpt-5");
-    session.runtime = "pi-tui-mirror";
+    session.runtime = "pi-tui";
     session.mirror = {
       status: "connected",
       capabilities: ["prompt", "abort"],
@@ -46,9 +47,37 @@ describe("storage session metadata format", () => {
     storage.saveSession(session);
 
     const loaded = new Storage(dir).getSession(session.id);
-    expect(loaded?.runtime).toBe("pi-tui-mirror");
+    expect(loaded?.runtime).toBe("pi-tui");
     expect(loaded?.mirror?.status).toBe("connected");
     expect(loaded?.mirror?.terminal?.cwd).toBe("/tmp/project");
+  });
+
+  it("normalizes legacy runtime values when loading stored sessions", () => {
+    const storage = new Storage(dir);
+    const mirrorSession = storage.createSession("terminal live", "openai/gpt-5");
+    mirrorSession.runtime = "pi-tui";
+    storage.saveSession(mirrorSession);
+
+    const oppiSession = storage.createSession("oppi live", "openai/gpt-5");
+    oppiSession.runtime = "oppi";
+    storage.saveSession(oppiSession);
+
+    const db = openDatabase(join(dir, "session-state.db"));
+    db.prepare("UPDATE session_state_sessions SET runtime = ?, session_json = ? WHERE id = ?").run(
+      "pi-tui-mirror",
+      JSON.stringify({ ...mirrorSession, runtime: "pi-tui-mirror" }),
+      mirrorSession.id,
+    );
+    db.prepare("UPDATE session_state_sessions SET runtime = ?, session_json = ? WHERE id = ?").run(
+      "managed",
+      JSON.stringify({ ...oppiSession, runtime: "managed" }),
+      oppiSession.id,
+    );
+    db.close();
+
+    const reloaded = new Storage(dir);
+    expect(reloaded.getSession(mirrorSession.id)?.runtime).toBe("pi-tui");
+    expect(reloaded.getSession(oppiSession.id)?.runtime).toBe("oppi");
   });
 
   it("imports legacy session metadata from disk", () => {

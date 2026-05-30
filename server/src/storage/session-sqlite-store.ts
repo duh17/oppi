@@ -215,6 +215,7 @@ export class SessionSqliteStore {
       messageCount: 0,
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
+      runtime: "oppi",
     };
 
     this.saveSession(session);
@@ -873,6 +874,19 @@ export class SessionSqliteStore {
   }
 }
 
+function normalizeStoredSessionRuntimeKind(value: unknown): Session["runtime"] | undefined {
+  if (value === "oppi" || value === "pi-tui") {
+    return value;
+  }
+  if (value === "managed") {
+    return "oppi";
+  }
+  if (value === "pi-tui-mirror") {
+    return "pi-tui";
+  }
+  return undefined;
+}
+
 function buildProjectedSession(row: SessionProjectionRow): Session {
   const session: Session = {
     id: row.id,
@@ -901,7 +915,7 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   if (row.first_message !== null) session.firstMessage = row.first_message;
   if (row.last_message !== null) session.lastMessage = row.last_message;
   if (row.thinking_level !== null) session.thinkingLevel = row.thinking_level;
-  if (row.runtime === "managed" || row.runtime === "pi-tui-mirror") session.runtime = row.runtime;
+  session.runtime = normalizeStoredSessionRuntimeKind(row.runtime) ?? "oppi";
   const mirror = parseJsonValue<Session["mirror"]>(row.mirror_json, row.id, "mirror");
   if (mirror) session.mirror = mirror;
   if (row.pi_session_file !== null) session.piSessionFile = row.pi_session_file;
@@ -1052,9 +1066,7 @@ function normalizeDeclaredSession(session: Session): Session {
   if (session.thinkingLevel !== undefined && session.thinkingLevel !== null) {
     normalized.thinkingLevel = session.thinkingLevel;
   }
-  if (session.runtime === "managed" || session.runtime === "pi-tui-mirror") {
-    normalized.runtime = session.runtime;
-  }
+  normalized.runtime = normalizeStoredSessionRuntimeKind(session.runtime) ?? "oppi";
   if (session.mirror !== undefined && session.mirror !== null) {
     normalized.mirror = session.mirror;
   }

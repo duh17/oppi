@@ -154,7 +154,7 @@ describe("BoundSessionStreamMux", () => {
   });
 
   it("does not auto-start a terminal mirror session when a client attaches", async () => {
-    const session = { ...makeSession("sess-mirror", "w1"), runtime: "pi-tui-mirror" as const };
+    const session = { ...makeSession("sess-mirror", "w1"), runtime: "pi-tui" as const };
     const { ctx } = createMockContext([session]);
     const mirrorSubscribe = vi.fn(() => () => {});
     ctx.mirrorRuntime = {
@@ -177,7 +177,7 @@ describe("BoundSessionStreamMux", () => {
   it("keeps a recently reloading terminal mirror session bound to the mirror runtime", async () => {
     const session = {
       ...makeSession("sess-reloading-mirror", "w1"),
-      runtime: "pi-tui-mirror" as const,
+      runtime: "pi-tui" as const,
       mirror: {
         status: "connected" as const,
         terminal: { disconnectedAt: Date.now(), disconnectReason: "reload" },
@@ -208,7 +208,7 @@ describe("BoundSessionStreamMux", () => {
   it("keeps a stale terminal mirror session bound to mirror ownership", async () => {
     const session = {
       ...makeSession("sess-stale-mirror", "w1"),
-      runtime: "pi-tui-mirror" as const,
+      runtime: "pi-tui" as const,
       mirror: { status: "connected" as const },
       piSessionFile: "/tmp/stale-session.jsonl",
     };
@@ -228,7 +228,7 @@ describe("BoundSessionStreamMux", () => {
 
     expect(ctx.sessions.startSession).not.toHaveBeenCalled();
     expect(mirrorSubscribe).toHaveBeenCalledWith("sess-stale-mirror", expect.any(Function));
-    expect(sessionMap.get("sess-stale-mirror")?.runtime).toBe("pi-tui-mirror");
+    expect(sessionMap.get("sess-stale-mirror")?.runtime).toBe("pi-tui");
     expect(ws.sentOfType("connected", "sess-stale-mirror")[0]).toMatchObject({ currentSeq: 7 });
   });
 
@@ -236,7 +236,7 @@ describe("BoundSessionStreamMux", () => {
     const session = {
       ...makeSession("sess-stopped-mirror", "w1"),
       status: "stopped" as const,
-      runtime: "pi-tui-mirror" as const,
+      runtime: "pi-tui" as const,
       mirror: { status: "disconnected" as const },
       piSessionFile: "/tmp/stopped-session.jsonl",
     };
@@ -256,12 +256,12 @@ describe("BoundSessionStreamMux", () => {
 
     expect(ctx.sessions.startSession).toHaveBeenCalledWith("sess-stopped-mirror", undefined);
     expect(mirrorSubscribe).not.toHaveBeenCalled();
-    expect(sessionMap.get("sess-stopped-mirror")?.runtime).toBe("managed");
+    expect(sessionMap.get("sess-stopped-mirror")?.runtime).toBe("oppi");
     expect(sessionMap.get("sess-stopped-mirror")?.mirror).toBeUndefined();
   });
 
   it("keeps a mirror-bound stream open when the live bridge disconnects", async () => {
-    const session = { ...makeSession("sess-live-mirror", "w1"), runtime: "pi-tui-mirror" as const };
+    const session = { ...makeSession("sess-live-mirror", "w1"), runtime: "pi-tui" as const };
     const { ctx } = createMockContext([session]);
     let mirrorCallback: ((msg: ServerMessage) => void) | undefined;
     ctx.mirrorRuntime = {

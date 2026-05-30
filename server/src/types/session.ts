@@ -24,7 +24,7 @@ export interface SessionSummaryChangeStats {
   removedLines: number;
 }
 
-export type SessionRuntimeKind = "managed" | "pi-tui-mirror";
+export type SessionRuntimeKind = "oppi" | "pi-tui";
 
 export interface PiTuiMirrorTerminalInfo {
   bridgeId?: string;
@@ -95,7 +95,7 @@ export interface Session {
   // Agent config state (synced from pi get_state)
   thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
-  // Runtime ownership. Omitted means a normal server-managed Pi SDK runtime.
+  // Runtime ownership. New sessions persist this explicitly as "oppi" or "pi-tui".
   runtime?: SessionRuntimeKind;
   mirror?: PiTuiMirrorSessionMetadata;
 

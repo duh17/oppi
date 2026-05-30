@@ -88,13 +88,13 @@ describe("MirrorBridgeCommandDriver", () => {
       unsafe: 1n,
     });
 
-    await expect(promise).rejects.toThrow("Failed to serialize terminal mirror command get_state");
+    await expect(promise).rejects.toThrow("Failed to serialize pi-tui command get_state");
     expect(ws.sent).toHaveLength(0);
     expect(connection.pendingCommands.size).toBe(0);
     expect(events[0]).toMatchObject({
       phase: "send_failed",
       commandType: "get_state",
-      error: expect.stringContaining("Failed to serialize terminal mirror command get_state"),
+      error: expect.stringContaining("Failed to serialize pi-tui command get_state"),
     });
   });
 
@@ -165,9 +165,9 @@ describe("MirrorBridgeCommandDriver", () => {
     const connection = makeConnection();
 
     const promise = driver.dispatch(connection, { type: "get_queue" });
-    driver.rejectPending(connection, new Error("Terminal mirror disconnected"));
+    driver.rejectPending(connection, new Error("pi-tui disconnected"));
 
-    await expect(promise).rejects.toThrow("Terminal mirror disconnected");
+    await expect(promise).rejects.toThrow("pi-tui disconnected");
     expect(connection.pendingCommands.size).toBe(0);
   });
 
@@ -179,7 +179,7 @@ describe("MirrorBridgeCommandDriver", () => {
       const promise = driver.dispatch(connection, { type: "get_queue" });
 
       vi.advanceTimersByTime(25);
-      await expect(promise).rejects.toThrow("Terminal mirror command timed out: get_queue");
+      await expect(promise).rejects.toThrow("pi-tui command timed out: get_queue");
       expect(connection.pendingCommands.size).toBe(0);
     } finally {
       vi.useRealTimers();

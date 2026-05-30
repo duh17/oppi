@@ -230,7 +230,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       code: "managed_runtime_active",
       sessionId: "managed-1",
       retryAfterMs: 10_000,
-      error: expect.stringContaining("already owned by the managed Oppi runtime"),
+      error: expect.stringContaining("already owned by the oppi runtime"),
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1008);
@@ -256,6 +256,28 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(stopped?.mirror?.status).toBe("disconnected");
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1000);
+  });
+
+  it("sends stop to pi-tui and waits for the terminal to shut down", async () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error("expected mirrored session");
+    session.status = "busy";
+
+    const stopPromise = runtime.stopSession(sessionId);
+    const command = await waitForLatestCommand(ws);
+    expect(command.command).toEqual({ type: "stop" });
+
+    ws.receive({
+      type: "goodbye",
+      reason: "stopped",
+      state: { isIdle: true },
+    });
+
+    await expect(stopPromise).resolves.toBeUndefined();
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("stopped");
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
   });
 
   it("backfills the first user message from the terminal session file", async () => {
@@ -455,7 +477,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       data: { queue: { version: 1, steering: "bad", followUp: [] } },
     });
 
-    await expect(queuePromise).rejects.toThrow("Terminal mirror did not return queue state");
+    await expect(queuePromise).rejects.toThrow("pi-tui did not return queue state");
   });
 
   it("forwards set_queue and broadcasts the returned queue state", async () => {
@@ -694,7 +716,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       requestId: "req-fork",
       success: false,
       error:
-        "terminal mirror runtime does not support command: fork (session-file replacement is terminal-owned; fork from the terminal)",
+        "pi-tui runtime does not support command: fork (session-file replacement is terminal-owned; fork from the terminal)",
     });
   });
 

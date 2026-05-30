@@ -17,7 +17,7 @@ import type {
 const log = createLogger({ base: { component: "ws_message_handler" } });
 
 function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
-  return session.runtime === "pi-tui-mirror" ? "pi-tui" : "oppi";
+  return session.runtime === "pi-tui" ? "pi-tui" : "oppi";
 }
 
 interface TurnCommandMessage {

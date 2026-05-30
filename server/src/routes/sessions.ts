@@ -1137,7 +1137,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    if (session.runtime === "pi-tui-mirror") {
+    if (session.runtime === "pi-tui") {
       const mirrorConnected = ctx.mirrorRuntime?.isSessionConnected?.(sessionId) === true;
       if (!canResumeStoppedMirrorAsManaged(session, mirrorConnected)) {
         const active = ctx.mirrorRuntime?.getActiveSession(sessionId) ?? session;
@@ -1274,13 +1274,29 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const hydratedSession = ctx.ensureSessionContextWindow(session);
 
-    if (ctx.sessions.isActive(sessionId)) {
-      await ctx.sessions.stopSession(sessionId);
-    } else {
-      hydratedSession.status = "stopped";
-      hydratedSession.currentTurnStartedAt = undefined;
-      hydratedSession.lastActivity = Date.now();
-      ctx.storage.saveSession(hydratedSession);
+    try {
+      if (session.runtime === "pi-tui") {
+        if (!ctx.mirrorRuntime) {
+          helpers.error(res, 503, "pi-tui runtime is not available");
+          return;
+        }
+        await ctx.mirrorRuntime.stopSession(sessionId);
+      } else if (ctx.sessions.isActive(sessionId)) {
+        await ctx.sessions.stopSession(sessionId);
+      } else {
+        hydratedSession.status = "stopped";
+        hydratedSession.currentTurnStartedAt = undefined;
+        hydratedSession.lastActivity = Date.now();
+        ctx.storage.saveSession(hydratedSession);
+      }
+    } catch (error: unknown) {
+      const message = safeErrorMessage(error);
+      helpers.error(
+        res,
+        session.runtime === "pi-tui" && message.includes("not connected") ? 409 : 500,
+        message,
+      );
+      return;
     }
 
     const updatedSession = ctx.storage.getSession(sessionId);

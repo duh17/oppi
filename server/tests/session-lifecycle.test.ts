@@ -1088,7 +1088,7 @@ describe("SessionManager RPC passthrough", () => {
     const { manager } = makeManagerHarness();
 
     await expect(manager.forwardClientCommand("s1", { type: "evil_command" })).rejects.toThrow(
-      "managed runtime does not support command: evil_command",
+      "oppi runtime does not support command: evil_command",
     );
   });
 

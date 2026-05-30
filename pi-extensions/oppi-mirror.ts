@@ -614,15 +614,12 @@ function userMessageFromQueueItem(item: MessageQueueItem) {
   };
 }
 
-function replaceAgentSessionQueue(
-  session: EditableAgentSession,
-  nextQueue: MessageQueueState,
-) {
+function clearAgentSessionQueue(session: EditableAgentSession) {
   const agent = session.agent;
   const canClear =
     agent?.clearAllQueues ||
     (agent?.clearSteeringQueue && agent.clearFollowUpQueue);
-  if (!agent || !canClear || !agent.steer || !agent.followUp) {
+  if (!agent || !canClear) {
     throw new Error("Terminal Pi runtime queue is not editable");
   }
 
@@ -632,6 +629,22 @@ function replaceAgentSessionQueue(
     agent.clearSteeringQueue?.();
     agent.clearFollowUpQueue?.();
   }
+
+  session._steeringMessages = [];
+  session._followUpMessages = [];
+  session._emitQueueUpdate?.();
+}
+
+function replaceAgentSessionQueue(
+  session: EditableAgentSession,
+  nextQueue: MessageQueueState,
+) {
+  const agent = session.agent;
+  if (!agent?.steer || !agent.followUp) {
+    throw new Error("Terminal Pi runtime queue is not editable");
+  }
+
+  clearAgentSessionQueue(session);
 
   session._steeringMessages = nextQueue.steering.map((item) => item.message);
   session._followUpMessages = nextQueue.followUp.map((item) => item.message);
@@ -1143,6 +1156,30 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     replaceAgentSessionQueue(session, nextQueue);
   }
 
+  function clearQueueForShutdown(ctx: ExtensionContext) {
+    const previous = queueProjection.snapshot();
+    queueProjection.replace(emptyQueue());
+    const session = findEditableAgentSession(ctx);
+    if (session) {
+      try {
+        clearAgentSessionQueue(session);
+      } catch (error) {
+        logCallbackError("failed to clear queue for shutdown", error);
+      }
+    }
+    writeMirrorLog("info", "queue_projection_cleared_for_shutdown", {
+      runtime: "pi-tui",
+      bridgeId,
+      sessionId: connectedSessionId,
+      workspaceId: connectedWorkspaceId,
+      previousVersion: previous.version,
+      previousSteeringCount: previous.steering.length,
+      previousFollowUpCount: previous.followUp.length,
+    });
+    sendQueueState();
+    renderIndicator();
+  }
+
   function scheduleRuntimeReload(ctx: ExtensionContext) {
     const session = findEditableAgentSession(ctx);
     if (!session?.reload) {
@@ -1471,6 +1508,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         const errorText = err.error ?? "unknown";
         if (
           err.code === "managed_runtime_active" ||
+          errorText.includes("already owned by the oppi runtime") ||
           errorText.includes("already owned by the managed Oppi runtime")
         ) {
           const sessionId = err.sessionId ?? "this session";
@@ -1635,6 +1673,22 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         sendQueueState();
         renderIndicator();
         return { aborted: true, queue: queueProjection.snapshot() };
+
+      case "stop": {
+        const session = findEditableAgentSession(ctx);
+        notify(
+          ctx,
+          "Oppi requested a pi-tui shutdown. Current work will be interrupted and this session will exit.",
+          "warning",
+        );
+        session?.abortCompaction?.();
+        session?.abortRetry?.();
+        session?.abortBash?.();
+        clearQueueForShutdown(ctx);
+        ctx.abort();
+        ctx.shutdown();
+        return { stopping: true };
+      }
 
       case "reload":
         scheduleRuntimeReload(ctx);
@@ -1961,10 +2015,13 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         queueUpdateBridge.internalEventListeners.delete(
           internalAgentEventListener,
         );
+        const shutdownReason = (event as { reason?: unknown }).reason;
         const reason =
-          (event as { reason?: unknown }).reason === "reload"
+          shutdownReason === "reload"
             ? "reload"
-            : "session_shutdown";
+            : shutdownReason === "quit"
+              ? "stopped"
+              : "session_shutdown";
         stop(ctx, reason, { notify: false });
       },
     ),

@@ -94,7 +94,7 @@ export class MirrorBridgeCommandDriver {
     command: Record<string, unknown>,
   ): Promise<unknown> {
     if (!connection || connection.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("Terminal mirror is not connected");
+      throw new Error("pi-tui is not connected");
     }
 
     const id = formatCommandId();
@@ -108,7 +108,7 @@ export class MirrorBridgeCommandDriver {
     try {
       serializedOutbound = JSON.stringify(outbound);
     } catch (error: unknown) {
-      const message = `Failed to serialize terminal mirror command ${commandType}: ${safeErrorMessage(
+      const message = `Failed to serialize pi-tui command ${commandType}: ${safeErrorMessage(
         error,
       )}`;
       this.notify({
@@ -128,7 +128,7 @@ export class MirrorBridgeCommandDriver {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         connection.pendingCommands.delete(id);
-        const message = `Terminal mirror command timed out: ${commandType}`;
+        const message = `pi-tui command timed out: ${commandType}`;
         this.notify({
           phase: "timeout",
           bridgeId: connection.bridgeId,

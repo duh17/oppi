@@ -708,7 +708,7 @@ export class SessionCommandCoordinator {
 
   constructor(private readonly deps: SessionCommandCoordinatorDeps) {
     this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
-      runtimeName: "managed runtime",
+      runtimeName: "oppi runtime",
       isCommandSupported: (commandType) => this.isAllowedCommand(commandType),
       normalizeError: normalizeCommandError,
       broadcast: (key, message) => this.deps.broadcast(key, message),

@@ -9,7 +9,7 @@ export function canResumeStoppedMirrorAsManaged(
   mirrorConnected: boolean,
 ): boolean {
   return (
-    session.runtime === "pi-tui-mirror" &&
+    session.runtime === "pi-tui" &&
     session.status === "stopped" &&
     !mirrorConnected &&
     mirrorSessionResumeFile(session) !== undefined
@@ -18,7 +18,7 @@ export function canResumeStoppedMirrorAsManaged(
 
 export function promoteStoppedMirrorToManaged(session: Session): Session {
   const resumeFile = mirrorSessionResumeFile(session);
-  session.runtime = "managed";
+  session.runtime = "oppi";
   session.mirror = undefined;
   if (resumeFile) {
     session.piSessionFile = resumeFile;

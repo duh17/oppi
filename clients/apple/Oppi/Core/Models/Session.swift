@@ -19,8 +19,8 @@ enum SessionStatus: String, Codable, Sendable {
 }
 
 enum SessionRuntimeKind: String, Codable, Sendable {
-    case managed
-    case piTuiMirror = "pi-tui-mirror"
+    case oppi
+    case piTui = "pi-tui"
 }
 
 struct PiTuiMirrorTerminalInfo: Codable, Sendable, Equatable {

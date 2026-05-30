@@ -69,7 +69,7 @@ function makeRouter(session: Session, options: { mirrorConnected?: boolean } = {
 describe("SessionRuntimeRouter", () => {
   it("routes connected terminal mirror prompts to the mirror runtime", async () => {
     const session = makeSession({
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       mirror: { status: "connected" },
       piSessionFile: "/tmp/session.jsonl",
     });
@@ -84,7 +84,7 @@ describe("SessionRuntimeRouter", () => {
 
   it("keeps stale connected terminal mirrors routed to the mirror runtime", async () => {
     const session = makeSession({
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       status: "busy",
       currentTurnStartedAt: 2,
       mirror: { status: "connected" },
@@ -95,7 +95,7 @@ describe("SessionRuntimeRouter", () => {
     await router.sendPrompt("sess-1", "resume here", { timestamp: 10 });
 
     expect(storage.saveSession).not.toHaveBeenCalled();
-    expect(session.runtime).toBe("pi-tui-mirror");
+    expect(session.runtime).toBe("pi-tui");
     expect(session.currentTurnStartedAt).toBe(2);
     expect(managed.startSession).not.toHaveBeenCalled();
     expect(managed.sendPrompt).not.toHaveBeenCalled();
@@ -104,7 +104,7 @@ describe("SessionRuntimeRouter", () => {
 
   it("keeps disconnected terminal mirrors terminal-owned instead of promoting", async () => {
     const session = makeSession({
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       status: "busy",
       currentTurnStartedAt: 2,
       mirror: { status: "disconnected" },
@@ -115,7 +115,7 @@ describe("SessionRuntimeRouter", () => {
     await router.sendPrompt("sess-1", "resume here", { timestamp: 10 });
 
     expect(storage.saveSession).not.toHaveBeenCalled();
-    expect(session.runtime).toBe("pi-tui-mirror");
+    expect(session.runtime).toBe("pi-tui");
     expect(session.currentTurnStartedAt).toBe(2);
     expect(managed.startSession).not.toHaveBeenCalled();
     expect(managed.sendPrompt).not.toHaveBeenCalled();
@@ -124,7 +124,7 @@ describe("SessionRuntimeRouter", () => {
 
   it("keeps stale mirror steer messages routed to the mirror runtime", async () => {
     const session = makeSession({
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       status: "busy",
       mirror: { status: "disconnected" },
       piSessionFile: "/tmp/session.jsonl",

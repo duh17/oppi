@@ -61,6 +61,7 @@ const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 const BRIDGE_PROTOCOL_VERSION = 1;
 const EVENT_RING_CAPACITY = 500;
 const MANAGED_RUNTIME_CONFLICT_RETRY_MS = 10_000;
+const PI_TUI_STOP_TIMEOUT_MS = 15_000;
 const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
 
 class BridgeRegistrationError extends Error {
@@ -205,12 +206,20 @@ interface MirrorActiveSession extends EventProcessorSessionState, SessionInputSe
   sdkBackend: never;
 }
 
+interface PendingBridgeStopWaiter {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
 interface BridgeConnection extends MirrorBridgeCommandConnection {
   cwd?: string;
   capabilities: string[];
   protocolVersion: number;
   connectedAt: number;
   lastSeenAt: number;
+  stopRequestedAt?: number;
+  fireAndForgetCommandIds: Set<string>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -390,6 +399,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private readonly inputCoordinator: SessionInputCoordinator;
   private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
   private readonly bridgeCommandDriver: MirrorBridgeCommandDriver;
+  private readonly pendingStopWaiters = new Map<string, Set<PendingBridgeStopWaiter>>();
 
   constructor(
     private readonly storage: Storage,
@@ -467,12 +477,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         const label = kind === "steer" ? "Steer" : "Follow-up";
         return `${label} requires an active streaming terminal turn`;
       },
-      attachmentWorkspaceErrorMessage:
-        "Attachments require a workspace-backed terminal mirror session",
+      attachmentWorkspaceErrorMessage: "Attachments require a workspace-backed pi-tui session",
     });
 
     this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
-      runtimeName: "terminal mirror runtime",
+      runtimeName: "pi-tui runtime",
       isCommandSupported: (commandType) => SUPPORTED_REMOTE_COMMANDS.has(commandType),
       unsupportedReason: (commandType) => UNSUPPORTED_REMOTE_COMMAND_REASONS.get(commandType),
       normalizeError: normalizeCommandError,
@@ -484,7 +493,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   isMirrorSession(session: Session | undefined | null): boolean {
-    return session?.runtime === "pi-tui-mirror";
+    return session?.runtime === "pi-tui";
   }
 
   handleBridgeWebSocket(ws: WebSocket): void {
@@ -672,10 +681,112 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     this.applyQueueFromCommandData(sessionId, data, "command_result:abort");
   }
 
-  async stopSession(_sessionId: string): Promise<void> {
-    throw new Error(
-      "Terminal-owned sessions can only be stopped from the terminal; use abort to stop the current turn",
-    );
+  async stopSession(sessionId: string): Promise<void> {
+    const bridgeId = this.bridgeBySession.get(sessionId);
+    const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
+
+    if (!connection || connection.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("pi-tui is not connected; stop it from the terminal");
+    }
+
+    connection.stopRequestedAt = Date.now();
+    const waitForStop = this.waitForBridgeStop(connection);
+
+    try {
+      await this.sendFireAndForgetBridgeCommand(connection, { type: "stop" });
+    } catch (error) {
+      connection.stopRequestedAt = undefined;
+      this.rejectPendingBridgeStops(connection, error);
+      throw error;
+    }
+
+    await waitForStop;
+  }
+
+  private async sendFireAndForgetBridgeCommand(
+    connection: BridgeConnection,
+    command: Record<string, unknown>,
+  ): Promise<void> {
+    const commandId = `mirror_ff_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const payload = JSON.stringify({ type: "command", id: commandId, command });
+    connection.fireAndForgetCommandIds.add(commandId);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const ws = connection.ws as WebSocket & {
+          send: (data: string, cb?: (error?: Error | null) => void) => void;
+        };
+        if (ws.send.length >= 2) {
+          ws.send(payload, (error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+          return;
+        }
+        ws.send(payload);
+        resolve();
+      });
+    } catch (error) {
+      connection.fireAndForgetCommandIds.delete(commandId);
+      throw error instanceof Error ? error : new Error(safeErrorMessage(error));
+    }
+  }
+
+  private waitForBridgeStop(connection: BridgeConnection): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const waiters = this.pendingStopWaiters.get(connection.bridgeId) ?? new Set();
+      const waiter: PendingBridgeStopWaiter = {
+        resolve,
+        reject,
+        timeout: setTimeout(() => {
+          waiters.delete(waiter);
+          if (waiters.size === 0) {
+            this.pendingStopWaiters.delete(connection.bridgeId);
+          }
+          if (connection.stopRequestedAt !== undefined) {
+            connection.stopRequestedAt = undefined;
+          }
+          reject(new Error("pi-tui did not shut down in time"));
+        }, PI_TUI_STOP_TIMEOUT_MS),
+      };
+      waiters.add(waiter);
+      this.pendingStopWaiters.set(connection.bridgeId, waiters);
+    });
+  }
+
+  private resolvePendingBridgeStops(connection: BridgeConnection, reason: string): void {
+    const waiters = this.pendingStopWaiters.get(connection.bridgeId);
+    if (!waiters) {
+      connection.stopRequestedAt = undefined;
+      return;
+    }
+
+    this.pendingStopWaiters.delete(connection.bridgeId);
+    connection.stopRequestedAt = undefined;
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout);
+      if (isTerminalStoppedReason(reason)) {
+        waiter.resolve();
+      } else {
+        waiter.reject(new Error(`pi-tui disconnected before stop completed (${reason})`));
+      }
+    }
+  }
+
+  private rejectPendingBridgeStops(connection: BridgeConnection, error: unknown): void {
+    const waiters = this.pendingStopWaiters.get(connection.bridgeId);
+    if (!waiters) {
+      connection.stopRequestedAt = undefined;
+      return;
+    }
+
+    this.pendingStopWaiters.delete(connection.bridgeId);
+    connection.stopRequestedAt = undefined;
+    const resolvedError = error instanceof Error ? error : new Error(safeErrorMessage(error));
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout);
+      waiter.reject(resolvedError);
+    }
   }
 
   respondToUIRequest(_sessionId: string, _response: { id: string }): boolean {
@@ -733,6 +844,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       connectedAt: now,
       lastSeenAt: now,
       pendingCommands: new Map(),
+      fireAndForgetCommandIds: new Set(),
     };
 
     this.bridges.set(bridgeId, connection);
@@ -784,7 +896,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         if (message.queue) {
           this.applyBridgeQueueState(
             active,
-            requireQueueState(message.queue, "Terminal mirror sent invalid heartbeat queue state"),
+            requireQueueState(message.queue, "pi-tui sent invalid heartbeat queue state"),
             "heartbeat",
           );
         }
@@ -794,7 +906,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       case "queue_state":
         this.applyBridgeQueueState(
           active,
-          requireQueueState(message.queue, "Terminal mirror sent invalid queue state"),
+          requireQueueState(message.queue, "pi-tui sent invalid queue state"),
           "queue_state",
         );
         return;
@@ -831,7 +943,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const commandType = typeof command.type === "string" ? command.type : "unknown";
     return this.applyBridgeQueueState(
       active,
-      requireQueueState(data, "Terminal mirror did not return queue state"),
+      requireQueueState(data, "pi-tui did not return queue state"),
       `command_result:${commandType}`,
     );
   }
@@ -889,7 +1001,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const previousQueue = active.messageQueue;
     if (message.queue) {
       active.messageQueue = cloneQueueState(
-        requireQueueState(message.queue, "Terminal mirror sent invalid started-item queue state"),
+        requireQueueState(message.queue, "pi-tui sent invalid started-item queue state"),
       );
     } else {
       removeQueueItemStartedByRuntime(
@@ -932,6 +1044,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       }
     });
     if (matched) return;
+    if (connection.fireAndForgetCommandIds.delete(message.id)) return;
 
     log.warn("mirror_bridge.command_result_unmatched", {
       runtime: MIRROR_RUNTIME_LOG_TAG,
@@ -944,11 +1057,17 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private detachBridge(connection: BridgeConnection, reason: string): void {
     if (this.bridges.get(connection.bridgeId) !== connection) return;
 
+    const effectiveReason =
+      connection.stopRequestedAt !== undefined && (reason === "closed" || reason === "goodbye")
+        ? "stopped"
+        : reason;
     const pendingCommandCount = connection.pendingCommands.size;
     this.bridges.delete(connection.bridgeId);
     this.bridgeBySession.delete(connection.sessionId);
+    connection.fireAndForgetCommandIds.clear();
 
-    this.bridgeCommandDriver.rejectPending(connection, new Error("Terminal mirror disconnected"));
+    this.bridgeCommandDriver.rejectPending(connection, new Error("pi-tui disconnected"));
+    this.resolvePendingBridgeStops(connection, effectiveReason);
 
     const active = this.active.get(connection.sessionId);
     if (active) {
@@ -958,11 +1077,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         bridgeId: connection.bridgeId,
         cwd: connection.cwd ?? active.session.mirror?.terminal?.cwd,
         disconnectedAt,
-        disconnectReason: reason,
+        disconnectReason: effectiveReason,
         lastSeenAt: connection.lastSeenAt,
       };
 
-      if (reason === "reload") {
+      if (effectiveReason === "reload") {
         active.session.mirror = {
           ...(active.session.mirror ?? { status: "connected" }),
           status: "connected",
@@ -975,14 +1094,14 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
           status: "disconnected",
           terminal,
         };
-        if (isTerminalStoppedReason(reason)) {
+        if (isTerminalStoppedReason(effectiveReason)) {
           active.session.status = "stopped";
           active.session.currentTurnStartedAt = undefined;
           active.session.lastActivity = disconnectedAt;
         }
         this.storage.saveSession(active.session);
         this.broadcast(connection.sessionId, { type: "state", session: active.session });
-        this.broadcastSessionSummaryIfChanged(active, `mirror_${reason}`);
+        this.broadcastSessionSummaryIfChanged(active, `mirror_${effectiveReason}`);
       }
     }
 
@@ -990,7 +1109,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       runtime: MIRROR_RUNTIME_LOG_TAG,
       bridgeId: connection.bridgeId,
       sessionId: connection.sessionId,
-      reason,
+      reason: effectiveReason,
       pendingCommandCount,
     });
   }
@@ -1004,7 +1123,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
           throw new Error("Bridge hello must include cwd when workspaceId is supplied");
         }
         if (!workspace.hostMount) {
-          throw new Error(`Oppi workspace ${workspace.id} has no hostMount for terminal mirror`);
+          throw new Error(`Oppi workspace ${workspace.id} has no hostMount for pi-tui`);
         }
         if (!pathContains(workspace.hostMount, cwd)) {
           throw new Error(`Terminal cwd is outside Oppi workspace hostMount: ${cwd}`);
@@ -1053,11 +1172,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     if (
       existing &&
-      existing.runtime !== "pi-tui-mirror" &&
+      existing.runtime !== "pi-tui" &&
       this.options.isManagedSessionActive?.(existing.id)
     ) {
       throw new BridgeRegistrationError(
-        `Session ${existing.id} is already owned by the managed Oppi runtime; stop it before mirroring this terminal session`,
+        `Session ${existing.id} is already owned by the oppi runtime; stop it before mirroring this pi-tui session`,
         "managed_runtime_active",
         { sessionId: existing.id, retryAfterMs: MANAGED_RUNTIME_CONFLICT_RETRY_MS },
       );
@@ -1068,7 +1187,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const session = existing ?? this.storage.createSession(sessionName, model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
-    session.runtime = "pi-tui-mirror";
+    session.runtime = "pi-tui";
     session.status = state.isIdle === false ? "busy" : "ready";
     const nextName = meaningfulSessionName(state.sessionName, session.id);
     if (nextName) session.name = nextName;
@@ -1130,7 +1249,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private requireActive(sessionId: string): MirrorActiveSession {
     const active = this.ensureActiveFromStorage(sessionId);
     if (!active) {
-      throw new Error(`Terminal mirror session not active: ${sessionId}`);
+      throw new Error(`pi-tui session not active: ${sessionId}`);
     }
     return active;
   }
@@ -1140,7 +1259,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     connection: BridgeConnection,
     state: PiBridgeStateSnapshot,
   ): void {
-    active.session.runtime = "pi-tui-mirror";
+    active.session.runtime = "pi-tui";
     active.session.mirror = {
       status: "connected",
       capabilities: connection.capabilities,
@@ -1162,7 +1281,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): void {
     const session = active.session;
     const now = Date.now();
-    session.runtime = "pi-tui-mirror";
+    session.runtime = "pi-tui";
     const nextName = meaningfulSessionName(state.sessionName, session.id);
     if (nextName) session.name = nextName;
     else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;

@@ -140,11 +140,11 @@ struct SessionRow: View {
     }
 
     private var terminalMirrorIndicator: (accessibilityLabel: String, color: Color, isAnimated: Bool)? {
-        guard session.runtime == .piTuiMirror else { return nil }
+        guard session.runtime == .piTui else { return nil }
         if session.mirror?.status == "connected" {
-            return ("Terminal mirror live", .themeGreen, true)
+            return ("pi-tui live", .themeGreen, true)
         }
-        return ("Terminal mirror offline", .themeComment, false)
+        return ("pi-tui offline", .themeComment, false)
     }
 
     private var currentTurnStartedAt: Date? {
