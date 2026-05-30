@@ -29,6 +29,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private var currentAssistantTimestamp: Date?
 
     private var currentThinkingID: String?
+    /// Content block index for the active thinking stream, when provided by the server.
+    private var currentThinkingContentIndex: Int?
     /// Live thinking buffer. Unlike tool output previews, thinking is not
     /// truncated in the timeline; the row container handles viewport limits.
     private var thinkingBuffer: String = ""
@@ -704,11 +706,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 pendingAssistantDeltas.append(delta)
                 hasPendingAssistantUpsert = true
 
-            case .thinkingDelta(_, let delta):
+            case .thinkingDelta(_, let delta, let contentIndex):
                 // Keep only preview-size text in memory for live rendering.
                 // Once overflowed, continue collecting full text in ToolOutputStore
                 // for post-turn expansion, but skip no-op rerenders.
-                if appendThinkingDelta(delta) {
+                if appendThinkingDelta(delta, contentIndex: contentIndex) {
                     hasPendingThinkingUpsert = true
                 }
 
@@ -819,8 +821,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             upsertAssistantMessage()
             return true
 
-        case .thinkingDelta(_, let delta):
-            if appendThinkingDelta(delta) {
+        case .thinkingDelta(_, let delta, let contentIndex):
+            if appendThinkingDelta(delta, contentIndex: contentIndex) {
                 upsertThinking()
                 return true
             }
@@ -1226,6 +1228,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentAssistantID = nil
         currentAssistantTimestamp = nil
         currentThinkingID = nil
+        currentThinkingContentIndex = nil
         turnInProgress = false
         lastAssistantIDThisTurn = nil
     }
@@ -1340,14 +1343,29 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         thinkingBuffer
     }
 
+    private func prepareThinkingBlock(contentIndex: Int?) {
+        guard let contentIndex else { return }
+
+        if let currentThinkingContentIndex {
+            guard currentThinkingContentIndex != contentIndex else { return }
+            if !thinkingBuffer.isEmpty {
+                upsertThinking()
+            }
+            finalizeThinking()
+        }
+
+        currentThinkingContentIndex = contentIndex
+    }
+
     /// Append a thinking delta into the live buffer.
     ///
     /// Thinking is intentionally not truncated in the timeline row; the row
     /// container manages viewport height and full-screen takes over for full
     /// reading.
     @discardableResult
-    private func appendThinkingDelta(_ delta: String) -> Bool {
+    private func appendThinkingDelta(_ delta: String, contentIndex: Int? = nil) -> Bool {
         guard !delta.isEmpty else { return false }
+        prepareThinkingBlock(contentIndex: contentIndex)
 
         let previousPreview = thinkingPreviewText()
         let previousHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
@@ -1430,6 +1448,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         thinkingBuffer = ""
         currentThinkingID = nil
+        currentThinkingContentIndex = nil
     }
 
     /// Close ALL in-progress tool call rows, not just the last one.

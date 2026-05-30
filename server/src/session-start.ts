@@ -29,6 +29,8 @@ export interface SessionStartActiveSession {
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
+  streamedThinkingContentIndexes: Set<number>;
+  currentThinkingContentIndex?: number;
   toolNames: Map<string, string>;
   shellPreviewLastSent: Map<string, number>;
   streamingArgPreviews: Set<string>;
@@ -167,6 +169,7 @@ export class SessionStartCoordinator {
           partialResults: new Map(),
           streamedAssistantText: "",
           hasStreamedThinking: false,
+          streamedThinkingContentIndexes: new Set(),
           toolNames: new Map(),
           shellPreviewLastSent: new Map(),
           streamingArgPreviews: new Set(),

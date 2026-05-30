@@ -41,6 +41,7 @@ describe("SessionAgentEventCoordinator", () => {
       partialResults: new Map(),
       streamedAssistantText: "",
       hasStreamedThinking: false,
+      streamedThinkingContentIndexes: new Set(),
       toolNames: new Map(),
       shellPreviewLastSent: new Map(),
       streamingArgPreviews: new Set<string>(),
@@ -75,6 +76,8 @@ describe("SessionAgentEventCoordinator", () => {
           partialResults: active.partialResults,
           streamedAssistantText: active.streamedAssistantText,
           hasStreamedThinking: active.hasStreamedThinking,
+          streamedThinkingContentIndexes: active.streamedThinkingContentIndexes,
+          currentThinkingContentIndex: active.currentThinkingContentIndex,
           mobileRenderers: {
             renderCall: vi.fn(),
             renderResult: vi.fn(),

@@ -133,7 +133,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
 
     // Streaming
     text_delta: { type: "text_delta", delta: "Hello, " },
-    thinking_delta: { type: "thinking_delta", delta: "Let me analyze..." },
+    thinking_delta: { type: "thinking_delta", delta: "Let me analyze...", contentIndex: 0 },
     audio_stream: {
       type: "audio_stream",
       kind: "audio-stream",

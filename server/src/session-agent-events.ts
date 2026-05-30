@@ -146,6 +146,7 @@ export class SessionAgentEventCoordinator {
     const messages = translatePiEvent(event, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
     active.hasStreamedThinking = ctx.hasStreamedThinking;
+    active.currentThinkingContentIndex = ctx.currentThinkingContentIndex;
 
     if (event.type === "tool_execution_end") {
       const toolCallId =

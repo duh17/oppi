@@ -174,7 +174,38 @@ describe("BoundSessionStreamMux", () => {
     expect(mirrorSubscribe).toHaveBeenCalledWith("sess-mirror", expect.any(Function));
   });
 
-  it("promotes a stale terminal mirror session before binding the stream", async () => {
+  it("keeps a recently reloading terminal mirror session bound to the mirror runtime", async () => {
+    const session = {
+      ...makeSession("sess-reloading-mirror", "w1"),
+      runtime: "pi-tui-mirror" as const,
+      mirror: {
+        status: "connected" as const,
+        terminal: { disconnectedAt: Date.now(), disconnectReason: "reload" },
+      },
+      piSessionFile: "/tmp/reloading-session.jsonl",
+    };
+    const { ctx } = createMockContext([session]);
+    const mirrorSubscribe = vi.fn(() => () => {});
+    ctx.mirrorRuntime = {
+      getActiveSession: () => session,
+      getCurrentSeq: () => 9,
+      isSessionConnected: () => false,
+      subscribe: mirrorSubscribe,
+    } as unknown as StreamContext["mirrorRuntime"];
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-reloading-mirror", ws as unknown as WebSocket);
+    await drain();
+
+    expect(ctx.sessions.startSession).not.toHaveBeenCalled();
+    expect(mirrorSubscribe).toHaveBeenCalledWith("sess-reloading-mirror", expect.any(Function));
+    expect(ws.sentOfType("connected", "sess-reloading-mirror")[0]).toMatchObject({
+      currentSeq: 9,
+    });
+  });
+
+  it("keeps a stale terminal mirror session bound to mirror ownership", async () => {
     const session = {
       ...makeSession("sess-stale-mirror", "w1"),
       runtime: "pi-tui-mirror" as const,
@@ -195,14 +226,13 @@ describe("BoundSessionStreamMux", () => {
     await mux.handleWebSocket("w1", "sess-stale-mirror", ws as unknown as WebSocket);
     await drain();
 
-    expect(ctx.sessions.startSession).toHaveBeenCalledWith("sess-stale-mirror", undefined);
-    expect(mirrorSubscribe).not.toHaveBeenCalled();
-    expect(sessionMap.get("sess-stale-mirror")?.runtime).toBeUndefined();
-    expect(sessionMap.get("sess-stale-mirror")?.mirror?.status).toBe("disconnected");
-    expect(ws.sentOfType("connected", "sess-stale-mirror")[0]).toMatchObject({ currentSeq: 0 });
+    expect(ctx.sessions.startSession).not.toHaveBeenCalled();
+    expect(mirrorSubscribe).toHaveBeenCalledWith("sess-stale-mirror", expect.any(Function));
+    expect(sessionMap.get("sess-stale-mirror")?.runtime).toBe("pi-tui-mirror");
+    expect(ws.sentOfType("connected", "sess-stale-mirror")[0]).toMatchObject({ currentSeq: 7 });
   });
 
-  it("closes a mirror-bound stream when the live bridge disconnects", async () => {
+  it("keeps a mirror-bound stream open when the live bridge disconnects", async () => {
     const session = { ...makeSession("sess-live-mirror", "w1"), runtime: "pi-tui-mirror" as const };
     const { ctx } = createMockContext([session]);
     let mirrorCallback: ((msg: ServerMessage) => void) | undefined;
@@ -229,8 +259,10 @@ describe("BoundSessionStreamMux", () => {
       },
     });
 
-    expect(ws.readyState).toBe(WebSocket.CLOSED);
-    expect(ws.closeCode).toBe(1012);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(ws.sentOfType("state", "sess-live-mirror").at(-1)).toMatchObject({
+      session: expect.objectContaining({ mirror: { status: "disconnected" } }),
+    });
   });
 
   it("includes server dictation availability in the split session bootstrap", async () => {

@@ -85,6 +85,7 @@ function makeManagerHarness(
     partialResults: new Map(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
+    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
@@ -1087,7 +1088,7 @@ describe("SessionManager RPC passthrough", () => {
     const { manager } = makeManagerHarness();
 
     await expect(manager.forwardClientCommand("s1", { type: "evil_command" })).rejects.toThrow(
-      "not allowed",
+      "managed runtime does not support command: evil_command",
     );
   });
 

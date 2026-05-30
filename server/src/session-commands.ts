@@ -1,7 +1,12 @@
 import { formatSkillsForPrompt, type AgentSession } from "@earendil-works/pi-coding-agent";
 
+import { applyForwardedCommandResultToSession } from "./agent-runtime-transport.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import { createLogger } from "./logger.js";
+import {
+  RuntimeCommandCoordinator,
+  type RuntimeCommandExecutionContext,
+} from "./runtime-command-coordinator.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import {
   shareSession,
@@ -699,7 +704,18 @@ function assertIdleForCommand(active: CommandSessionState, commandType: string):
 }
 
 export class SessionCommandCoordinator {
-  constructor(private readonly deps: SessionCommandCoordinatorDeps) {}
+  private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
+
+  constructor(private readonly deps: SessionCommandCoordinatorDeps) {
+    this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
+      runtimeName: "managed runtime",
+      isCommandSupported: (commandType) => this.isAllowedCommand(commandType),
+      normalizeError: normalizeCommandError,
+      broadcast: (key, message) => this.deps.broadcast(key, message),
+      onCommandSuccess: (key, context) => this.handleForwardedCommandSuccess(key, context),
+      preflightFailureMode: "throw",
+    });
+  }
 
   private static readonly SERVER_LOGIC_HANDLERS = new Map<string, BackendCommandHandler>([
     ["get_state", (backend) => backend.getStateSnapshot()],
@@ -907,142 +923,76 @@ export class SessionCommandCoordinator {
     requestId: string | undefined,
     sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>,
   ): Promise<void> {
-    const cmdType = message.type as string;
-    if (!this.isAllowedCommand(cmdType)) {
-      throw new Error(`Command not allowed: ${cmdType}`);
-    }
-
     const active = this.deps.getActiveSession(key);
     if (!active) {
       throw new Error(`Session not active: ${key}`);
     }
 
-    try {
-      const rpcData: unknown = await sendCommandAsync(key, { ...message });
-      const rpcObject = toRecord(rpcData);
+    await this.runtimeCommandCoordinator.forwardClientCommand(key, message, requestId, (command) =>
+      sendCommandAsync(key, command),
+    );
+  }
 
-      if (cmdType === "get_state") {
-        const snapshot = parsePiStateSnapshot(rpcData);
-        if (snapshot && this.deps.applyPiStateSnapshot(active.session, snapshot)) {
-          this.deps.persistSessionNow(key, active.session);
-          // Broadcast updated session so clients see model/thinking/name changes
-          this.deps.broadcast(key, { type: "state", session: active.session });
-        }
-      }
+  private async handleForwardedCommandSuccess(
+    key: string,
+    context: RuntimeCommandExecutionContext,
+  ): Promise<void> {
+    const active = this.deps.getActiveSession(key);
+    if (!active) {
+      throw new Error(`Session not active: ${key}`);
+    }
 
-      // Track thinking level changes so the session object stays in sync
-      if (cmdType === "cycle_thinking_level" || cmdType === "set_thinking_level") {
-        const levelFromResponse =
-          typeof rpcObject.level === "string" && rpcObject.level.trim().length > 0
-            ? rpcObject.level.trim()
-            : undefined;
-        const levelFromRequest =
-          cmdType === "set_thinking_level" &&
-          typeof message.level === "string" &&
-          message.level.trim().length > 0
-            ? message.level.trim()
-            : undefined;
+    const { commandType: cmdType, request, data: rpcData, executeCommand } = context;
 
-        const effectiveLevel = levelFromResponse ?? levelFromRequest;
-        if (effectiveLevel && active.session.thinkingLevel !== effectiveLevel) {
-          active.session.thinkingLevel = effectiveLevel;
-          this.deps.persistSessionNow(key, active.session);
-        }
-      }
-
-      // Track model changes so the session object stays in sync
-      if (cmdType === "set_model" || cmdType === "cycle_model") {
-        // set_model returns the model object, cycle_model returns { model, thinkingLevel, isScoped }
-        const modelData = cmdType === "cycle_model" ? toRecord(rpcObject.model) : rpcObject;
-        const provider = modelData.provider;
-        const modelId = modelData.id;
-        if (typeof provider === "string" && typeof modelId === "string") {
-          const fullId = composeModelId(provider, modelId);
-          if (active.session.model !== fullId) {
-            active.session.model = fullId;
-            const contextWindowResolver = this.deps.getContextWindowResolver();
-            if (contextWindowResolver) {
-              active.session.contextWindow = contextWindowResolver(fullId);
-            }
-            this.deps.persistSessionNow(key, active.session);
-          }
-        }
-
-        // Pi returns the clamped thinkingLevel for the active model.
-        if (
-          typeof rpcObject.thinkingLevel === "string" &&
-          rpcObject.thinkingLevel.trim().length > 0
-        ) {
-          active.session.thinkingLevel = rpcObject.thinkingLevel.trim();
-          this.deps.persistSessionNow(key, active.session);
-        }
-      }
-
-      // Track session name changes so optimistic client renames don't get
-      // overwritten by stale local get_state snapshots.
-      if (cmdType === "set_session_name") {
-        const requestedName = typeof message.name === "string" ? message.name.trim() : "";
-        const responseName = typeof rpcObject.name === "string" ? rpcObject.name.trim() : "";
-        const nextName = responseName.length > 0 ? responseName : requestedName;
-        if (nextName.length > 0 && active.session.name !== nextName) {
-          active.session.name = nextName;
-          this.deps.persistSessionNow(key, active.session);
-        }
-      }
-
-      // Session-branching commands mutate pi session identity/file in-place.
-      // Refresh state immediately so reconnect/resume uses the new branch.
-      if (
-        cmdType === "fork" ||
-        cmdType === "new_session" ||
-        cmdType === "switch_session" ||
-        cmdType === "navigate_tree"
-      ) {
-        try {
-          const refreshed = await sendCommandAsync(key, { type: "get_state" });
-          const snapshot = parsePiStateSnapshot(refreshed);
-          if (snapshot && this.deps.applyPiStateSnapshot(active.session, snapshot)) {
-            this.deps.persistSessionNow(key, active.session);
-            this.deps.broadcast(key, { type: "state", session: active.session });
-          }
-        } catch (stateErr) {
-          const message = stateErr instanceof Error ? stateErr.message : String(stateErr);
-          log.warn("session_commands.state_refresh.failed", {
-            sessionId: active.session.id,
-            commandType: cmdType,
-            error: message,
-          });
-        }
-      }
-
-      this.deps.broadcast(key, {
-        type: "command_result",
-        command: cmdType,
-        requestId,
-        success: true,
-        data: rpcData,
-      });
-
-      // Broadcast updated session state after model/thinking/name changes
-      // so clients see the change immediately without waiting for next agent event
-      if (
-        cmdType === "set_model" ||
-        cmdType === "cycle_model" ||
-        cmdType === "set_thinking_level" ||
-        cmdType === "cycle_thinking_level" ||
-        cmdType === "set_session_name"
-      ) {
+    if (cmdType === "get_state") {
+      const snapshot = parsePiStateSnapshot(rpcData);
+      if (snapshot && this.deps.applyPiStateSnapshot(active.session, snapshot)) {
+        this.deps.persistSessionNow(key, active.session);
+        // Broadcast updated session so clients see model/thinking/name changes
         this.deps.broadcast(key, { type: "state", session: active.session });
       }
-    } catch (err) {
-      const rawError = err instanceof Error ? err.message : String(err);
-      this.deps.broadcast(key, {
-        type: "command_result",
-        command: cmdType,
-        requestId,
-        success: false,
-        error: normalizeCommandError(cmdType, rawError),
-      });
+    }
+
+    const resultApplication = applyForwardedCommandResultToSession({
+      session: active.session,
+      commandType: cmdType,
+      request,
+      data: rpcData,
+      contextWindowResolver: this.deps.getContextWindowResolver(),
+    });
+    if (resultApplication.changed) {
+      this.deps.persistSessionNow(key, active.session);
+    }
+
+    // Session-branching commands mutate pi session identity/file in-place.
+    // Refresh state immediately so reconnect/resume uses the new branch.
+    if (
+      cmdType === "fork" ||
+      cmdType === "new_session" ||
+      cmdType === "switch_session" ||
+      cmdType === "navigate_tree"
+    ) {
+      try {
+        const refreshed = await executeCommand({ type: "get_state" });
+        const snapshot = parsePiStateSnapshot(refreshed);
+        if (snapshot && this.deps.applyPiStateSnapshot(active.session, snapshot)) {
+          this.deps.persistSessionNow(key, active.session);
+          this.deps.broadcast(key, { type: "state", session: active.session });
+        }
+      } catch (stateErr) {
+        const message = stateErr instanceof Error ? stateErr.message : String(stateErr);
+        log.warn("session_commands.state_refresh.failed", {
+          sessionId: active.session.id,
+          commandType: cmdType,
+          error: message,
+        });
+      }
+    }
+
+    // Broadcast updated session state after model/thinking/name changes
+    // so clients see the change immediately without waiting for next agent event
+    if (resultApplication.shouldBroadcastState) {
+      this.deps.broadcast(key, { type: "state", session: active.session });
     }
   }
 

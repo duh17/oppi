@@ -260,7 +260,7 @@ final class DeltaCoalescer {
         switch event {
         case .textDelta(_, let delta):
             return delta.utf8.count
-        case .thinkingDelta(_, let delta):
+        case .thinkingDelta(_, let delta, _):
             return delta.utf8.count
         case .toolStart(_, _, let tool, let args, _),
              .toolUpdate(_, _, let tool, let args, _):

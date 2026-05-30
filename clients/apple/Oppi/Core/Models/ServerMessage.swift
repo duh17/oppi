@@ -58,7 +58,7 @@ enum ServerMessage: Sendable, Equatable {
     case agentEnd
     case messageEnd(role: String, content: String)
     case textDelta(delta: String)
-    case thinkingDelta(delta: String)
+    case thinkingDelta(delta: String, contentIndex: Int? = nil)
     case audioStream(AudioStreamMessage)
 
     // Tool execution
@@ -211,7 +211,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / text_delta / thinking_delta / audio_stream
-        case role, content, delta, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
+        case role, content, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
@@ -307,7 +307,8 @@ extension ServerMessage: Decodable {
 
         case "thinking_delta":
             let delta = try c.decode(String.self, forKey: .delta)
-            self = .thinkingDelta(delta: delta)
+            let contentIndex = try c.decodeIfPresent(Int.self, forKey: .contentIndex)
+            self = .thinkingDelta(delta: delta, contentIndex: contentIndex)
 
         case "audio_stream":
             let stream = AudioStreamMessage(

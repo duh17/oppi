@@ -34,6 +34,7 @@ export interface PiTuiMirrorTerminalInfo {
   connectedAt?: number;
   lastSeenAt?: number;
   disconnectedAt?: number;
+  disconnectReason?: string;
 }
 
 export interface PiTuiMirrorSessionMetadata {

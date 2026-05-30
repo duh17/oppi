@@ -1,3 +1,8 @@
+import {
+  runtimeCommandFailure,
+  runtimeCommandSuccess,
+  type AgentRuntimeCommandTransport,
+} from "./agent-runtime-transport.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type {
@@ -5,7 +10,6 @@ import type {
   ClientMessage,
   ImageAttachment,
   MessageQueueDraftItem,
-  MessageQueueState,
   ServerMessage,
   Session,
 } from "./types.js";
@@ -27,66 +31,7 @@ interface SetQueueMessage {
   requestId?: string;
 }
 
-interface ExtensionUIResponseMessage {
-  type: "extension_ui_response";
-  id: string;
-  value?: string;
-  confirmed?: boolean;
-  cancelled?: boolean;
-}
-
-export interface WsSessionCommands {
-  sendPrompt: (
-    sessionId: string,
-    message: string,
-    opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-      streamingBehavior?: "steer" | "followUp";
-      timestamp: number;
-    },
-  ) => Promise<void>;
-  sendSteer: (
-    sessionId: string,
-    message: string,
-    opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-    },
-  ) => Promise<void>;
-  sendFollowUp: (
-    sessionId: string,
-    message: string,
-    opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-    },
-  ) => Promise<void>;
-  getMessageQueue: (sessionId: string) => MessageQueueState | Promise<MessageQueueState>;
-  setMessageQueue: (
-    sessionId: string,
-    payload: {
-      baseVersion: number;
-      steering: MessageQueueDraftItem[];
-      followUp: MessageQueueDraftItem[];
-    },
-  ) => Promise<MessageQueueState>;
-  sendAbort: (sessionId: string) => Promise<void>;
-  stopSession: (sessionId: string) => Promise<void>;
-  getActiveSession: (sessionId: string) => Session | undefined;
-  respondToUIRequest: (sessionId: string, response: ExtensionUIResponseMessage) => boolean;
-  forwardClientCommand: (
-    sessionId: string,
-    message: Record<string, unknown>,
-    requestId: string | undefined,
-  ) => Promise<void>;
-}
+export type WsSessionCommands = AgentRuntimeCommandTransport;
 
 interface WsGateDecisions {
   resolveDecision: (
@@ -265,13 +210,7 @@ export class WsMessageHandler {
           });
 
           if (msg.requestId) {
-            send({
-              type: "command_result",
-              command: msg.type,
-              requestId: msg.requestId,
-              success: false,
-              error: message,
-            });
+            send(runtimeCommandFailure(msg.type, msg.requestId, message));
             return;
           }
 
@@ -290,13 +229,13 @@ export class WsMessageHandler {
         // Runtime: unknown types (e.g. future protocol additions) get an error reply.
         const unhandled: never = msg;
         const raw = unhandled as unknown as { type?: string; requestId?: string };
-        send({
-          type: "command_result",
-          command: raw.type ?? "unknown",
-          requestId: raw.requestId ?? "",
-          success: false,
-          error: `Unsupported command type: ${raw.type ?? "unknown"}`,
-        });
+        send(
+          runtimeCommandFailure(
+            raw.type ?? "unknown",
+            raw.requestId ?? "",
+            `Unsupported command type: ${raw.type ?? "unknown"}`,
+          ),
+        );
         return;
       }
     }
@@ -355,7 +294,7 @@ export class WsMessageHandler {
       });
 
       if (requestId) {
-        send({ type: "command_result", command, requestId, success: true });
+        send(runtimeCommandSuccess(command, requestId));
       }
 
       log.info("ws.turn_command.completed", {
@@ -378,7 +317,7 @@ export class WsMessageHandler {
       });
 
       if (requestId) {
-        send({ type: "command_result", command, requestId, success: false, error: message });
+        send(runtimeCommandFailure(command, requestId, message));
         return;
       }
       throw err;
@@ -396,24 +335,12 @@ export class WsMessageHandler {
       const queue = await this.deps.sessions.getMessageQueue(session.id);
       send({ type: "queue_state", queue });
       if (requestId) {
-        send({
-          type: "command_result",
-          command: "get_queue",
-          requestId,
-          success: true,
-          data: queue,
-        });
+        send(runtimeCommandSuccess("get_queue", requestId, queue));
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (requestId) {
-        send({
-          type: "command_result",
-          command: "get_queue",
-          requestId,
-          success: false,
-          error: message,
-        });
+        send(runtimeCommandFailure("get_queue", requestId, message));
         return;
       }
       throw err;
@@ -434,24 +361,12 @@ export class WsMessageHandler {
         followUp: msg.followUp,
       });
       if (requestId) {
-        send({
-          type: "command_result",
-          command: "set_queue",
-          requestId,
-          success: true,
-          data: queue,
-        });
+        send(runtimeCommandSuccess("set_queue", requestId, queue));
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (requestId) {
-        send({
-          type: "command_result",
-          command: "set_queue",
-          requestId,
-          success: false,
-          error: message,
-        });
+        send(runtimeCommandFailure("set_queue", requestId, message));
         return;
       }
       throw err;
@@ -478,7 +393,7 @@ export class WsMessageHandler {
     try {
       await this.deps.sessions.sendAbort(session.id);
       if (requestId) {
-        send({ type: "command_result", command, requestId, success: true });
+        send(runtimeCommandSuccess(command, requestId));
       }
 
       log.info("ws.stop.completed", {
@@ -501,7 +416,7 @@ export class WsMessageHandler {
       });
 
       if (requestId) {
-        send({ type: "command_result", command, requestId, success: false, error: message });
+        send(runtimeCommandFailure(command, requestId, message));
         return;
       }
       throw err;
@@ -526,7 +441,7 @@ export class WsMessageHandler {
     try {
       await this.deps.sessions.stopSession(session.id);
       if (requestId) {
-        send({ type: "command_result", command: "stop_session", requestId, success: true });
+        send(runtimeCommandSuccess("stop_session", requestId));
       }
 
       log.info("ws.stop_session.completed", {
@@ -547,13 +462,7 @@ export class WsMessageHandler {
       });
 
       if (requestId) {
-        send({
-          type: "command_result",
-          command: "stop_session",
-          requestId,
-          success: false,
-          error: message,
-        });
+        send(runtimeCommandFailure("stop_session", requestId, message));
         return;
       }
       throw err;

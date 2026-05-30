@@ -31,7 +31,13 @@ class FakeBridgeWebSocket extends EventEmitter {
   }
 }
 
-function makeRuntime(options: { hostMount?: string; dataDir?: string } = {}) {
+function makeRuntime(
+  options: {
+    hostMount?: string;
+    dataDir?: string;
+    isManagedSessionActive?: (sessionId: string) => boolean;
+  } = {},
+) {
   const workspace: Workspace = {
     id: "w1",
     name: "Workspace",
@@ -73,7 +79,12 @@ function makeRuntime(options: { hostMount?: string; dataDir?: string } = {}) {
     getDataDir: () => options.dataDir ?? "/tmp/oppi-mirror-test-config",
   } as unknown as Storage;
 
-  return { runtime: new PiTuiMirrorRuntime(storage), sessions };
+  return {
+    runtime: new PiTuiMirrorRuntime(storage, {
+      isManagedSessionActive: options.isManagedSessionActive,
+    }),
+    sessions,
+  };
 }
 
 function connectBridge(
@@ -174,6 +185,52 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.sent.at(-1)).toMatchObject({
       type: "error",
       error: expect.stringContaining("No Oppi workspace hostMount contains terminal cwd"),
+    });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ws.closeCode).toBe(1008);
+  });
+
+  it("reports managed-runtime ownership conflicts as structured retryable bridge errors", () => {
+    const { runtime, sessions } = makeRuntime({
+      hostMount: "/tmp/oppi-mirror-test",
+      isManagedSessionActive: (sessionId) => sessionId === "managed-1",
+    });
+    sessions.set("managed-1", {
+      id: "managed-1",
+      workspaceId: "w1",
+      workspaceName: "Workspace",
+      status: "busy",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      piSessionId: "pi-1",
+      piSessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+    });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-1",
+      workspaceId: "w1",
+      cwd: "/tmp/oppi-mirror-test",
+      state: {
+        piSessionId: "pi-1",
+        sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+      },
+    });
+    ws.receive({ type: "heartbeat", state: { piSessionId: "pi-1" } });
+
+    expect(ws.sent).toHaveLength(1);
+    expect(ws.sent[0]).toMatchObject({
+      type: "error",
+      code: "managed_runtime_active",
+      sessionId: "managed-1",
+      retryAfterMs: 10_000,
+      error: expect.stringContaining("already owned by the managed Oppi runtime"),
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1008);
@@ -293,6 +350,42 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     );
   });
 
+  it("broadcasts terminal-origin compaction events", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "event",
+      event: { type: "compaction_start", reason: "threshold" },
+    });
+    ws.receive({
+      type: "event",
+      event: {
+        type: "compaction_end",
+        reason: "threshold",
+        result: { summary: "Summarized context", tokensBefore: 180000 },
+        aborted: false,
+        willRetry: false,
+      },
+    });
+
+    expect(received).toContainEqual(
+      expect.objectContaining({ type: "compaction_start", reason: "threshold" }),
+    );
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "compaction_end",
+        aborted: false,
+        willRetry: false,
+        summary: "Summarized context",
+        tokensBefore: 180000,
+      }),
+    );
+    expect(runtime.getActiveSession(sessionId)?.changeStats?.compactionCount).toBe(1);
+  });
+
   it("hydrates get_queue from the terminal bridge", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
@@ -348,6 +441,23 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     await expect(queuePromise).rejects.toThrow("bridge queue unavailable");
   });
 
+  it("rejects malformed get_queue command results", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+
+    const queuePromise = runtime.getMessageQueue(sessionId);
+    const command = latestCommand(ws);
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { queue: { version: 1, steering: "bad", followUp: [] } },
+    });
+
+    await expect(queuePromise).rejects.toThrow("Terminal mirror did not return queue state");
+  });
+
   it("forwards set_queue and broadcasts the returned queue state", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
@@ -388,6 +498,198 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
         steering: [{ id: "s1", message: "edited steer", createdAt: 10 }],
         followUp: [],
       },
+    });
+  });
+
+  it("routes /reload prompts to the terminal reload command without starting a turn", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const reloadPromise = runtime.sendPrompt(sessionId, "/reload", {
+      clientTurnId: "turn-reload",
+      requestId: "req-reload",
+      timestamp: Date.now(),
+    });
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "reload" });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { reloading: true },
+    });
+
+    await expect(reloadPromise).resolves.toBeUndefined();
+    expect(received.some((message) => message.type === "turn_ack")).toBe(false);
+  });
+
+  it("waits for the terminal user event before recording a mirrored prompt", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+
+    const promptPromise = runtime.sendPrompt(sessionId, "hello from phone", {
+      clientTurnId: "turn-phone",
+      requestId: "req-phone",
+      timestamp: Date.now(),
+    });
+    const command = await waitForLatestCommand(ws);
+    expect(command.command).toEqual({ type: "prompt", message: "hello from phone" });
+    expect(runtime.getActiveSession(sessionId)?.messageCount).toBe(0);
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { queue: { version: 0, steering: [], followUp: [] } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
+    expect(runtime.getActiveSession(sessionId)?.messageCount).toBe(0);
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "message_end",
+        message: { role: "user", content: "hello from phone" },
+      },
+    });
+    expect(runtime.getActiveSession(sessionId)?.messageCount).toBe(1);
+    expect(runtime.getActiveSession(sessionId)?.lastMessage).toBe("hello from phone");
+  });
+
+  it("preserves returned queue state after remote abort", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "queue_state",
+      queue: {
+        version: 7,
+        steering: [{ id: "s1", message: "do not lose this steer", createdAt: 1 }],
+        followUp: [{ id: "f1", message: "do not lose this follow-up", createdAt: 2 }],
+      },
+    });
+
+    const abortPromise = runtime.sendAbort(sessionId);
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "abort" });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: {
+        aborted: true,
+        queue: {
+          version: 8,
+          steering: [{ id: "s1", message: "do not lose this steer", createdAt: 1 }],
+          followUp: [{ id: "f1", message: "do not lose this follow-up", createdAt: 2 }],
+        },
+      },
+    });
+
+    await expect(abortPromise).resolves.toBeUndefined();
+    expect(received).toContainEqual({
+      type: "queue_state",
+      queue: {
+        version: 8,
+        steering: [{ id: "s1", message: "do not lose this steer", createdAt: 1 }],
+        followUp: [{ id: "f1", message: "do not lose this follow-up", createdAt: 2 }],
+      },
+    });
+  });
+
+  it("applies forwarded metadata command results and broadcasts canonical command_result", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const commandPromise = runtime.forwardClientCommand(
+      sessionId,
+      { type: "set_session_name", name: "Requested Name" },
+      "req-name",
+    );
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "set_session_name", name: "Requested Name" });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { name: "Terminal Name" },
+    });
+
+    await expect(commandPromise).resolves.toBeUndefined();
+    expect(runtime.getActiveSession(sessionId)?.name).toBe("Terminal Name");
+    expect(received).toContainEqual({
+      type: "command_result",
+      command: "set_session_name",
+      requestId: "req-name",
+      success: true,
+      data: { name: "Terminal Name" },
+    });
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "state",
+        session: expect.objectContaining({ name: "Terminal Name" }),
+      }),
+    );
+  });
+
+  it("forwards supported terminal-control commands through the bridge", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const commandPromise = runtime.forwardClientCommand(
+      sessionId,
+      { type: "set_auto_retry", enabled: false },
+      "req-retry-mode",
+    );
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "set_auto_retry", enabled: false });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { enabled: false },
+    });
+
+    await expect(commandPromise).resolves.toBeUndefined();
+    expect(received).toContainEqual({
+      type: "command_result",
+      command: "set_auto_retry",
+      requestId: "req-retry-mode",
+      success: true,
+      data: { enabled: false },
+    });
+  });
+
+  it("reports unsupported mirror commands through the runtime command_result contract", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    await expect(
+      runtime.forwardClientCommand(sessionId, { type: "fork", entryId: "entry-1" }, "req-fork"),
+    ).resolves.toBeUndefined();
+
+    expect(ws.sent.filter((message) => message.type === "command")).toHaveLength(0);
+    expect(received).toContainEqual({
+      type: "command_result",
+      command: "fork",
+      requestId: "req-fork",
+      success: false,
+      error:
+        "terminal mirror runtime does not support command: fork (session-file replacement is terminal-owned; fork from the terminal)",
     });
   });
 
@@ -456,7 +758,6 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(forwarded).toEqual({
       type: "prompt",
       message: `read this\n\nAttached files:\n- note.txt: .pi/attachments/${sessionId}/turn-attachment/note.txt`,
-      streamingBehavior: undefined,
     });
     await expect(
       readFile(join(root, ".pi", "attachments", sessionId, "turn-attachment", "note.txt"), "utf8"),

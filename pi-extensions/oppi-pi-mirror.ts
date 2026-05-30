@@ -48,6 +48,8 @@ interface EditableAgentSession {
   _steeringMessages?: string[];
   _followUpMessages?: string[];
   _emitQueueUpdate?: () => void;
+  getSteeringMessages?: () => readonly string[];
+  getFollowUpMessages?: () => readonly string[];
   agent?: {
     clearAllQueues?: () => void;
     clearSteeringQueue?: () => void;
@@ -879,6 +881,37 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     renderIndicator();
   }
 
+  function queueTextsFromAgentSession(
+    session: EditableAgentSession | undefined,
+  ): { steering: readonly string[]; followUp: readonly string[] } | null {
+    if (!session) return null;
+    const hasSteeringQueue =
+      typeof session.getSteeringMessages === "function" ||
+      Array.isArray(session._steeringMessages);
+    const hasFollowUpQueue =
+      typeof session.getFollowUpMessages === "function" ||
+      Array.isArray(session._followUpMessages);
+    if (!hasSteeringQueue && !hasFollowUpQueue) return null;
+
+    return {
+      steering: Array.from(
+        session.getSteeringMessages?.() ?? session._steeringMessages ?? [],
+      ),
+      followUp: Array.from(
+        session.getFollowUpMessages?.() ?? session._followUpMessages ?? [],
+      ),
+    };
+  }
+
+  function syncQueueFromEditableSession(ctx: ExtensionContext): boolean {
+    const texts = queueTextsFromAgentSession(findEditableAgentSession(ctx));
+    if (!texts) return false;
+    if (!syncQueueFromTexts(texts.steering, texts.followUp)) return false;
+    sendQueueState();
+    renderIndicator();
+    return true;
+  }
+
   function findEditableAgentSession(
     ctx: ExtensionContext,
   ): EditableAgentSession | undefined {
@@ -1028,6 +1061,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       }
       if (!latestCtx) return;
       try {
+        syncQueueFromEditableSession(latestCtx);
         send({
           type: "heartbeat",
           state: stateSnapshot(pi, latestCtx),
@@ -1387,7 +1421,9 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       case "abort":
         findEditableAgentSession(ctx)?.abortCompaction?.();
         ctx.abort();
-        queue = { version: queue.version + 1, steering: [], followUp: [] };
+        // Remote abort has no terminal composer to restore queued text into.
+        // Keep the queue intact so phone users do not lose queued steer/follow-up
+        // messages. Terminal Escape still owns its native clear-and-restore path.
         sendQueueState();
         renderIndicator();
         return { aborted: true, queue: cloneQueueState(queue) };
@@ -1682,6 +1718,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
             markQueueItemStarted(
               textFromUserMessage((event as { message?: unknown }).message),
             );
+            syncQueueFromEditableSession(ctx);
           }
           const includeState =
             eventType === "agent_start" ||

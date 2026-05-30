@@ -61,7 +61,10 @@
         "type": "text_end",
         "contentIndex": 0,
         "content": "Let me help you with that. ",
-        "partial": { "role": "assistant", "content": [{ "type": "text", "text": "Let me help you with that. " }] }
+        "partial": {
+          "role": "assistant",
+          "content": [{ "type": "text", "text": "Let me help you with that. " }]
+        }
       }
     },
     {
@@ -108,7 +111,11 @@
       "assistantMessageEvent": {
         "type": "toolcall_end",
         "contentIndex": 2,
-        "toolCall": { "id": "tc-replay-001", "name": "bash", "args": "{\"command\":\"npm test\"}" },
+        "toolCall": {
+          "id": "tc-replay-001",
+          "name": "bash",
+          "args": "{\"command\":\"npm test\"}"
+        },
         "partial": { "role": "assistant", "content": [] }
       }
     },
@@ -118,7 +125,10 @@
       "assistantMessageEvent": {
         "type": "done",
         "reason": "stop",
-        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Done." }] }
+        "message": {
+          "role": "assistant",
+          "content": [{ "type": "text", "text": "Done." }]
+        }
       }
     },
     {
@@ -154,7 +164,9 @@
       "toolName": "bash",
       "toolCallId": "tc-replay-001",
       "partialResult": {
-        "content": [{ "type": "text", "text": "Running tests...\n42 tests passed\n" }]
+        "content": [
+          { "type": "text", "text": "Running tests...\n42 tests passed\n" }
+        ]
       }
     },
     {
@@ -163,7 +175,9 @@
       "toolName": "bash",
       "toolCallId": "tc-replay-001",
       "result": {
-        "content": [{ "type": "text", "text": "Running tests...\n42 tests passed\n" }],
+        "content": [
+          { "type": "text", "text": "Running tests...\n42 tests passed\n" }
+        ],
         "details": { "exitCode": 0, "durationMs": 1234 }
       },
       "isError": false
@@ -185,7 +199,9 @@
       "toolName": "remember",
       "toolCallId": "tc-replay-ext",
       "result": {
-        "content": [{ "type": "text", "text": "Saved to journal: 2026-02-18-session.md" }],
+        "content": [
+          { "type": "text", "text": "Saved to journal: 2026-02-18-session.md" }
+        ],
         "details": { "file": "2026-02-18-session.md", "redacted": false }
       },
       "isError": false
@@ -201,9 +217,7 @@
       "type": "message_end",
       "message": {
         "role": "assistant",
-        "content": [
-          { "type": "text", "text": "All 42 tests passed!" }
-        ],
+        "content": [{ "type": "text", "text": "All 42 tests passed!" }],
         "usage": {
           "input": 1200,
           "output": 350,
@@ -249,17 +263,20 @@
       "error": "Unknown model: fake-model"
     },
     {
-      "_label": "auto_compaction_start: pi begins auto-compaction",
-      "type": "auto_compaction_start",
-      "reason": "Context window 90% full"
+      "_label": "compaction_start: pi begins manual or auto-compaction",
+      "type": "compaction_start",
+      "reason": "threshold"
     },
     {
-      "_label": "auto_compaction_end: compaction completes",
-      "type": "auto_compaction_end",
+      "_label": "compaction_end: compaction completes",
+      "type": "compaction_end",
+      "reason": "threshold",
       "aborted": false,
       "willRetry": false,
-      "summary": "Compacted from 180k to 95k tokens",
-      "tokensBefore": 180000
+      "result": {
+        "summary": "Compacted from 180k to 95k tokens",
+        "tokensBefore": 180000
+      }
     },
     {
       "_label": "auto_retry_start: pi begins auto-retry after error",

@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events";
 
 import { type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
+import type { AgentRuntimeTransport } from "./agent-runtime-transport.js";
 import type {
   ChatAttachmentRef,
   MessageQueueDraftItem,
@@ -64,7 +65,7 @@ type ActiveSession = SessionStartActiveSession;
 
 // ─── Session Manager ───
 
-export class SessionManager extends EventEmitter {
+export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
   private pendingExtensionFactories: Map<string, ExtensionFactory[]> = new Map();

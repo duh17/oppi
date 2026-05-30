@@ -6,7 +6,9 @@ import type {
   ImageAttachment,
   MessageQueueDraftItem,
   MessageQueueItem,
+  MessageQueueKind,
   MessageQueueState,
+  ServerMessage,
 } from "./types.js";
 
 export interface QueueImageContent {
@@ -15,11 +17,20 @@ export interface QueueImageContent {
   mimeType: string;
 }
 
-interface SessionMessageQueueStoreLike {
+export interface MutableMessageQueueState<T extends MessageQueueItem = MessageQueueItem> {
   version: number;
-  steering: MessageQueueItem[];
-  followUp: MessageQueueItem[];
+  steering: T[];
+  followUp: T[];
 }
+
+export interface StartedQueueItem<T extends MessageQueueItem = MessageQueueItem> {
+  kind: MessageQueueKind;
+  item: T;
+  queueVersion: number;
+}
+
+export type QueueStateMessage = Extract<ServerMessage, { type: "queue_state" }>;
+export type QueueItemStartedMessage = Extract<ServerMessage, { type: "queue_item_started" }>;
 
 function cloneImageAttachment(image: ImageAttachment): ImageAttachment {
   return {
@@ -74,12 +85,90 @@ export function cloneQueueItem(item: MessageQueueItem): MessageQueueItem {
   };
 }
 
-export function cloneQueueState(queue: SessionMessageQueueStoreLike): MessageQueueState {
+export function cloneQueueState(queue: MutableMessageQueueState): MessageQueueState {
   return {
     version: queue.version,
     steering: queue.steering.map(cloneQueueItem),
     followUp: queue.followUp.map(cloneQueueItem),
   };
+}
+
+export function queueStateMessage(queue: MutableMessageQueueState): QueueStateMessage {
+  return {
+    type: "queue_state",
+    queue: cloneQueueState(queue),
+  };
+}
+
+export function queueItemStartedMessage(
+  started: StartedQueueItem<MessageQueueItem>,
+): QueueItemStartedMessage {
+  return {
+    type: "queue_item_started",
+    kind: started.kind,
+    item: cloneQueueItem(started.item),
+    queueVersion: started.queueVersion,
+  };
+}
+
+export function parseQueueState(value: unknown): MessageQueueState | undefined {
+  const record = asRecord(value);
+  const queue = asRecord(record?.queue) ?? record;
+  if (!queue) return undefined;
+  const version = typeof queue.version === "number" ? queue.version : undefined;
+  const steering = parseQueueItems(queue.steering);
+  const followUp = parseQueueItems(queue.followUp);
+  if (version === undefined || !steering || !followUp) return undefined;
+  return { version, steering, followUp };
+}
+
+export function requireQueueState(value: unknown, errorMessage: string): MessageQueueState {
+  const queue = parseQueueState(value);
+  if (!queue) {
+    throw new Error(errorMessage);
+  }
+  return queue;
+}
+
+export function assertQueueBaseVersion(
+  queue: Pick<MutableMessageQueueState, "version">,
+  baseVersion: number,
+): void {
+  if (baseVersion !== queue.version) {
+    throw new Error(`Queue version mismatch: expected ${queue.version}, got ${baseVersion}`);
+  }
+}
+
+function parseQueueItems(value: unknown): MessageQueueItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: MessageQueueItem[] = [];
+  for (const raw of value) {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const message = typeof record.message === "string" ? record.message : undefined;
+    if (message === undefined) return undefined;
+    items.push(
+      cloneQueueItem({
+        id: normalizeQueueId(typeof record.id === "string" ? record.id : undefined),
+        message,
+        createdAt:
+          typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
+            ? Math.trunc(record.createdAt)
+            : Date.now(),
+        ...(Array.isArray(record.images) ? { images: record.images as ImageAttachment[] } : {}),
+        ...(Array.isArray(record.attachments)
+          ? { attachments: record.attachments as ChatAttachmentRef[] }
+          : {}),
+      }),
+    );
+  }
+  return items;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 export function queueImagesFromPromptImages(
@@ -107,6 +196,40 @@ export function promptImagesFromQueue(
     data: image.data,
     mimeType: image.mimeType,
   }));
+}
+
+export function dequeueQueueItemByText<T extends MessageQueueItem>(
+  queue: MutableMessageQueueState<T>,
+  text: string | undefined,
+  matches: (item: T, text: string) => boolean = (item, value) => item.message.trim() === value,
+): StartedQueueItem<T> | null {
+  const normalized = text?.trim();
+  if (!normalized) return null;
+
+  const dequeue = (kind: MessageQueueKind, list: T[]): StartedQueueItem<T> | null => {
+    const index = list.findIndex((item) => matches(item, normalized));
+    if (index === -1) return null;
+    const [item] = list.splice(index, 1);
+    if (!item) return null;
+    queue.version += 1;
+    return { kind, item, queueVersion: queue.version };
+  };
+
+  return dequeue("steer", queue.steering) ?? dequeue("follow_up", queue.followUp);
+}
+
+export function removeQueueItemStartedByRuntime<T extends MessageQueueItem>(
+  queue: MutableMessageQueueState<T>,
+  kind: MessageQueueKind,
+  item: Pick<MessageQueueItem, "id" | "message">,
+  queueVersion: number,
+): void {
+  queue.version = queueVersion;
+  const target = kind === "steer" ? queue.steering : queue.followUp;
+  const index = target.findIndex(
+    (candidate) => candidate.id === item.id || candidate.message === item.message,
+  );
+  if (index !== -1) target.splice(index, 1);
 }
 
 export function extractQueuedUserText(

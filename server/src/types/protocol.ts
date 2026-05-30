@@ -227,7 +227,7 @@ export type ServerMessage = // ── Connection ──
     | { type: "message_end"; role: "user" | "assistant"; content: string }
     // ── Streaming ──
     | { type: "text_delta"; delta: string }
-    | { type: "thinking_delta"; delta: string }
+    | { type: "thinking_delta"; delta: string; contentIndex?: number }
     | {
         type: "audio_stream";
         kind: "audio-stream";

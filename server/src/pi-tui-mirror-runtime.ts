@@ -6,22 +6,41 @@ import { join, resolve } from "node:path";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 
-import { materializeChatAttachments } from "./chat-attachments.js";
+import {
+  applyForwardedCommandResultToSession,
+  type AgentRuntimeTransport,
+} from "./agent-runtime-transport.js";
 import { EventRing } from "./event-ring.js";
-import { materializeAgentEventMedia } from "./session-agent-event-media.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
-  extractAssistantText,
-  normalizeCommandError,
-  translatePiEvent,
-} from "./session-protocol.js";
+  MirrorBridgeCommandDriver,
+  type MirrorBridgeCommandConnection,
+} from "./mirror-bridge-command-driver.js";
+import {
+  RuntimeCommandCoordinator,
+  type RuntimeCommandExecutionContext,
+} from "./runtime-command-coordinator.js";
+import type { SessionBackendEvent } from "./pi-events.js";
+import { SessionAgentEventCoordinator } from "./session-agent-events.js";
+import { normalizeCommandError } from "./session-protocol.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
 import { SessionEventProcessor, type EventProcessorSessionState } from "./session-events.js";
-import { cloneQueueItem, cloneQueueState, extractQueuedUserText } from "./session-queue-utils.js";
-import { SessionTurnCoordinator, type TurnSessionState } from "./session-turns.js";
+import { SessionInputCoordinator, type SessionInputSessionState } from "./session-input.js";
+import {
+  assertQueueBaseVersion,
+  cloneQueueState,
+  dequeueQueueItemByText,
+  extractQueuedUserText,
+  parseQueueState,
+  queueItemStartedMessage,
+  queueStateMessage,
+  removeQueueItemStartedByRuntime,
+  requireQueueState,
+} from "./session-queue-utils.js";
+import { SessionTurnCoordinator } from "./session-turns.js";
 import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
@@ -39,12 +58,24 @@ import type {
 const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 
 const BRIDGE_PROTOCOL_VERSION = 1;
-const COMMAND_TIMEOUT_MS = 30_000;
 const EVENT_RING_CAPACITY = 500;
+const MANAGED_RUNTIME_CONFLICT_RETRY_MS = 10_000;
+
+class BridgeRegistrationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(message);
+  }
+}
 
 const SUPPORTED_REMOTE_COMMANDS = new Set([
   "get_state",
   "get_messages",
+  "get_fork_messages",
+  "navigate_tree",
   "get_session_stats",
   "get_commands",
   "set_model",
@@ -55,9 +86,23 @@ const SUPPORTED_REMOTE_COMMANDS = new Set([
   "set_session_name",
   "compact",
   "set_auto_compaction",
+  "set_steering_mode",
+  "set_follow_up_mode",
+  "set_auto_retry",
+  "abort_retry",
+  "abort_bash",
   "abort",
+  "reload",
   "get_queue",
   "set_queue",
+]);
+
+const UNSUPPORTED_REMOTE_COMMAND_REASONS = new Map([
+  ["get_session_tree", "terminal bridge does not expose Pi's tree serializer yet"],
+  ["share_session", "sharing needs a server-owned AgentSession export path"],
+  ["new_session", "session replacement is terminal-owned; start it from the terminal"],
+  ["fork", "session-file replacement is terminal-owned; fork from the terminal"],
+  ["switch_session", "session-file replacement is terminal-owned; switch from the terminal"],
 ]);
 
 export interface PiBridgeStateSnapshot {
@@ -138,13 +183,7 @@ type PiBridgeInboundMessage =
   | PiBridgeQueueItemStartedMessage
   | PiBridgeGoodbyeMessage;
 
-interface PiBridgeOutboundCommand {
-  type: "command";
-  id: string;
-  command: Record<string, unknown>;
-}
-
-interface MirrorActiveSession extends EventProcessorSessionState, TurnSessionState {
+interface MirrorActiveSession extends EventProcessorSessionState, SessionInputSessionState {
   session: Session;
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
@@ -152,32 +191,24 @@ interface MirrorActiveSession extends EventProcessorSessionState, TurnSessionSta
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
+  streamedThinkingContentIndexes: Set<number>;
+  currentThinkingContentIndex?: number;
   toolNames: Map<string, string>;
   shellPreviewLastSent: Map<string, number>;
   streamingArgPreviews: Set<string>;
   streamingToolUpdatesSeen: Map<string, string>;
+  toolFullOutputPaths: Map<string, string>;
   messageQueue: MessageQueueState;
   lastSummaryFingerprint?: string;
+  sdkBackend: never;
 }
 
-interface BridgeConnection {
-  bridgeId: string;
-  sessionId: string;
-  ws: WebSocket;
+interface BridgeConnection extends MirrorBridgeCommandConnection {
   cwd?: string;
   capabilities: string[];
   protocolVersion: number;
   connectedAt: number;
   lastSeenAt: number;
-  pendingCommands: Map<
-    string,
-    {
-      commandType: string;
-      resolve: (data: unknown) => void;
-      reject: (err: Error) => void;
-      timeout: ReturnType<typeof setTimeout>;
-    }
-  >;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -195,6 +226,22 @@ function rawDataToText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
   return Buffer.from(data).toString("utf8");
+}
+
+function isMirrorReloadPrompt(
+  message: string,
+  opts: {
+    images?: unknown[];
+    attachments?: unknown[];
+    streamingBehavior?: "steer" | "followUp";
+  },
+): boolean {
+  return (
+    message.trim() === "/reload" &&
+    !opts.streamingBehavior &&
+    !opts.images?.length &&
+    !opts.attachments?.length
+  );
 }
 
 function isTerminalStoppedReason(reason: string): boolean {
@@ -302,36 +349,25 @@ function mergePiSessionFile(session: Session, file: string | undefined): void {
   session.piSessionFiles = [...files];
 }
 
-function formatCommandId(): string {
-  return `mirror_cmd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function emptyQueue(): MessageQueueState {
   return { version: 0, steering: [], followUp: [] };
-}
-
-function parseQueueState(value: unknown): MessageQueueState | undefined {
-  const record = asRecord(value);
-  const queue = asRecord(record?.queue) ?? record;
-  if (!queue) return undefined;
-  const version = typeof queue.version === "number" ? queue.version : undefined;
-  const steering = Array.isArray(queue.steering) ? queue.steering : undefined;
-  const followUp = Array.isArray(queue.followUp) ? queue.followUp : undefined;
-  if (version === undefined || !steering || !followUp) return undefined;
-  return queue as unknown as MessageQueueState;
 }
 
 export interface PiTuiMirrorRuntimeOptions {
   isManagedSessionActive?: (sessionId: string) => boolean;
 }
 
-export class PiTuiMirrorRuntime extends EventEmitter {
+export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTransport {
   private readonly active = new Map<string, MirrorActiveSession>();
   private readonly bridges = new Map<string, BridgeConnection>();
   private readonly bridgeBySession = new Map<string, string>();
   private readonly broadcaster: SessionBroadcaster;
   private readonly eventProcessor: SessionEventProcessor;
   private readonly turnCoordinator: SessionTurnCoordinator;
+  private readonly agentEventCoordinator: SessionAgentEventCoordinator;
+  private readonly inputCoordinator: SessionInputCoordinator;
+  private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
+  private readonly bridgeCommandDriver = new MirrorBridgeCommandDriver();
 
   constructor(
     private readonly storage: Storage,
@@ -357,6 +393,68 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     this.turnCoordinator = new SessionTurnCoordinator({
       broadcast: (sessionId, message) => this.broadcast(sessionId, message),
     });
+    this.agentEventCoordinator = new SessionAgentEventCoordinator({
+      getActiveSession: (sessionId) => this.active.get(sessionId),
+      eventProcessor: this.eventProcessor,
+      stopCoordinator: {
+        finishPendingStopOnAgentEnd: () => {},
+      } as never,
+      turnCoordinator: this.turnCoordinator,
+      broadcast: (sessionId, message) => this.broadcast(sessionId, message),
+      resetIdleTimer: () => {},
+      markQueuedMessageStarted: (sessionId, message) => {
+        const active = this.active.get(sessionId);
+        if (!active) return;
+        this.markQueuedMessageStarted(active, extractQueuedUserText(message));
+      },
+      dataDir: (this.storage as { getDataDir?: () => string }).getDataDir?.(),
+      trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
+    });
+
+    const uploadStoreConfig = resolveUploadStoreConfig(this.storage.getConfig());
+    this.inputCoordinator = new SessionInputCoordinator({
+      getActiveSession: (sessionId) => this.active.get(sessionId),
+      beginTurnIntent: (sessionId, active, command, payload, clientTurnId, requestId) =>
+        this.turnCoordinator.beginTurnIntent(
+          sessionId,
+          active,
+          command,
+          payload,
+          clientTurnId,
+          requestId,
+        ),
+      isDuplicateTurnIntent: (active, command, clientTurnId, payload) =>
+        this.turnCoordinator.isDuplicateTurnIntent(active, command, clientTurnId, payload),
+      markTurnDispatched: (sessionId, active, command, turn, requestId) =>
+        this.turnCoordinator.markTurnDispatched(sessionId, active, command, turn, requestId),
+      sendCommand: (sessionId, command) => this.dispatchBridgeCommand(sessionId, command),
+      onCommandResult: (sessionId, _command, data) => {
+        this.applyQueueFromCommandData(sessionId, data);
+      },
+      resolveWorkspaceRoot: (session) => this.resolveWorkspaceRoot(session),
+      maxTurnAttachmentBytes: uploadStoreConfig.maxTurnBytes,
+      uploadStoreConfig,
+      recordPromptLocally: false,
+      promptBusyErrorMessage:
+        "Prompt requires an idle terminal session; use steer or follow_up while a turn is streaming",
+      streamingInputBusyErrorMessage: (kind) => {
+        const label = kind === "steer" ? "Steer" : "Follow-up";
+        return `${label} requires an active streaming terminal turn`;
+      },
+      attachmentWorkspaceErrorMessage:
+        "Attachments require a workspace-backed terminal mirror session",
+    });
+
+    this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
+      runtimeName: "terminal mirror runtime",
+      isCommandSupported: (commandType) => SUPPORTED_REMOTE_COMMANDS.has(commandType),
+      unsupportedReason: (commandType) => UNSUPPORTED_REMOTE_COMMAND_REASONS.get(commandType),
+      normalizeError: normalizeCommandError,
+      broadcast: (sessionId, message) => this.broadcast(sessionId, message),
+      onCommandSuccess: (sessionId, context) =>
+        this.handleForwardedCommandSuccess(sessionId, context),
+      preflightFailureMode: "broadcast",
+    });
   }
 
   isMirrorSession(session: Session | undefined | null): boolean {
@@ -365,8 +463,12 @@ export class PiTuiMirrorRuntime extends EventEmitter {
 
   handleBridgeWebSocket(ws: WebSocket): void {
     let connection: BridgeConnection | undefined;
+    let rejectedBeforeHello = false;
 
     ws.on("message", (data, isBinary) => {
+      if (rejectedBeforeHello) {
+        return;
+      }
       if (isBinary) {
         ws.close(1003, "Binary bridge messages are not supported");
         return;
@@ -389,10 +491,21 @@ export class PiTuiMirrorRuntime extends EventEmitter {
         this.handleBridgeMessage(connection, message);
       } catch (error) {
         const message = safeErrorMessage(error);
-        log.warn("mirror_bridge.message_rejected", { error: message });
+        const details = error instanceof BridgeRegistrationError ? error.details : {};
+        log.warn("mirror_bridge.message_rejected", {
+          error: message,
+          ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
+        });
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "error", error: message }));
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: message,
+              ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
+            }),
+          );
           if (!connection) {
+            rejectedBeforeHello = true;
             ws.close(1008, message);
           }
         }
@@ -448,45 +561,6 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     return normalizePath(workspace.hostMount);
   }
 
-  private async prepareMessageWithAttachments(
-    active: MirrorActiveSession,
-    message: string,
-    opts: {
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-    },
-  ): Promise<{
-    message: string;
-    images: Array<{ type: "image"; data: string; mimeType: string }>;
-  }> {
-    if (!opts.attachments?.length) {
-      return { message, images: [] };
-    }
-
-    const workspaceRoot = this.resolveWorkspaceRoot(active.session);
-    if (!workspaceRoot || !active.session.workspaceId) {
-      throw new Error("Attachments require a workspace-backed terminal mirror session");
-    }
-
-    const uploadStoreConfig = resolveUploadStoreConfig(this.storage.getConfig());
-    const materialized = await materializeChatAttachments({
-      workspaceRoot,
-      workspaceId: active.session.workspaceId,
-      sessionId: active.session.id,
-      turnId: opts.clientTurnId ?? opts.requestId,
-      message,
-      attachments: opts.attachments,
-      maxTurnBytes: uploadStoreConfig.maxTurnBytes,
-      uploadStore: uploadStoreConfig,
-    });
-
-    return {
-      message: materialized.message,
-      images: materialized.imageInputs,
-    };
-  }
-
   async sendPrompt(
     sessionId: string,
     message: string,
@@ -500,61 +574,16 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     },
   ): Promise<void> {
     const active = this.requireActive(sessionId);
-    if (active.session.status === "busy" && !opts.streamingBehavior) {
-      const duplicate = this.turnCoordinator.isDuplicateTurnIntent(
-        active,
-        "prompt",
-        opts.clientTurnId,
-        {
-          message,
-          images: opts.images ?? [],
-          attachments: opts.attachments ?? [],
-          streamingBehavior: opts.streamingBehavior,
-        },
-      );
-      if (!duplicate) {
-        throw new Error(
-          "Prompt requires an idle terminal session; use steer or follow_up while a turn is streaming",
-        );
-      }
+    if (isMirrorReloadPrompt(message, opts)) {
+      await this.dispatchBridgeCommand(sessionId, { type: "reload" });
+      active.session.lastActivity = opts.timestamp;
+      this.storage.saveSession(active.session);
+      return;
     }
 
-    const turn = this.turnCoordinator.beginTurnIntent(
-      active.session.id,
-      active,
-      "prompt",
-      {
-        message,
-        images: opts.images ?? [],
-        attachments: opts.attachments ?? [],
-        streamingBehavior: opts.streamingBehavior,
-      },
-      opts.clientTurnId,
-      opts.requestId,
-    );
-    if (turn.duplicate) return;
+    const result = await this.inputCoordinator.sendPrompt(sessionId, message, opts);
+    if (result.duplicate) return;
 
-    const prepared = await this.prepareMessageWithAttachments(active, message, {
-      attachments: opts.attachments,
-      clientTurnId: opts.clientTurnId,
-      requestId: opts.requestId,
-    });
-    const dispatchImages = [...(opts.images ?? []), ...prepared.images];
-    const data = await this.dispatchBridgeCommand(sessionId, {
-      type: "prompt",
-      message: prepared.message,
-      ...(dispatchImages.length ? { images: dispatchImages } : {}),
-      streamingBehavior: opts.streamingBehavior,
-    });
-    this.applyQueueFromCommandData(sessionId, data);
-
-    this.turnCoordinator.markTurnDispatched(
-      active.session.id,
-      active,
-      "prompt",
-      turn,
-      opts.requestId,
-    );
     active.session.lastActivity = opts.timestamp;
     this.storage.saveSession(active.session);
   }
@@ -569,7 +598,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       requestId?: string;
     },
   ): Promise<void> {
-    await this.sendStreamingInput(sessionId, "steer", message, opts);
+    await this.inputCoordinator.sendSteer(sessionId, message, opts);
   }
 
   async sendFollowUp(
@@ -582,19 +611,11 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       requestId?: string;
     },
   ): Promise<void> {
-    await this.sendStreamingInput(sessionId, "follow_up", message, opts);
+    await this.inputCoordinator.sendFollowUp(sessionId, message, opts);
   }
 
   async getMessageQueue(sessionId: string): Promise<MessageQueueState> {
-    const active = this.requireActive(sessionId);
-    const data = await this.dispatchBridgeCommand(sessionId, { type: "get_queue" });
-    const queue = parseQueueState(data);
-    if (!queue) {
-      throw new Error("Terminal mirror did not return queue state");
-    }
-    active.messageQueue = cloneQueueState(queue);
-    this.broadcast(sessionId, { type: "queue_state", queue: active.messageQueue });
-    return cloneQueueState(active.messageQueue);
+    return this.dispatchBridgeQueueCommand(sessionId, { type: "get_queue" });
   }
 
   async setMessageQueue(
@@ -606,29 +627,19 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     },
   ): Promise<MessageQueueState> {
     const active = this.requireActive(sessionId);
-    if (payload.baseVersion !== active.messageQueue.version) {
-      throw new Error(
-        `Queue version mismatch: expected ${active.messageQueue.version}, got ${payload.baseVersion}`,
-      );
-    }
+    assertQueueBaseVersion(active.messageQueue, payload.baseVersion);
 
-    const data = await this.dispatchBridgeCommand(sessionId, {
+    return this.dispatchBridgeQueueCommand(sessionId, {
       type: "set_queue",
       baseVersion: payload.baseVersion,
       steering: payload.steering,
       followUp: payload.followUp,
     });
-    const queue = parseQueueState(data);
-    if (!queue) {
-      throw new Error("Terminal mirror did not return queue state");
-    }
-    active.messageQueue = cloneQueueState(queue);
-    this.broadcast(sessionId, { type: "queue_state", queue: active.messageQueue });
-    return cloneQueueState(active.messageQueue);
   }
 
   async sendAbort(sessionId: string): Promise<void> {
-    await this.dispatchBridgeCommand(sessionId, { type: "abort" });
+    const data = await this.dispatchBridgeCommand(sessionId, { type: "abort" });
+    this.applyQueueFromCommandData(sessionId, data);
   }
 
   async stopSession(_sessionId: string): Promise<void> {
@@ -637,7 +648,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     );
   }
 
-  respondToUIRequest(_sessionId: string): boolean {
+  respondToUIRequest(_sessionId: string, _response: { id: string }): boolean {
     return false;
   }
 
@@ -646,74 +657,20 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     message: Record<string, unknown>,
     requestId: string | undefined,
   ): Promise<void> {
-    const commandType = typeof message.type === "string" ? message.type : "unknown";
-    if (!SUPPORTED_REMOTE_COMMANDS.has(commandType)) {
-      throw new Error(`Terminal mirror does not support command: ${commandType}`);
-    }
-
-    try {
-      const data = await this.dispatchBridgeCommand(sessionId, message);
-      this.applyQueueFromCommandData(sessionId, data);
-      this.applyCommandResult(sessionId, commandType, message, data);
-      this.broadcast(sessionId, {
-        type: "command_result",
-        command: commandType,
-        requestId,
-        success: true,
-        data,
-      });
-    } catch (error) {
-      const raw = safeErrorMessage(error);
-      this.broadcast(sessionId, {
-        type: "command_result",
-        command: commandType,
-        requestId,
-        success: false,
-        error: normalizeCommandError(commandType, raw),
-      });
-    }
+    await this.runtimeCommandCoordinator.forwardClientCommand(
+      sessionId,
+      message,
+      requestId,
+      (command) => this.dispatchBridgeCommand(sessionId, command),
+    );
   }
 
-  private async sendStreamingInput(
+  private handleForwardedCommandSuccess(
     sessionId: string,
-    kind: "steer" | "follow_up",
-    message: string,
-    opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-    },
-  ): Promise<void> {
-    const active = this.requireActive(sessionId);
-    if (active.session.status !== "busy") {
-      const label = kind === "steer" ? "Steer" : "Follow-up";
-      throw new Error(`${label} requires an active streaming terminal turn`);
-    }
-
-    const turn = this.turnCoordinator.beginTurnIntent(
-      active.session.id,
-      active,
-      kind,
-      { message, images: opts.images ?? [], attachments: opts.attachments ?? [] },
-      opts.clientTurnId,
-      opts.requestId,
-    );
-    if (turn.duplicate) return;
-
-    const prepared = await this.prepareMessageWithAttachments(active, message, {
-      attachments: opts.attachments,
-      clientTurnId: opts.clientTurnId,
-      requestId: opts.requestId,
-    });
-    const dispatchImages = [...(opts.images ?? []), ...prepared.images];
-    const data = await this.dispatchBridgeCommand(sessionId, {
-      type: kind,
-      message: prepared.message,
-      ...(dispatchImages.length ? { images: dispatchImages } : {}),
-    });
-    this.applyQueueFromCommandData(sessionId, data);
-    this.turnCoordinator.markTurnDispatched(active.session.id, active, kind, turn, opts.requestId);
+    context: RuntimeCommandExecutionContext,
+  ): void {
+    this.applyQueueFromCommandData(sessionId, context.data);
+    this.applyCommandResult(sessionId, context.commandType, context.request, context.data);
   }
 
   private registerBridge(ws: WebSocket, hello: PiBridgeHelloMessage): BridgeConnection {
@@ -787,13 +744,19 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       case "heartbeat":
         this.applyBridgeState(active, message.state ?? {}, connection);
         if (message.queue) {
-          this.applyBridgeQueueState(active, message.queue);
+          this.applyBridgeQueueState(
+            active,
+            requireQueueState(message.queue, "Terminal mirror sent invalid heartbeat queue state"),
+          );
         }
         this.broadcast(connection.sessionId, { type: "state", session: active.session });
         return;
 
       case "queue_state":
-        this.applyBridgeQueueState(active, message.queue);
+        this.applyBridgeQueueState(
+          active,
+          requireQueueState(message.queue, "Terminal mirror sent invalid queue state"),
+        );
         return;
 
       case "queue_item_started":
@@ -819,6 +782,18 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     }
   }
 
+  private async dispatchBridgeQueueCommand(
+    sessionId: string,
+    command: Record<string, unknown>,
+  ): Promise<MessageQueueState> {
+    const active = this.requireActive(sessionId);
+    const data = await this.dispatchBridgeCommand(sessionId, command);
+    return this.applyBridgeQueueState(
+      active,
+      requireQueueState(data, "Terminal mirror did not return queue state"),
+    );
+  }
+
   private applyQueueFromCommandData(
     sessionId: string,
     data: unknown,
@@ -826,37 +801,24 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     const queue = parseQueueState(data);
     if (!queue) return undefined;
     const active = this.requireActive(sessionId);
-    this.applyBridgeQueueState(active, queue);
-    return cloneQueueState(active.messageQueue);
+    return this.applyBridgeQueueState(active, queue);
   }
 
   private markQueuedMessageStarted(active: MirrorActiveSession, text: string | undefined): void {
-    const normalized = text?.trim();
-    if (!normalized) return;
+    const started = dequeueQueueItemByText(active.messageQueue, text);
+    if (!started) return;
 
-    const dequeue = (kind: MessageQueueKind, list: MessageQueueItem[]): MessageQueueItem | null => {
-      const index = list.findIndex((item) => item.message.trim() === normalized);
-      if (index === -1) return null;
-      const [item] = list.splice(index, 1);
-      if (!item) return null;
-      active.messageQueue.version += 1;
-      this.broadcast(active.session.id, {
-        type: "queue_item_started",
-        kind,
-        item: cloneQueueItem(item),
-        queueVersion: active.messageQueue.version,
-      });
-      this.broadcast(active.session.id, { type: "queue_state", queue: active.messageQueue });
-      return item;
-    };
-
-    if (dequeue("steer", active.messageQueue.steering)) return;
-    dequeue("follow_up", active.messageQueue.followUp);
+    this.broadcast(active.session.id, queueItemStartedMessage(started));
+    this.broadcast(active.session.id, queueStateMessage(active.messageQueue));
   }
 
-  private applyBridgeQueueState(active: MirrorActiveSession, queue: MessageQueueState): void {
+  private applyBridgeQueueState(
+    active: MirrorActiveSession,
+    queue: MessageQueueState,
+  ): MessageQueueState {
     active.messageQueue = cloneQueueState(queue);
-    this.broadcast(active.session.id, { type: "queue_state", queue: active.messageQueue });
+    this.broadcast(active.session.id, queueStateMessage(active.messageQueue));
+    return cloneQueueState(active.messageQueue);
   }
 
   private applyBridgeQueueItemStarted(
@@ -864,53 +826,44 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     message: PiBridgeQueueItemStartedMessage,
   ): void {
     if (message.queue) {
-      active.messageQueue = cloneQueueState(message.queue);
-    } else {
-      active.messageQueue.version = message.queueVersion;
-      const target =
-        message.kind === "steer" ? active.messageQueue.steering : active.messageQueue.followUp;
-      const index = target.findIndex(
-        (item) => item.id === message.item.id || item.message === message.item.message,
+      active.messageQueue = cloneQueueState(
+        requireQueueState(message.queue, "Terminal mirror sent invalid started-item queue state"),
       );
-      if (index !== -1) target.splice(index, 1);
+    } else {
+      removeQueueItemStartedByRuntime(
+        active.messageQueue,
+        message.kind,
+        message.item,
+        message.queueVersion,
+      );
     }
-    this.broadcast(active.session.id, {
-      type: "queue_item_started",
-      kind: message.kind,
-      item: cloneQueueItem(message.item),
-      queueVersion: active.messageQueue.version,
-    });
-    this.broadcast(active.session.id, { type: "queue_state", queue: active.messageQueue });
+    this.broadcast(
+      active.session.id,
+      queueItemStartedMessage({
+        kind: message.kind,
+        item: message.item,
+        queueVersion: active.messageQueue.version,
+      }),
+    );
+    this.broadcast(active.session.id, queueStateMessage(active.messageQueue));
   }
 
   private resolveCommandResult(
     connection: BridgeConnection,
     message: PiBridgeCommandResultMessage,
   ): void {
-    const pending = connection.pendingCommands.get(message.id);
-    if (!pending) {
-      log.warn("mirror_bridge.command_result_unmatched", {
-        bridgeId: connection.bridgeId,
-        sessionId: connection.sessionId,
-        commandId: message.id,
-      });
-      return;
-    }
+    const matched = this.bridgeCommandDriver.resolveResult(connection, message, () => {
+      if (message.state) {
+        this.applyBridgeState(this.requireActive(connection.sessionId), message.state, connection);
+      }
+    });
+    if (matched) return;
 
-    connection.pendingCommands.delete(message.id);
-    clearTimeout(pending.timeout);
-
-    const active = this.requireActive(connection.sessionId);
-    if (message.state) {
-      this.applyBridgeState(active, message.state, connection);
-    }
-
-    if (message.success) {
-      pending.resolve(message.data);
-      return;
-    }
-
-    pending.reject(new Error(message.error || `${pending.commandType} failed`));
+    log.warn("mirror_bridge.command_result_unmatched", {
+      bridgeId: connection.bridgeId,
+      sessionId: connection.sessionId,
+      commandId: message.id,
+    });
   }
 
   private detachBridge(connection: BridgeConnection, reason: string): void {
@@ -919,34 +872,42 @@ export class PiTuiMirrorRuntime extends EventEmitter {
     this.bridges.delete(connection.bridgeId);
     this.bridgeBySession.delete(connection.sessionId);
 
-    for (const pending of connection.pendingCommands.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("Terminal mirror disconnected"));
-    }
-    connection.pendingCommands.clear();
+    this.bridgeCommandDriver.rejectPending(connection, new Error("Terminal mirror disconnected"));
 
     const active = this.active.get(connection.sessionId);
     if (active) {
       const disconnectedAt = Date.now();
-      active.session.mirror = {
-        ...(active.session.mirror ?? { status: "disconnected" }),
-        status: "disconnected",
-        terminal: {
-          ...(active.session.mirror?.terminal ?? {}),
-          bridgeId: connection.bridgeId,
-          cwd: connection.cwd ?? active.session.mirror?.terminal?.cwd,
-          disconnectedAt,
-          lastSeenAt: connection.lastSeenAt,
-        },
+      const terminal = {
+        ...(active.session.mirror?.terminal ?? {}),
+        bridgeId: connection.bridgeId,
+        cwd: connection.cwd ?? active.session.mirror?.terminal?.cwd,
+        disconnectedAt,
+        disconnectReason: reason,
+        lastSeenAt: connection.lastSeenAt,
       };
-      if (isTerminalStoppedReason(reason)) {
-        active.session.status = "stopped";
-        active.session.currentTurnStartedAt = undefined;
-        active.session.lastActivity = disconnectedAt;
+
+      if (reason === "reload") {
+        active.session.mirror = {
+          ...(active.session.mirror ?? { status: "connected" }),
+          status: "connected",
+          terminal,
+        };
+        this.storage.saveSession(active.session);
+      } else {
+        active.session.mirror = {
+          ...(active.session.mirror ?? { status: "disconnected" }),
+          status: "disconnected",
+          terminal,
+        };
+        if (isTerminalStoppedReason(reason)) {
+          active.session.status = "stopped";
+          active.session.currentTurnStartedAt = undefined;
+          active.session.lastActivity = disconnectedAt;
+        }
+        this.storage.saveSession(active.session);
+        this.broadcast(connection.sessionId, { type: "state", session: active.session });
+        this.broadcastSessionSummaryIfChanged(active, `mirror_${reason}`);
       }
-      this.storage.saveSession(active.session);
-      this.broadcast(connection.sessionId, { type: "state", session: active.session });
-      this.broadcastSessionSummaryIfChanged(active, `mirror_${reason}`);
     }
 
     log.info("mirror_bridge.disconnected", {
@@ -1017,8 +978,10 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       existing.runtime !== "pi-tui-mirror" &&
       this.options.isManagedSessionActive?.(existing.id)
     ) {
-      throw new Error(
+      throw new BridgeRegistrationError(
         `Session ${existing.id} is already owned by the managed Oppi runtime; stop it before mirroring this terminal session`,
+        "managed_runtime_active",
+        { sessionId: existing.id, retryAfterMs: MANAGED_RUNTIME_CONFLICT_RETRY_MS },
       );
     }
 
@@ -1071,13 +1034,16 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       partialResults: new Map(),
       streamedAssistantText: "",
       hasStreamedThinking: false,
+      streamedThinkingContentIndexes: new Set(),
       toolNames: new Map(),
       shellPreviewLastSent: new Map(),
       streamingArgPreviews: new Set(),
       streamingToolUpdatesSeen: new Map(),
+      toolFullOutputPaths: new Map(),
       turnCache: new TurnDedupeCache(),
       pendingTurnStarts: [],
       messageQueue: emptyQueue(),
+      sdkBackend: {} as never,
     };
     this.active.set(session.id, active);
     return active;
@@ -1174,54 +1140,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
   }
 
   private ingestAgentEvent(active: MirrorActiveSession, rawEvent: AgentSessionEvent): void {
-    const sessionId = active.session.id;
-    const dataDir = (this.storage as { getDataDir?: () => string }).getDataDir?.();
-    const event = materializeAgentEventMedia({
-      event: rawEvent,
-      dataDir,
-      sessionId,
-      trustedSourceRoots: trustedSessionAttachmentSourceRoots(),
-    });
-    const ctx = this.eventProcessor.translationContext(active);
-
-    const messages = translatePiEvent(event, ctx);
-    active.streamedAssistantText = ctx.streamedAssistantText;
-    active.hasStreamedThinking = ctx.hasStreamedThinking;
-
-    for (const message of messages) {
-      this.broadcast(sessionId, message);
-    }
-
-    if (event.type === "message_end") {
-      const role = event.message.role;
-      if (role === "assistant") {
-        this.broadcast(sessionId, {
-          type: "message_end",
-          role,
-          content: extractAssistantText(event.message),
-        });
-      } else if (role === "user") {
-        const content = extractQueuedUserText(event.message).trim();
-        if (content) {
-          this.broadcast(sessionId, { type: "message_end", role, content });
-        }
-      }
-    }
-
-    if (event.type === "message_start" && event.message.role === "user") {
-      this.markQueuedMessageStarted(active, extractQueuedUserText(event.message));
-    }
-
-    if (event.type === "agent_start") {
-      this.turnCoordinator.markNextTurnStarted(sessionId, active);
-    }
-
-    this.eventProcessor.updateSessionFromEvent(sessionId, active, event);
-
-    if (event.type === "agent_start" || event.type === "agent_end") {
-      this.broadcastSessionSummaryIfChanged(active, event.type);
-      this.broadcast(sessionId, { type: "state", session: active.session });
-    }
+    this.agentEventCoordinator.handlePiEvent(active.session.id, rawEvent as SessionBackendEvent);
   }
 
   private broadcast(sessionId: string, message: ServerMessage): number {
@@ -1247,28 +1166,7 @@ export class PiTuiMirrorRuntime extends EventEmitter {
   ): Promise<unknown> {
     const bridgeId = this.bridgeBySession.get(sessionId);
     const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
-    if (!connection || connection.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("Terminal mirror is not connected");
-    }
-
-    const id = formatCommandId();
-    const commandType = typeof command.type === "string" ? command.type : "unknown";
-    const outbound: PiBridgeOutboundCommand = { type: "command", id, command };
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        connection.pendingCommands.delete(id);
-        reject(new Error(`Terminal mirror command timed out: ${commandType}`));
-      }, COMMAND_TIMEOUT_MS);
-
-      connection.pendingCommands.set(id, { commandType, resolve, reject, timeout });
-      connection.ws.send(JSON.stringify(outbound), (error) => {
-        if (!error) return;
-        clearTimeout(timeout);
-        connection.pendingCommands.delete(id);
-        reject(error);
-      });
-    });
+    return this.bridgeCommandDriver.dispatch(connection, command);
   }
 
   private applyCommandResult(
@@ -1279,7 +1177,6 @@ export class PiTuiMirrorRuntime extends EventEmitter {
   ): void {
     const active = this.active.get(sessionId);
     if (!active) return;
-    const response = asRecord(data) ?? {};
     const session = active.session;
 
     if (commandType === "get_state") {
@@ -1288,45 +1185,16 @@ export class PiTuiMirrorRuntime extends EventEmitter {
       return;
     }
 
-    if (commandType === "set_session_name") {
-      const requestedName = typeof request.name === "string" ? request.name.trim() : "";
-      const responseName = typeof response.name === "string" ? response.name.trim() : "";
-      const nextName = responseName || requestedName;
-      if (nextName) session.name = nextName;
+    const resultApplication = applyForwardedCommandResultToSession({
+      session,
+      commandType,
+      request,
+      data,
+    });
+    if (resultApplication.changed) {
+      this.storage.saveSession(session);
     }
-
-    if (commandType === "set_thinking_level" || commandType === "cycle_thinking_level") {
-      const requested = typeof request.level === "string" ? request.level.trim() : "";
-      const responseLevel = typeof response.level === "string" ? response.level.trim() : "";
-      const nextLevel = responseLevel || requested;
-      if (nextLevel) session.thinkingLevel = nextLevel;
-    }
-
-    if (commandType === "set_model" || commandType === "cycle_model") {
-      const modelData = commandType === "cycle_model" ? asRecord(response.model) : response;
-      if (modelData) {
-        const provider = typeof modelData.provider === "string" ? modelData.provider : undefined;
-        const modelId =
-          typeof modelData.id === "string"
-            ? modelData.id
-            : typeof modelData.modelId === "string"
-              ? modelData.modelId
-              : undefined;
-        if (provider && modelId) session.model = composeModelId(provider, modelId);
-      }
-      if (typeof response.thinkingLevel === "string" && response.thinkingLevel.trim()) {
-        session.thinkingLevel = response.thinkingLevel.trim();
-      }
-    }
-
-    this.storage.saveSession(session);
-    if (
-      commandType === "set_model" ||
-      commandType === "cycle_model" ||
-      commandType === "set_thinking_level" ||
-      commandType === "cycle_thinking_level" ||
-      commandType === "set_session_name"
-    ) {
+    if (resultApplication.shouldBroadcastState) {
       this.broadcast(sessionId, { type: "state", session });
     }
   }

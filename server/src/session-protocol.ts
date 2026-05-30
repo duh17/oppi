@@ -390,6 +390,10 @@ export interface TranslationContext {
   streamedAssistantText: string;
   /** True when thinking_delta events were already forwarded for the current message. */
   hasStreamedThinking: boolean;
+  /** Thinking content indexes that have already streamed for the current assistant message. */
+  streamedThinkingContentIndexes: Set<number>;
+  /** Current thinking block content index from thinking_start, used when deltas omit it. */
+  currentThinkingContentIndex?: number;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
   mobileRenderers?: MobileRendererRegistry;
   /** Tool names per toolCallId — tracked for shell preview logic. */
@@ -757,6 +761,10 @@ function resolveToolCallId(event: AgentSessionEvent): string | undefined {
  * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
  * side effect (streaming state for the current turn).
  */
+function contentIndexFrom(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 export function translatePiEvent(
   event: AgentSessionEvent,
   ctx: TranslationContext,
@@ -764,11 +772,15 @@ export function translatePiEvent(
   switch (event.type) {
     case "agent_start":
       ctx.streamedAssistantText = "";
+      ctx.currentThinkingContentIndex = undefined;
+      ctx.streamedThinkingContentIndexes.clear();
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_start" }];
 
     case "agent_end":
       ctx.streamedAssistantText = "";
+      ctx.currentThinkingContentIndex = undefined;
+      ctx.streamedThinkingContentIndexes.clear();
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_end" }];
 
@@ -789,9 +801,30 @@ export function translatePiEvent(
         ctx.streamedAssistantText += evt.delta;
         return [{ type: "text_delta", delta: evt.delta }];
       }
+      if (evt?.type === "thinking_start") {
+        ctx.currentThinkingContentIndex = contentIndexFrom(evt.contentIndex);
+        return EMPTY_MESSAGES;
+      }
       if (evt?.type === "thinking_delta") {
         ctx.hasStreamedThinking = true;
-        return [{ type: "thinking_delta", delta: evt.delta }];
+        const contentIndex = contentIndexFrom(evt.contentIndex) ?? ctx.currentThinkingContentIndex;
+        if (contentIndex !== undefined) {
+          ctx.streamedThinkingContentIndexes.add(contentIndex);
+        }
+        return [
+          {
+            type: "thinking_delta",
+            delta: evt.delta,
+            ...(contentIndex !== undefined ? { contentIndex } : {}),
+          },
+        ];
+      }
+      if (evt?.type === "thinking_end") {
+        const contentIndex = contentIndexFrom(evt.contentIndex);
+        if (contentIndex === undefined || contentIndex === ctx.currentThinkingContentIndex) {
+          ctx.currentThinkingContentIndex = undefined;
+        }
+        return EMPTY_MESSAGES;
       }
       if (evt?.type === "error") {
         const reason = evt.reason ?? "error";
@@ -1137,6 +1170,8 @@ export function translatePiEvent(
       const message = event.message;
       if (message.role !== "assistant") {
         ctx.streamedAssistantText = "";
+        ctx.currentThinkingContentIndex = undefined;
+        ctx.streamedThinkingContentIndexes.clear();
         return EMPTY_MESSAGES;
       }
 
@@ -1150,6 +1185,8 @@ export function translatePiEvent(
 
         ctx.streamedAssistantText = "";
         ctx.hasStreamedThinking = false;
+        ctx.currentThinkingContentIndex = undefined;
+        ctx.streamedThinkingContentIndexes.clear();
         return [{ type: "error", error: normalizeUserFacingError(rawError) }];
       }
 
@@ -1158,21 +1195,27 @@ export function translatePiEvent(
       // Recover thinking only when it wasn't already streamed live.
       // Streaming sets ctx.hasStreamedThinking; recovery is for reconnect
       // catch-up scenarios where the client missed the streaming events.
-      if (!ctx.hasStreamedThinking) {
-        const content = message.content;
-        if (Array.isArray(content)) {
-          for (const block of content as unknown[]) {
-            const record = asRecord(block);
-            if (!record) {
-              continue;
-            }
+      // When contentIndex is available, recover only the specific thinking
+      // blocks that did not stream instead of suppressing the whole message.
+      const content = message.content;
+      const hasIndexedThinking = ctx.streamedThinkingContentIndexes.size > 0;
+      if (Array.isArray(content)) {
+        for (const [index, block] of (content as unknown[]).entries()) {
+          const record = asRecord(block);
+          if (!record) {
+            continue;
+          }
 
-            if (
-              record.type === "thinking" &&
-              typeof record.thinking === "string" &&
-              record.thinking.length > 0
-            ) {
-              out.push({ type: "thinking_delta", delta: record.thinking });
+          if (
+            record.type === "thinking" &&
+            typeof record.thinking === "string" &&
+            record.thinking.length > 0
+          ) {
+            const shouldRecover =
+              !ctx.hasStreamedThinking ||
+              (hasIndexedThinking && !ctx.streamedThinkingContentIndexes.has(index));
+            if (shouldRecover) {
+              out.push({ type: "thinking_delta", delta: record.thinking, contentIndex: index });
             }
           }
         }
@@ -1180,6 +1223,8 @@ export function translatePiEvent(
 
       ctx.streamedAssistantText = "";
       ctx.hasStreamedThinking = false;
+      ctx.currentThinkingContentIndex = undefined;
+      ctx.streamedThinkingContentIndexes.clear();
       return out;
     }
 

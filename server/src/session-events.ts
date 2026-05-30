@@ -72,6 +72,8 @@ export interface EventProcessorSessionState {
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
+  streamedThinkingContentIndexes: Set<number>;
+  currentThinkingContentIndex?: number;
   pendingStop?: PendingStop;
   /** Tool names per toolCallId — tracked for shell preview decisions. */
   toolNames: Map<string, string>;
@@ -126,6 +128,8 @@ export class SessionEventProcessor {
       partialResults: active.partialResults,
       streamedAssistantText: active.streamedAssistantText,
       hasStreamedThinking: active.hasStreamedThinking,
+      streamedThinkingContentIndexes: active.streamedThinkingContentIndexes,
+      currentThinkingContentIndex: active.currentThinkingContentIndex,
       mobileRenderers: this.deps.mobileRenderers,
       toolNames: active.toolNames,
       shellPreviewLastSent: active.shellPreviewLastSent,

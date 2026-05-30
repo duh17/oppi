@@ -123,12 +123,13 @@ struct ServerMessageTests {
     }
 
     @Test func decodesThinkingDelta() throws {
-        let msg = try ServerMessage.decode(from: #"{"type":"thinking_delta","delta":"Let me think..."}"#)
-        guard case .thinkingDelta(let delta) = msg else {
+        let msg = try ServerMessage.decode(from: #"{"type":"thinking_delta","delta":"Let me think...","contentIndex":2}"#)
+        guard case .thinkingDelta(let delta, let contentIndex) = msg else {
             Issue.record("Expected .thinkingDelta")
             return
         }
         #expect(delta == "Let me think...")
+        #expect(contentIndex == 2)
     }
 
     @Test func decodesAudioStreamChunk() throws {

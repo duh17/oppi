@@ -5,14 +5,18 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { UploadStoreConfigResolved } from "./uploads/local-upload-store.js";
 import {
+  assertQueueBaseVersion,
   cloneQueueItem,
   cloneQueueState,
+  dequeueQueueItemByText,
   extractQueuedUserText,
   normalizeDraftItems,
   normalizeQueueId,
   normalizeQueueMessage,
   promptImagesFromQueue,
   queueImagesFromPromptImages,
+  queueItemStartedMessage,
+  queueStateMessage,
   type QueueImageContent,
 } from "./session-queue-utils.js";
 import type {
@@ -196,10 +200,7 @@ export class SessionMessageQueueCoordinator {
   }
 
   private broadcastQueueState(key: string, queue: SessionMessageQueueStore): void {
-    this.deps.broadcast(key, {
-      type: "queue_state",
-      queue: cloneQueueState(queue),
-    });
+    this.deps.broadcast(key, queueStateMessage(queue));
   }
 
   /**
@@ -335,21 +336,25 @@ export class SessionMessageQueueCoordinator {
       }
 
       for (const item of synced.removedSteering) {
-        this.deps.broadcast(key, {
-          type: "queue_item_started",
-          kind: "steer",
-          item: cloneQueueItem(item),
-          queueVersion: synced.queue.version,
-        });
+        this.deps.broadcast(
+          key,
+          queueItemStartedMessage({
+            kind: "steer",
+            item,
+            queueVersion: synced.queue.version,
+          }),
+        );
       }
 
       for (const item of synced.removedFollowUp) {
-        this.deps.broadcast(key, {
-          type: "queue_item_started",
-          kind: "follow_up",
-          item: cloneQueueItem(item),
-          queueVersion: synced.queue.version,
-        });
+        this.deps.broadcast(
+          key,
+          queueItemStartedMessage({
+            kind: "follow_up",
+            item,
+            queueVersion: synced.queue.version,
+          }),
+        );
       }
 
       this.broadcastQueueState(key, synced.queue);
@@ -360,37 +365,14 @@ export class SessionMessageQueueCoordinator {
       return;
     }
 
-    const dequeue = (kind: MessageQueueKind, list: QueueStoreItem[]): MessageQueueItem | null => {
-      const index = list.findIndex(
-        (item) => item.message === text || this.sdkQueueText(item) === text,
-      );
-      if (index === -1) {
-        return null;
-      }
-
-      const [removed] = list.splice(index, 1);
-      if (!removed) {
-        return null;
-      }
-
-      queue.version += 1;
-      this.deps.broadcast(key, {
-        type: "queue_item_started",
-        kind,
-        item: cloneQueueItem(removed),
-        queueVersion: queue.version,
-      });
+    const started = dequeueQueueItemByText(
+      queue,
+      text,
+      (item, value) => item.message === value || this.sdkQueueText(item) === value,
+    );
+    if (started) {
+      this.deps.broadcast(key, queueItemStartedMessage(started));
       this.broadcastQueueState(key, queue);
-      return removed;
-    };
-
-    const fromSteering = dequeue("steer", queue.steering);
-    if (fromSteering) {
-      return;
-    }
-
-    const fromFollowUp = dequeue("follow_up", queue.followUp);
-    if (fromFollowUp) {
       return;
     }
 
@@ -441,12 +423,10 @@ export class SessionMessageQueueCoordinator {
     queue.followUp = remainingFollowUp;
     queue.version += 1;
 
-    this.deps.broadcast(key, {
-      type: "queue_item_started",
-      kind: first.kind,
-      item: cloneQueueItem(firstItem),
-      queueVersion: queue.version,
-    });
+    this.deps.broadcast(
+      key,
+      queueItemStartedMessage({ kind: first.kind, item: firstItem, queueVersion: queue.version }),
+    );
 
     active.sdkBackend.prompt(firstItem.sdkMessage ?? firstItem.message, {
       images: promptImagesFromQueue(firstItem.sdkImages ?? firstItem.images),
@@ -484,11 +464,7 @@ export class SessionMessageQueueCoordinator {
     }
 
     const queue = this.syncFromSdk(active);
-    if (payload.baseVersion !== queue.version) {
-      throw new Error(
-        `Queue version mismatch: expected ${queue.version}, got ${payload.baseVersion}`,
-      );
-    }
+    assertQueueBaseVersion(queue, payload.baseVersion);
 
     const steeringItems = normalizeDraftItems(payload.steering);
     const followUpItems = normalizeDraftItems(payload.followUp);

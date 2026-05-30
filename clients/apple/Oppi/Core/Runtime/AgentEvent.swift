@@ -20,7 +20,7 @@ enum AgentEvent: Sendable {
     case agentEnd(sessionId: String)
 
     case textDelta(sessionId: String, delta: String)
-    case thinkingDelta(sessionId: String, delta: String)
+    case thinkingDelta(sessionId: String, delta: String, contentIndex: Int? = nil)
     case messageEnd(sessionId: String, content: String)
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).

@@ -1,114 +1,62 @@
+import type { AgentRuntimeCommandTransport } from "./agent-runtime-transport.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
-import type { WsSessionCommands } from "./ws-message-handler.js";
 import type { Session } from "./types.js";
-
-export function prepareDisconnectedMirrorForManagedResume(
-  storage: Pick<Storage, "saveSession">,
-  session: Session,
-): void {
-  delete session.runtime;
-  session.mirror = {
-    ...(session.mirror ?? { status: "disconnected" }),
-    status: "disconnected",
-  };
-  session.status = "stopped";
-  session.currentTurnStartedAt = undefined;
-  session.lastActivity = Date.now();
-  storage.saveSession(session);
-}
 
 /**
  * Routes client commands to the runtime that owns a session.
  *
  * Managed sessions continue through the in-process Pi SDK SessionManager.
- * Terminal mirror sessions are owned by a live Pi TUI bridge while connected.
- * Once the bridge disconnects, the server may promote the stored session back
- * into an in-process SDK runtime and continue from the same pi JSONL trace.
+ * Terminal mirror sessions stay terminal-owned until an explicit future
+ * "resume as managed" flow is added. This avoids split-brain behavior where
+ * the server silently starts an SDK runtime while a terminal bridge is only
+ * reloading or temporarily disconnected.
  */
-export class SessionRuntimeRouter implements WsSessionCommands {
+export class SessionRuntimeRouter implements AgentRuntimeCommandTransport {
   constructor(
     private readonly storage: Storage,
     private readonly managed: SessionManager,
     private readonly mirror: PiTuiMirrorRuntime,
   ) {}
 
-  private runtimeFor(sessionId: string): WsSessionCommands {
+  private runtimeFor(sessionId: string): AgentRuntimeCommandTransport {
     const session = this.storage.getSession(sessionId);
-    return this.isConnectedMirror(session) ? this.mirror : this.managed;
+    return this.isMirror(session) ? this.mirror : this.managed;
   }
 
   private isMirror(session: Session | undefined): session is Session {
     return session?.runtime === "pi-tui-mirror";
   }
 
-  private isConnectedMirror(session: Session | undefined): boolean {
-    return this.isMirror(session) && this.mirror.isSessionConnected(session.id);
-  }
+  sendPrompt: AgentRuntimeCommandTransport["sendPrompt"] = (sessionId, message, opts) =>
+    this.runtimeFor(sessionId).sendPrompt(sessionId, message, opts);
 
-  private isDisconnectedMirror(session: Session | undefined): session is Session {
-    return this.isMirror(session) && !this.mirror.isSessionConnected(session.id);
-  }
+  sendSteer: AgentRuntimeCommandTransport["sendSteer"] = (sessionId, message, opts) =>
+    this.runtimeFor(sessionId).sendSteer(sessionId, message, opts);
 
-  private async promoteDisconnectedMirror(sessionId: string): Promise<Session | undefined> {
-    const session = this.storage.getSession(sessionId);
-    if (!this.isDisconnectedMirror(session)) return session;
+  sendFollowUp: AgentRuntimeCommandTransport["sendFollowUp"] = (sessionId, message, opts) =>
+    this.runtimeFor(sessionId).sendFollowUp(sessionId, message, opts);
 
-    if (session.ephemeral) {
-      throw new Error("Incognito terminal mirror sessions cannot be resumed");
-    }
-    if (!session.piSessionFile) {
-      throw new Error("Terminal mirror session has no pi session file to resume");
-    }
-
-    prepareDisconnectedMirrorForManagedResume(this.storage, session);
-
-    return this.managed.startSession(sessionId);
-  }
-
-  sendPrompt: WsSessionCommands["sendPrompt"] = async (sessionId, message, opts) => {
-    await this.promoteDisconnectedMirror(sessionId);
-    return this.runtimeFor(sessionId).sendPrompt(sessionId, message, opts);
-  };
-
-  sendSteer: WsSessionCommands["sendSteer"] = async (sessionId, message, opts) => {
-    const wasDisconnectedMirror = this.isDisconnectedMirror(this.storage.getSession(sessionId));
-    await this.promoteDisconnectedMirror(sessionId);
-    if (wasDisconnectedMirror) {
-      return this.managed.sendPrompt(sessionId, message, { ...opts, timestamp: Date.now() });
-    }
-    return this.runtimeFor(sessionId).sendSteer(sessionId, message, opts);
-  };
-
-  sendFollowUp: WsSessionCommands["sendFollowUp"] = async (sessionId, message, opts) => {
-    const wasDisconnectedMirror = this.isDisconnectedMirror(this.storage.getSession(sessionId));
-    await this.promoteDisconnectedMirror(sessionId);
-    if (wasDisconnectedMirror) {
-      return this.managed.sendPrompt(sessionId, message, { ...opts, timestamp: Date.now() });
-    }
-    return this.runtimeFor(sessionId).sendFollowUp(sessionId, message, opts);
-  };
-
-  getMessageQueue: WsSessionCommands["getMessageQueue"] = (sessionId) =>
+  getMessageQueue: AgentRuntimeCommandTransport["getMessageQueue"] = (sessionId) =>
     this.runtimeFor(sessionId).getMessageQueue(sessionId);
 
-  setMessageQueue: WsSessionCommands["setMessageQueue"] = (sessionId, payload) =>
+  setMessageQueue: AgentRuntimeCommandTransport["setMessageQueue"] = (sessionId, payload) =>
     this.runtimeFor(sessionId).setMessageQueue(sessionId, payload);
 
-  sendAbort: WsSessionCommands["sendAbort"] = (sessionId) =>
+  sendAbort: AgentRuntimeCommandTransport["sendAbort"] = (sessionId) =>
     this.runtimeFor(sessionId).sendAbort(sessionId);
 
-  stopSession: WsSessionCommands["stopSession"] = (sessionId) =>
+  stopSession: AgentRuntimeCommandTransport["stopSession"] = (sessionId) =>
     this.runtimeFor(sessionId).stopSession(sessionId);
 
-  getActiveSession: WsSessionCommands["getActiveSession"] = (sessionId) =>
+  getActiveSession: AgentRuntimeCommandTransport["getActiveSession"] = (sessionId) =>
     this.runtimeFor(sessionId).getActiveSession(sessionId);
 
-  respondToUIRequest: WsSessionCommands["respondToUIRequest"] = (sessionId, response) =>
+  respondToUIRequest: AgentRuntimeCommandTransport["respondToUIRequest"] = (sessionId, response) =>
     this.runtimeFor(sessionId).respondToUIRequest(sessionId, response);
 
-  forwardClientCommand: WsSessionCommands["forwardClientCommand"] = (
+  forwardClientCommand: AgentRuntimeCommandTransport["forwardClientCommand"] = (
     sessionId,
     message,
     requestId,

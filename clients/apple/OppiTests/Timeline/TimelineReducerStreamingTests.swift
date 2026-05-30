@@ -51,6 +51,73 @@ struct TimelineReducerStreamingTests {
         #expect(text2 == "Done.")
     }
 
+    @Test func indexedThinkingDeltasCreateSeparateThinkingRowsAroundTools() {
+        let reducer = TimelineReducer()
+
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .thinkingDelta(sessionId: "s1", delta: "first thought", contentIndex: 0),
+            .textDelta(sessionId: "s1", delta: "Searching."),
+            .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": "echo hi"]),
+            .toolEnd(sessionId: "s1", toolEventId: "t1"),
+            .thinkingDelta(sessionId: "s1", delta: "second thought", contentIndex: 2),
+            .textDelta(sessionId: "s1", delta: "Done."),
+            .agentEnd(sessionId: "s1"),
+        ])
+
+        #expect(reducer.items.count == 5)
+        guard case .thinking(_, let firstThinking, _, let firstDone) = reducer.items[0] else {
+            Issue.record("Expected first thinking row")
+            return
+        }
+        guard case .assistantMessage(_, let firstText, _) = reducer.items[1] else {
+            Issue.record("Expected assistant text before tool")
+            return
+        }
+        guard case .toolCall(_, let tool, _, _, _, _, _) = reducer.items[2] else {
+            Issue.record("Expected tool row")
+            return
+        }
+        guard case .thinking(_, let secondThinking, _, let secondDone) = reducer.items[3] else {
+            Issue.record("Expected second thinking row")
+            return
+        }
+        guard case .assistantMessage(_, let secondText, _) = reducer.items[4] else {
+            Issue.record("Expected assistant text after tool")
+            return
+        }
+
+        #expect(firstThinking == "first thought")
+        #expect(firstDone)
+        #expect(firstText == "Searching.")
+        #expect(tool == "bash")
+        #expect(secondThinking == "second thought")
+        #expect(secondDone)
+        #expect(secondText == "Done.")
+    }
+
+    @Test func indexedThinkingDeltasSplitWithinOneCoalescedBatch() {
+        let reducer = TimelineReducer()
+
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .thinkingDelta(sessionId: "s1", delta: "first", contentIndex: 0),
+            .thinkingDelta(sessionId: "s1", delta: "second", contentIndex: 1),
+            .agentEnd(sessionId: "s1"),
+        ])
+
+        #expect(reducer.items.count == 2)
+        guard case .thinking(_, let first, _, let firstDone) = reducer.items[0],
+              case .thinking(_, let second, _, let secondDone) = reducer.items[1] else {
+            Issue.record("Expected two thinking rows")
+            return
+        }
+        #expect(first == "first")
+        #expect(firstDone)
+        #expect(second == "second")
+        #expect(secondDone)
+    }
+
     @Test func processBatchCoalescesMultipleToolOutputs() {
         let reducer = TimelineReducer()
 

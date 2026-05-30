@@ -13,7 +13,6 @@ import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.j
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
-import { prepareDisconnectedMirrorForManagedResume } from "./runtime-router.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -365,21 +364,14 @@ export class BoundSessionStreamMux {
     try {
       const isStoredMirrorSession = session.runtime === "pi-tui-mirror";
       const mirrorRuntime = isStoredMirrorSession ? this.ctx.mirrorRuntime : undefined;
-      const isMirrorSession =
-        isStoredMirrorSession && mirrorRuntime?.isSessionConnected(sessionId) === true;
-      if (isStoredMirrorSession && !isMirrorSession) {
-        if (session.ephemeral) {
-          throw new Error("Incognito terminal mirror sessions cannot be resumed");
-        }
-        if (!session.piSessionFile) {
-          throw new Error("Terminal mirror session has no pi session file to resume");
-        }
-        prepareDisconnectedMirrorForManagedResume(this.ctx.storage, session);
+      if (isStoredMirrorSession && !mirrorRuntime) {
+        throw new Error("Terminal mirror runtime is not available");
       }
+      const isMirrorSession = isStoredMirrorSession;
 
       let hydratedSession = this.ctx.ensureSessionContextWindow(session);
       const hadActiveSession = isMirrorSession
-        ? mirrorRuntime?.getActiveSession(sessionId) !== undefined
+        ? mirrorRuntime?.isSessionConnected(sessionId) === true
         : this.ctx.sessions.getActiveSession(sessionId) !== undefined;
 
       if (isMirrorSession) {
@@ -410,10 +402,6 @@ export class BoundSessionStreamMux {
               }
             : msg;
         sendForSession(outbound);
-
-        if (isMirrorSession && msg.type === "state" && msg.session.mirror?.status !== "connected") {
-          ws.close(1012, "Terminal mirror disconnected");
-        }
       };
       unsubscribeBoundSession = isMirrorSession
         ? mirrorRuntime?.subscribe(sessionId, callback)

@@ -82,7 +82,7 @@ describe("SessionRuntimeRouter", () => {
     expect(managed.sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("promotes stale connected terminal mirrors when no bridge is live", async () => {
+  it("keeps stale connected terminal mirrors routed to the mirror runtime", async () => {
     const session = makeSession({
       runtime: "pi-tui-mirror",
       status: "busy",
@@ -94,16 +94,15 @@ describe("SessionRuntimeRouter", () => {
 
     await router.sendPrompt("sess-1", "resume here", { timestamp: 10 });
 
-    expect(storage.saveSession).toHaveBeenCalledOnce();
-    expect(session.runtime).toBeUndefined();
-    expect(session.mirror?.status).toBe("disconnected");
-    expect(session.currentTurnStartedAt).toBeUndefined();
-    expect(managed.startSession).toHaveBeenCalledWith("sess-1");
-    expect(managed.sendPrompt).toHaveBeenCalledWith("sess-1", "resume here", { timestamp: 10 });
-    expect(mirror.sendPrompt).not.toHaveBeenCalled();
+    expect(storage.saveSession).not.toHaveBeenCalled();
+    expect(session.runtime).toBe("pi-tui-mirror");
+    expect(session.currentTurnStartedAt).toBe(2);
+    expect(managed.startSession).not.toHaveBeenCalled();
+    expect(managed.sendPrompt).not.toHaveBeenCalled();
+    expect(mirror.sendPrompt).toHaveBeenCalledWith("sess-1", "resume here", { timestamp: 10 });
   });
 
-  it("promotes a disconnected terminal mirror to managed SDK before prompting", async () => {
+  it("keeps disconnected terminal mirrors terminal-owned instead of promoting", async () => {
     const session = makeSession({
       runtime: "pi-tui-mirror",
       status: "busy",
@@ -115,15 +114,15 @@ describe("SessionRuntimeRouter", () => {
 
     await router.sendPrompt("sess-1", "resume here", { timestamp: 10 });
 
-    expect(storage.saveSession).toHaveBeenCalledOnce();
-    expect(session.runtime).toBeUndefined();
-    expect(session.currentTurnStartedAt).toBeUndefined();
-    expect(managed.startSession).toHaveBeenCalledWith("sess-1");
-    expect(managed.sendPrompt).toHaveBeenCalledWith("sess-1", "resume here", { timestamp: 10 });
-    expect(mirror.sendPrompt).not.toHaveBeenCalled();
+    expect(storage.saveSession).not.toHaveBeenCalled();
+    expect(session.runtime).toBe("pi-tui-mirror");
+    expect(session.currentTurnStartedAt).toBe(2);
+    expect(managed.startSession).not.toHaveBeenCalled();
+    expect(managed.sendPrompt).not.toHaveBeenCalled();
+    expect(mirror.sendPrompt).toHaveBeenCalledWith("sess-1", "resume here", { timestamp: 10 });
   });
 
-  it("turns stale mirror steer messages into a managed prompt after promotion", async () => {
+  it("keeps stale mirror steer messages routed to the mirror runtime", async () => {
     const session = makeSession({
       runtime: "pi-tui-mirror",
       status: "busy",
@@ -134,12 +133,10 @@ describe("SessionRuntimeRouter", () => {
 
     await router.sendSteer("sess-1", "actually continue", { requestId: "req-1" });
 
-    expect(managed.startSession).toHaveBeenCalledWith("sess-1");
-    expect(managed.sendPrompt).toHaveBeenCalledWith(
-      "sess-1",
-      "actually continue",
-      expect.objectContaining({ requestId: "req-1" }),
-    );
-    expect(mirror.sendSteer).not.toHaveBeenCalled();
+    expect(managed.startSession).not.toHaveBeenCalled();
+    expect(managed.sendPrompt).not.toHaveBeenCalled();
+    expect(mirror.sendSteer).toHaveBeenCalledWith("sess-1", "actually continue", {
+      requestId: "req-1",
+    });
   });
 });

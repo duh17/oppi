@@ -42,6 +42,7 @@ function createHarness(): {
     partialResults: new Map<string, string>(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
+    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map<string, string>(),
     shellPreviewLastSent: new Map<string, number>(),
     streamingArgPreviews: new Set<string>(),

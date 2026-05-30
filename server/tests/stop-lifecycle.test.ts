@@ -60,6 +60,7 @@ function makeManagerHarness(status: Session["status"] = "busy") {
     partialResults: new Map(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
+    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),

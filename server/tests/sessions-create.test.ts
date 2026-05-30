@@ -655,6 +655,39 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
     expect(mock.sessions.startSession).not.toHaveBeenCalled();
     expect(mock.errors).toEqual([{ status: 400, message: "Incognito sessions cannot be resumed" }]);
   });
+
+  it("does not promote terminal mirror sessions when resuming", async () => {
+    const mock = createMockContext();
+    const mirrorSession = makeSession({
+      id: "sess-1",
+      workspaceId: "ws-1",
+      runtime: "pi-tui-mirror",
+      mirror: { status: "disconnected" },
+      status: "ready",
+    });
+    mock.storage.getSession.mockReturnValue(mirrorSession);
+    mock.sessions.isActive.mockReturnValue(true);
+    mock.sessions.getActiveSession.mockReturnValue(
+      makeSession({ id: "sess-1", workspaceId: "ws-1", status: "ready" }),
+    );
+    const mirrorActive = { ...mirrorSession, mirror: { status: "connected" as const } };
+    (
+      mock.ctx as RouteContext & { mirrorRuntime?: { getActiveSession: (id: string) => Session } }
+    ).mirrorRuntime = {
+      getActiveSession: vi.fn(() => mirrorActive),
+    };
+
+    await dispatchResume(mock);
+
+    expect(mock.sessions.startSession).not.toHaveBeenCalled();
+    expect(mock.sessions.getActiveSession).not.toHaveBeenCalled();
+    expect(mock.responses).toHaveLength(1);
+    expect((mock.responses[0]!.data as { session: Session }).session).toMatchObject({
+      id: "sess-1",
+      runtime: "pi-tui-mirror",
+      mirror: { status: "connected" },
+    });
+  });
 });
 
 describe("workspace-scoped session route ownership", () => {

@@ -14,6 +14,16 @@ const log = createLogger({ base: { component: "session_input" } });
 export type SdkImageInput = { type: "image"; data: string; mimeType: string };
 type StreamingInputKind = "steer" | "follow_up";
 
+export interface SessionInputDispatchResult {
+  duplicate: boolean;
+}
+
+function isPromiseLike(value: void | Promise<unknown>): value is Promise<unknown> {
+  return Boolean(
+    value && typeof value === "object" && typeof (value as { then?: unknown }).then === "function",
+  );
+}
+
 export interface SessionInputCoordinatorDeps {
   getActiveSession: (key: string) => SessionInputSessionState | undefined;
   beginTurnIntent: (
@@ -37,7 +47,12 @@ export interface SessionInputCoordinatorDeps {
     turn: { clientTurnId?: string; duplicate: boolean },
     requestId?: string,
   ) => void;
-  sendCommand: (key: string, command: Record<string, unknown>) => void;
+  sendCommand: (key: string, command: Record<string, unknown>) => void | Promise<unknown>;
+  onCommandResult?: (
+    key: string,
+    command: Record<string, unknown>,
+    data: unknown,
+  ) => void | Promise<void>;
   enqueueQueuedMessage?: (
     key: string,
     kind: "steer" | "follow_up",
@@ -52,6 +67,10 @@ export interface SessionInputCoordinatorDeps {
   maxTurnAttachmentBytes?: number;
   uploadStoreConfig?: UploadStoreConfigResolved;
   onFirstMessage?: (session: Session) => void;
+  recordPromptLocally?: boolean;
+  promptBusyErrorMessage?: string;
+  streamingInputBusyErrorMessage?: (kind: StreamingInputKind) => string;
+  attachmentWorkspaceErrorMessage?: string;
 }
 
 export class SessionInputCoordinator {
@@ -74,12 +93,14 @@ export class SessionInputCoordinator {
     }
 
     const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
+    const workspaceError =
+      this.deps.attachmentWorkspaceErrorMessage ?? "Attachments require a workspace-backed session";
     if (!workspaceRoot) {
-      throw new Error("Attachments require a workspace-backed session");
+      throw new Error(workspaceError);
     }
 
     if (!active.session.workspaceId) {
-      throw new Error("Attachments require a workspace-backed session");
+      throw new Error(workspaceError);
     }
 
     const materialized = await materializeChatAttachments({
@@ -110,7 +131,7 @@ export class SessionInputCoordinator {
       requestId?: string;
       timestamp?: number;
     },
-  ): Promise<void> {
+  ): Promise<SessionInputDispatchResult> {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       throw new Error(`Session not active: ${key}`);
@@ -129,7 +150,8 @@ export class SessionInputCoordinator {
       !this.deps.isDuplicateTurnIntent(active, "prompt", opts?.clientTurnId, turnPayload)
     ) {
       throw new Error(
-        "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
+        this.deps.promptBusyErrorMessage ??
+          "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
       );
     }
 
@@ -143,7 +165,7 @@ export class SessionInputCoordinator {
     );
 
     if (turn.duplicate) {
-      return;
+      return { duplicate: true };
     }
 
     const prepared = await this.prepareMessageWithAttachments(active, message, {
@@ -154,14 +176,16 @@ export class SessionInputCoordinator {
     const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
     const dispatchMessage = prepared.message;
 
-    const capturedFirst = appendSessionMessage(active.session, {
-      role: "user",
-      content: dispatchMessage,
-      timestamp: opts?.timestamp ?? Date.now(),
-    });
+    if (this.deps.recordPromptLocally !== false) {
+      const capturedFirst = appendSessionMessage(active.session, {
+        role: "user",
+        content: dispatchMessage,
+        timestamp: opts?.timestamp ?? Date.now(),
+      });
 
-    if (capturedFirst) {
-      this.deps.onFirstMessage?.(active.session);
+      if (capturedFirst) {
+        this.deps.onFirstMessage?.(active.session);
+      }
     }
 
     const cmd: Record<string, unknown> = {
@@ -184,7 +208,13 @@ export class SessionInputCoordinator {
       status: active.session.status,
     });
 
-    this.deps.sendCommand(key, cmd);
+    const commandResult = this.deps.sendCommand(key, cmd);
+    if (isPromiseLike(commandResult)) {
+      const data = await commandResult;
+      await this.deps.onCommandResult?.(key, cmd, data);
+    } else if (this.deps.onCommandResult) {
+      await this.deps.onCommandResult(key, cmd, commandResult);
+    }
     this.deps.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
 
     if (active.session.status === "busy" && opts?.streamingBehavior) {
@@ -200,6 +230,8 @@ export class SessionInputCoordinator {
         dispatchImages,
       );
     }
+
+    return { duplicate: false };
   }
 
   async sendSteer(
@@ -238,7 +270,7 @@ export class SessionInputCoordinator {
       clientTurnId?: string;
       requestId?: string;
     },
-  ): Promise<void> {
+  ): Promise<SessionInputDispatchResult> {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       throw new Error(`Session not active: ${key}`);
@@ -246,7 +278,10 @@ export class SessionInputCoordinator {
 
     if (active.session.status !== "busy") {
       const label = kind === "steer" ? "Steer" : "Follow-up";
-      throw new Error(`${label} requires an active streaming turn`);
+      throw new Error(
+        this.deps.streamingInputBusyErrorMessage?.(kind) ??
+          `${label} requires an active streaming turn`,
+      );
     }
 
     const turn = this.deps.beginTurnIntent(
@@ -263,7 +298,7 @@ export class SessionInputCoordinator {
     );
 
     if (turn.duplicate) {
-      return;
+      return { duplicate: true };
     }
 
     const prepared = await this.prepareMessageWithAttachments(active, message, {
@@ -279,7 +314,13 @@ export class SessionInputCoordinator {
       cmd.images = dispatchImages;
     }
 
-    this.deps.sendCommand(key, cmd);
+    const commandResult = this.deps.sendCommand(key, cmd);
+    if (isPromiseLike(commandResult)) {
+      const data = await commandResult;
+      await this.deps.onCommandResult?.(key, cmd, data);
+    } else if (this.deps.onCommandResult) {
+      await this.deps.onCommandResult(key, cmd, commandResult);
+    }
     this.deps.markTurnDispatched(key, active, kind, turn, opts?.requestId);
     this.deps.enqueueQueuedMessage?.(
       key,
@@ -291,5 +332,7 @@ export class SessionInputCoordinator {
       dispatchMessage,
       dispatchImages,
     );
+
+    return { duplicate: false };
   }
 }

@@ -20,6 +20,7 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     partialResults: new Map(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
+    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
@@ -613,7 +614,7 @@ describe("translatePiEvent", () => {
   });
 
   describe("message_update: thinking_delta", () => {
-    it("sets hasStreamedThinking and emits thinking_delta", () => {
+    it("sets hasStreamedThinking and emits thinking_delta with contentIndex", () => {
       const ctx = makeCtx();
       const event = {
         type: "message_update",
@@ -622,8 +623,32 @@ describe("translatePiEvent", () => {
       } as AgentSessionEvent;
 
       const result = translatePiEvent(event, ctx);
-      expect(result).toEqual([{ type: "thinking_delta", delta: "hmm" }]);
+      expect(result).toEqual([{ type: "thinking_delta", delta: "hmm", contentIndex: 0 }]);
       expect(ctx.hasStreamedThinking).toBe(true);
+      expect(ctx.streamedThinkingContentIndexes.has(0)).toBe(true);
+    });
+
+    it("uses thinking_start contentIndex when thinking_delta omits it", () => {
+      const ctx = makeCtx();
+      translatePiEvent(
+        {
+          type: "message_update",
+          message: {},
+          assistantMessageEvent: { type: "thinking_start", contentIndex: 2 },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      const result = translatePiEvent(
+        {
+          type: "message_update",
+          message: {},
+          assistantMessageEvent: { type: "thinking_delta", delta: "later" },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toEqual([{ type: "thinking_delta", delta: "later", contentIndex: 2 }]);
     });
   });
 
@@ -1934,7 +1959,7 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(1);
-      expect(result[0]).toEqual({ type: "thinking_delta", delta: "I should..." });
+      expect(result[0]).toEqual({ type: "thinking_delta", delta: "I should...", contentIndex: 0 });
     });
 
     it("skips thinking recovery when already streamed live", () => {
@@ -1995,8 +2020,30 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ type: "thinking_delta", delta: "first thought" });
-      expect(result[1]).toEqual({ type: "thinking_delta", delta: "second thought" });
+      expect(result[0]).toEqual({ type: "thinking_delta", delta: "first thought", contentIndex: 0 });
+      expect(result[1]).toEqual({ type: "thinking_delta", delta: "second thought", contentIndex: 2 });
+    });
+
+    it("recovers only unstreamed thinking blocks when indexed thinking streamed live", () => {
+      const ctx = makeCtx({ hasStreamedThinking: true });
+      ctx.streamedThinkingContentIndexes.add(0);
+
+      const result = translatePiEvent(
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "streamed" },
+              { type: "text", text: "middle" },
+              { type: "thinking", thinking: "not streamed" },
+            ],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toEqual([{ type: "thinking_delta", delta: "not streamed", contentIndex: 2 }]);
     });
 
     it("skips empty thinking blocks", () => {

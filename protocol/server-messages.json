@@ -175,7 +175,8 @@
     },
     "thinking_delta": {
       "type": "thinking_delta",
-      "delta": "Let me analyze..."
+      "delta": "Let me analyze...",
+      "contentIndex": 0
     },
     "audio_stream": {
       "type": "audio_stream",
