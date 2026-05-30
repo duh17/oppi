@@ -252,7 +252,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         /// Near-bottom hysteresis to avoid follow/unfollow flicker while
-        /// streaming text grows the tail between throttled auto-scroll pulses.
+        /// streaming text grows the tail between layout-time follow passes.
         let nearBottomEnterThreshold: CGFloat = 120
         let nearBottomExitThreshold: CGFloat = 200
         let detachedProgrammaticArmMinDelta: CGFloat = 120
@@ -636,13 +636,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousReviewAnnotationSignature = configuration.reviewAnnotationSignature
                 isTimelineBusy = configuration.isBusy
 
-                // Process pending scroll commands (auto-scroll during streaming).
-                var didScroll = false
-                if let scrollCommand = configuration.scrollCommand,
-                   scrollCommand.nonce != lastHandledScrollCommandNonce,
-                   performScroll(scrollCommand, in: collectionView) {
-                    lastHandledScrollCommandNonce = scrollCommand.nonce
-                    didScroll = true
+                let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+                let didScroll = performPendingScrollCommandIfNeeded(
+                    configuration.scrollCommand,
+                    in: collectionView
+                )
+                if !didScroll,
+                   !hadPendingScrollCommand,
+                   configuration.scrollCommand?.anchor != .top {
+                    reconcileAmbientScrollAfterTimelineUpdate(
+                        collectionView,
+                        isBusy: configuration.isBusy,
+                        itemCount: currentIDs.count,
+                        sessionId: configuration.sessionId
+                    )
                 }
                 ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
@@ -726,12 +733,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousReviewAnnotationSignature = configuration.reviewAnnotationSignature
                 isTimelineBusy = configuration.isBusy
 
-                var didScroll = false
-                if let scrollCommand = configuration.scrollCommand,
-                   scrollCommand.nonce != lastHandledScrollCommandNonce,
-                   performScroll(scrollCommand, in: collectionView) {
-                    lastHandledScrollCommandNonce = scrollCommand.nonce
-                    didScroll = true
+                let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+                let didScroll = performPendingScrollCommandIfNeeded(
+                    configuration.scrollCommand,
+                    in: collectionView
+                )
+                if !didScroll,
+                   !hadPendingScrollCommand,
+                   configuration.scrollCommand?.anchor != .top {
+                    reconcileAmbientScrollAfterTimelineUpdate(
+                        collectionView,
+                        isBusy: configuration.isBusy,
+                        itemCount: currentIDs.count,
+                        sessionId: configuration.sessionId
+                    )
                 }
                 ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
@@ -752,12 +767,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let previousIDs = currentIDs
             currentIDs = applyPlan.nextIDs
             currentItemByID = applyPlan.nextItemByID
-            let wasAttachedToBottom = scrollController?.isCurrentlyNearBottom ?? true
 
             // Enable passive anchoring before snapshot apply so layout passes
             // during reconfigure preserve scroll position for detached users.
-            // When attached (near bottom), anchoring is off so auto-scroll and
-            // passive bottom-pinning work without interference.
+            // When attached (near bottom), anchoring is off so explicit scroll
+            // commands and the ambient tail governor work without interference.
             if let anchoredCV = collectionView as? AnchoredCollectionView {
                 let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
                 anchoredCV.isDetachedFromBottom = detached
@@ -800,39 +814,38 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // invalidation — the anchor could be cleared BEFORE the
             // invalidation's layoutIfNeeded fired, causing 480pt drift.
 
-            // Force layout when not streaming, or when the user is scrolled
-            // away from the bottom. Forced layout resolves all pending cell
-            // self-sizing in one pass, preventing the post-layout self-sizing
-            // cascade that causes contentOffset drift and potential hangs.
-            //
-            // When attached and streaming, skip forced layout — the collection
-            // view layouts naturally and auto-scroll keeps the viewport pinned.
+            // When detached, force layout immediately after snapshot apply to
+            // let AnchoredCollectionView restore the captured anchor and resolve
+            // pending self-sizing in one pass. When attached, the ambient tail
+            // governor/idle settle below owns the layout pass and applies only
+            // the movement it needs.
             let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
-            if !configuration.isBusy || detached {
+            if detached {
                 let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
                 collectionView.layoutIfNeeded()
                 ChatTimelinePerf.endLayoutPass(layoutToken)
-            } else if wasAttachedToBottom,
-                      configuration.scrollCommand?.anchor != .top {
-                correctAttachedBottomAfterStructuralApply(
+            }
+            let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+            let didScroll = performPendingScrollCommandIfNeeded(
+                configuration.scrollCommand,
+                in: collectionView
+            )
+            if !didScroll,
+               !hadPendingScrollCommand,
+               configuration.scrollCommand?.anchor != .top {
+                reconcileAmbientScrollAfterTimelineUpdate(
                     collectionView,
+                    isBusy: configuration.isBusy,
                     itemCount: applyPlan.nextIDs.count,
                     sessionId: configuration.sessionId
                 )
             }
-            var didScroll = false
-            if let scrollCommand = configuration.scrollCommand,
-               scrollCommand.nonce != lastHandledScrollCommandNonce,
-               performScroll(scrollCommand, in: collectionView) {
-                lastHandledScrollCommandNonce = scrollCommand.nonce
-                didScroll = true
-            }
 
-            // When the session is busy (streaming or running tools), new items
-            // grow contentSize faster than auto-scroll can keep up. Suppress
-            // updateScrollState here to avoid flipping isNearBottom=false before
-            // the throttled auto-scroll fires. User-initiated scroll changes
-            // are still detected via scrollViewDidScroll delegate callbacks.
+            // When the session is busy (streaming or running tools), ambient
+            // follow is handled by the tail governor and user-initiated scroll
+            // changes are detected via scrollViewDidScroll delegate callbacks.
+            // Suppress updateScrollState here so passive layout growth cannot
+            // false-detach the user from attached follow.
             //
             // When idle (!isBusy), only update scroll state if the user is
             // currently attached. A detached user must not be re-attached by
@@ -1189,20 +1202,98 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
         }
 
-        private func correctAttachedBottomAfterStructuralApply(
+        private let liveTailMinimumBottomPadding: CGFloat = 16
+
+        private func isPendingScrollCommand(
+            _ scrollCommand: ChatTimelineScrollCommand?
+        ) -> Bool {
+            guard let scrollCommand else { return false }
+            return scrollCommand.nonce != lastHandledScrollCommandNonce
+        }
+
+        private func performPendingScrollCommandIfNeeded(
+            _ scrollCommand: ChatTimelineScrollCommand?,
+            in collectionView: UICollectionView
+        ) -> Bool {
+            guard let scrollCommand,
+                  scrollCommand.nonce != lastHandledScrollCommandNonce,
+                  performScroll(scrollCommand, in: collectionView) else {
+                return false
+            }
+            lastHandledScrollCommandNonce = scrollCommand.nonce
+            return true
+        }
+
+        private func reconcileAmbientScrollAfterTimelineUpdate(
             _ collectionView: UICollectionView,
+            isBusy: Bool,
             itemCount: Int,
             sessionId: String
         ) {
+            guard scrollController?.isCurrentlyNearBottom ?? true else { return }
+            guard !collectionView.isTracking,
+                  !collectionView.isDragging,
+                  !collectionView.isDecelerating else {
+                return
+            }
+            if #available(iOS 17.4, *), collectionView.isScrollAnimating {
+                return
+            }
+
             let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: itemCount, sessionId: sessionId)
             collectionView.layoutIfNeeded()
             ChatTimelinePerf.endLayoutPass(layoutToken)
 
+            if isBusy {
+                keepLiveTailVisible(collectionView)
+            } else {
+                settleAttachedBottom(collectionView)
+            }
+        }
+
+        private func keepLiveTailVisible(_ collectionView: UICollectionView) {
+            guard let tailIndex = currentIDs.indices.last else { return }
+            let tailIndexPath = IndexPath(item: tailIndex, section: 0)
+            guard let attrs = collectionView.layoutAttributesForItem(at: tailIndexPath) else { return }
+
+            let insets = collectionView.adjustedContentInset
+            let viewportBottomY = collectionView.contentOffset.y
+                + collectionView.bounds.height
+                - insets.bottom
+            let distanceFromViewportBottom = viewportBottomY - attrs.frame.maxY
+
+            // Busy streaming uses minimum-needed visibility instead of
+            // exact-bottom chasing. If the live tail is visible, do nothing.
+            // If it is about to fall behind the composer/footer, nudge downward
+            // only enough to restore the minimum padding. Never move upward
+            // while busy; final settling happens on idle.
+            guard distanceFromViewportBottom < liveTailMinimumBottomPadding else { return }
+
+            let targetOffsetY = collectionView.contentOffset.y
+                + (liveTailMinimumBottomPadding - distanceFromViewportBottom)
+            applyAmbientOffsetCorrection(targetOffsetY, in: collectionView)
+        }
+
+        private func settleAttachedBottom(_ collectionView: UICollectionView) {
             let insets = collectionView.adjustedContentInset
             let targetOffsetY = max(
                 -insets.top,
                 collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
             )
+            applyAmbientOffsetCorrection(targetOffsetY, in: collectionView)
+        }
+
+        private func applyAmbientOffsetCorrection(
+            _ proposedOffsetY: CGFloat,
+            in collectionView: UICollectionView
+        ) {
+            let insets = collectionView.adjustedContentInset
+            let minOffsetY = -insets.top
+            let maxOffsetY = max(
+                minOffsetY,
+                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+            )
+            let targetOffsetY = min(max(proposedOffsetY, minOffsetY), maxOffsetY)
             guard abs(collectionView.contentOffset.y - targetOffsetY) > 0.5 else { return }
 
             if let anchoredCV = collectionView as? AnchoredCollectionView {
@@ -1211,7 +1302,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 collectionView.contentOffset.y = targetOffsetY
             }
             scrollController?.updateNearBottom(true)
-            lastDistanceFromBottom = 0
+            updateLastDistanceFromBottom(collectionView)
         }
 
         private func performScroll(

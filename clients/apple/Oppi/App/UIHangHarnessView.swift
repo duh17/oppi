@@ -1171,19 +1171,10 @@ struct UIHangHarnessView: View {
         let visible = Array(items.suffix(renderWindow))
         scrollController.itemCount = visible.count
 
-        if UIHangHarnessConfig.uiTestMode {
-            if scrollController.isCurrentlyNearBottom, let bottomID = visible.last?.id {
-                issueScrollCommand(id: bottomID, anchor: .bottom, animated: false)
-            }
-        } else {
-            scrollController.handleContentChange(
-                isBusy: true,
-                streamingAssistantID: streamID,
-                bottomItemID: visible.last?.id
-            ) { targetID in
-                issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
-            }
-        }
+        // Busy streaming follow is intentionally owned by
+        // ChatTimelineCollectionHost after layout settles. The harness should
+        // exercise the same ambient tail governor as production rather than
+        // emitting scrollToItem commands on every token.
     }
 
     private func pulseStream(count: Int) {

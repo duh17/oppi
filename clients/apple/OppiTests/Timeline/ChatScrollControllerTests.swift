@@ -85,29 +85,45 @@ struct ChatScrollControllerTests {
 
     // MARK: - handleContentChange
 
-    @Test func handleContentChangeScrollsToStreamingTarget() async {
+    @Test func handleContentChangeDoesNotAutoScrollDuringBusyStreaming() async {
         let controller = makeTestScrollController()
         controller.updateNearBottom(true)
 
-        var targets: [String] = []
+        var callCount = 0
         controller.handleContentChange(
             isBusy: true,
             streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { targets.append($0) }
+        ) { _ in callCount += 1 }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(100)) {
-            targets == ["stream-1"]
-        })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(40)) {
+            callCount == 0
+        }, "busy streaming must not schedule SwiftUI scroll commands")
     }
 
-    @Test func handleContentChangeScrollsToBottomWhenNoStreaming() async {
+    @Test func handleContentChangeDoesNotAutoScrollBusyToolOutput() async {
+        let controller = makeTestScrollController()
+        controller.updateNearBottom(true)
+
+        var callCount = 0
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: nil,
+            bottomItemID: "bottom-1"
+        ) { _ in callCount += 1 }
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(40)) {
+            callCount == 0
+        }, "busy tool output must be handled by the collection tail governor")
+    }
+
+    @Test func handleContentChangeScrollsToBottomWhenIdleAndNearBottom() async {
         let controller = makeTestScrollController()
         controller.updateNearBottom(true)
 
         var targets: [String] = []
         controller.handleContentChange(
-            isBusy: true,
+            isBusy: false,
             streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { targets.append($0) }
@@ -123,30 +139,13 @@ struct ChatScrollControllerTests {
 
         var callCount = 0
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(20)) {
             callCount == 0
-        })
-    }
-
-    @Test func handleContentChangeHeavyTimelineFollowsWhenBusy() async {
-        let controller = makeTestScrollController()
-        controller.updateNearBottom(true)
-        controller.itemCount = 240
-
-        var targets: [String] = []
-        controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
-            bottomItemID: "bottom-1"
-        ) { targets.append($0) }
-
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(100)) {
-            targets == ["stream-1"]
         })
     }
 
@@ -176,8 +175,8 @@ struct ChatScrollControllerTests {
 
         var callCount = 0
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -188,8 +187,8 @@ struct ChatScrollControllerTests {
         // After keyboard settles
         controller.expireKeyboardTransitionForTesting()
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -204,8 +203,8 @@ struct ChatScrollControllerTests {
 
         var callCount = 0
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -226,8 +225,8 @@ struct ChatScrollControllerTests {
 
         var callCount = 0
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -242,8 +241,8 @@ struct ChatScrollControllerTests {
 
         var callCount = 0
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -255,8 +254,8 @@ struct ChatScrollControllerTests {
 
         controller.setUserInteracting(false)
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -272,8 +271,8 @@ struct ChatScrollControllerTests {
 
         var callCount = 0
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 
@@ -283,8 +282,8 @@ struct ChatScrollControllerTests {
 
         controller.updateNearBottom(true)
         controller.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
         ) { _ in callCount += 1 }
 

@@ -71,6 +71,38 @@ struct ScrollFollowBehaviorTests {
         #expect(harness.scrollController.isCurrentlyNearBottom)
     }
 
+    @Test func attachedBusyLayoutGrowthDoesNotSnapOrDetachFromDelegate() {
+        let harness = makeTimelineHarness(sessionId: "session-busy")
+        let busyConfig = makeTimelineConfiguration(
+            items: [.assistantMessage(id: "stream-1", text: "token", timestamp: Date())],
+            isBusy: true,
+            streamingAssistantID: "stream-1",
+            sessionId: "session-busy",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: busyConfig, to: harness.collectionView)
+
+        let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+        metricsView.testContentSize = CGSize(width: 390, height: 1_100)
+
+        harness.scrollController.updateNearBottom(true)
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 0, in: metricsView))
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        let offsetBeforeGrowth = metricsView.contentOffset.y
+        metricsView.testContentSize = CGSize(width: 390, height: 1_400)
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        #expect(abs(metricsView.contentOffset.y - offsetBeforeGrowth) < 0.5)
+        #expect(harness.scrollController.isCurrentlyNearBottom)
+    }
+
     @Test func upwardUserScrollDetachesFollowBeforeExitThreshold() {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))

@@ -3,6 +3,15 @@ import Testing
 import UIKit
 @testable import Oppi
 
+@MainActor
+private func timelineMaxOffsetY(_ collectionView: UICollectionView) -> CGFloat {
+    let insets = collectionView.adjustedContentInset
+    return max(
+        -insets.top,
+        collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+    )
+}
+
 /// Tests the full jump-to-bottom chain: detach → hint visible → requestScrollToBottom → scroll command processed.
 @Suite("Scroll to bottom button")
 struct ScrollToBottomTests {
@@ -81,6 +90,48 @@ struct ScrollToBottomTests {
                 "streaming hint should hide")
     }
 
+    // MARK: - Passive bottom pinning
+
+    @MainActor
+    @Test func attachedPassiveContentShrinkClampsBackToBottom() {
+        let harness = makeTimelineHarness(sessionId: "session-shrink")
+        let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testAdjustedContentInset = .zero
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+        metricsView.testContentSize = CGSize(width: 390, height: 3_000)
+        metricsView.contentOffset = CGPoint(x: 0, y: 2_500)
+
+        harness.scrollController.updateNearBottom(true)
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        metricsView.testContentSize = CGSize(width: 390, height: 2_400)
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        #expect(
+            abs(metricsView.contentOffset.y - 1_900) < 0.5,
+            "attached timeline should clamp to the new bottom after content shrinks"
+        )
+        #expect(harness.scrollController.isCurrentlyNearBottom)
+    }
+
+    @MainActor
+    @Test func streamingAssistantSizingDoesNotShrinkCachedHeight() {
+        let cell = SafeSizingCell(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        cell.isStreamingAssistant = true
+        cell.cachedStreamingHeight = 240
+        cell.lastFullSizeComputeNs = 0
+
+        let attributes = UICollectionViewLayoutAttributes(
+            forCellWith: IndexPath(item: 0, section: 0)
+        )
+        attributes.size = CGSize(width: 320, height: 100)
+
+        let fitted = cell.preferredLayoutAttributesFitting(attributes)
+
+        #expect(fitted.size.height >= 240)
+        #expect(cell.cachedStreamingHeight == fitted.size.height)
+    }
+
     // MARK: - Scroll command processing
 
     @MainActor
@@ -148,6 +199,153 @@ struct ScrollToBottomTests {
         )
         // This should be a no-op (nonce already handled).
         windowed.coordinator.apply(configuration: configWithSameScroll, to: windowed.collectionView)
+    }
+
+    @MainActor
+    @Test func attachedAssistantStreamingDoesNotBounceAwayFromBottom() {
+        let streamingID = "assistant-streaming"
+        let (windowed, initialItems) = makeCalmStreamingHarness(
+            sessionId: "session-streaming-calm",
+            tailItem: .assistantMessage(id: streamingID, text: "Starting", timestamp: Date()),
+            streamingID: streamingID
+        )
+        var items = initialItems
+
+        var previousOffsetY = windowed.collectionView.contentOffset.y
+        for round in 1...10 {
+            items[items.count - 1] = .assistantMessage(
+                id: streamingID,
+                text: String(repeating: "Streaming round \(round). ", count: round * 16),
+                timestamp: Date()
+            )
+            applyBusyStreamingItems(items, to: windowed, streamingID: streamingID)
+            previousOffsetY = expectCalmBottomFollow(
+                windowed,
+                previousOffsetY: previousOffsetY,
+                round: round,
+                label: "assistant streaming"
+            )
+        }
+    }
+
+    @MainActor
+    @Test func attachedToolStreamingDoesNotBounceAwayFromBottom() {
+        let toolID = "tool-streaming"
+        let startingTool = ChatItem.toolCall(
+            id: toolID,
+            tool: "bash",
+            argsSummary: "swift test",
+            outputPreview: "Starting",
+            outputByteCount: 8,
+            isError: false,
+            isDone: false
+        )
+        let (windowed, initialItems) = makeCalmStreamingHarness(
+            sessionId: "session-tool-streaming-calm",
+            tailItem: startingTool
+        )
+        var items = initialItems
+
+        var previousOffsetY = windowed.collectionView.contentOffset.y
+        for round in 1...10 {
+            items[items.count - 1] = .toolCall(
+                id: toolID,
+                tool: "bash",
+                argsSummary: "swift test",
+                outputPreview: String(repeating: "tool output round \(round)\n", count: round * 6),
+                outputByteCount: round * 128,
+                isError: false,
+                isDone: false
+            )
+            applyBusyStreamingItems(items, to: windowed)
+            previousOffsetY = expectCalmBottomFollow(
+                windowed,
+                previousOffsetY: previousOffsetY,
+                round: round,
+                label: "tool streaming"
+            )
+        }
+    }
+
+    @MainActor
+    private func calmStreamingItems(tailItem: ChatItem) -> [ChatItem] {
+        let baseItems = (0..<44).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "History \(index) line. ", count: 12),
+                timestamp: Date()
+            )
+        }
+        return baseItems + [tailItem]
+    }
+
+    @MainActor
+    private func makeCalmStreamingHarness(
+        sessionId: String,
+        tailItem: ChatItem,
+        streamingID: String? = nil
+    ) -> (WindowedTimelineHarness, [ChatItem]) {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: sessionId,
+            useAnchoredCollectionView: true
+        )
+        let items = calmStreamingItems(tailItem: tailItem)
+        windowed.applyItems(items, isBusy: true, streamingID: streamingID)
+        windowed.collectionView.layoutIfNeeded()
+        windowed.collectionView.scrollToItem(
+            at: IndexPath(item: windowed.coordinator.currentIDs.count - 1, section: 0),
+            at: .bottom,
+            animated: false
+        )
+        windowed.collectionView.layoutIfNeeded()
+        windowed.scrollController.updateNearBottom(true)
+        windowed.coordinator.updateScrollState(windowed.collectionView)
+        return (windowed, items)
+    }
+
+    @MainActor
+    private func applyBusyStreamingItems(
+        _ items: [ChatItem],
+        to windowed: WindowedTimelineHarness,
+        streamingID: String? = nil
+    ) {
+        let config = makeTimelineConfiguration(
+            items: items,
+            isBusy: true,
+            streamingAssistantID: streamingID,
+            scrollCommand: nil,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer
+        )
+        windowed.coordinator.apply(configuration: config, to: windowed.collectionView)
+        windowed.collectionView.layoutIfNeeded()
+    }
+
+    @MainActor
+    private func expectCalmBottomFollow(
+        _ windowed: WindowedTimelineHarness,
+        previousOffsetY: CGFloat,
+        round: Int,
+        label: String
+    ) -> CGFloat {
+        let offsetY = windowed.collectionView.contentOffset.y
+        let maxOffsetY = timelineMaxOffsetY(windowed.collectionView)
+        let distanceFromBottom = maxOffsetY - offsetY
+        #expect(
+            offsetY >= previousOffsetY - 4,
+            "\(label) offset bounced upward by \(previousOffsetY - offsetY)pt on round \(round)"
+        )
+        #expect(
+            distanceFromBottom < 120,
+            "\(label) should keep the live tail visible without exact-bottom chasing, distance=\(distanceFromBottom) on round \(round)"
+        )
+        return offsetY
     }
 
     @MainActor

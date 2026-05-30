@@ -14,13 +14,12 @@ final class ChatScrollController: NSObject {
     /// Non-reactive anchor — mutations are invisible to SwiftUI observation.
     private let anchor = ScrollAnchorState()
 
-    /// Throttle task for scroll-to-bottom during streaming.
-    /// Uses "first-wins" throttle: if a scroll is scheduled, subsequent
-    /// triggers are no-ops. This prevents cancel loops during 33ms streaming
-    /// where a debounce pattern (cancel + reschedule) would never fire.
+    /// Throttle task for idle explicit scroll-to-bottom requests.
+    /// Busy streaming/tool output is followed by the collection view's
+    /// layout-time tail governor, not by timer-driven SwiftUI scroll commands.
     private var scrollTask: Task<Void, Never>?
 
-    /// Last completed auto-scroll timestamp.
+    /// Last completed idle auto-scroll timestamp.
     private var lastAutoScrollAt: ContinuousClock.Instant?
 
     // MARK: - Tuning Constants
@@ -28,15 +27,8 @@ final class ChatScrollController: NSObject {
     /// Timelines with more items than this use conservative scroll timing.
     private let heavyTimelineThreshold = 120
 
-    /// Streaming auto-scroll delay: responsive enough to follow live tokens.
-    private var streamingDelay: Duration = .milliseconds(33)
-
     /// Non-streaming delay: less aggressive to reduce needless churn.
     private var nonStreamingDelay: Duration = .milliseconds(60)
-
-    /// Heavy timeline streaming: smooth but bounded.
-    private var heavyStreamingDelay: Duration = .milliseconds(80)
-    private var heavyStreamingMinInterval: Duration = .milliseconds(120)
 
     /// Keyboard animation settle time — suppress auto-scroll until layout settles.
     private var keyboardSettleDuration: Duration = .milliseconds(500)
@@ -152,10 +144,7 @@ final class ChatScrollController: NSObject {
     #if DEBUG
         // periphery:ignore - used by ChatScrollControllerTests via @testable import
         func useFastTimingForTesting() {
-            streamingDelay = .milliseconds(1)
             nonStreamingDelay = .milliseconds(1)
-            heavyStreamingDelay = .milliseconds(1)
-            heavyStreamingMinInterval = .milliseconds(0)
             keyboardSettleDuration = .milliseconds(1)
         }
 
@@ -224,57 +213,39 @@ final class ChatScrollController: NSObject {
 
     // MARK: - Auto-Scroll on Content Change
 
-    /// Called when `renderVersion` changes. Schedules a throttled scroll
-    /// if the user is near the bottom and not interacting.
+    /// Called when idle content changes and a caller wants an explicit
+    /// scroll-to-bottom command. Busy streaming/tool output is intentionally
+    /// excluded: live updates are handled by the collection view's tail
+    /// visibility governor after layout settles, not by timer-driven
+    /// `scrollToItem` commands from SwiftUI.
     ///
     /// - Parameters:
     ///   - isBusy: Whether the agent session is active (streaming, thinking, tools).
-    ///   - streamingAssistantID: ID of the currently streaming assistant message, if any.
-    ///   - bottomItemID: ID of the last item (or working indicator) to scroll to.
-    ///   - performScrollToBottom: Callback to execute the actual scroll command.
+    ///   - streamingAssistantID: Ignored while busy; retained for call-site compatibility.
+    ///   - bottomItemID: ID of the last item to scroll to when idle.
+    ///   - performScrollToBottom: Callback to execute the explicit scroll command.
     func handleContentChange(
         isBusy: Bool,
-        streamingAssistantID: String?,
+        streamingAssistantID _: String?,
         bottomItemID: String?,
         performScrollToBottom: @escaping (String) -> Void
     ) {
+        guard !isBusy else { return }
         guard anchor.isNearBottom else { return }
         guard !anchor.isUserInteracting else { return }
         guard !isKeyboardSettling else { return }
 
         let isHeavy = itemCount >= heavyTimelineThreshold
-        let isActive = isBusy  // agent is doing something — always auto-scroll
-
-        // In heavy timelines, only auto-scroll when the agent is active.
-        // Idle content changes (e.g. late reconfigures) are skipped to
-        // avoid expensive layout cascades.
-        if isHeavy, !isActive {
+        if isHeavy {
             return
         }
 
         // First-wins throttle: if a scroll is already scheduled, skip.
         guard scrollTask == nil else { return }
-
-        // Rate-limit heavy timeline streaming.
-        if isHeavy,
-           let lastAutoScrollAt,
-           ContinuousClock.now - lastAutoScrollAt < heavyStreamingMinInterval {
-            return
-        }
-
-        // Determine scroll target: streaming message if available, else bottom.
-        guard let targetID = streamingAssistantID ?? bottomItemID else { return }
-
-        let isStreaming = streamingAssistantID != nil
-        let delay: Duration
-        if isHeavy {
-            delay = isStreaming ? heavyStreamingDelay : nonStreamingDelay
-        } else {
-            delay = isStreaming ? streamingDelay : nonStreamingDelay
-        }
+        guard let targetID = bottomItemID else { return }
 
         scrollTask = Task { @MainActor in
-            try? await Task.sleep(for: delay)
+            try? await Task.sleep(for: nonStreamingDelay)
             scrollTask = nil
             guard !Task.isCancelled else { return }
             guard anchor.isNearBottom else { return }

@@ -101,22 +101,15 @@ extension ChatTimelineCollectionHost.Controller {
 
         if !isUserDriven,
            alreadyAttached,
-           contentHeightDelta > 0.5 {
+           !isTimelineBusy,
+           abs(contentHeightDelta) > 0.5 {
             let insets = scrollView.adjustedContentInset
             let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
             if visibleHeight > 0 {
-                // Keep the viewport pinned to the bottom when content grows
-                // during non-user-driven layout changes. The previous
-                // abs(deltaY) < 2 guard was too restrictive — self-sizing
-                // cascades where cells above the viewport resolve estimated
-                // -> actual heights shift contentOffset by > 2pt per pass.
-                // The old guard missed these corrections, slowly accumulating
-                // a gap between the last item and the viewport bottom until
-                // the user got false-detached past the 200pt exit threshold.
-                //
-                // Forward-only: never snap the user upward (away from new
-                // content). Content shrinking during estimate resolution is
-                // transient and handled by UIKit's natural layout.
+                // Keep the idle viewport pinned to the bottom when content
+                // size changes during non-user-driven layout passes. Busy
+                // streaming is handled by the collection view's tail governor
+                // after apply/layout so this delegate does not fight it.
                 //
                 // Formula: contentSize - bounds + adjustedContentInset.bottom.
                 // NOT contentSize - visibleHeight, which expands to
@@ -127,8 +120,12 @@ extension ChatTimelineCollectionHost.Controller {
                     -insets.top,
                     scrollView.contentSize.height - scrollView.bounds.height + insets.bottom
                 )
-                if desiredBottomOffsetY - scrollView.contentOffset.y > 0.5 {
-                    scrollView.contentOffset.y = desiredBottomOffsetY
+                if abs(desiredBottomOffsetY - scrollView.contentOffset.y) > 0.5 {
+                    if let anchoredCV = scrollView as? AnchoredCollectionView {
+                        anchoredCV.applyOffsetCorrection(desiredBottomOffsetY)
+                    } else {
+                        scrollView.contentOffset.y = desiredBottomOffsetY
+                    }
                     lastDistanceFromBottom = 0
                 }
             }
@@ -140,10 +137,10 @@ extension ChatTimelineCollectionHost.Controller {
         // always update state so re-attach can happen.
         //
         // For programmatic offset changes (layout invalidation during
-        // snapshot apply), only update when already attached. This prevents
-        // a detached user from being re-attached by a layout-triggered
-        // contentOffset adjustment.
-        if isUserDriven || alreadyAttached {
+        // snapshot apply), only update when already attached and idle. Busy
+        // ambient follow keeps the logical attached state stable until the user
+        // scrolls or the collection-side tail governor/idle settle runs.
+        if isUserDriven || (alreadyAttached && !isTimelineBusy) {
             updateScrollState(collectionView)
         }
         updateDetachedStreamingHintVisibility()
@@ -153,7 +150,7 @@ extension ChatTimelineCollectionHost.Controller {
 // MARK: - Scroll State Helpers
 
 extension ChatTimelineCollectionHost.Controller {
-    private func updateLastDistanceFromBottom(_ scrollView: UIScrollView) {
+    func updateLastDistanceFromBottom(_ scrollView: UIScrollView) {
         let insets = scrollView.adjustedContentInset
         let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
         guard visibleHeight > 0 else { return }

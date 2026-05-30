@@ -139,19 +139,12 @@ struct ChatTimelineView: View {
         // the footer's z-order blocking taps on this overlay.
         .onChange(of: reducer.renderVersion) { _, _ in
             scrollController.itemCount = visibleItems.count
-            let hasNewItems = scrollController.consumeHasNewItems()
-            scrollController.handleContentChange(
-                isBusy: isBusy,
-                streamingAssistantID: reducer.streamingAssistantID,
-                bottomItemID: bottomItemID
-            ) { _ in
-                // Always target the actual bottom of the timeline.
-                // During streaming, bottomItemID == streaming assistant (correct).
-                // During tool calls, bottomItemID == latest tool or working indicator.
-                guard let bottom = bottomItemID else { return }
-                let animate = hasNewItems
-                issueScrollCommand(id: bottom, anchor: .bottom, animated: animate)
-            }
+            _ = scrollController.consumeHasNewItems()
+            // Ambient streaming follow is handled inside the collection view
+            // after layout settles. SwiftUI only issues explicit scroll
+            // intents (initial load, jump-to-bottom, navigation) so token/tool
+            // streaming does not fight self-sizing layout with repeated
+            // scrollToItem calls.
         }
         .onChange(of: sessionManager.needsInitialScroll) { _, needs in
             guard needs else { return }

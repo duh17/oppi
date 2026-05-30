@@ -173,12 +173,20 @@ final class SafeSizingCell: UICollectionViewCell {
             height = Self.fallbackHeight
         }
 
+        let resolvedHeight: CGFloat
         if isStreamingAssistant {
-            cachedStreamingHeight = height
+            // While text is streaming, never let self-sizing estimates shrink
+            // the cell. Shrink/grow oscillation turns TextKit/layout noise into
+            // visible outer-scroll bounce. The final non-streaming configure
+            // clears this cache and allows one settled measurement.
+            resolvedHeight = max(cachedStreamingHeight ?? 0, height)
+            cachedStreamingHeight = resolvedHeight
             lastFullSizeComputeNs = DispatchTime.now().uptimeNanoseconds
+        } else {
+            resolvedHeight = height
         }
 
-        attributes.size = CGSize(width: width, height: height)
+        attributes.size = CGSize(width: width, height: resolvedHeight)
         return attributes
     }
 }
