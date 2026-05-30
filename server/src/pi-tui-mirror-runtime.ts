@@ -61,7 +61,7 @@ const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 const BRIDGE_PROTOCOL_VERSION = 1;
 const EVENT_RING_CAPACITY = 500;
 const MANAGED_RUNTIME_CONFLICT_RETRY_MS = 10_000;
-const MIRROR_RUNTIME_LOG_TAG = "pi-tui-mirror";
+const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
 
 class BridgeRegistrationError extends Error {
   constructor(

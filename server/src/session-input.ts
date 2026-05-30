@@ -11,8 +11,8 @@ export interface SessionInputSessionState extends TurnSessionState {
 
 const log = createLogger({ base: { component: "session_input" } });
 
-function runtimeLogTag(session: Session): "managed" | "pi-tui-mirror" {
-  return session.runtime ?? "managed";
+function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
+  return session.runtime === "pi-tui-mirror" ? "pi-tui" : "oppi";
 }
 
 export type SdkImageInput = { type: "image"; data: string; mimeType: string };

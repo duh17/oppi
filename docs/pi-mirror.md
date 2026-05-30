@@ -204,7 +204,7 @@ Mirror diagnostics are structured JSON lines.
 - Server mirror/runtime logs: `~/.config/oppi/server.log`
 - Terminal extension logs: `~/.config/oppi/pi-mirror.log`
 
-Useful fields: `runtime`, `sessionId`, `bridgeId`, `commandId`, `requestId`, `clientTurnId`, `command`, `outcome`, `durationMs`, `queueVersion`, `steeringCount`, and `followUpCount`. Managed-session server logs use `runtime: "managed"`; mirrored-session logs use `runtime: "pi-tui-mirror"`.
+Useful fields: `runtime`, `sessionId`, `bridgeId`, `commandId`, `requestId`, `clientTurnId`, `command`, `outcome`, `durationMs`, `queueVersion`, `steeringCount`, and `followUpCount`. Server-owned Oppi sessions log `runtime: "oppi"`; mirrored terminal sessions log `runtime: "pi-tui"`.
 
 ### The bridge does not start
 

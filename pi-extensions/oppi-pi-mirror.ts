@@ -1033,7 +1033,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     });
     if (result.changed) {
       writeMirrorLog("info", "queue_projection_reconciled", {
-        runtime: "pi-tui-mirror",
+        runtime: "pi-tui",
         bridgeId,
         sessionId: connectedSessionId,
         workspaceId: connectedWorkspaceId,
@@ -1127,7 +1127,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     const result = queueProjection.replace(nextQueue);
     if (result.changed) {
       writeMirrorLog("info", "queue_projection_replaced", {
-        runtime: "pi-tui-mirror",
+        runtime: "pi-tui",
         bridgeId,
         sessionId: connectedSessionId,
         workspaceId: connectedWorkspaceId,
@@ -1349,7 +1349,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         return;
       }
       writeMirrorLog("info", "bridge_disconnected", {
-        runtime: "pi-tui-mirror",
+        runtime: "pi-tui",
         bridgeId,
         sessionId: connectedSessionId,
         workspaceId: connectedWorkspaceId,
@@ -1447,7 +1447,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         lastManagedConflictSessionId = null;
         lastManagedConflictNotifiedAt = 0;
         writeMirrorLog("info", "bridge_connected", {
-          runtime: "pi-tui-mirror",
+          runtime: "pi-tui",
           bridgeId,
           sessionId: connectedSessionId,
           workspaceId: connectedWorkspaceId,
@@ -1524,7 +1524,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     const startedAt = Date.now();
     const details = commandLogDetails(command);
     writeMirrorLog("info", "command_received", {
-      runtime: "pi-tui-mirror",
+      runtime: "pi-tui",
       bridgeId,
       sessionId: connectedSessionId,
       workspaceId: connectedWorkspaceId,
@@ -1534,7 +1534,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     try {
       const data = await runCommand(ctx, command);
       writeMirrorLog("info", "command_completed", {
-        runtime: "pi-tui-mirror",
+        runtime: "pi-tui",
         bridgeId,
         sessionId: connectedSessionId,
         workspaceId: connectedWorkspaceId,
@@ -1552,7 +1552,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       });
     } catch (error) {
       writeMirrorLog("warn", "command_completed", {
-        runtime: "pi-tui-mirror",
+        runtime: "pi-tui",
         bridgeId,
         sessionId: connectedSessionId,
         workspaceId: connectedWorkspaceId,
