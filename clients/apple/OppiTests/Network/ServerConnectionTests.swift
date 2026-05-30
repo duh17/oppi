@@ -176,8 +176,8 @@ struct ServerConnectionTests {
     }
 
     @Test func routePermissionRequestUsesActiveSessionForNotificationDecision() {
-        let (conn, pipe) = makeTestConnection(sessionId: "stream-s1")
-        conn.sessionStore.activeSessionId = "active-s1"
+        let (conn, _) = makeTestConnection(sessionId: "active-s1")
+        conn._setActiveSessionIdForTesting("active-s1")
 
         let notificationService = PermissionNotificationService.shared
         let previousAppState = notificationService._applicationStateForTesting
@@ -210,7 +210,12 @@ struct ServerConnectionTests {
             timeoutAt: Date().addingTimeInterval(120)
         )
 
-        pipe.handle(.permissionRequest(perm), sessionId: "stream-s1")
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "other-s2",
+            seq: 1,
+            currentSeq: nil,
+            message: .permissionRequest(perm)
+        ))
 
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             #expect(capturedRequestSessionId == "other-s2")
