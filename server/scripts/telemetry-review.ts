@@ -375,6 +375,8 @@ const DICTATION_BREAKDOWN_METRICS = new Set<string>([
 ]);
 
 function inferUnit(metric: string): string {
+  if (metric.endsWith("_ms")) return "ms";
+  if (metric.endsWith("_bytes")) return "bytes";
   if (metric.endsWith("_ratio") || metric.includes("_delta")) return "ratio";
   if (metric.endsWith("_pct")) return "pct";
   if (metric.endsWith("_mb")) return "mb";
@@ -383,10 +385,30 @@ function inferUnit(metric: string): string {
     metric.endsWith("_skip") ||
     metric.endsWith("_error") ||
     metric.endsWith("_cancel") ||
-    metric.endsWith("_updates")
-  )
+    metric.endsWith("_updates") ||
+    metric.endsWith("_tokens") ||
+    metric.endsWith("_cost") ||
+    metric.endsWith("_calls") ||
+    metric.endsWith("_decision") ||
+    metric.endsWith("_result") ||
+    metric.endsWith("_timeout") ||
+    metric.endsWith("_fanout") ||
+    metric.endsWith("_events") ||
+    metric.endsWith("_messages_sent") ||
+    metric.endsWith("_messages_received") ||
+    metric.endsWith("_message_sent") ||
+    metric.endsWith("_message_received") ||
+    metric.endsWith("_close_code") ||
+    metric.endsWith("_active_peak")
+  ) {
     return "count";
-  return "ms";
+  }
+
+  // Server operational metrics use `_ms` for latency and explicit suffixes
+  // for bytes/ratios. Treat unknown derived metrics as counts rather than
+  // milliseconds so dashboards do not render tokens, costs, or close-code
+  // counters as seconds.
+  return "count";
 }
 
 function isDictationMetric(metric: string): boolean {

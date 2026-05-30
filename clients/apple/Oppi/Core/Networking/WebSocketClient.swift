@@ -33,10 +33,12 @@ final class WebSocketClient {
     private var continuation: AsyncStream<StreamFrameEvent>.Continuation?
     private var lastReceiveErrorFingerprint: String?
     private var lastReceiveErrorLogNs: UInt64 = 0
+    private var suppressedReceiveErrorCount = 0
 
-    /// Deduplicate repeated receive error logs (common during lifecycle
-    /// transitions) while preserving first occurrence signal.
-    private let receiveErrorLogCooldownNs: UInt64 = 3_000_000_000
+    /// Deduplicate repeated receive error uploads while preserving first
+    /// occurrence and periodic/terminal summaries. Reconnect storms can last
+    /// minutes; logging every backoff attempt hides rarer failures.
+    private let receiveErrorLogCooldownNs: UInt64 = 60_000_000_000
 
     let credentials: ServerCredentials
     private var preferredEndpoint: EndpointSelection?
@@ -364,6 +366,7 @@ final class WebSocketClient {
         continuation = nil
         lastReceiveErrorFingerprint = nil
         lastReceiveErrorLogNs = 0
+        suppressedReceiveErrorCount = 0
 
         status = .disconnected
         resolveConnectionWaiters()
@@ -404,12 +407,20 @@ final class WebSocketClient {
 
         if lastReceiveErrorFingerprint == fingerprint,
            nowNs &- lastReceiveErrorLogNs < receiveErrorLogCooldownNs {
+            suppressedReceiveErrorCount += 1
             return false
         }
 
         lastReceiveErrorFingerprint = fingerprint
         lastReceiveErrorLogNs = nowNs
         return true
+    }
+
+    private func consumeReceiveErrorSuppressionMetadata() -> [String: String] {
+        guard suppressedReceiveErrorCount > 0 else { return [:] }
+        let count = suppressedReceiveErrorCount
+        suppressedReceiveErrorCount = 0
+        return ["suppressedReceiveErrorCount": String(count)]
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
@@ -498,6 +509,7 @@ final class WebSocketClient {
                         self.wsLogError(
                             "WebSocket receive error",
                             metadata: ClientLog.networkErrorMetadata(error)
+                                .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
                         )
                     } else {
                         logger.debug("Suppressed duplicate WebSocket receive error: \(String(describing: error), privacy: .public)")
@@ -562,7 +574,7 @@ final class WebSocketClient {
 
         guard attempt < maxReconnectAttempts else {
             logger.error("Max reconnect attempts reached")
-            wsLogError("Max reconnect attempts reached")
+            wsLogError("Max reconnect attempts reached", metadata: consumeReceiveErrorSuppressionMetadata())
             disconnect()
             return
         }

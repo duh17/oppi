@@ -21,6 +21,10 @@ server/scripts/*
 !server/scripts/check-testing-policy.ts
 !server/scripts/testing-gates.ts
 !server/scripts/telemetry-review.ts
+!server/scripts/client-log-review.ts
+!server/scripts/metrickit-review.ts
+!server/scripts/server-log-review.ts
+!server/scripts/diagnostics-review.ts
 !server/scripts/manual/
 !server/scripts/manual/telemetry-import-sqlite.mjs
 clients/apple/scripts/*
