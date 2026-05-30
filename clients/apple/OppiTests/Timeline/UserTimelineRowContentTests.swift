@@ -203,7 +203,7 @@ struct UserTimelineRowContentTests {
     @Test("selection-enabled user row passes vertical pans to outer timeline")
     func selectionEnabledUserRowPassesVerticalPansToOuterTimeline() throws {
         let interactionCtx = TimelineInteractionContext()
-        interactionCtx.selectedTextPiRouter = SelectedTextPiActionRouter { _ in }
+        interactionCtx.reviewCommentSelectionRouter = ReviewCommentSelectionRouter { _ in }
         interactionCtx.sessionId = "session-1"
         var config = UserTimelineRowConfiguration(
             text: String(repeating: "Review clients/apple/Oppi/Features/Chat/ChatView.swift\n", count: 40),
@@ -228,10 +228,10 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
-    @Test("user row selected text edit menu prepends π submenu")
-    func userRowSelectedTextEditMenuPrependsPiSubmenu() throws {
+    @Test("user row selected text edit menu prepends Comment")
+    func userRowSelectedTextEditMenuPrependsComment() throws {
         let interactionCtx = TimelineInteractionContext()
-        interactionCtx.selectedTextPiRouter = SelectedTextPiActionRouter { _ in }
+        interactionCtx.reviewCommentSelectionRouter = ReviewCommentSelectionRouter { _ in }
         interactionCtx.sessionId = "session-1"
         var config = UserTimelineRowConfiguration(
             text: "Need help with this prompt",

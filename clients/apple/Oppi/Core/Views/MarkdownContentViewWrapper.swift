@@ -7,12 +7,12 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     var isStreaming = false
     var textSelectionEnabled = true
     var plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold
-    var selectedTextSourceContext: SelectedTextSourceContext? = nil
+    var reviewCommentSourceContext: ReviewCommentSourceContext? = nil
     var workspaceID: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
-    @Environment(\.selectedTextPiActionRouter) private var selectedTextPiRouter
+    @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
 
     func makeUIView(context: Context) -> AssistantMarkdownContentView {
         let view = AssistantMarkdownContentView()
@@ -30,8 +30,8 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: textSelectionEnabled,
             plainTextFallbackThreshold: plainTextFallbackThreshold,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: selectedTextSourceContext,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSourceContext: reviewCommentSourceContext,
             workspaceID: workspaceID,
             serverBaseURL: serverBaseURL
         ))

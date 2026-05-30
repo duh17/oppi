@@ -9,10 +9,10 @@ struct PlainTextView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
-    private var selectedTextActionContext: SelectedTextActionContext? {
-        selectedTextActionScope?.makeActionContext(
+    private var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionScope?.makeContext(
             sourceLabel: "Text",
             filePath: filePath
         )
@@ -39,7 +39,7 @@ struct PlainTextView: View {
                 content: content,
                 language: nil,
                 startLine: startLine,
-                selectedTextSourceContext: selectedTextActionContext?
+                reviewCommentSourceContext: reviewCommentSelectionContext?
                     .sourceContext(
                         surface: .fullScreenSource,
                         filePath: filePath

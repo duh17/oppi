@@ -3,9 +3,9 @@ import Testing
 
 @Suite("Timeline expandable text interaction spec")
 struct ExpandableTextInteractionSpecTests {
-    @Test func noSelectedTextAndNoFullScreenDisablesEverything() {
+    @Test func noReviewCommentContextAndNoFullScreenDisablesEverything() {
         let spec = TimelineExpandableTextInteractionSpec.build(
-            hasSelectedTextContext: false,
+            hasReviewCommentContext: false,
             supportsFullScreenPreview: false
         )
 
@@ -15,9 +15,9 @@ struct ExpandableTextInteractionSpecTests {
         #expect(!spec.supportsFullScreenPreview)
     }
 
-    @Test func selectedTextWithoutFullScreenEnablesInlineSelectionOnly() {
+    @Test func reviewCommentContextWithoutFullScreenEnablesInlineSelectionOnly() {
         let spec = TimelineExpandableTextInteractionSpec.build(
-            hasSelectedTextContext: true,
+            hasReviewCommentContext: true,
             supportsFullScreenPreview: false
         )
 
@@ -29,7 +29,7 @@ struct ExpandableTextInteractionSpecTests {
 
     @Test func fullScreenPreferredDisablesInlineSelectionAndEnablesActivation() {
         let spec = TimelineExpandableTextInteractionSpec.build(
-            hasSelectedTextContext: true,
+            hasReviewCommentContext: true,
             supportsFullScreenPreview: true
         )
 

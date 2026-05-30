@@ -6,8 +6,8 @@ import UIKit
 /// optional syntax highlighting. Supports in-place content updates
 /// for streaming.
 final class NativeCodeBlockView: UIView {
-    private var selectedTextPiRouter: SelectedTextPiActionRouter?
-    private var selectedTextSourceContext: SelectedTextSourceContext?
+    private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
 
     private let headerStack: UIStackView = {
@@ -132,13 +132,13 @@ final class NativeCodeBlockView: UIView {
         ])
     }
 
-    func configureSelectedTextPi(
-        router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?,
+    func configureReviewCommentSelection(
+        router: ReviewCommentSelectionRouter?,
+        sourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
-        selectedTextPiRouter = router
-        selectedTextSourceContext = sourceContext
+        reviewCommentSelectionRouter = router
+        reviewCommentSourceContext = sourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
         let selectionEnabled = router != nil && sourceContext != nil
         codeLabel.isSelectable = selectionEnabled
@@ -197,7 +197,7 @@ final class NativeCodeBlockView: UIView {
         ReviewCommentInlineAnnotationRenderer.apply(
             to: codeLabel,
             annotations: reviewCommentAnnotations,
-            sourceContext: selectedTextSourceContext
+            sourceContext: reviewCommentSourceContext
         )
     }
 
@@ -234,12 +234,12 @@ extension NativeCodeBlockView: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        SelectedTextPiEditMenuSupport.buildMenu(
+        ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
         )
     }
 }
@@ -249,8 +249,8 @@ extension NativeCodeBlockView: UITextViewDelegate {
 /// Uses monospaced column alignment (like the diff view) for pixel-perfect
 /// columns. Much tighter and better-looking than a stack-of-stacks approach.
 final class NativeTableBlockView: UIView {
-    private var selectedTextPiRouter: SelectedTextPiActionRouter?
-    private var selectedTextSourceContext: SelectedTextSourceContext?
+    private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
 
     /// Inner card that wraps the scroll view. Carries the background, border,
@@ -386,13 +386,13 @@ final class NativeTableBlockView: UIView {
         }
     }
 
-    func configureSelectedTextPi(
-        router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?,
+    func configureReviewCommentSelection(
+        router: ReviewCommentSelectionRouter?,
+        sourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
-        selectedTextPiRouter = router
-        selectedTextSourceContext = sourceContext
+        reviewCommentSelectionRouter = router
+        reviewCommentSourceContext = sourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
         let selectionEnabled = router != nil && sourceContext != nil
         tableLabel.isSelectable = selectionEnabled
@@ -432,7 +432,7 @@ final class NativeTableBlockView: UIView {
         ReviewCommentInlineAnnotationRenderer.apply(
             to: tableLabel,
             annotations: reviewCommentAnnotations,
-            sourceContext: selectedTextSourceContext
+            sourceContext: reviewCommentSourceContext
         )
     }
 
@@ -744,23 +744,23 @@ extension NativeTableBlockView: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        if let menu = SelectedTextPiEditMenuSupport.buildMenu(
+        if let menu = ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
         ) {
             return menu
         }
 
-        guard let router = selectedTextPiRouter,
-              let sourceContext = selectedTextSourceContext,
+        guard let router = reviewCommentSelectionRouter,
+              let sourceContext = reviewCommentSourceContext,
               let fallbackText = fallbackSelectedText(in: textView, range: range) else {
             return nil
         }
 
-        return SelectedTextPiMenuBuilder.editMenu(
+        return ReviewCommentSelectionMenuBuilder.editMenu(
             suggestedActions: suggestedActions,
             selectedText: fallbackText,
             sourceContext: sourceContext,
@@ -777,7 +777,7 @@ extension NativeTableBlockView: UITextViewDelegate {
 
         let lineRange = nsText.lineRange(for: NSRange(location: range.location, length: 0))
         let lineText = nsText.substring(with: lineRange)
-        let normalized = SelectedTextPiPromptFormatter.normalizedSelectedText(lineText)
+        let normalized = ReviewCommentSelectionTextFormatter.normalizedSelectedText(lineText)
         return normalized.isEmpty ? nil : normalized
     }
 }

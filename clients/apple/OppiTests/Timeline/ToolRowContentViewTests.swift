@@ -281,14 +281,14 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func selectedTextCommandEditMenuPrependsCommentActionAndDisablesTapCopy() throws {
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
             copyCommandText: "echo hi",
             copyOutputText: "hi",
             isExpanded: true,
-            selectedTextPiRouter: router,
-            selectedTextSessionId: "session-1"
+            reviewCommentSelectionRouter: router,
+            reviewCommentSessionId: "session-1"
         )
         let view = ToolTimelineRowContentView(configuration: config)
 
@@ -310,13 +310,13 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func selectedTextExpandedMarkdownKeepsInlineFullScreenActivation() throws {
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "Alpha beta gamma"),
             toolNamePrefix: "read",
             isExpanded: true,
-            selectedTextPiRouter: router,
-            selectedTextSessionId: "session-1"
+            reviewCommentSelectionRouter: router,
+            reviewCommentSessionId: "session-1"
         )
         let view = ToolTimelineRowContentView(configuration: config)
 

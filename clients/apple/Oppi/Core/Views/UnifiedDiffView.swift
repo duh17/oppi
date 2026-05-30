@@ -14,14 +14,13 @@ struct UnifiedDiffView: View {
     var emptyTitle = "No Textual Changes"
     var emptySystemImage = "checkmark.circle"
     var emptyDescription = "This file has no textual changes to show."
-    var selectedTextSourceContext: SelectedTextSourceContext?
-    var selectedTextActionContext: SelectedTextActionContext?
+    var reviewCommentSourceContext: ReviewCommentSourceContext?
+    var reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
-    @Environment(\.piQuickActionStore) private var piQuickActionStore
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
-    private var effectiveActionContext: SelectedTextActionContext? {
-        selectedTextActionContext ?? selectedTextActionScope?.makeActionContext()
+    private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionContext ?? reviewCommentSelectionScope?.makeContext()
     }
 
     /// Pre-built attributed string + measured width, computed off main thread.
@@ -40,9 +39,8 @@ struct UnifiedDiffView: View {
             } else if let built {
                 UnifiedDiffTextView(
                     built: built,
-                    selectedTextActionContext: effectiveActionContext,
-                    piQuickActionStore: piQuickActionStore,
-                    sourceContext: selectedTextSourceContext ?? effectiveActionContext?.sourceContext(
+                    reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+                    sourceContext: reviewCommentSourceContext ?? effectiveReviewCommentSelectionContext?.sourceContext(
                         surface: .fullScreenDiff,
                         filePath: filePath
                     )
@@ -162,14 +160,12 @@ private final class UnifiedDiffScrollView: UIScrollView {
 /// attributed string. The build happens off the main thread in the parent view.
 private struct UnifiedDiffTextView: UIViewRepresentable {
     let built: UnifiedDiffView.BuiltDiff
-    let selectedTextActionContext: SelectedTextActionContext?
-    let piQuickActionStore: PiQuickActionStore?
-    let sourceContext: SelectedTextSourceContext?
+    let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    let sourceContext: ReviewCommentSourceContext?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            selectedTextActionContext: selectedTextActionContext,
-            piQuickActionStore: piQuickActionStore,
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
             sourceContext: sourceContext
         )
     }
@@ -233,23 +229,19 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.selectedTextActionContext = selectedTextActionContext
-        context.coordinator.piQuickActionStore = piQuickActionStore
+        context.coordinator.reviewCommentSelectionContext = reviewCommentSelectionContext
         context.coordinator.sourceContext = sourceContext
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        var selectedTextActionContext: SelectedTextActionContext?
-        var piQuickActionStore: PiQuickActionStore?
-        var sourceContext: SelectedTextSourceContext?
+        var reviewCommentSelectionContext: ReviewCommentSelectionContext?
+        var sourceContext: ReviewCommentSourceContext?
 
         init(
-            selectedTextActionContext: SelectedTextActionContext?,
-            piQuickActionStore: PiQuickActionStore?,
-            sourceContext: SelectedTextSourceContext?
+            reviewCommentSelectionContext: ReviewCommentSelectionContext?,
+            sourceContext: ReviewCommentSourceContext?
         ) {
-            self.selectedTextActionContext = selectedTextActionContext
-            self.piQuickActionStore = piQuickActionStore
+            self.reviewCommentSelectionContext = reviewCommentSelectionContext
             self.sourceContext = sourceContext
         }
 
@@ -258,13 +250,12 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
             editMenuForTextIn range: NSRange,
             suggestedActions: [UIMenuElement]
         ) -> UIMenu? {
-            SelectedTextPiEditMenuSupport.buildMenu(
+            ReviewCommentSelectionEditMenuSupport.buildMenu(
                 textView: textView,
                 range: range,
                 suggestedActions: suggestedActions,
-                router: selectedTextActionContext?.dispatcher,
-                sourceContext: sourceContext,
-                actionStore: piQuickActionStore
+                router: reviewCommentSelectionContext?.dispatcher,
+                sourceContext: sourceContext
             )
         }
     }

@@ -2,16 +2,16 @@ import SwiftUI
 
 // MARK: - Source Context Helper
 
-/// Creates a ``SelectedTextSourceContext`` for file content views.
+/// Creates a ``ReviewCommentSourceContext`` for file content views.
 ///
 /// Centralises the boilerplate shared by every file-type view so the
 /// surface and language hint are the only things that vary per call site.
 func fileContentSourceContext(
     filePath: String?,
     language: String? = nil,
-    surface: SelectedTextSurfaceKind = .fullScreenCode
-) -> SelectedTextSourceContext {
-    SelectedTextSourceContext(
+    surface: ReviewCommentSurfaceKind = .fullScreenCode
+) -> ReviewCommentSourceContext {
+    ReviewCommentSourceContext(
         sessionId: "",
         surface: surface,
         filePath: filePath,
@@ -153,9 +153,9 @@ struct NativeCodeBodyView: UIViewRepresentable {
     let language: String?
     let startLine: Int
     var maxHeight: CGFloat? = nil
-    var selectedTextSourceContext: SelectedTextSourceContext? = nil
+    var reviewCommentSourceContext: ReviewCommentSourceContext? = nil
 
-    @Environment(\.selectedTextPiActionRouter) private var selectedTextActionRouter
+    @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
 
     /// Approximate line height for FullScreenCodeTypography.codeFont (12pt mono).
     private static let estimatedLineHeight: CGFloat = 15.0
@@ -169,8 +169,8 @@ struct NativeCodeBodyView: UIViewRepresentable {
             startLine: startLine,
             palette: ThemeRuntimeState.currentThemeID().palette,
             alwaysBounceVertical: maxHeight == nil,
-            selectedTextPiRouter: selectedTextActionRouter,
-            selectedTextSourceContext: selectedTextSourceContext
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSourceContext: reviewCommentSourceContext
         )
     }
 

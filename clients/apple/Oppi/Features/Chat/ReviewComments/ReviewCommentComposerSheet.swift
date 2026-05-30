@@ -2,9 +2,9 @@ import SwiftUI
 
 struct ReviewCommentComposerSheet: View {
     let selectedText: String
-    let source: SelectedTextSourceContext
+    let source: ReviewCommentSourceContext
     var voiceInputManager: VoiceInputManager?
-    var quickComments: [PiQuickAction] = []
+    var quickComments: [QuickCommentTemplate] = []
     let onCancel: () -> Void
     let onSave: (String) async -> Bool
 
@@ -107,7 +107,7 @@ struct ReviewCommentComposerSheet: View {
                     language: source.languageHint,
                     startLine: source.lineRange?.lowerBound ?? 1,
                     maxHeight: 180,
-                    selectedTextSourceContext: nil
+                    reviewCommentSourceContext: nil
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
@@ -184,7 +184,7 @@ struct ReviewCommentComposerSheet: View {
         }
     }
 
-    private func applyQuickComment(_ action: PiQuickAction) {
+    private func applyQuickComment(_ action: QuickCommentTemplate) {
         let text = action.quickCommentText
         guard !text.isEmpty else { return }
 
@@ -211,7 +211,7 @@ struct ReviewCommentComposerSheet: View {
     }
 }
 
-private extension SelectedTextSurfaceKind {
+private extension ReviewCommentSurfaceKind {
     var reviewCommentLabel: String {
         switch self {
         case .assistantProse: "Assistant message"

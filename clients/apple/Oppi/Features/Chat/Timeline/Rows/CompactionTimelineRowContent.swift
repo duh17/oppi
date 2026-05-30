@@ -206,13 +206,13 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
         let trimmedDetail = configuration.presentation.detail?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let selectedTextSourceContext = configuration.interactionContext?.sourceContext(
+        let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
             sourceLabel: style.title,
             timelineItemId: configuration.itemID
         )
         let reviewCommentAnnotations = configuration.interactionContext?
-            .inlineReviewAnnotations(for: selectedTextSourceContext) ?? []
+            .inlineReviewAnnotations(for: reviewCommentSourceContext) ?? []
 
         let hasDetail: Bool
         if let trimmedDetail, !trimmedDetail.isEmpty {
@@ -235,8 +235,8 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                         content: trimmedDetail,
                         isStreaming: false,
                         themeID: ThemeRuntimeState.currentThemeID(),
-                        selectedTextPiRouter: configuration.interactionContext?.selectedTextActionContext?.dispatcher,
-                        selectedTextSourceContext: selectedTextSourceContext,
+                        reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
+                        reviewCommentSourceContext: reviewCommentSourceContext,
                         reviewCommentAnnotations: reviewCommentAnnotations
                     )
                 )

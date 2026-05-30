@@ -15,7 +15,7 @@ struct ReviewCommentInlineAnnotation: Equatable, Identifiable {
 enum ReviewCommentInlineAnnotationMatcher {
     static func annotations(
         from comments: [ReviewComment],
-        for sourceContext: SelectedTextSourceContext?
+        for sourceContext: ReviewCommentSourceContext?
     ) -> [ReviewCommentInlineAnnotation] {
         guard let sourceContext else { return [] }
 
@@ -46,12 +46,12 @@ enum ReviewCommentInlineAnnotationMatcher {
         }
     }
 
-    private static func sessionMatches(comment: ReviewComment, sourceContext: SelectedTextSourceContext) -> Bool {
+    private static func sessionMatches(comment: ReviewComment, sourceContext: ReviewCommentSourceContext) -> Bool {
         guard let sessionId = comment.sessionId, !sessionId.isEmpty else { return true }
         return sessionId == sourceContext.sessionId
     }
 
-    private static func matches(reference: ReviewCommentReference, sourceContext: SelectedTextSourceContext) -> Bool {
+    private static func matches(reference: ReviewCommentReference, sourceContext: ReviewCommentSourceContext) -> Bool {
         guard reference.source == sourceContext.reviewCommentReferenceSource else { return false }
 
         if let referenceLanguage = nonEmpty(reference.languageHint),
@@ -82,7 +82,7 @@ enum ReviewCommentInlineAnnotationMatcher {
     }
 }
 
-extension SelectedTextSurfaceKind {
+extension ReviewCommentSurfaceKind {
     var reviewCommentReferenceSource: ReviewCommentReferenceSource {
         switch self {
         case .fullScreenDiff:
@@ -97,7 +97,7 @@ extension SelectedTextSurfaceKind {
     }
 }
 
-extension SelectedTextSourceContext {
+extension ReviewCommentSourceContext {
     var reviewCommentReferenceSource: ReviewCommentReferenceSource {
         surface.reviewCommentReferenceSource
     }
@@ -112,7 +112,7 @@ enum ReviewCommentInlineAnnotationRenderer {
     static func apply(
         to textView: UITextView,
         annotations: [ReviewCommentInlineAnnotation],
-        sourceContext: SelectedTextSourceContext?
+        sourceContext: ReviewCommentSourceContext?
     ) {
         removeExistingBubbleButtons(from: textView)
 
@@ -180,7 +180,7 @@ enum ReviewCommentInlineAnnotationRenderer {
         in text: String,
         matchingLineRange requestedLineRange: ClosedRange<Int>?
     ) -> NSRange? {
-        let normalizedNeedle = SelectedTextPiPromptFormatter.normalizedSelectedText(needle)
+        let normalizedNeedle = ReviewCommentSelectionTextFormatter.normalizedSelectedText(needle)
         guard !normalizedNeedle.isEmpty else { return nil }
         let nsText = text as NSString
         var searchRange = NSRange(location: 0, length: nsText.length)
@@ -225,7 +225,7 @@ enum ReviewCommentInlineAnnotationRenderer {
     private static func installBubbleButtons(
         groups: [RenderedAnnotationGroup],
         in textView: UITextView,
-        sourceContext: SelectedTextSourceContext
+        sourceContext: ReviewCommentSourceContext
     ) {
         textView.layoutIfNeeded()
         textView.layoutManager.ensureLayout(for: textView.textContainer)
@@ -305,9 +305,9 @@ private struct RenderedAnnotationGroup {
 private final class ReviewCommentInlineBubbleButton: UIButton {
     let range: NSRange
     private let annotations: [ReviewCommentInlineAnnotation]
-    private let sourceContext: SelectedTextSourceContext
+    private let sourceContext: ReviewCommentSourceContext
 
-    init(group: RenderedAnnotationGroup, sourceContext: SelectedTextSourceContext) {
+    init(group: RenderedAnnotationGroup, sourceContext: ReviewCommentSourceContext) {
         self.range = group.range
         self.annotations = group.annotations
         self.sourceContext = sourceContext

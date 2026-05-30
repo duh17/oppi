@@ -24,10 +24,10 @@ struct WorkspaceReviewFileDetailView: View {
     let workspaceId: String
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
-    var selectedTextActionScopeOverride: SelectedTextActionScope? = nil
+    var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
 
     @Environment(\.apiClient) private var apiClient
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(SessionStore.self) private var sessionStore
 
     @State private var selectedTab: DetailTab = .diff
@@ -40,12 +40,12 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var isLoadingQuickActions = false
 
-    private var selectedTextScope: SelectedTextActionScope? {
-        selectedTextActionScopeOverride ?? selectedTextActionScope
+    private var effectiveReviewCommentSelectionScope: ReviewCommentSelectionScope? {
+        reviewCommentSelectionScopeOverride ?? reviewCommentSelectionScope
     }
 
-    private var selectedTextActionContext: SelectedTextActionContext? {
-        selectedTextScope?.makeActionContext(
+    private var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        effectiveReviewCommentSelectionScope?.makeContext(
             sessionId: selectedSessionId,
             sourceLabel: file.path.lastPathComponentForDisplay,
             filePath: file.path
@@ -210,7 +210,7 @@ struct WorkspaceReviewFileDetailView: View {
                     filePath: file.path,
                     presentation: .document
                 )
-                .environment(\.selectedTextActionScope, selectedTextScope)
+                .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isDeletedFile {
                 // Deleted file: skip tabs, show diff (the only useful view)
@@ -219,9 +219,9 @@ struct WorkspaceReviewFileDetailView: View {
                 WorkspaceReviewDiffView(
                     diff: diff,
                     filePath: file.path,
-                    selectedTextActionContext: selectedTextActionContext
+                    reviewCommentSelectionContext: reviewCommentSelectionContext
                 )
-                .environment(\.selectedTextActionScope, selectedTextScope)
+                .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Picker("View", selection: $selectedTab) {
@@ -241,9 +241,9 @@ struct WorkspaceReviewFileDetailView: View {
                         WorkspaceReviewDiffView(
                             diff: diff,
                             filePath: file.path,
-                            selectedTextActionContext: selectedTextActionContext
+                            reviewCommentSelectionContext: reviewCommentSelectionContext
                         )
-                        .environment(\.selectedTextActionScope, selectedTextScope)
+                        .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                     case .current:
                         currentContent(diff: diff)
                     }
@@ -260,7 +260,7 @@ struct WorkspaceReviewFileDetailView: View {
             filePath: file.path,
             presentation: .document
         )
-        .environment(\.selectedTextActionScope, selectedTextScope)
+        .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
     }
 
     private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
@@ -361,14 +361,14 @@ struct WorkspaceReviewFileDetailView: View {
 struct WorkspaceReviewDiffView: View {
     let diff: WorkspaceReviewDiffResponse
     let filePath: String
-    var selectedTextActionContext: SelectedTextActionContext?
+    var reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
     var body: some View {
         UnifiedDiffView(
             hunks: diff.hunks,
             filePath: filePath,
             emptyDescription: "This file has no textual diff to show.",
-            selectedTextActionContext: selectedTextActionContext
+            reviewCommentSelectionContext: reviewCommentSelectionContext
         )
     }
 }

@@ -165,8 +165,7 @@ struct ReadySessionScrollToBottomTests {
                 sessionManager: sessionManager,
                 audioLifecycleCoordinator: nil,
                 onFork: { _ in },
-                selectedTextPiRouter: nil,
-                piQuickActionStore: nil,
+                reviewCommentSelectionRouter: nil,
                 topOverlap: 0,
                 bottomOverlap: 0,
                 reviewComments: []

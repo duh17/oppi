@@ -16,7 +16,6 @@ final class ChatTimelineControllerContext {
     var currentModel: String?
     var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
-    var piQuickActionStore: PiQuickActionStore?
     var reviewComments: [ReviewComment] = []
 
     func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
@@ -37,10 +36,9 @@ final class ChatTimelineControllerContext {
         connection = configuration.connection
         currentModel = configuration.currentModel
         audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
-        interactionContext.selectedTextPiRouter = configuration.selectedTextPiRouter
+        interactionContext.reviewCommentSelectionRouter = configuration.reviewCommentSelectionRouter
         interactionContext.sessionId = configuration.sessionId
         interactionContext.reviewComments = configuration.reviewComments
-        piQuickActionStore = configuration.piQuickActionStore
         reviewComments = configuration.reviewComments
     }
 }

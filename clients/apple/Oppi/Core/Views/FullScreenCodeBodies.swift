@@ -15,8 +15,8 @@ final class NativeFullScreenCodeBody: UIView {
     private let startLine: Int
     private let palette: ThemePalette
     private let alwaysBounceVertical: Bool
-    private let selectedTextPiRouter: SelectedTextPiActionRouter?
-    private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var highlightTask: Task<Void, Never>?
 
@@ -26,8 +26,8 @@ final class NativeFullScreenCodeBody: UIView {
         startLine: Int,
         palette: ThemePalette,
         alwaysBounceVertical: Bool = true,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.content = content
@@ -35,8 +35,8 @@ final class NativeFullScreenCodeBody: UIView {
         self.startLine = startLine
         self.palette = palette
         self.alwaysBounceVertical = alwaysBounceVertical
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
         super.init(frame: .zero)
         setup()
@@ -167,7 +167,7 @@ final class NativeFullScreenCodeBody: UIView {
         ReviewCommentInlineAnnotationRenderer.apply(
             to: codeTextView,
             annotations: reviewCommentAnnotations,
-            sourceContext: selectedTextSourceContext
+            sourceContext: reviewCommentSourceContext
         )
     }
 }
@@ -178,12 +178,12 @@ extension NativeFullScreenCodeBody: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        buildFullScreenSelectedTextMenu(
+        buildFullScreenReviewCommentMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
         )
     }
 }
@@ -198,8 +198,8 @@ final class NativeFullScreenDiffBody: UIView {
     private let scrollView = UIScrollView()
     private let diffTextView = UITextView()
     private let progressView = UIActivityIndicatorView(style: .medium)
-    private let selectedTextPiRouter: SelectedTextPiActionRouter?
-    private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var widthConstraint: NSLayoutConstraint?
     private var buildTask: Task<Void, Never>?
@@ -217,12 +217,12 @@ final class NativeFullScreenDiffBody: UIView {
         filePath: String?,
         precomputedLines: [DiffLine]?,
         palette: ThemePalette,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
 
         super.init(frame: .zero)
@@ -401,7 +401,7 @@ final class NativeFullScreenDiffBody: UIView {
         ReviewCommentInlineAnnotationRenderer.apply(
             to: diffTextView,
             annotations: reviewCommentAnnotations,
-            sourceContext: selectedTextSourceContext
+            sourceContext: reviewCommentSourceContext
         )
     }
 
@@ -415,12 +415,12 @@ extension NativeFullScreenDiffBody: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        buildFullScreenSelectedTextMenu(
+        buildFullScreenReviewCommentMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
         )
     }
 }
@@ -438,8 +438,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private let outputView = UITextView()
     private let palette: ThemePalette
     private let stream: TerminalTraceStream?
-    private let selectedTextPiRouter: SelectedTextPiActionRouter?
-    private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
@@ -465,15 +465,15 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         stream: TerminalTraceStream?,
         palette: ThemePalette,
         outputWrapped: Bool = false,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.palette = palette
         self.stream = stream
         self.outputWrapped = outputWrapped
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
 
         let initialSnapshot = stream?.snapshot
@@ -705,7 +705,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         ReviewCommentInlineAnnotationRenderer.apply(
             to: textView,
             annotations: reviewCommentAnnotations,
-            sourceContext: selectedTextSourceContext
+            sourceContext: reviewCommentSourceContext
         )
     }
 
@@ -738,12 +738,12 @@ extension NativeFullScreenTerminalBody: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        buildFullScreenSelectedTextMenu(
+        buildFullScreenReviewCommentMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
         )
     }
 }
@@ -754,8 +754,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let markdownWidthConstraint: NSLayoutConstraint
     private let stream: ThinkingTraceStream?
     private let plainTextFallbackThreshold: Int?
-    private let selectedTextPiRouter: SelectedTextPiActionRouter?
-    private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private let workspaceID: String?
     private let sessionID: String?
@@ -782,8 +782,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         isStreaming: Bool = false,
         palette: ThemePalette,
         plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
         workspaceID: String? = nil,
         sessionID: String? = nil,
@@ -796,8 +796,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.stream = stream
         self.perfSurface = perfSurface
         self.plainTextFallbackThreshold = plainTextFallbackThreshold
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
         self.workspaceID = workspaceID
         self.sessionID = sessionID
@@ -894,8 +894,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             isStreaming: !snapshot.isDone,
             themeID: ThemeRuntimeState.currentThemeID(),
             plainTextFallbackThreshold: plainTextFallbackThreshold,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: selectedTextSourceContext,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSourceContext: reviewCommentSourceContext,
             reviewCommentAnnotations: reviewCommentAnnotations,
             workspaceID: workspaceID,
             sessionID: sessionID,
@@ -934,8 +934,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
 final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     private let textView = UITextView()
-    private let selectedTextPiRouter: SelectedTextPiActionRouter?
-    private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var isStreaming: Bool
 
@@ -951,12 +951,12 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         content: String,
         isStreaming: Bool,
         palette: ThemePalette,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
         self.isStreaming = isStreaming
         super.init(frame: .zero)
@@ -1038,7 +1038,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         ReviewCommentInlineAnnotationRenderer.apply(
             to: textView,
             annotations: reviewCommentAnnotations,
-            sourceContext: selectedTextSourceContext
+            sourceContext: reviewCommentSourceContext
         )
     }
 
@@ -1047,12 +1047,12 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        buildFullScreenSelectedTextMenu(
+        buildFullScreenReviewCommentMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
         )
     }
 }
@@ -1075,8 +1075,8 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
     init(
         content: DocumentContent,
         palette: ThemePalette,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)

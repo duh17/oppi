@@ -14,7 +14,7 @@ struct SessionFilesListView: View {
     let workspaceId: String?
     let changedFiles: [String]
     var searchText: String = ""
-    var fileDetailActionScope: SelectedTextActionScope? = nil
+    var fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil
 
     @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(\.apiClient) private var apiClient
@@ -93,7 +93,7 @@ struct SessionFilesListView: View {
                         workspaceId: workspaceId,
                         selectedSessionId: sessionId,
                         file: gitFile.toReviewFile(),
-                        selectedTextActionScopeOverride: makeFileDetailActionScope()
+                        reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope()
                     )
                 } label: {
                     fileRowContent(
@@ -120,7 +120,7 @@ struct SessionFilesListView: View {
                             )
                         }
                     }
-                    .environment(\.selectedTextActionScope, makeFileDetailActionScope())
+                    .environment(\.reviewCommentSelectionScope, makeFileDetailReviewCommentScope())
                 } label: {
                     fileRowContent(
                         icon: icon, fileName: fileName, parentPath: parentPath,
@@ -139,11 +139,11 @@ struct SessionFilesListView: View {
         }
     }
 
-    private func makeFileDetailActionScope() -> SelectedTextActionScope? {
-        guard case .activeSession(let router) = fileDetailActionScope else {
-            return fileDetailActionScope
+    private func makeFileDetailReviewCommentScope() -> ReviewCommentSelectionScope? {
+        guard case .activeSession(let router) = fileDetailReviewCommentScope else {
+            return fileDetailReviewCommentScope
         }
-        return .activeSession(SelectedTextPiActionRouter { request in
+        return .activeSession(ReviewCommentSelectionRouter { request in
             dismiss()
             router.dispatch(request)
         })

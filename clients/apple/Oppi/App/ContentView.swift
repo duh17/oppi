@@ -64,7 +64,6 @@ struct ContentView: View {
                 }
             }
         }
-        .environment(\.selectedTextActionScope, navigation.makeQuickSessionActionScope())
         .safeAreaInset(edge: .top, spacing: 0) {
             topInsetBanners
         }

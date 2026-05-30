@@ -29,7 +29,7 @@ struct ChatView: View {
     @Environment(FileIndexStore.self) private var fileIndexStore
     @Environment(MessageQueueStore.self) private var messageQueueStore
     @Environment(AppNavigation.self) private var appNavigation
-    @Environment(PiQuickActionStore.self) private var piQuickActionStore
+    @Environment(QuickCommentTemplateStore.self) private var quickCommentTemplateStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -214,8 +214,7 @@ struct ChatView: View {
             sessionManager: sessionManager,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
             onFork: forkFromMessage,
-            selectedTextPiRouter: selectedTextPiRouter,
-            piQuickActionStore: piQuickActionStore,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: headerHeight,
             bottomOverlap: footerHeight,
             reviewComments: reviewComments.comments
@@ -253,7 +252,7 @@ struct ChatView: View {
                     onReviewInCurrentSession: { prompt, files in
                         stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
                     },
-                    fileDetailActionScope: .activeSession(selectedTextPiRouter),
+                    fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: handleContextBarExpandedChanged
                 )
@@ -316,7 +315,7 @@ struct ChatView: View {
                     selectedText: context.request.selectedText,
                     source: context.request.source,
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-                    quickComments: PiQuickAction.quickCommentTemplates(piQuickActionStore.actions),
+                    quickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
                     onCancel: { reviewComments.pendingDraft = nil },
                     onSave: { body in
                         await saveReviewComment(body: body, request: context.request)
@@ -783,14 +782,10 @@ struct ChatView: View {
         .clipped()
     }
 
-    private var selectedTextPiRouter: SelectedTextPiActionRouter {
-        SelectedTextPiActionRouter(dispatchWithPresentation: { request, presentingViewController in
-            handleSelectedTextPiAction(request, presentingViewController: presentingViewController)
+    private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter {
+        ReviewCommentSelectionRouter(dispatchWithPresentation: { request, presentingViewController in
+            handleReviewCommentSelection(request, presentingViewController: presentingViewController)
         })
-    }
-
-    static func routeForSelectedTextPiAction(_ request: SelectedTextPiRequest) -> SelectedTextPiRoute? {
-        SelectedTextPiRouterPolicy.route(request: request, context: .activeChat)
     }
 
     // MARK: - Actions
@@ -821,47 +816,21 @@ struct ChatView: View {
     }
 
     @MainActor
-    private func handleSelectedTextPiAction(
-        _ request: SelectedTextPiRequest,
+    private func handleReviewCommentSelection(
+        _ request: ReviewCommentSelectionRequest,
         presentingViewController: UIViewController? = nil
     ) {
-        guard let route = Self.routeForSelectedTextPiAction(request) else { return }
-
-        switch route {
-        case .reviewComment(let request):
-            if let presentingViewController,
-               presentFullscreenReviewCommentSheet(from: presentingViewController, request: request) {
-                return
-            }
-            reviewComments.beginComment(request)
-
-        case .quickSessionDraft(let addition):
-            appNavigation.pendingQuickSessionDraft = addition
-            appNavigation.showQuickSession = true
-
-        case .currentSessionDraft(let addition):
-            if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                inputText = addition
-            } else if inputText.hasSuffix("\n\n") {
-                inputText += addition
-            } else if inputText.hasSuffix("\n") {
-                inputText += "\n" + addition
-            } else {
-                inputText += "\n\n" + addition
-            }
-
-            if isStopped {
-                showComposer = true
-            } else if !showComposer {
-                composerExternalFocusRequestID &+= 1
-            }
+        if let presentingViewController,
+           presentFullscreenReviewCommentSheet(from: presentingViewController, request: request) {
+            return
         }
+        reviewComments.beginComment(request)
     }
 
     @MainActor
     private func presentFullscreenReviewCommentSheet(
         from presentingViewController: UIViewController,
-        request: SelectedTextPiRequest
+        request: ReviewCommentSelectionRequest
     ) -> Bool {
         guard Self.isInsideFullScreenViewer(presentingViewController),
               presentingViewController.viewIfLoaded?.window != nil,
@@ -874,7 +843,7 @@ struct ChatView: View {
             selectedText: request.selectedText,
             source: request.source,
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-            quickComments: PiQuickAction.quickCommentTemplates(piQuickActionStore.actions),
+            quickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
             onCancel: {
                 sheetController?.dismiss(animated: true)
             },
@@ -1007,7 +976,7 @@ struct ChatView: View {
     }
 
     @discardableResult
-    private func saveReviewComment(body: String, request: SelectedTextPiRequest) async -> Bool {
+    private func saveReviewComment(body: String, request: ReviewCommentSelectionRequest) async -> Bool {
         if let error = await reviewComments.save(
             body: body,
             request: request,
@@ -1556,7 +1525,7 @@ struct ChatView: View {
                 scrollController.scrollTargetID = targetID
             },
             onFork: forkFromMessage,
-            fileDetailActionScope: .activeSession(selectedTextPiRouter),
+            fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
             onNavigateTreeNode: { request in
                 try await navigateFromTree(request)
             },
@@ -1705,7 +1674,7 @@ struct ChatView: View {
                 }
             }
         }
-        .environment(\.selectedTextActionScope, .activeSession(selectedTextPiRouter))
+        .environment(\.reviewCommentSelectionScope, .activeSession(reviewCommentSelectionRouter))
         .presentationDetents([.medium, .large])
     }
 

@@ -236,7 +236,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // Text appears immediately on each coalescer flush (no reveal animation).
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.fetchSessionFile = configuration.fetchSessionFile
-        let selectedTextSourceContext = configuration.interactionContext?.sourceContext(
+        let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
             timelineItemId: configuration.itemID
         )
@@ -244,9 +244,9 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             content: trimmedText,
             isStreaming: configuration.isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
-            selectedTextPiRouter: configuration.interactionContext?.selectedTextActionContext?.dispatcher,
-            selectedTextSourceContext: selectedTextSourceContext,
-            reviewCommentAnnotations: configuration.interactionContext?.inlineReviewAnnotations(for: selectedTextSourceContext) ?? [],
+            reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
+            reviewCommentSourceContext: reviewCommentSourceContext,
+            reviewCommentAnnotations: configuration.interactionContext?.inlineReviewAnnotations(for: reviewCommentSourceContext) ?? [],
             workspaceID: configuration.workspaceID,
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,

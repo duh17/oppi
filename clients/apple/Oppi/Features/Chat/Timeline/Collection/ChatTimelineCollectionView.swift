@@ -39,8 +39,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let currentModel: String?
         let audioPlayer: AudioPlayerService
         let audioLifecycleCoordinator: AudioLifecycleCoordinator?
-        let selectedTextPiRouter: SelectedTextPiActionRouter?
-        let piQuickActionStore: PiQuickActionStore?
+        let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
         let topOverlap: CGFloat
         let bottomOverlap: CGFloat
         let reviewComments: [ReviewComment]
@@ -67,8 +66,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentModel: String? = nil,
             audioPlayer: AudioPlayerService,
             audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
-            selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-            piQuickActionStore: PiQuickActionStore? = nil,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             topOverlap: CGFloat = 0,
             bottomOverlap: CGFloat = 0,
             reviewComments: [ReviewComment] = []
@@ -93,8 +91,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.currentModel = currentModel
             self.audioPlayer = audioPlayer
             self.audioLifecycleCoordinator = audioLifecycleCoordinator
-            self.selectedTextPiRouter = selectedTextPiRouter
-            self.piQuickActionStore = piQuickActionStore
+            self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
             self.topOverlap = topOverlap
             self.bottomOverlap = bottomOverlap
             self.reviewComments = reviewComments

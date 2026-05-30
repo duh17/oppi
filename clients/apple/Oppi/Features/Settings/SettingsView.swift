@@ -151,7 +151,7 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink {
-                    PiActionsSettingsView()
+                    QuickCommentsSettingsView()
                 } label: {
                     Label("Quick Comments", systemImage: "text.bubble")
                 }

@@ -256,12 +256,6 @@ struct QuickSessionSheet: View {
             configureVoiceInputForSelectedServer(manager)
         }
 
-        // Pre-fill with pending draft (e.g. from file browser pi action)
-        if let draft = navigation.pendingQuickSessionDraft {
-            text = draft
-            navigation.pendingQuickSessionDraft = nil
-        }
-
         // Auto-focus the text input
         composerFocusRequestID += 1
 

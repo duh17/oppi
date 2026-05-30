@@ -10,9 +10,9 @@ import SwiftUI
 ///
 /// The dismiss (back) button calls SwiftUI's `dismiss()` to pop the navigation.
 ///
-/// Selected-text action routing: reads from `\.selectedTextActionScope` in the
-/// SwiftUI environment when no explicit router is provided. This means new
-/// callers get action routing for free as long as the environment is set by an
+/// Review comment selection routing: reads from `\.reviewCommentSelectionScope`
+/// in the SwiftUI environment when no explicit router is provided. This means new
+/// callers get comment routing for free as long as the environment is set by an
 /// ancestor (which `ContentView` does at the root level).
 ///
 /// Usage:
@@ -27,21 +27,21 @@ import SwiftUI
 /// ```
 struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
-    var selectedTextActionContext: SelectedTextActionContext?
-    var selectedTextActionRouter: SelectedTextPiActionRouter?
-    var selectedTextSessionId: String?
-    var selectedTextSourceLabel: String?
+    var reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    var reviewCommentSessionId: String?
+    var reviewCommentSourceLabel: String?
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
     /// Effective action context for this embedded fullscreen presentation.
-    private var effectiveActionContext: SelectedTextActionContext? {
-        selectedTextActionContext
-            ?? selectedTextActionRouter.map { SelectedTextActionContext(router: $0, sessionId: selectedTextSessionId, sourceLabel: selectedTextSourceLabel) }
-            ?? selectedTextActionScope?.makeActionContext(
-                sessionId: selectedTextSessionId,
-                sourceLabel: selectedTextSourceLabel
+    private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionContext
+            ?? reviewCommentSelectionRouter.map { ReviewCommentSelectionContext(router: $0, sessionId: reviewCommentSessionId, sourceLabel: reviewCommentSourceLabel) }
+            ?? reviewCommentSelectionScope?.makeContext(
+                sessionId: reviewCommentSessionId,
+                sourceLabel: reviewCommentSourceLabel
             )
     }
 
@@ -50,7 +50,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         return FullScreenCodeViewController(
             content: content,
             presentationMode: .embedded(onDismiss: { dismissAction() }),
-            selectedTextActionContext: effectiveActionContext
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext
         )
     }
 

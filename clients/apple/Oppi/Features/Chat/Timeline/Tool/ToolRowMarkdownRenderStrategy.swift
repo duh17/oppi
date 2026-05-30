@@ -12,8 +12,8 @@ struct ToolRowMarkdownRenderStrategy {
         previousAutoFollow: Bool,
         wasExpandedVisible: Bool,
         isUsingMarkdownLayout: Bool,
-        selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
         textSelectionEnabled: Bool
     ) -> ExpandedRenderOutput {
@@ -31,8 +31,8 @@ struct ToolRowMarkdownRenderStrategy {
             // Disable the plain-text fallback threshold so write/read tools
             // always render formatted markdown regardless of content size.
             plainTextFallbackThreshold: nil,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: selectedTextSourceContext,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSourceContext: reviewCommentSourceContext,
             reviewCommentAnnotations: reviewCommentAnnotations,
             perfSurface: .toolExpanded
         ))

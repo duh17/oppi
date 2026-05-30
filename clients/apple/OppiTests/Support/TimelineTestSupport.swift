@@ -243,7 +243,7 @@ extension TimelineTestHarness {
         renderWindowStep: Int = 50,
         isBusy: Bool = false,
         streamingAssistantID: String? = nil,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         onShowEarlier: @escaping () -> Void = {}
     ) {
         let config = makeTimelineConfiguration(
@@ -261,7 +261,7 @@ extension TimelineTestHarness {
             connection: connection,
             scrollController: scrollController,
             audioPlayer: audioPlayer,
-            selectedTextPiRouter: selectedTextPiRouter
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter
         )
         coordinator.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
@@ -322,7 +322,7 @@ struct WindowedTimelineHarness {
         renderWindowStep: Int = 50,
         isBusy: Bool = true,
         streamingID: String? = nil,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         onShowEarlier: @escaping () -> Void = {}
     ) {
         harness.applyAndLayout(
@@ -331,7 +331,7 @@ struct WindowedTimelineHarness {
             renderWindowStep: renderWindowStep,
             isBusy: isBusy,
             streamingAssistantID: streamingID,
-            selectedTextPiRouter: selectedTextPiRouter,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             onShowEarlier: onShowEarlier
         )
     }
@@ -455,7 +455,7 @@ func makeTimelineConfiguration(
     audioPlayer: AudioPlayerService,
     topOverlap: CGFloat = 0,
     bottomOverlap: CGFloat = 0,
-    selectedTextPiRouter: SelectedTextPiActionRouter? = nil
+    reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
@@ -475,7 +475,7 @@ func makeTimelineConfiguration(
         toolSegmentStore: toolSegmentStore,
         connection: connection,
         audioPlayer: audioPlayer,
-        selectedTextPiRouter: selectedTextPiRouter,
+        reviewCommentSelectionRouter: reviewCommentSelectionRouter,
         topOverlap: topOverlap,
         bottomOverlap: bottomOverlap
     )
@@ -513,6 +513,19 @@ func expectTimelineRowsUseConfigurationType<T>(
     for item in items {
         let cell = try configuredTimelineCell(in: collectionView, item: item, section: section)
         #expect(cell.contentConfiguration is T, "Expected \(type) at item \(item)")
+    }
+}
+
+@MainActor
+func setTimelineUserScrollOffsetY(_ collectionView: UICollectionView, _ rawOffsetY: CGFloat) {
+    if let anchoredCV = collectionView as? AnchoredCollectionView {
+        anchoredCV.clearExpandCollapseAnchor()
+        anchoredCV.applyOffsetCorrection(rawOffsetY)
+        if anchoredCV.isDetachedFromBottom {
+            anchoredCV.captureDetachedAnchor()
+        }
+    } else {
+        collectionView.contentOffset.y = rawOffsetY
     }
 }
 
@@ -577,8 +590,8 @@ func makeTimelineToolConfiguration(
     isExpanded: Bool,
     isDone: Bool = true,
     isError: Bool = false,
-    selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-    selectedTextSessionId: String? = nil
+    reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+    reviewCommentSessionId: String? = nil
 ) -> ToolTimelineRowConfiguration {
     ToolTimelineRowConfiguration(
         itemID: "tool-row-test-item",
@@ -603,8 +616,8 @@ func makeTimelineToolConfiguration(
         elapsedSeconds: nil,
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil,
-        selectedTextPiRouter: selectedTextPiRouter,
-        selectedTextSessionId: selectedTextSessionId
+        reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+        reviewCommentSessionId: reviewCommentSessionId
     )
 }
 

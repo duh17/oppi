@@ -161,7 +161,7 @@ struct OppiApp: App {
     @State private var coordinator = ConnectionCoordinator(serverStore: ServerStore())
     @State private var navigation = AppNavigation()
     @State private var themeStore = ThemeStore()
-    @State private var piQuickActionStore = PiQuickActionStore()
+    @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
@@ -212,8 +212,7 @@ struct OppiApp: App {
             .environment(navigation)
             .environment(coordinator.serverStore)
             .environment(themeStore)
-            .environment(piQuickActionStore)
-            .environment(\.piQuickActionStore, piQuickActionStore)
+            .environment(quickCommentTemplateStore)
             .environment(\.theme, themeStore.appTheme)
             .tint(.themeBlue)
             .background {

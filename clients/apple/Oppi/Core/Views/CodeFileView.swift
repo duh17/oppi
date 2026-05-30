@@ -14,10 +14,10 @@ struct CodeFileView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
-    private var selectedTextActionContext: SelectedTextActionContext? {
-        selectedTextActionScope?.makeActionContext(
+    private var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionScope?.makeContext(
             sourceLabel: language.displayName,
             filePath: filePath,
             languageHint: language.displayName
@@ -50,7 +50,7 @@ struct CodeFileView: View {
                 content: content,
                 language: language.displayName,
                 startLine: startLine,
-                selectedTextSourceContext: selectedTextActionContext?
+                reviewCommentSourceContext: reviewCommentSelectionContext?
                     .sourceContext(
                         surface: .fullScreenCode,
                         filePath: filePath,

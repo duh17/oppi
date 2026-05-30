@@ -4,7 +4,7 @@ import SwiftUI
 
 /// SwiftUI bridge for ``RenderableDocumentView``.
 ///
-/// Reads SwiftUI environment (selected-text action scope, allowsFullScreenExpansion),
+/// Reads SwiftUI environment (review comment selection scope, allowsFullScreenExpansion),
 /// owns the `@State showFullScreen` + `.fullScreenViewer()` modifier,
 /// and passes everything to the UIKit view.
 ///
@@ -29,8 +29,7 @@ struct RenderableDocumentWrapper: View {
     let renderedViewFactory: @MainActor () -> UIView
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
-    @Environment(\.selectedTextPiActionRouter) private var piRouter
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var showFullScreen = false
 
     init(
@@ -49,8 +48,8 @@ struct RenderableDocumentWrapper: View {
         self.renderedViewFactory = renderedViewFactory
     }
 
-    private var effectiveActionContext: SelectedTextActionContext? {
-        selectedTextActionScope?.makeActionContext()
+    private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionScope?.makeContext()
     }
 
     var body: some View {
@@ -61,13 +60,12 @@ struct RenderableDocumentWrapper: View {
             presentation: presentation,
             renderedViewFactory: renderedViewFactory,
             allowsFullScreenExpansion: allowsFullScreenExpansion,
-            piRouter: piRouter,
             onExpandFullScreen: { showFullScreen = true }
         )
         .fullScreenViewer(
             isPresented: $showFullScreen,
             content: fullScreenContent,
-            selectedTextActionContext: effectiveActionContext
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext
         )
     }
 }
@@ -81,7 +79,6 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
     let presentation: FileContentPresentation
     let renderedViewFactory: @MainActor () -> UIView
     let allowsFullScreenExpansion: Bool
-    let piRouter: SelectedTextPiActionRouter?
     let onExpandFullScreen: () -> Void
 
     func makeUIView(context: Context) -> RenderableDocumentView {
@@ -91,8 +88,7 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
             filePath: filePath,
             presentation: presentation,
             renderedContentView: renderedViewFactory(),
-            allowsFullScreenExpansion: allowsFullScreenExpansion,
-            piRouter: piRouter
+            allowsFullScreenExpansion: allowsFullScreenExpansion
         )
         view.onExpandFullScreen = onExpandFullScreen
         return view

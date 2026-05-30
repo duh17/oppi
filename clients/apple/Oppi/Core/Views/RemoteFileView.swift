@@ -19,7 +19,7 @@ struct RemoteFileView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var content: String?
     @State private var imageData: Data?
     @State private var isLoading = true
@@ -95,7 +95,7 @@ struct RemoteFileView: View {
                 // The VC has its own nav controller with dismiss, copy, share, toggle.
                 FullScreenCodeView(
                     content: fullScreenContent(text: content),
-                    selectedTextActionContext: selectedTextActionScope?.makeActionContext(
+                    reviewCommentSelectionContext: reviewCommentSelectionScope?.makeContext(
                         sessionId: sessionId,
                         sourceLabel: filename,
                         filePath: path

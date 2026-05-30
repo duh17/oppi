@@ -200,7 +200,7 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func compactionRowsRenderWithNativeConfiguration() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
 
         let rows: [ChatItem] = [
             .systemEvent(
@@ -218,7 +218,7 @@ struct ChatTimelineCoordinatorTests {
             connection: harness.connection,
             scrollController: harness.scrollController,
             audioPlayer: harness.audioPlayer,
-            selectedTextPiRouter: router
+            reviewCommentSelectionRouter: router
         )
         harness.coordinator.apply(configuration: config, to: harness.collectionView)
 
@@ -590,7 +590,7 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func compactionRowExpandedSelectedTextEditMenuPrependsCommentAction() throws {
         let interactionCtx = TimelineInteractionContext()
-        interactionCtx.selectedTextPiRouter = SelectedTextPiActionRouter { _ in }
+        interactionCtx.reviewCommentSelectionRouter = ReviewCommentSelectionRouter { _ in }
         interactionCtx.sessionId = "session-1"
 
         let config = CompactionTimelineRowConfiguration(

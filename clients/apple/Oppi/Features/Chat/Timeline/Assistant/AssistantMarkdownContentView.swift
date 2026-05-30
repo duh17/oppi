@@ -37,8 +37,8 @@ final class AssistantMarkdownContentView: UIView {
         let themeID: ThemeID
         let textSelectionEnabled: Bool
         let plainTextFallbackThreshold: Int?
-        let selectedTextPiRouter: SelectedTextPiActionRouter?
-        let selectedTextSourceContext: SelectedTextSourceContext?
+        let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+        let reviewCommentSourceContext: ReviewCommentSourceContext?
         let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
         /// Workspace context for resolving inline image paths.
         let workspaceID: String?
@@ -71,8 +71,8 @@ final class AssistantMarkdownContentView: UIView {
             themeID: ThemeID,
             textSelectionEnabled: Bool = true,
             plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
-            selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-            selectedTextSourceContext: SelectedTextSourceContext? = nil,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+            reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
             reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
             workspaceID: String? = nil,
             sessionID: String? = nil,
@@ -86,8 +86,8 @@ final class AssistantMarkdownContentView: UIView {
             self.themeID = themeID
             self.textSelectionEnabled = textSelectionEnabled
             self.plainTextFallbackThreshold = plainTextFallbackThreshold
-            self.selectedTextPiRouter = selectedTextPiRouter
-            self.selectedTextSourceContext = selectedTextSourceContext
+            self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+            self.reviewCommentSourceContext = reviewCommentSourceContext
             self.reviewCommentAnnotations = reviewCommentAnnotations
             self.workspaceID = workspaceID
             self.sessionID = sessionID
@@ -103,8 +103,8 @@ final class AssistantMarkdownContentView: UIView {
             themeID: ThemeID,
             textSelectionEnabled: Bool = true,
             plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
-            selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-            selectedTextSourceContext: SelectedTextSourceContext? = nil,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+            reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
             reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
             workspaceID: String? = nil,
             sessionID: String? = nil,
@@ -119,8 +119,8 @@ final class AssistantMarkdownContentView: UIView {
                 themeID: themeID,
                 textSelectionEnabled: textSelectionEnabled,
                 plainTextFallbackThreshold: plainTextFallbackThreshold,
-                selectedTextPiRouter: selectedTextPiRouter,
-                selectedTextSourceContext: selectedTextSourceContext,
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+                reviewCommentSourceContext: reviewCommentSourceContext,
                 reviewCommentAnnotations: reviewCommentAnnotations,
                 workspaceID: workspaceID,
                 sessionID: sessionID,
@@ -137,8 +137,8 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.themeID == rhs.themeID
                 && lhs.textSelectionEnabled == rhs.textSelectionEnabled
                 && lhs.plainTextFallbackThreshold == rhs.plainTextFallbackThreshold
-                && lhs.selectedTextPiRouter === rhs.selectedTextPiRouter
-                && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
+                && lhs.reviewCommentSelectionRouter === rhs.reviewCommentSelectionRouter
+                && lhs.reviewCommentSourceContext == rhs.reviewCommentSourceContext
                 && lhs.reviewCommentAnnotations == rhs.reviewCommentAnnotations
                 && lhs.workspaceID == rhs.workspaceID
                 && lhs.sessionID == rhs.sessionID
@@ -258,12 +258,12 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
     ) -> UIMenu? {
         guard let config = currentConfig else { return nil }
 
-        return SelectedTextPiEditMenuSupport.buildMenu(
+        return ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: config.selectedTextPiRouter,
-            sourceContext: config.selectedTextSourceContext
+            router: config.reviewCommentSelectionRouter,
+            sourceContext: config.reviewCommentSourceContext
         )
     }
 

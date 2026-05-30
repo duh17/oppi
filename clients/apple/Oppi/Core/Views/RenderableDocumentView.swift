@@ -114,8 +114,7 @@ final class RenderableDocumentView: UIView {
         filePath: String?,
         presentation: FileContentPresentation,
         renderedContentView: UIView,
-        allowsFullScreenExpansion: Bool,
-        piRouter: SelectedTextPiActionRouter?
+        allowsFullScreenExpansion: Bool
     ) {
         self.config = config
         self.content = content
@@ -130,9 +129,9 @@ final class RenderableDocumentView: UIView {
         let palette = ThemeRuntimeState.currentPalette()
 
         if isInline {
-            setupInlineMode(palette: palette, piRouter: piRouter)
+            setupInlineMode(palette: palette)
         } else {
-            setupDocumentMode(palette: palette, piRouter: piRouter)
+            setupDocumentMode(palette: palette)
         }
 
         if isInline {
@@ -145,7 +144,7 @@ final class RenderableDocumentView: UIView {
 
     // MARK: - Inline Mode
 
-    private func setupInlineMode(palette: ThemePalette, piRouter: SelectedTextPiActionRouter?) {
+    private func setupInlineMode(palette: ThemePalette) {
         let outerStack = UIStackView()
         outerStack.axis = .vertical
         outerStack.spacing = 0
@@ -183,7 +182,7 @@ final class RenderableDocumentView: UIView {
 
     // MARK: - Document Mode
 
-    private func setupDocumentMode(palette: ThemePalette, piRouter: SelectedTextPiActionRouter?) {
+    private func setupDocumentMode(palette: ThemePalette) {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentContainer)
         NSLayoutConstraint.activate([
@@ -233,8 +232,8 @@ final class RenderableDocumentView: UIView {
                     startLine: 1,
                     palette: palette,
                     alwaysBounceVertical: !isInline,
-                    selectedTextPiRouter: nil,
-                    selectedTextSourceContext: nil
+                    reviewCommentSelectionRouter: nil,
+                    reviewCommentSourceContext: nil
                 )
             }
             if let sv = sourceView {

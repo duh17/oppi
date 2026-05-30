@@ -163,7 +163,7 @@ struct AssistantMarkdownLayoutTests {
                     return false
                 }
                 return timelineAllViews(in: imageView).contains {
-                    String(describing: type(of: $0)).contains("PiWKWebView") && !$0.isHidden
+                    String(describing: type(of: $0)).contains("ReviewCommentWKWebView") && !$0.isHidden
                 }
             }
         }

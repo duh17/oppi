@@ -108,9 +108,9 @@ struct ThinkingRowContentViewTests {
     }
 
     @Test func selectedTextEditMenuPrependsCommentAction() throws {
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         let interactionCtx = TimelineInteractionContext()
-        interactionCtx.selectedTextPiRouter = router
+        interactionCtx.reviewCommentSelectionRouter = router
         interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
@@ -137,9 +137,9 @@ struct ThinkingRowContentViewTests {
     }
 
     @Test func selectedTextModeKeepsOverflowFullScreenGesturesAndDisablesInlineSelection() throws {
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         let interactionCtx = TimelineInteractionContext()
-        interactionCtx.selectedTextPiRouter = router
+        interactionCtx.reviewCommentSelectionRouter = router
         interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
@@ -170,9 +170,9 @@ struct ThinkingRowContentViewTests {
     }
 
     @Test func selectedTextModeAllowsInlineSelectionWhenThinkingFitsBubble() throws {
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         let interactionCtx = TimelineInteractionContext()
-        interactionCtx.selectedTextPiRouter = router
+        interactionCtx.reviewCommentSelectionRouter = router
         interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,

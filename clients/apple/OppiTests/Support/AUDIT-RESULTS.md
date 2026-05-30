@@ -58,21 +58,21 @@ anotherSessionTookOver removal, TimelineInteractionContext introduction, TestEve
 
 ## Stale Patterns (reference removed or migrating concepts)
 
-### `makeTimelineToolConfiguration()` — selectedTextPiRouter/selectedTextSessionId params
+### `makeTimelineToolConfiguration()` — reviewCommentSelectionRouter/reviewCommentSessionId params
 
 **File:** `TimelineTestSupport.swift` lines 551-593
 
-The factory still accepts `selectedTextPiRouter` and `selectedTextSessionId` as direct parameters
+The factory still accepts `reviewCommentSelectionRouter` and `reviewCommentSessionId` as direct parameters
 and threads them into `ToolTimelineRowConfiguration`. Production code still carries these fields
 on `ToolTimelineRowConfiguration`, so the factory is **not broken**. However, the broader migration
-toward `TimelineInteractionContext` (which now holds `selectedTextPiRouter` on the collection
+toward `TimelineInteractionContext` (which now holds `reviewCommentSelectionRouter` on the collection
 controller context) means this threading pattern is on borrowed time.
 
-**12 call sites** still pass `selectedTextPiRouter:` through the factory across 6 test files.
+**12 call sites** still pass `reviewCommentSelectionRouter:` through the factory across 6 test files.
 These will need updating when the remaining row configurations drop the direct params.
 
-**Action:** No change now. When `ToolTimelineRowConfiguration` drops `selectedTextPiRouter`/
-`selectedTextSessionId`, update this factory and all 12 call sites simultaneously.
+**Action:** No change now. When `ToolTimelineRowConfiguration` drops `reviewCommentSelectionRouter`/
+`reviewCommentSessionId`, update this factory and all 12 call sites simultaneously.
 
 ### No stale references found for:
 - `themeID` — already fully removed from support files
@@ -191,7 +191,7 @@ These will need updating when the remaining row configurations drop the direct p
 | Category | Lines | Action |
 |----------|-------|--------|
 | Dead (private Ack helpers) | ~55 | Delete from `ServerConnectionScenarioSupport.swift` |
-| Stale pattern (selectedTextPiRouter threading) | ~40 | Update when production drops the fields |
+| Stale pattern (reviewCommentSelectionRouter threading) | ~40 | Update when production drops the fields |
 | Rarely used | ~50 | Leave; small and domain-specific |
 | Healthy | ~3,150 | Leave alone |
 

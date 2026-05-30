@@ -3,7 +3,7 @@ import Observation
 
 struct ReviewCommentDraftContext: Identifiable, Equatable {
     let id = UUID()
-    let request: SelectedTextPiRequest
+    let request: ReviewCommentSelectionRequest
 }
 
 @MainActor @Observable
@@ -19,7 +19,7 @@ final class ChatReviewCommentsController {
     var activeCount: Int { store.activeCount }
     var stagedCommentIds: [String] { store.stagedComments.map(\.id) }
 
-    func beginComment(_ request: SelectedTextPiRequest) {
+    func beginComment(_ request: ReviewCommentSelectionRequest) {
         pendingDraft = ReviewCommentDraftContext(request: request)
     }
 
@@ -49,7 +49,7 @@ final class ChatReviewCommentsController {
     }
 
     @discardableResult
-    func save(body: String, request: SelectedTextPiRequest, api: APIClient?, workspaceId: String?, sessionId: String) async -> String? {
+    func save(body: String, request: ReviewCommentSelectionRequest, api: APIClient?, workspaceId: String?, sessionId: String) async -> String? {
         guard let api else {
             return "Connect to a server before saving review comments."
         }
@@ -113,7 +113,7 @@ final class ChatReviewCommentsController {
         return didMarkSent ? nil : "Sent, but failed to update review comment status. Open Review Comments before sending again."
     }
 
-    private static func reviewReference(for request: SelectedTextPiRequest) -> ReviewCommentReference {
+    private static func reviewReference(for request: ReviewCommentSelectionRequest) -> ReviewCommentReference {
         ReviewCommentReference(
             source: request.source.reviewCommentReferenceSource,
             label: request.source.sourceLabel,

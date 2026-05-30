@@ -3,8 +3,8 @@ import UIKit
 @testable import Oppi
 
 @MainActor
-@Suite("Full-screen selected text π actions")
-struct FullScreenSelectedTextTests {
+@Suite("Full-screen review comment selection")
+struct FullScreenReviewCommentSelectionTests {
     @Test func codeBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
@@ -175,8 +175,8 @@ struct FullScreenSelectedTextTests {
             command: nil,
             stream: nil,
             palette: ThemeID.dark.palette,
-            selectedTextPiRouter: nil,
-            selectedTextSourceContext: nil
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
         )
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -302,12 +302,11 @@ struct FullScreenSelectedTextTests {
     @Test func routerForwardsFullscreenPresenterWhenCommentActionDispatches() throws {
         let presenter = UIViewController()
         var forwardedPresenter: UIViewController?
-        let request = SelectedTextPiRequest(
-            action: .reviewCommentAction,
+        let request = ReviewCommentSelectionRequest(
             selectedText: "selected text",
-            source: SelectedTextSourceContext(sessionId: "session-1", surface: .fullScreenMarkdown)
+            source: ReviewCommentSourceContext(sessionId: "session-1", surface: .fullScreenMarkdown)
         )
-        let router = SelectedTextPiActionRouter(dispatchWithPresentation: { _, presentingViewController in
+        let router = ReviewCommentSelectionRouter(dispatchWithPresentation: { _, presentingViewController in
             forwardedPresenter = presentingViewController
         })
 
@@ -341,9 +340,9 @@ struct FullScreenSelectedTextTests {
     private func makeController(content: FullScreenCodeContent) -> FullScreenCodeViewController {
         let controller = FullScreenCodeViewController(
             content: content,
-            selectedTextPiRouter: SelectedTextPiActionRouter { _ in },
-            selectedTextSessionId: "session-1",
-            selectedTextSourceLabel: "Full Screen"
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
+            reviewCommentSessionId: "session-1",
+            reviewCommentSourceLabel: "Full Screen"
         )
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)

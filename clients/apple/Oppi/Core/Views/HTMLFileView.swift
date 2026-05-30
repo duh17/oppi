@@ -12,8 +12,7 @@ struct HTMLFileView: View {
     let filePath: String?
     let presentation: FileContentPresentation
 
-    @Environment(\.selectedTextPiActionRouter) private var piRouter
-    @Environment(\.piQuickActionStore) private var piQuickActionStore
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
     var body: some View {
         RenderableDocumentWrapper(
@@ -22,30 +21,23 @@ struct HTMLFileView: View {
             filePath: filePath,
             presentation: presentation,
             fullScreenContent: .html(content: content, filePath: filePath),
-            renderedViewFactory: { [content, filePath, piRouter, piQuickActionStore] in
-                let sourceContext = SelectedTextSourceContext(
-                    sessionId: "",
-                    surface: .fullScreenSource,
-                    filePath: filePath
-                )
-                let piHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = piRouter.flatMap { router in
-                    guard router.allowsReviewComments else { return nil }
-                    return { text, action, presentingViewController in
-                        router.dispatch(
-                            SelectedTextPiRequest(
-                                action: action,
+            renderedViewFactory: { [content, filePath, reviewCommentSelectionScope] in
+                let selectionContext = reviewCommentSelectionScope?.makeContext(filePath: filePath)
+                let handler: ((String, UIViewController?) -> Void)? = selectionContext.map { context in
+                    { text, presentingViewController in
+                        context.dispatcher.dispatch(
+                            ReviewCommentSelectionRequest(
                                 selectedText: text,
-                                source: sourceContext
+                                source: context.sourceContext(
+                                    surface: .fullScreenSource,
+                                    filePath: filePath
+                                )
                             ),
                             presentingViewController: presentingViewController
                         )
                     }
                 }
-                return HTMLRenderView(
-                    htmlString: content,
-                    piActionHandler: piHandler,
-                    piActionStore: piQuickActionStore
-                )
+                return HTMLRenderView(htmlString: content, reviewCommentHandler: handler)
             }
         )
     }

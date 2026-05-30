@@ -3,7 +3,7 @@ import Foundation
 /// Pure-function helpers for selected-text source context resolution and selection flag
 /// computation. Extracted from ToolTimelineRowContentView to isolate logic that is testable
 /// without constructing UITextViews.
-enum ToolTimelineRowSelectedTextSupport {
+enum ToolTimelineRowReviewCommentSelectionSupport {
 
     /// Identifies which text surface is requesting a source context.
     enum Surface {
@@ -26,7 +26,7 @@ enum ToolTimelineRowSelectedTextSupport {
 
     // MARK: - Source context resolution
 
-    /// Resolve which `SelectedTextSourceContext` applies for a given surface.
+    /// Resolve which `ReviewCommentSourceContext` applies for a given surface.
     ///
     /// - Parameters:
     ///   - surface: Which text view is requesting context.
@@ -43,10 +43,10 @@ enum ToolTimelineRowSelectedTextSupport {
         sourceLabel: String,
         timelineItemId: String? = nil,
         expandedLabelText: String?
-    ) -> SelectedTextSourceContext? {
+    ) -> ReviewCommentSourceContext? {
         switch surface {
         case .command:
-            return SelectedTextSourceContext(
+            return ReviewCommentSourceContext(
                 sessionId: sessionId,
                 surface: .toolCommand,
                 sourceLabel: sourceLabel,
@@ -54,7 +54,7 @@ enum ToolTimelineRowSelectedTextSupport {
             )
 
         case .output:
-            return SelectedTextSourceContext(
+            return ReviewCommentSourceContext(
                 sessionId: sessionId,
                 surface: .toolOutput,
                 sourceLabel: sourceLabel,
@@ -74,7 +74,7 @@ enum ToolTimelineRowSelectedTextSupport {
         case .expandedMarkdown:
             guard let expandedContent else { return nil }
             guard case .markdown = expandedContent else { return nil }
-            return SelectedTextSourceContext(
+            return ReviewCommentSourceContext(
                 sessionId: sessionId,
                 surface: .toolExpandedText,
                 sourceLabel: sourceLabel,
@@ -133,7 +133,7 @@ enum ToolTimelineRowSelectedTextSupport {
         sourceLabel: String,
         timelineItemId: String?,
         expandedLabelText: String?
-    ) -> SelectedTextSourceContext? {
+    ) -> ReviewCommentSourceContext? {
         switch expandedContent {
         case .code(_, let language, let startLine, let filePath):
             let lineRange: ClosedRange<Int>?
@@ -144,7 +144,7 @@ enum ToolTimelineRowSelectedTextSupport {
             } else {
                 lineRange = nil
             }
-            return SelectedTextSourceContext(
+            return ReviewCommentSourceContext(
                 sessionId: sessionId,
                 surface: .toolExpandedText,
                 sourceLabel: sourceLabel,
@@ -155,7 +155,7 @@ enum ToolTimelineRowSelectedTextSupport {
             )
 
         case .diff(_, let path):
-            return SelectedTextSourceContext(
+            return ReviewCommentSourceContext(
                 sessionId: sessionId,
                 surface: .toolExpandedText,
                 sourceLabel: sourceLabel,
@@ -164,7 +164,7 @@ enum ToolTimelineRowSelectedTextSupport {
             )
 
         case .text(_, let language):
-            return SelectedTextSourceContext(
+            return ReviewCommentSourceContext(
                 sessionId: sessionId,
                 surface: .toolExpandedText,
                 sourceLabel: sourceLabel,

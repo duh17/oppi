@@ -46,8 +46,8 @@ final class NativeMermaidBlockView: UIView {
     /// Used to recompute inline height if the view width changes later.
     private var renderedDiagramNaturalSize: CGSize?
     private var renderTask: Task<Void, Never>?
-    private var selectedTextPiRouter: SelectedTextPiActionRouter?
-    private var selectedTextSourceContext: SelectedTextSourceContext?
+    private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private var reviewCommentSourceContext: ReviewCommentSourceContext?
 
     // MARK: - Init
 
@@ -201,15 +201,15 @@ final class NativeMermaidBlockView: UIView {
         }
     }
 
-    /// Configure selected-text Pi action forwarding on the inner code block.
-    func configureSelectedTextPi(
-        router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?,
+    /// Configure review-comment selection forwarding on the inner code block.
+    func configureReviewCommentSelection(
+        router: ReviewCommentSelectionRouter?,
+        sourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
-        selectedTextPiRouter = router
-        selectedTextSourceContext = sourceContext
-        codeBlockView.configureSelectedTextPi(
+        reviewCommentSelectionRouter = router
+        reviewCommentSourceContext = sourceContext
+        codeBlockView.configureReviewCommentSelection(
             router: router,
             sourceContext: sourceContext,
             reviewCommentAnnotations: reviewCommentAnnotations
@@ -289,9 +289,9 @@ final class NativeMermaidBlockView: UIView {
         let content = FullScreenCodeContent.mermaid(content: code, filePath: nil)
         FullScreenCodeViewController.present(
             content: content,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSessionId: selectedTextSourceContext?.sessionId,
-            selectedTextSourceLabel: selectedTextSourceContext?.sourceLabel
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
+            reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
         )
     }
 }

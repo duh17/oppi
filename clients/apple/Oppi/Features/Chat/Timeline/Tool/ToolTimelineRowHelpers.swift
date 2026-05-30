@@ -31,10 +31,10 @@ enum ToolTimelineRowPresentationHelpers {
     static func presentFullScreenContent(
         _ content: FullScreenCodeContent,
         from sourceView: UIView,
-        selectedTextActionContext: SelectedTextActionContext? = nil,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+        reviewCommentSessionId: String? = nil,
+        reviewCommentSourceLabel: String? = nil,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         guard let presenter = nearestViewController(from: sourceView) else {
@@ -46,11 +46,11 @@ enum ToolTimelineRowPresentationHelpers {
 
         let controller = FullScreenCodeViewController(
             content: content,
-            selectedTextActionContext: selectedTextActionContext
-                ?? SelectedTextActionContext(
-                    router: selectedTextPiRouter,
-                    sessionId: selectedTextSessionId,
-                    sourceLabel: selectedTextSourceLabel
+            reviewCommentSelectionContext: reviewCommentSelectionContext
+                ?? ReviewCommentSelectionContext(
+                    router: reviewCommentSelectionRouter,
+                    sessionId: reviewCommentSessionId,
+                    sourceLabel: reviewCommentSourceLabel
                 ),
             reviewCommentAnnotations: reviewCommentAnnotations
         )

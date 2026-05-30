@@ -137,15 +137,15 @@ final class AssistantMarkdownSegmentApplier {
             let textView = makeTextView(palette: palette)
             textView.isSelectable = config.textSelectionEnabled
             textView.attributedText = NSAttributedString(attributed)
-            applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
+            applyInlineReviewAnnotations(to: textView, sourceContext: config.reviewCommentSourceContext, config: config)
             stackView.addArrangedSubview(textView)
             textViews[index] = textView
 
         case .codeBlock(let language, let code):
             let codeView = NativeCodeBlockView()
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
-            codeView.configureSelectedTextPi(
-                router: config.selectedTextPiRouter,
+            codeView.configureReviewCommentSelection(
+                router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
                 reviewCommentAnnotations: config.reviewCommentAnnotations
             )
@@ -158,8 +158,8 @@ final class AssistantMarkdownSegmentApplier {
 
         case .table(let headers, let rows):
             let tableView = NativeTableBlockView()
-            tableView.configureSelectedTextPi(
-                router: config.selectedTextPiRouter,
+            tableView.configureReviewCommentSelection(
+                router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantTableSourceContext(config: config),
                 reviewCommentAnnotations: config.reviewCommentAnnotations
             )
@@ -185,8 +185,8 @@ final class AssistantMarkdownSegmentApplier {
         case .mermaidDiagram(let code):
             let mermaidView = NativeMermaidBlockView()
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
-            mermaidView.configureSelectedTextPi(
-                router: config.selectedTextPiRouter,
+            mermaidView.configureReviewCommentSelection(
+                router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
                 reviewCommentAnnotations: config.reviewCommentAnnotations
             )
@@ -201,8 +201,8 @@ final class AssistantMarkdownSegmentApplier {
         case .latexBlock(let code):
             let latexView = NativeLatexBlockView()
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
-            latexView.configureSelectedTextPi(
-                router: config.selectedTextPiRouter,
+            latexView.configureReviewCommentSelection(
+                router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
                 reviewCommentAnnotations: config.reviewCommentAnnotations
             )
@@ -395,7 +395,7 @@ final class AssistantMarkdownSegmentApplier {
                             }
                             let attrText = NSAttributedString(attributed)
                             textView.attributedText = attrText
-                            applyInlineReviewAnnotations(to: textView, sourceContext: config.selectedTextSourceContext, config: config)
+                            applyInlineReviewAnnotations(to: textView, sourceContext: config.reviewCommentSourceContext, config: config)
                             refreshTextViewLayoutAfterContentChange(textView)
                         }
                     }
@@ -407,8 +407,8 @@ final class AssistantMarkdownSegmentApplier {
                         && index == segments.count - 1
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     if !config.isStreaming || isOpen {
-                        codeView.configureSelectedTextPi(
-                            router: config.selectedTextPiRouter,
+                        codeView.configureReviewCommentSelection(
+                            router: config.reviewCommentSelectionRouter,
                             sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
                             reviewCommentAnnotations: config.reviewCommentAnnotations
                         )
@@ -424,8 +424,8 @@ final class AssistantMarkdownSegmentApplier {
 
             case .table(let headers, let rows):
                 if let tableView = tableViews[index] {
-                    tableView.configureSelectedTextPi(
-                        router: config.selectedTextPiRouter,
+                    tableView.configureReviewCommentSelection(
+                        router: config.reviewCommentSelectionRouter,
                         sourceContext: assistantTableSourceContext(config: config),
                         reviewCommentAnnotations: config.reviewCommentAnnotations
                     )
@@ -452,8 +452,8 @@ final class AssistantMarkdownSegmentApplier {
                     let isOpen = config.isStreaming
                         && index == segments.count - 1
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                    mermaidView.configureSelectedTextPi(
-                        router: config.selectedTextPiRouter,
+                    mermaidView.configureReviewCommentSelection(
+                        router: config.reviewCommentSelectionRouter,
                         sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
                         reviewCommentAnnotations: config.reviewCommentAnnotations
                     )
@@ -470,8 +470,8 @@ final class AssistantMarkdownSegmentApplier {
                     let isOpen = config.isStreaming
                         && index == segments.count - 1
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                    latexView.configureSelectedTextPi(
-                        router: config.selectedTextPiRouter,
+                    latexView.configureReviewCommentSelection(
+                        router: config.reviewCommentSelectionRouter,
                         sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
                         reviewCommentAnnotations: config.reviewCommentAnnotations
                     )
@@ -522,9 +522,9 @@ final class AssistantMarkdownSegmentApplier {
     private func assistantCodeBlockSourceContext(
         language: String?,
         config: AssistantMarkdownContentView.Configuration
-    ) -> SelectedTextSourceContext? {
-        guard let base = config.selectedTextSourceContext else { return nil }
-        return SelectedTextSourceContext(
+    ) -> ReviewCommentSourceContext? {
+        guard let base = config.reviewCommentSourceContext else { return nil }
+        return ReviewCommentSourceContext(
             sessionId: base.sessionId,
             surface: .assistantCodeBlock,
             sourceLabel: base.sourceLabel,
@@ -537,9 +537,9 @@ final class AssistantMarkdownSegmentApplier {
 
     private func assistantTableSourceContext(
         config: AssistantMarkdownContentView.Configuration
-    ) -> SelectedTextSourceContext? {
-        guard let base = config.selectedTextSourceContext else { return nil }
-        return SelectedTextSourceContext(
+    ) -> ReviewCommentSourceContext? {
+        guard let base = config.reviewCommentSourceContext else { return nil }
+        return ReviewCommentSourceContext(
             sessionId: base.sessionId,
             surface: .assistantTable,
             sourceLabel: base.sourceLabel,
@@ -552,7 +552,7 @@ final class AssistantMarkdownSegmentApplier {
 
     private func applyInlineReviewAnnotations(
         to textView: UITextView,
-        sourceContext: SelectedTextSourceContext?,
+        sourceContext: ReviewCommentSourceContext?,
         config: AssistantMarkdownContentView.Configuration
     ) {
         guard !config.isStreaming else { return }

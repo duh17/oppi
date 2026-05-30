@@ -444,14 +444,14 @@ final class ImagePreviewNavigationBlocker: NSObject, WKNavigationDelegate {
 }
 
 final class AnimatedImageWebContainerView: UIView {
-    private let webView: PiWKWebView
+    private let webView: ReviewCommentWKWebView
     private let navigationBlocker = ImagePreviewNavigationBlocker()
     private var currentSignature: Int?
     private var loadedSignature: Int?
     private var pendingDataURLString: String?
 
     override init(frame: CGRect) {
-        self.webView = PiWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
+        self.webView = ReviewCommentWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
         super.init(frame: frame)
         setupViews()
     }

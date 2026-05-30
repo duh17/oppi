@@ -40,14 +40,14 @@ func fullScreenAttributedCodeText(from attributed: NSAttributedString) -> NSAttr
 }
 
 @MainActor
-func buildFullScreenSelectedTextMenu(
+func buildFullScreenReviewCommentMenu(
     textView: UITextView,
     range: NSRange,
     suggestedActions: [UIMenuElement],
-    router: SelectedTextPiActionRouter?,
-    sourceContext: SelectedTextSourceContext?
+    router: ReviewCommentSelectionRouter?,
+    sourceContext: ReviewCommentSourceContext?
 ) -> UIMenu? {
-    SelectedTextPiEditMenuSupport.buildMenu(
+    ReviewCommentSelectionEditMenuSupport.buildMenu(
         textView: textView,
         range: range,
         suggestedActions: suggestedActions,

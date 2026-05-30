@@ -4,18 +4,18 @@ import SwiftUI
 ///
 /// Shows the ordered list of templates with edit/delete/reorder support.
 /// Tapping a template opens an editor sheet. "Add Quick Comment" creates a new one.
-struct PiActionsSettingsView: View {
-    @Environment(PiQuickActionStore.self) private var store
+struct QuickCommentsSettingsView: View {
+    @Environment(QuickCommentTemplateStore.self) private var store
 
-    @State private var editingAction: PiQuickAction?
+    @State private var editingTemplate: QuickCommentTemplate?
     @State private var isAdding = false
     @State private var showResetConfirmation = false
 
     var body: some View {
         List {
             Section {
-                ForEach(store.actions) { action in
-                    actionRow(action)
+                ForEach(store.templates) { template in
+                    templateRow(template)
                 }
                 .onDelete { offsets in
                     store.delete(at: offsets)
@@ -29,15 +29,14 @@ struct PiActionsSettingsView: View {
 
             Section {
                 Button {
-                    let newAction = PiQuickAction(
+                    let newTemplate = QuickCommentTemplate(
                         id: UUID(),
                         title: "",
                         systemImage: "text.bubble",
                         promptPrefix: "",
-                        behavior: .currentSession,
-                        sortOrder: store.actions.count
+                        sortOrder: store.templates.count
                     )
-                    editingAction = newAction
+                    editingTemplate = newTemplate
                     isAdding = true
                 } label: {
                     Label("Add Quick Comment", systemImage: "plus")
@@ -58,10 +57,10 @@ struct PiActionsSettingsView: View {
                 EditButton()
             }
         }
-        .sheet(item: $editingAction) { action in
+        .sheet(item: $editingTemplate) { template in
             NavigationStack {
-                PiActionEditorView(
-                    action: action,
+                QuickCommentEditorView(
+                    template: template,
                     isNew: isAdding,
                     onSave: { saved in
                         if isAdding {
@@ -69,11 +68,11 @@ struct PiActionsSettingsView: View {
                         } else {
                             store.update(saved)
                         }
-                        editingAction = nil
+                        editingTemplate = nil
                         isAdding = false
                     },
                     onCancel: {
-                        editingAction = nil
+                        editingTemplate = nil
                         isAdding = false
                     }
                 )
@@ -92,23 +91,23 @@ struct PiActionsSettingsView: View {
         }
     }
 
-    private func actionRow(_ action: PiQuickAction) -> some View {
+    private func templateRow(_ template: QuickCommentTemplate) -> some View {
         Button {
             isAdding = false
-            editingAction = action
+            editingTemplate = template
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: action.systemImage)
+                Image(systemName: template.systemImage)
                     .font(.appAction)
                     .foregroundStyle(.themeBlue)
                     .frame(width: 24, alignment: .center)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(action.title)
+                    Text(template.title)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.themeFg)
 
-                    Text(action.quickCommentText)
+                    Text(template.quickCommentText)
                         .font(.caption2)
                         .foregroundStyle(.themeComment)
                         .lineLimit(1)
@@ -128,28 +127,28 @@ struct PiActionsSettingsView: View {
 // MARK: - Editor
 
 /// Form for creating or editing a single quick comment template.
-struct PiActionEditorView: View {
+struct QuickCommentEditorView: View {
     @State private var title: String
     @State private var systemImage: String
     @State private var promptPrefix: String
 
-    private let actionId: UUID
+    private let templateId: UUID
     private let sortOrder: Int
     private let isNew: Bool
-    private let onSave: (PiQuickAction) -> Void
+    private let onSave: (QuickCommentTemplate) -> Void
     private let onCancel: () -> Void
 
     init(
-        action: PiQuickAction,
+        template: QuickCommentTemplate,
         isNew: Bool,
-        onSave: @escaping (PiQuickAction) -> Void,
+        onSave: @escaping (QuickCommentTemplate) -> Void,
         onCancel: @escaping () -> Void
     ) {
-        _title = State(initialValue: action.title)
-        _systemImage = State(initialValue: action.systemImage)
-        _promptPrefix = State(initialValue: action.promptPrefix)
-        self.actionId = action.id
-        self.sortOrder = action.sortOrder
+        _title = State(initialValue: template.title)
+        _systemImage = State(initialValue: template.systemImage)
+        _promptPrefix = State(initialValue: template.promptPrefix)
+        self.templateId = template.id
+        self.sortOrder = template.sortOrder
         self.isNew = isNew
         self.onSave = onSave
         self.onCancel = onCancel
@@ -197,15 +196,14 @@ struct PiActionEditorView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
-                    let action = PiQuickAction(
-                        id: actionId,
+                    let template = QuickCommentTemplate(
+                        id: templateId,
                         title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                         systemImage: systemImage,
                         promptPrefix: promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines),
-                        behavior: .currentSession,
                         sortOrder: sortOrder
                     )
-                    onSave(action)
+                    onSave(template)
                 }
                 .disabled(!canSave)
             }
@@ -237,7 +235,7 @@ struct PiActionEditorView: View {
 
 // MARK: - SF Symbol Picker
 
-/// Compact SF Symbol picker with common coding/action icons.
+/// Compact SF Symbol picker with common coding and review icons.
 struct SFSymbolPicker: View {
     @Binding var selection: String
 

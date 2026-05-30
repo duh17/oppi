@@ -492,17 +492,17 @@ function runAppleGuardrails(): GuardrailResult {
   }
 
   hits = filterAllowed(
-    rgFiles("(?<!Pi)WKWebView\\(frame:", ["Oppi/"], {
+    rgFiles("(?<!ReviewComment)(?<!Pi)WKWebView\\(frame:", ["Oppi/"], {
       cwd: appleRoot,
       pcre2: true,
       type: "swift",
     }),
-    /PiWKWebView\.swift|HTMLContentTracker|PDFFileView\.swift/,
+    /ReviewCommentWKWebView\.swift|HTMLContentTracker|PDFFileView\.swift/,
   );
   if (hits.length > 0) {
     err(
       `Plain WKWebView instantiation in: ${hits.join(", ")}`,
-      "Use PiWKWebView so pi quick actions appear on text selection",
+      "Use ReviewCommentWKWebView so review comments appear on text selection",
       hits,
     );
   }

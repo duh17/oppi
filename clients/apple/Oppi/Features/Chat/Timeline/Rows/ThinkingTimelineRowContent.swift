@@ -17,8 +17,8 @@ enum ThinkingRowHeightPolicy {
 /// - No floating expand icon in thinking bubbles.
 /// - Context menu exposes "Open Full Screen" and "Copy" when overflowed.
 /// - Double-tap or pinch-out opens full screen.
-/// - Inline text selection only activates when π actions are enabled and the
-///   bubble does not have a full-screen overflow affordance.
+/// - Inline text selection only activates when review comments are enabled and
+///   the bubble does not have a full-screen overflow affordance.
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
@@ -133,13 +133,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         }
     }
 
-    private var isSelectedTextPiEnabled: Bool {
-        currentConfiguration.interactionContext?.selectedTextActionContext != nil
+    private var isReviewCommentSelectionEnabled: Bool {
+        currentConfiguration.interactionContext?.reviewCommentSelectionContext != nil
     }
 
     private var currentInteractionSpec: TimelineExpandableTextInteractionSpec {
         TimelineExpandableTextInteractionSpec.build(
-            hasSelectedTextContext: isSelectedTextPiEnabled,
+            hasReviewCommentContext: isReviewCommentSelectionEnabled,
             supportsFullScreenPreview: canShowFullScreen
         )
     }
@@ -303,7 +303,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
-                updateSelectedTextInteractionPolicy()
+                updateReviewCommentSelectionPolicy()
                 return
             }
 
@@ -361,10 +361,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         }
 
         applyReviewCommentAnnotations()
-        updateSelectedTextInteractionPolicy()
+        updateReviewCommentSelectionPolicy()
     }
 
-    private func updateSelectedTextInteractionPolicy() {
+    private func updateReviewCommentSelectionPolicy() {
         let interaction = currentInteractionSpec
         textLabel.isSelectable = interaction.inlineSelectionEnabled
         scrollView.isUserInteractionEnabled = interaction.inlineSelectionEnabled
@@ -436,7 +436,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             contentIsTruncated = false
             removeFadeMask()
             configureScrollBehavior()
-            updateSelectedTextInteractionPolicy()
+            updateReviewCommentSelectionPolicy()
             return
         }
 
@@ -471,7 +471,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         }
 
         configureScrollBehavior()
-        updateSelectedTextInteractionPolicy()
+        updateReviewCommentSelectionPolicy()
     }
 
     // MARK: - Scroll Behavior
@@ -560,20 +560,20 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             content: trimmedDisplayText,
             stream: fullScreenThinkingStream
         )
-        let selectedTextActionContext = currentConfiguration.interactionContext?
-            .selectedTextActionContext?
+        let reviewCommentSelectionContext = currentConfiguration.interactionContext?
+            .reviewCommentSelectionContext?
             .overriding(
                 sourceLabel: "Thinking",
                 timelineItemId: currentConfiguration.itemID
             )
-        let sourceContext = selectedTextActionContext?.sourceContext(
+        let sourceContext = reviewCommentSelectionContext?.sourceContext(
             surface: .fullScreenThinking,
             sourceLabel: "Thinking"
         )
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            selectedTextActionContext: selectedTextActionContext,
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
             reviewCommentAnnotations: currentConfiguration.interactionContext?
                 .inlineReviewAnnotations(for: sourceContext) ?? []
         )
@@ -645,11 +645,11 @@ extension ThinkingTimelineRowContentView: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        SelectedTextPiEditMenuSupport.buildMenu(
+        ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: currentConfiguration.interactionContext?.selectedTextActionContext?.dispatcher,
+            router: currentConfiguration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .thinking,
                 sourceLabel: "Thinking",

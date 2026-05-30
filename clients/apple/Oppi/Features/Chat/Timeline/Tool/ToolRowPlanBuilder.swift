@@ -12,15 +12,15 @@ enum ToolRowPlanBuilder {
         }
 
         let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent, isDone: configuration.isDone)
-        let hasSelectedTextContext = configuration.selectedTextPiRouter != nil
-            && configuration.selectedTextSessionId != nil
+        let hasReviewCommentContext = configuration.reviewCommentSelectionRouter != nil
+            && configuration.reviewCommentSessionId != nil
         let supportsFullScreen = supportsFullScreenPreview(
             configuration: configuration,
             expandedContent: expandedContent,
             interactionPolicy: interactionPolicy
         )
         let expandedSurfaceInteraction = TimelineExpandableTextInteractionSpec.build(
-            hasSelectedTextContext: hasSelectedTextContext,
+            hasReviewCommentContext: hasReviewCommentContext,
             supportsFullScreenPreview: supportsFullScreen
         )
 
@@ -35,8 +35,8 @@ enum ToolRowPlanBuilder {
         }
         let markdownSelectionEligible = if case .markdown = expandedContent { true } else { false }
 
-        let commandSelectionEnabled = hasSelectedTextContext && commandTextPresent
-        let outputSelectionEnabled = hasSelectedTextContext
+        let commandSelectionEnabled = hasReviewCommentContext && commandTextPresent
+        let outputSelectionEnabled = hasReviewCommentContext
             && isBashMode
             && expandedSurfaceInteraction.inlineSelectionEnabled
             && outputTextPresent

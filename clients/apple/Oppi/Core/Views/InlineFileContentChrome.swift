@@ -17,7 +17,7 @@ struct InlineFileContentChrome<Content: View>: View {
     @ViewBuilder let innerContent: (_ displayContent: String, _ isTruncated: Bool) -> Content
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
-    @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
     @State private var showFullScreen = false
 
     init(
@@ -70,7 +70,7 @@ struct InlineFileContentChrome<Content: View>: View {
         .fullScreenViewer(
             isPresented: $showFullScreen,
             content: fullScreenContent,
-            piRouter: piRouter
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter
         )
     }
 }

@@ -24,7 +24,7 @@ struct ReviewCommentInlineAnnotationTests {
             )
         )
 
-        let context = SelectedTextSourceContext(
+        let context = ReviewCommentSourceContext(
             sessionId: "s1",
             surface: .assistantProse,
             timelineItemId: "item-a"
@@ -50,7 +50,7 @@ struct ReviewCommentInlineAnnotationTests {
             reference: Self.reference(source: .timelineText, selectedText: "selected")
         )
 
-        let context = SelectedTextSourceContext(sessionId: "s1", surface: .assistantProse)
+        let context = ReviewCommentSourceContext(sessionId: "s1", surface: .assistantProse)
         let annotations = ReviewCommentInlineAnnotationMatcher.annotations(
             from: [staged, resolved],
             for: context
@@ -70,12 +70,12 @@ struct ReviewCommentInlineAnnotationTests {
             )
         )
 
-        let proseContext = SelectedTextSourceContext(
+        let proseContext = ReviewCommentSourceContext(
             sessionId: "s1",
             surface: .assistantProse,
             timelineItemId: "item-a"
         )
-        let codeContext = SelectedTextSourceContext(
+        let codeContext = ReviewCommentSourceContext(
             sessionId: "s1",
             surface: .assistantCodeBlock,
             languageHint: "swift",
@@ -95,7 +95,7 @@ struct ReviewCommentInlineAnnotationTests {
                 timelineItemId: "thinking-a"
             )
         )
-        let context = SelectedTextSourceContext(
+        let context = ReviewCommentSourceContext(
             sessionId: "s1",
             surface: .fullScreenThinking,
             timelineItemId: "thinking-a"
@@ -111,14 +111,14 @@ struct ReviewCommentInlineAnnotationTests {
 
     @MainActor
     @Test func fullScreenToolContextsCanStayScopedToToolOutput() {
-        let actionContext = SelectedTextActionContext(
-            dispatcher: SelectedTextPiActionRouter(dispatch: { _ in }),
+        let selectionContext = ReviewCommentSelectionContext(
+            dispatcher: ReviewCommentSelectionRouter(dispatch: { _ in }),
             sessionId: "s1",
             sourceLabel: "tool output",
             timelineItemId: "tool-a",
             sourceSurfaceOverride: .toolExpandedText
         )
-        let sourceContext = actionContext.sourceContext(
+        let sourceContext = selectionContext.sourceContext(
             surface: .fullScreenCode,
             languageHint: "swift"
         )
@@ -138,7 +138,7 @@ struct ReviewCommentInlineAnnotationTests {
             reference: Self.reference(source: .file, path: "Sources/Other.swift", selectedText: "let app")
         )
 
-        let context = SelectedTextSourceContext(
+        let context = ReviewCommentSourceContext(
             sessionId: "s1",
             surface: .fullScreenCode,
             filePath: "Sources/App.swift"

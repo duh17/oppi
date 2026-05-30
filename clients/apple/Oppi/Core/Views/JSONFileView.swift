@@ -13,11 +13,11 @@ struct JSONFileView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var prettyContent: String?
 
-    private var selectedTextActionContext: SelectedTextActionContext? {
-        selectedTextActionScope?.makeActionContext(
+    private var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionScope?.makeContext(
             sourceLabel: "JSON",
             filePath: filePath,
             languageHint: "json"
@@ -52,7 +52,7 @@ struct JSONFileView: View {
                     content: effectiveContent,
                     language: "json",
                     startLine: startLine,
-                    selectedTextSourceContext: selectedTextActionContext?
+                    reviewCommentSourceContext: reviewCommentSelectionContext?
                         .sourceContext(
                             surface: .fullScreenCode,
                             filePath: filePath,

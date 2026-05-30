@@ -40,8 +40,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var audioPlayer: AudioPlayerService? = nil
     var sessionAttachmentFetcher: ((String) async throws -> Data)? = nil
     var sessionFileDataFetcher: ((String) async throws -> Data)? = nil
-    var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
-    var selectedTextSessionId: String? = nil
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
+    var reviewCommentSessionId: String? = nil
     var reviewComments: [ReviewComment] = []
     var onAddBashCommandPolicyRule: (@MainActor (BashCommandPolicyRuleDecision) async throws -> Void)? = nil
 
@@ -53,10 +53,10 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         self
     }
 
-    func withSelectedTextPi(router: SelectedTextPiActionRouter?, sessionId: String?) -> Self {
+    func withReviewCommentSelection(router: ReviewCommentSelectionRouter?, sessionId: String?) -> Self {
         var copy = self
-        copy.selectedTextPiRouter = router
-        copy.selectedTextSessionId = sessionId
+        copy.reviewCommentSelectionRouter = router
+        copy.reviewCommentSessionId = sessionId
         return copy
     }
 
@@ -266,18 +266,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private var selectedTextPiRouter: SelectedTextPiActionRouter? {
-        currentConfiguration.selectedTextPiRouter
+    private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? {
+        currentConfiguration.reviewCommentSelectionRouter
     }
 
-    private var selectedTextSessionId: String? {
-        currentConfiguration.selectedTextSessionId
+    private var reviewCommentSessionId: String? {
+        currentConfiguration.reviewCommentSessionId
     }
 
-    private var selectedTextActionContext: SelectedTextActionContext? {
-        SelectedTextActionContext(
-            router: selectedTextPiRouter,
-            sessionId: selectedTextSessionId,
+    private var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        ReviewCommentSelectionContext(
+            router: reviewCommentSelectionRouter,
+            sessionId: reviewCommentSessionId,
             sourceLabel: currentConfiguration.title,
             timelineItemId: currentConfiguration.itemID,
             sourceSurfaceOverride: .toolExpandedText
@@ -285,7 +285,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private var perfSessionId: String? {
-        currentConfiguration.selectedTextSessionId
+        currentConfiguration.reviewCommentSessionId
     }
 
     override func systemLayoutSizeFitting(
@@ -558,7 +558,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachmentId: attachmentId,
                 mimeType: mimeType,
                 playbackBehavior: playbackBehavior,
-                sessionId: currentConfiguration.selectedTextSessionId,
+                sessionId: currentConfiguration.reviewCommentSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: nil,
                 palette: ThemeRuntimeState.currentPalette(),
@@ -571,7 +571,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachmentId: attachmentId,
                 mimeType: mimeType,
                 playbackBehavior: playbackBehavior,
-                sessionId: currentConfiguration.selectedTextSessionId,
+                sessionId: currentConfiguration.reviewCommentSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
                 palette: ThemeRuntimeState.currentPalette(),
@@ -1074,7 +1074,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputColor: outputColor
         )
 
-        // 5. Interactions, selected text, viewport updates, follow-tail
+        // 5. Interactions, review comments, viewport updates, follow-tail
         applyInteractionsAndScrolling(
             plan: renderPlan,
             showCommand: showCommand,
@@ -1193,7 +1193,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             userInfo: [
                 "commentId": first.id,
                 "commentIds": annotations.map(\.id),
-                "sessionId": selectedTextSessionId ?? "",
+                "sessionId": reviewCommentSessionId ?? "",
             ]
         )
     }
@@ -1271,7 +1271,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    /// Apply interaction policy, selected text integration, viewport heights, and follow-tail.
+    /// Apply interaction policy, review comment selection, viewport heights, and follow-tail.
     private func applyInteractionsAndScrolling(
         plan: ToolRowRenderPlan,
         showCommand: Bool,
@@ -1295,7 +1295,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputScrollView.isScrollEnabled = false
         }
 
-        updateSelectedTextIntegration(
+        updateReviewCommentSelectionIntegration(
             plan: plan,
             showCommandContainer: showCommand,
             showOutputContainer: showOutput,
@@ -1393,8 +1393,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         case .markdown(let text):
             let markdownSelectionEnabled = renderPlan.interactionSpec.markdownSelectionEnabled
-            let selectedTextSourceContext = selectedTextSessionId.flatMap { sessionId in
-                ToolTimelineRowSelectedTextSupport.sourceContext(
+            let reviewCommentSourceContext = reviewCommentSessionId.flatMap { sessionId in
+                ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
                     surface: .expandedMarkdown,
                     expandedContent: .markdown(text: text),
                     sessionId: sessionId,
@@ -1413,9 +1413,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousAutoFollow: expandedShouldAutoFollow,
                 wasExpandedVisible: wasExpandedVisible,
                 isUsingMarkdownLayout: expandedUsesMarkdownLayout,
-                selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
-                selectedTextSourceContext: markdownSelectionEnabled ? selectedTextSourceContext : nil,
-                reviewCommentAnnotations: reviewAnnotations(for: selectedTextSourceContext),
+                reviewCommentSelectionRouter: markdownSelectionEnabled ? reviewCommentSelectionRouter : nil,
+                reviewCommentSourceContext: markdownSelectionEnabled ? reviewCommentSourceContext : nil,
+                reviewCommentAnnotations: reviewAnnotations(for: reviewCommentSourceContext),
                 textSelectionEnabled: markdownSelectionEnabled
             )
 
@@ -1563,17 +1563,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func updateSelectedTextIntegration(
+    private func updateReviewCommentSelectionIntegration(
         plan: ToolRowRenderPlan,
         showCommandContainer: Bool,
         showOutputContainer: Bool,
         showExpandedContainer: Bool,
         expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     ) {
-        let hasSession = selectedTextPiRouter != nil && selectedTextSessionId != nil
+        let hasSession = reviewCommentSelectionRouter != nil && reviewCommentSessionId != nil
         let hasExpandedContext = hasSession && {
-            guard let sessionId = selectedTextSessionId else { return false }
-            return ToolTimelineRowSelectedTextSupport.sourceContext(
+            guard let sessionId = reviewCommentSessionId else { return false }
+            return ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
                 surface: .expandedLabel,
                 expandedContent: expandedContent,
                 sessionId: sessionId,
@@ -1583,7 +1583,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             ) != nil
         }()
 
-        let flags = ToolTimelineRowSelectedTextSupport.selectionFlags(
+        let flags = ToolTimelineRowReviewCommentSelectionSupport.selectionFlags(
             spec: plan.interactionSpec,
             showCommand: showCommandContainer,
             showOutput: showOutputContainer,
@@ -1618,7 +1618,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         showExpanded: Bool
     ) {
         if showCommand {
-            let context = resolveSelectedTextSourceContext(for: commandLabel)
+            let context = resolveReviewCommentSourceContext(for: commandLabel)
             ReviewCommentInlineAnnotationRenderer.apply(
                 to: commandLabel,
                 annotations: reviewAnnotations(for: context),
@@ -1629,7 +1629,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
 
         if showOutput {
-            let context = resolveSelectedTextSourceContext(for: outputLabel)
+            let context = resolveReviewCommentSourceContext(for: outputLabel)
             ReviewCommentInlineAnnotationRenderer.apply(
                 to: outputLabel,
                 annotations: reviewAnnotations(for: context),
@@ -1640,7 +1640,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
 
         if showExpanded, !expandedUsesMarkdownLayout, !expandedUsesReadMediaLayout {
-            let context = resolveSelectedTextSourceContext(for: expandedLabel)
+            let context = resolveReviewCommentSourceContext(for: expandedLabel)
             ReviewCommentInlineAnnotationRenderer.apply(
                 to: expandedLabel,
                 annotations: reviewAnnotations(for: context),
@@ -1651,14 +1651,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func resolveSelectedTextSourceContext(for textView: UITextView) -> SelectedTextSourceContext? {
-        guard let sessionId = selectedTextSessionId,
-              selectedTextPiRouter != nil else {
+    private func resolveReviewCommentSourceContext(for textView: UITextView) -> ReviewCommentSourceContext? {
+        guard let sessionId = reviewCommentSessionId,
+              reviewCommentSelectionRouter != nil else {
             return nil
         }
-        let surface: ToolTimelineRowSelectedTextSupport.Surface
+        let surface: ToolTimelineRowReviewCommentSelectionSupport.Surface
         if textView === commandLabel { surface = .command } else if textView === outputLabel { surface = .output } else if textView === expandedLabel { surface = .expandedLabel } else { return nil }
-        return toolSelectedTextSourceContext(
+        return toolReviewCommentSourceContext(
             surface: surface,
             expandedContent: currentConfiguration.expandedContent,
             sessionId: sessionId,
@@ -1666,13 +1666,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func toolSelectedTextSourceContext(
-        surface: ToolTimelineRowSelectedTextSupport.Surface,
+    private func toolReviewCommentSourceContext(
+        surface: ToolTimelineRowReviewCommentSelectionSupport.Surface,
         expandedContent: ToolPresentationBuilder.ToolExpandedContent?,
         sessionId: String,
         expandedLabelText: String?
-    ) -> SelectedTextSourceContext? {
-        ToolTimelineRowSelectedTextSupport.sourceContext(
+    ) -> ReviewCommentSourceContext? {
+        ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
             surface: surface,
             expandedContent: expandedContent,
             sessionId: sessionId,
@@ -1682,7 +1682,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func reviewAnnotations(for sourceContext: SelectedTextSourceContext?) -> [ReviewCommentInlineAnnotation] {
+    private func reviewAnnotations(for sourceContext: ReviewCommentSourceContext?) -> [ReviewCommentInlineAnnotation] {
         ReviewCommentInlineAnnotationMatcher.annotations(
             from: currentConfiguration.reviewComments,
             for: sourceContext
@@ -1693,13 +1693,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         configuration: ToolTimelineRowConfiguration
     ) -> [ReviewCommentInlineAnnotation] {
         guard !configuration.isExpanded,
-              let sessionId = configuration.selectedTextSessionId else {
+              let sessionId = configuration.reviewCommentSessionId else {
             return []
         }
 
         let expandedLabelText = expandedLabel.text ?? expandedLabel.attributedText?.string
-        let candidateContexts: [SelectedTextSourceContext?] = [
-            ToolTimelineRowSelectedTextSupport.sourceContext(
+        let candidateContexts: [ReviewCommentSourceContext?] = [
+            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
                 surface: .command,
                 expandedContent: configuration.expandedContent,
                 sessionId: sessionId,
@@ -1707,7 +1707,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 timelineItemId: configuration.itemID,
                 expandedLabelText: nil
             ),
-            ToolTimelineRowSelectedTextSupport.sourceContext(
+            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
                 surface: .output,
                 expandedContent: configuration.expandedContent,
                 sessionId: sessionId,
@@ -1715,7 +1715,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 timelineItemId: configuration.itemID,
                 expandedLabelText: nil
             ),
-            ToolTimelineRowSelectedTextSupport.sourceContext(
+            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
                 surface: .expandedLabel,
                 expandedContent: configuration.expandedContent,
                 sessionId: sessionId,
@@ -1723,7 +1723,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 timelineItemId: configuration.itemID,
                 expandedLabelText: expandedLabelText
             ),
-            ToolTimelineRowSelectedTextSupport.sourceContext(
+            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
                 surface: .expandedMarkdown,
                 expandedContent: configuration.expandedContent,
                 sessionId: sessionId,
@@ -1946,66 +1946,66 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            selectedTextActionContext: selectedTextActionContext,
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
             reviewCommentAnnotations: reviewAnnotations(for: fullScreenSourceContext(for: content))
         )
     }
 
-    private func fullScreenSourceContext(for content: FullScreenCodeContent) -> SelectedTextSourceContext? {
-        guard let selectedTextActionContext else { return nil }
+    private func fullScreenSourceContext(for content: FullScreenCodeContent) -> ReviewCommentSourceContext? {
+        guard let reviewCommentSelectionContext else { return nil }
 
         switch content {
         case .code(_, let language, let filePath, _):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenCode,
                 filePath: filePath,
                 languageHint: language
             )
 
         case .plainText(_, let filePath):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenSource,
                 filePath: filePath
             )
 
         case .diff(_, _, let filePath, _):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenDiff,
                 filePath: filePath
             )
 
         case .markdown(_, let filePath, _):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             )
 
         case .terminal(_, let command, _):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenTerminal,
                 sourceLabel: command ?? currentConfiguration.title
             )
 
         case .liveSource(let snapshot, _):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
             )
 
         case .html(_, let filePath):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenSource,
                 filePath: filePath
             )
 
         case .thinking:
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenThinking,
                 sourceLabel: "Thinking"
             )
 
         case .latex(_, let filePath), .orgMode(_, let filePath), .mermaid(_, let filePath), .graphviz(_, let filePath):
-            return selectedTextActionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContext(
                 surface: .fullScreenCode,
                 filePath: filePath
             )
@@ -2215,12 +2215,12 @@ extension ToolTimelineRowContentView: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        SelectedTextPiEditMenuSupport.buildMenu(
+        ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: selectedTextPiRouter,
-            sourceContext: resolveSelectedTextSourceContext(for: textView)
+            router: reviewCommentSelectionRouter,
+            sourceContext: resolveReviewCommentSourceContext(for: textView)
         )
     }
 }

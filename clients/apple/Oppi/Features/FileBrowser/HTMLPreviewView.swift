@@ -118,19 +118,18 @@ enum HTMLContentSecurity {
 /// Checks both `didMoveToWindow` and `layoutSubviews` — whichever fires last
 /// with all conditions met triggers the load.
 final class HTMLRenderView: UIView, WKNavigationDelegate {
-    private let webView: PiWKWebView
+    private let webView: ReviewCommentWKWebView
     private let contentTracker = HTMLContentTracker()
 
-    init(htmlString: String, piActionHandler: ((String, PiQuickAction, UIViewController?) -> Void)? = nil, piActionStore: PiQuickActionStore? = nil) {
-        let wv = PiWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
+    init(htmlString: String, reviewCommentHandler: ((String, UIViewController?) -> Void)? = nil) {
+        let wv = ReviewCommentWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
         wv.isInspectable = false
         wv.allowsBackForwardNavigationGestures = false
         wv.scrollView.contentInsetAdjustmentBehavior = .always
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
-        wv.piActionHandler = piActionHandler
-        wv.piActionStore = piActionStore
+        wv.reviewCommentHandler = reviewCommentHandler
         self.webView = wv
 
         super.init(frame: .zero)
@@ -178,10 +177,9 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
         }
     }
 
-    /// Update the pi action handler and store (e.g., when SwiftUI re-renders).
-    func updatePiActionHandler(_ handler: ((String, PiQuickAction, UIViewController?) -> Void)?, actionStore: PiQuickActionStore? = nil) {
-        webView.piActionHandler = handler
-        webView.piActionStore = actionStore
+    /// Update the review comment handler (e.g., when SwiftUI re-renders).
+    func updateReviewCommentHandler(_ handler: ((String, UIViewController?) -> Void)?) {
+        webView.reviewCommentHandler = handler
     }
 
     // MARK: - Private
@@ -251,15 +249,14 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
 struct HTMLWebView: UIViewRepresentable {
     let htmlString: String
     let baseFileName: String
-    var piActionHandler: ((String, PiQuickAction, UIViewController?) -> Void)?
-    var piActionStore: PiQuickActionStore?
+    var reviewCommentHandler: ((String, UIViewController?) -> Void)?
 
     func makeUIView(context: Context) -> HTMLRenderView {
-        HTMLRenderView(htmlString: htmlString, piActionHandler: piActionHandler, piActionStore: piActionStore)
+        HTMLRenderView(htmlString: htmlString, reviewCommentHandler: reviewCommentHandler)
     }
 
     func updateUIView(_ view: HTMLRenderView, context: Context) {
-        view.updatePiActionHandler(piActionHandler, actionStore: piActionStore)
+        view.updateReviewCommentHandler(reviewCommentHandler)
         view.load(htmlString)
     }
 }

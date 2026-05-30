@@ -7,7 +7,7 @@ struct CommitDetailView: View {
     let commit: GitCommitSummary
 
     @Environment(\.apiClient) private var apiClient
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var detail: GitCommitDetail?
     @State private var error: String?
     @State private var selectedFile: GitCommitFileInfo?
@@ -36,7 +36,7 @@ struct CommitDetailView: View {
         .sheet(item: $selectedFile) { file in
             NavigationStack {
                 CommitFileDiffView(workspaceId: workspaceId, sha: commit.sha, file: file)
-                    .environment(\.selectedTextActionScope, selectedTextActionScope)
+                    .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") { selectedFile = nil }

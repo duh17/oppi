@@ -21,8 +21,8 @@ struct ToolRowPlanContractTests {
             copyCommandText: "echo hi",
             copyOutputText: "hi",
             isExpanded: true,
-            selectedTextPiRouter: SelectedTextPiActionRouter { _ in },
-            selectedTextSessionId: "session-1"
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
+            reviewCommentSessionId: "session-1"
         ))
 
         let policy = try #require(plan.interactionPolicy)
@@ -41,8 +41,8 @@ struct ToolRowPlanContractTests {
             copyOutputText: "# Header\n\nBody",
             toolNamePrefix: "read",
             isExpanded: true,
-            selectedTextPiRouter: SelectedTextPiActionRouter { _ in },
-            selectedTextSessionId: "session-1"
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
+            reviewCommentSessionId: "session-1"
         ))
 
         let policy = try #require(plan.interactionPolicy)
@@ -63,8 +63,8 @@ struct ToolRowPlanContractTests {
             , attachments: []),
             toolNamePrefix: "read",
             isExpanded: true,
-            selectedTextPiRouter: SelectedTextPiActionRouter { _ in },
-            selectedTextSessionId: "session-1"
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
+            reviewCommentSessionId: "session-1"
         ))
         let readMediaPolicy = try #require(readMediaPlan.interactionPolicy)
         #expect(readMediaPolicy.mode == .readMedia)

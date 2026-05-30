@@ -7,10 +7,10 @@ struct TimelineExpandableTextInteractionSpec: Equatable {
     let enablesPinchActivation: Bool
 
     static func build(
-        hasSelectedTextContext: Bool,
+        hasReviewCommentContext: Bool,
         supportsFullScreenPreview: Bool
     ) -> Self {
-        let inlineSelectionEnabled = hasSelectedTextContext && !supportsFullScreenPreview
+        let inlineSelectionEnabled = hasReviewCommentContext && !supportsFullScreenPreview
         return Self(
             supportsFullScreenPreview: supportsFullScreenPreview,
             inlineSelectionEnabled: inlineSelectionEnabled,

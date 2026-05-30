@@ -289,8 +289,8 @@ extension View {
     func fullScreenViewer(
         isPresented: Binding<Bool>,
         content: FullScreenCodeContent,
-        selectedTextActionContext: SelectedTextActionContext? = nil,
-        piRouter: SelectedTextPiActionRouter? = nil,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         sessionId: String? = nil,
         sourceLabel: String? = nil,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
@@ -298,10 +298,10 @@ extension View {
         sheet(isPresented: isPresented) {
             FullScreenCodeView(
                 content: content,
-                selectedTextActionContext: selectedTextActionContext,
-                selectedTextActionRouter: piRouter,
-                selectedTextSessionId: sessionId,
-                selectedTextSourceLabel: sourceLabel,
+                reviewCommentSelectionContext: reviewCommentSelectionContext,
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+                reviewCommentSessionId: sessionId,
+                reviewCommentSourceLabel: sourceLabel,
                 reviewCommentAnnotations: reviewCommentAnnotations
             )
             .presentationDetents([.large])
@@ -314,44 +314,44 @@ extension View {
 
 struct FullScreenCodeView: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
-    var selectedTextActionContext: SelectedTextActionContext?
-    var selectedTextActionRouter: SelectedTextPiActionRouter?
-    let selectedTextSessionId: String?
-    let selectedTextSourceLabel: String?
+    var reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    let reviewCommentSessionId: String?
+    let reviewCommentSourceLabel: String?
     let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
 
-    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
     /// Effective action context for this fullscreen presentation.
-    private var effectiveActionContext: SelectedTextActionContext? {
-        selectedTextActionContext
-            ?? selectedTextActionRouter.map { SelectedTextActionContext(router: $0, sessionId: selectedTextSessionId, sourceLabel: selectedTextSourceLabel) }
-            ?? selectedTextActionScope?.makeActionContext(
-                sessionId: selectedTextSessionId,
-                sourceLabel: selectedTextSourceLabel
+    private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        reviewCommentSelectionContext
+            ?? reviewCommentSelectionRouter.map { ReviewCommentSelectionContext(router: $0, sessionId: reviewCommentSessionId, sourceLabel: reviewCommentSourceLabel) }
+            ?? reviewCommentSelectionScope?.makeContext(
+                sessionId: reviewCommentSessionId,
+                sourceLabel: reviewCommentSourceLabel
             )
     }
 
     init(
         content: FullScreenCodeContent,
-        selectedTextActionContext: SelectedTextActionContext? = nil,
-        selectedTextActionRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+        reviewCommentSessionId: String? = nil,
+        reviewCommentSourceLabel: String? = nil,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.content = content
-        self.selectedTextActionContext = selectedTextActionContext
-        self.selectedTextActionRouter = selectedTextActionRouter
-        self.selectedTextSessionId = selectedTextSessionId
-        self.selectedTextSourceLabel = selectedTextSourceLabel
+        self.reviewCommentSelectionContext = reviewCommentSelectionContext
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSessionId = reviewCommentSessionId
+        self.reviewCommentSourceLabel = reviewCommentSourceLabel
         self.reviewCommentAnnotations = reviewCommentAnnotations
     }
 
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            selectedTextActionContext: effectiveActionContext,
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
             reviewCommentAnnotations: reviewCommentAnnotations
         )
     }

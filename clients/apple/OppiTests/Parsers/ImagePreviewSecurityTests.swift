@@ -40,7 +40,7 @@ struct ImagePreviewSecurityTests {
             controller.view.setNeedsLayout()
             controller.view.layoutIfNeeded()
             return timelineAllViews(in: controller.view).contains { view in
-                String(describing: type(of: view)).contains("PiWKWebView") &&
+                String(describing: type(of: view)).contains("ReviewCommentWKWebView") &&
                     view.bounds.width > 100 &&
                     view.bounds.height > 50
             }

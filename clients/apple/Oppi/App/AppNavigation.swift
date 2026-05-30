@@ -33,10 +33,6 @@ final class AppNavigation {
     /// Set externally (e.g. by QuickSessionSheet) to deep-link to a session.
     var workspacePath = NavigationPath()
 
-    /// Draft text pre-filled by π actions from outside a chat session (e.g. file browser).
-    /// Consumed once by QuickSessionSheet, then cleared.
-    var pendingQuickSessionDraft: String?
-
     /// Pending workspace creation deep-link payload.
     /// Consumed once by WorkspaceHomeView, then cleared.
     var pendingWorkspaceDeepLink: WorkspaceDeepLink.Payload?
@@ -93,21 +89,6 @@ final class AppNavigation {
         workspacePath.append(target)
         selectedTab = .workspaces
         return target
-    }
-
-    // MARK: - Pi Quick Actions
-
-    /// Creates the default non-chat selected-text routing scope.
-    func makeQuickSessionActionScope() -> SelectedTextActionScope {
-        .quickSession(SelectedTextPiActionRouter(dispatch: { [weak self] request in
-            guard let self,
-                  case .quickSessionDraft(let draft) = SelectedTextPiRouterPolicy.route(
-                    request: request,
-                    context: .nonChat
-                  ) else { return }
-            self.pendingQuickSessionDraft = draft
-            self.showQuickSession = true
-        }, allowsReviewComments: false))
     }
 }
 

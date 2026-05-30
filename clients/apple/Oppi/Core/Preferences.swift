@@ -7,7 +7,7 @@ import Foundation
 /// lives here for discoverability.
 ///
 /// Typography preferences remain in `FontPreferences` due to their
-/// notification/font-rebuild lifecycle. `PiQuickActionStore` manages its
+/// notification/font-rebuild lifecycle. `QuickCommentTemplateStore` manages its
 /// own JSON persistence as a full observable store.
 ///
 /// ## Usage

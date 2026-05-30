@@ -56,7 +56,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
-    private let selectedTextActionContext: SelectedTextActionContext?
+    private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var showSource = false
     private var terminalOutputWrapped = false
@@ -74,19 +74,19 @@ final class FullScreenCodeViewController: UIViewController {
     init(
         content: FullScreenCodeContent,
         presentationMode: PresentationMode = .sheet,
-        selectedTextActionContext: SelectedTextActionContext? = nil,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+        reviewCommentSessionId: String? = nil,
+        reviewCommentSourceLabel: String? = nil,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.content = content
         self.presentationMode = presentationMode
-        self.selectedTextActionContext = selectedTextActionContext
-            ?? SelectedTextActionContext(
-                router: selectedTextPiRouter,
-                sessionId: selectedTextSessionId,
-                sourceLabel: selectedTextSourceLabel
+        self.reviewCommentSelectionContext = reviewCommentSelectionContext
+            ?? ReviewCommentSelectionContext(
+                router: reviewCommentSelectionRouter,
+                sessionId: reviewCommentSessionId,
+                sourceLabel: reviewCommentSourceLabel
             )
         self.reviewCommentAnnotations = reviewCommentAnnotations
         super.init(nibName: nil, bundle: nil)
@@ -100,10 +100,10 @@ final class FullScreenCodeViewController: UIViewController {
     /// responder-chain walk from a specific source view.
     static func present(
         content: FullScreenCodeContent,
-        selectedTextActionContext: SelectedTextActionContext? = nil,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+        reviewCommentSessionId: String? = nil,
+        reviewCommentSourceLabel: String? = nil,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         guard let scene = UIApplication.shared.connectedScenes
@@ -119,11 +119,11 @@ final class FullScreenCodeViewController: UIViewController {
 
         let controller = FullScreenCodeViewController(
             content: content,
-            selectedTextActionContext: selectedTextActionContext
-                ?? SelectedTextActionContext(
-                    router: selectedTextPiRouter,
-                    sessionId: selectedTextSessionId,
-                    sourceLabel: selectedTextSourceLabel
+            reviewCommentSelectionContext: reviewCommentSelectionContext
+                ?? ReviewCommentSelectionContext(
+                    router: reviewCommentSelectionRouter,
+                    sessionId: reviewCommentSessionId,
+                    sourceLabel: reviewCommentSourceLabel
                 ),
             reviewCommentAnnotations: reviewCommentAnnotations
         )
@@ -314,8 +314,8 @@ final class FullScreenCodeViewController: UIViewController {
                 language: language,
                 startLine: startLine,
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: language
@@ -327,8 +327,8 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 isStreaming: false,
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenSource,
                     filePath: filePath
                 ),
@@ -341,8 +341,8 @@ final class FullScreenCodeViewController: UIViewController {
                 filePath: filePath,
                 precomputedLines: precomputedLines,
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenDiff,
                     filePath: filePath
                 ),
@@ -354,8 +354,8 @@ final class FullScreenCodeViewController: UIViewController {
                 stream: nil,
                 palette: palette,
                 plainTextFallbackThreshold: nil,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenMarkdown,
                     filePath: filePath
                 ),
@@ -370,11 +370,11 @@ final class FullScreenCodeViewController: UIViewController {
             )
             return body
         case .html(let text, let filePath):
-            let piHandler = makePiWebViewHandler(
-                router: selectedTextActionContext?.dispatcher,
+            let handler = makeHTMLReviewCommentHandler(
+                router: reviewCommentSelectionContext?.dispatcher,
                 sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
             )
-            let view = HTMLRenderView(htmlString: text, piActionHandler: piHandler)
+            let view = HTMLRenderView(htmlString: text, reviewCommentHandler: handler)
             view.backgroundColor = UIColor(palette.bgDark)
             return view
         case .thinking(let text, let stream):
@@ -382,8 +382,8 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 stream: stream,
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenThinking,
                     fallbackSourceLabel: String(localized: "Thinking")
                 ),
@@ -397,8 +397,8 @@ final class FullScreenCodeViewController: UIViewController {
                 stream: stream,
                 palette: palette,
                 outputWrapped: terminalOutputWrapped,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
                     fallbackSourceLabel: command
                 ),
@@ -412,8 +412,8 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .latex(text),
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "latex"
@@ -423,8 +423,8 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .orgMode(text),
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "org"
@@ -434,8 +434,8 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .mermaid(text),
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "mermaid"
@@ -447,8 +447,8 @@ final class FullScreenCodeViewController: UIViewController {
                 language: "dot",
                 startLine: 1,
                 palette: palette,
-                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-                selectedTextSourceContext: makeSourceContext(
+                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "dot"
@@ -466,8 +466,8 @@ final class FullScreenCodeViewController: UIViewController {
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
             palette: palette,
-            selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-            selectedTextSourceContext: makeSourceContext(
+            reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+            reviewCommentSourceContext: makeSourceContext(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
             ),
@@ -490,8 +490,8 @@ final class FullScreenCodeViewController: UIViewController {
             isStreaming: isStreaming,
             palette: palette,
             plainTextFallbackThreshold: nil,
-            selectedTextPiRouter: selectedTextActionContext?.dispatcher,
-            selectedTextSourceContext: makeSourceContext(
+            reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+            reviewCommentSourceContext: makeSourceContext(
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             ),
@@ -511,11 +511,11 @@ final class FullScreenCodeViewController: UIViewController {
         filePath: String?,
         palette: ThemePalette
     ) -> HTMLRenderView {
-        let piHandler = makePiWebViewHandler(
-            router: selectedTextActionContext?.dispatcher,
+        let handler = makeHTMLReviewCommentHandler(
+            router: reviewCommentSelectionContext?.dispatcher,
             sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
         )
-        let view = HTMLRenderView(htmlString: text, piActionHandler: piHandler)
+        let view = HTMLRenderView(htmlString: text, reviewCommentHandler: handler)
         view.backgroundColor = UIColor(palette.bgDark)
         return view
     }
@@ -761,30 +761,29 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func makeSourceContext(
-        surface: SelectedTextSurfaceKind,
+        surface: ReviewCommentSurfaceKind,
         filePath: String? = nil,
         languageHint: String? = nil,
         fallbackSourceLabel: String? = nil
-    ) -> SelectedTextSourceContext? {
-        guard let actionContext = selectedTextActionContext else { return nil }
-        return actionContext.sourceContext(
+    ) -> ReviewCommentSourceContext? {
+        guard let selectionContext = reviewCommentSelectionContext else { return nil }
+        return selectionContext.sourceContext(
             surface: surface,
-            sourceLabel: actionContext.sourceLabel ?? fallbackSourceLabel,
+            sourceLabel: selectionContext.sourceLabel ?? fallbackSourceLabel,
             filePath: filePath,
             languageHint: languageHint
         )
     }
 
-    /// Bridge a pi router + source context into a closure for HTMLRenderView.
-    private func makePiWebViewHandler(
-        router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?
-    ) -> ((String, PiQuickAction, UIViewController?) -> Void)? {
-        guard let router, let sourceContext, router.allowsReviewComments else { return nil }
-        return { text, quickAction, presentingViewController in
+    /// Bridge a review-comment router + source context into HTMLRenderView.
+    private func makeHTMLReviewCommentHandler(
+        router: ReviewCommentSelectionRouter?,
+        sourceContext: ReviewCommentSourceContext?
+    ) -> ((String, UIViewController?) -> Void)? {
+        guard let router, let sourceContext else { return nil }
+        return { text, presentingViewController in
             router.dispatch(
-                SelectedTextPiRequest(
-                    action: quickAction,
+                ReviewCommentSelectionRequest(
                     selectedText: text,
                     source: sourceContext
                 ),

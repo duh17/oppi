@@ -114,8 +114,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
     var forkAction: (() -> Void)? { currentConfiguration.onFork }
 
-    private var isSelectedTextPiEnabled: Bool {
-        currentConfiguration.interactionContext?.selectedTextActionContext != nil
+    private var isReviewCommentSelectionEnabled: Bool {
+        currentConfiguration.interactionContext?.reviewCommentSelectionContext != nil
     }
 
     init(configuration: UserTimelineRowConfiguration) {
@@ -276,7 +276,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
         let displayText = Self.displayText(for: parsed.visibleText)
-        let selectedTextSourceContext = configuration.interactionContext?.sourceContext(
+        let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .userMessage,
             timelineItemId: configuration.itemID
         )
@@ -285,7 +285,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             ReviewCommentInlineAnnotationRenderer.apply(
                 to: messageTextView,
                 annotations: [],
-                sourceContext: selectedTextSourceContext
+                sourceContext: reviewCommentSourceContext
             )
         } else {
             messageTextView.attributedText = FlatSegment.renderMarkdownInline(
@@ -295,8 +295,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             )
             ReviewCommentInlineAnnotationRenderer.apply(
                 to: messageTextView,
-                annotations: configuration.interactionContext?.inlineReviewAnnotations(for: selectedTextSourceContext) ?? [],
-                sourceContext: selectedTextSourceContext
+                annotations: configuration.interactionContext?.inlineReviewAnnotations(for: reviewCommentSourceContext) ?? [],
+                sourceContext: reviewCommentSourceContext
             )
         }
         let inlineImagePathPills = parsed.pathPills.filter { pill in
@@ -325,7 +325,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty && visibleBadges.isEmpty && parsed.pathPills.isEmpty
         iconLabel.isHidden = displayText.text.isEmpty
 
-        updateSelectedTextInteractionPolicy()
+        updateReviewCommentSelectionPolicy()
 
         let currentThemeID = ThemeRuntimeState.currentThemeID()
         let imagesChanged = previousConfiguration.images != configuration.images
@@ -413,8 +413,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         }
     }
 
-    private func updateSelectedTextInteractionPolicy() {
-        let selectionEnabled = isSelectedTextPiEnabled && !messageTextView.isHidden
+    private func updateReviewCommentSelectionPolicy() {
+        let selectionEnabled = isReviewCommentSelectionEnabled && !messageTextView.isHidden
         messageTextView.isSelectable = selectionEnabled
         interactionHandlers?.gesture.isEnabled = !selectionEnabled
     }
@@ -748,11 +748,11 @@ extension UserTimelineRowContentView: UITextViewDelegate {
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        SelectedTextPiEditMenuSupport.buildMenu(
+        ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: currentConfiguration.interactionContext?.selectedTextActionContext?.dispatcher,
+            router: currentConfiguration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .userMessage,
                 timelineItemId: currentConfiguration.itemID

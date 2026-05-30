@@ -390,7 +390,7 @@ struct AssistantTimelineRowContentViewTests {
 
         ```mermaid
         flowchart TD
-            A["SelectedTextSourceContext"] --> B["Selection menu injectors"]
+            A["ReviewCommentSourceContext"] --> B["Selection menu injectors"]
             B --> C["ContextCapture model"]
             C --> D["PromptAssembler v2"]
         ```
@@ -685,13 +685,13 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func selectedTextEditMenuPrependsCommentAction() throws {
         let markdownView = AssistantMarkdownContentView()
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         markdownView.apply(configuration: .make(
             content: "Alpha beta gamma",
             isStreaming: false,
             themeID: .light,
-            selectedTextPiRouter: router,
-            selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
+            reviewCommentSelectionRouter: router,
+            reviewCommentSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
         ))
 
         let textView = try #require(timelineFirstTextView(in: markdownView))
@@ -712,13 +712,13 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func selectedAssistantCodeBlockEditMenuPrependsCommentAction() throws {
         let markdownView = AssistantMarkdownContentView()
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         markdownView.apply(configuration: .make(
             content: "```swift\nlet answer = 42\n```",
             isStreaming: false,
             themeID: .light,
-            selectedTextPiRouter: router,
-            selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
+            reviewCommentSelectionRouter: router,
+            reviewCommentSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
         ))
         _ = fittedTimelineSize(for: markdownView, width: 320)
 
@@ -737,13 +737,13 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func selectedAssistantTableEditMenuPrependsCommentAction() throws {
         let markdownView = AssistantMarkdownContentView()
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
         markdownView.apply(configuration: .make(
             content: "| A | B |\n| --- | --- |\n| 1 | 2 |",
             isStreaming: false,
             themeID: .light,
-            selectedTextPiRouter: router,
-            selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
+            reviewCommentSelectionRouter: router,
+            reviewCommentSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
         ))
         _ = fittedTimelineSize(for: markdownView, width: 320)
 

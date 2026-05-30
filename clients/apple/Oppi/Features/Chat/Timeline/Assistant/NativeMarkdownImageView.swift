@@ -34,7 +34,7 @@ final class NativeMarkdownImageView: UIView {
     /// Web view for rendering SVG and animated images that UIImage doesn't support.
     /// Created lazily on first SVG load to avoid WKWebView overhead for
     /// raster-image-only messages.
-    private var svgWebView: PiWKWebView?
+    private var svgWebView: ReviewCommentWKWebView?
     private var svgTapOverlay: UIView?
     private let svgNavigationBlocker = ImagePreviewNavigationBlocker()
     private let svgHTMLTracker = HTMLContentTracker()
@@ -591,11 +591,11 @@ final class NativeMarkdownImageView: UIView {
     }
 
     /// Lazily create and configure the WKWebView for SVG rendering.
-    private func ensureSVGWebView() -> PiWKWebView {
+    private func ensureSVGWebView() -> ReviewCommentWKWebView {
         if let existing = svgWebView {
             return existing
         }
-        let webView = PiWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
+        let webView = ReviewCommentWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.isOpaque = false
         webView.backgroundColor = .clear

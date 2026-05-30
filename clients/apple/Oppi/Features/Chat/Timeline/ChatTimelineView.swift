@@ -31,8 +31,7 @@ struct ChatTimelineView: View {
     let sessionManager: ChatSessionManager
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let onFork: (String) -> Void
-    let selectedTextPiRouter: SelectedTextPiActionRouter?
-    let piQuickActionStore: PiQuickActionStore?
+    let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
     let reviewComments: [ReviewComment]
@@ -106,8 +105,7 @@ struct ChatTimelineView: View {
                 currentModel: currentModel,
                 audioPlayer: audioPlayer,
                 audioLifecycleCoordinator: audioLifecycleCoordinator,
-                selectedTextPiRouter: selectedTextPiRouter,
-                piQuickActionStore: piQuickActionStore,
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 topOverlap: topOverlap,
                 bottomOverlap: bottomOverlap,
                 reviewComments: reviewComments

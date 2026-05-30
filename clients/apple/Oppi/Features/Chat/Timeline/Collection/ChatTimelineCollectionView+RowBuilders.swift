@@ -51,9 +51,9 @@ extension ChatTimelineCollectionHost.Controller {
     func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
         guard case .userMessage(_, let text, let images, _) = item else { return nil }
 
-        // Fork/branch actions now live in Session Timeline sheet so selected-text
-        // interactions in row bubbles are never blocked by context-menu competition.
-        // Keep row-level copy + selected-text actions only.
+        // Fork/branch actions now live in Session Timeline sheet so review-comment
+        // selection in row bubbles is never blocked by context-menu competition.
+        // Keep row-level copy + review-comment selection only.
         let canFork = false
         let forkAction: (() -> Void)? = nil
 
@@ -85,7 +85,7 @@ extension ChatTimelineCollectionHost.Controller {
                     fileSize: nil
                 )
                 .environment(\.apiClient, apiClient)
-                .environment(\.selectedTextActionScope, interactionContext.selectedTextPiRouter.map(SelectedTextActionScope.activeSession))
+                .environment(\.reviewCommentSelectionScope, interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession))
 
                 let host = UIHostingController(rootView: view)
                 let navigation = UINavigationController(rootViewController: host)
@@ -244,7 +244,7 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         return configuration
-            .withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
+            .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
             .withReviewComments(interactionCtx.reviewComments)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)

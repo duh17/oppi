@@ -164,12 +164,12 @@ struct ChatViewLifecycleTests {
 
     private func makeHost(connection: ServerConnection, sessionId: String) -> HostHarness {
         let appNavigation = AppNavigation()
-        let piQuickActionStore = PiQuickActionStore(actions: [])
+        let quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
         let root = makeRootView(
             connection: connection,
             sessionId: sessionId,
             appNavigation: appNavigation,
-            piQuickActionStore: piQuickActionStore
+            quickCommentTemplateStore: quickCommentTemplateStore
         )
 
         let controller = UIHostingController(rootView: root)
@@ -189,7 +189,7 @@ struct ChatViewLifecycleTests {
         connection: ServerConnection,
         sessionId: String,
         appNavigation: AppNavigation,
-        piQuickActionStore: PiQuickActionStore
+        quickCommentTemplateStore: QuickCommentTemplateStore
     ) -> AnyView {
         AnyView(
             ChatView(sessionId: sessionId)
@@ -203,7 +203,7 @@ struct ChatViewLifecycleTests {
                 .environment(connection.permissionStore)
                 .environment(connection.askRequestStore)
                 .environment(appNavigation)
-                .environment(piQuickActionStore)
+                .environment(quickCommentTemplateStore)
         )
     }
 }

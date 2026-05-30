@@ -510,7 +510,7 @@ struct ToolExpandedSurfaceHostTests {
             collectionView.layoutIfNeeded()
             guard let firstCell = collectionView.cellForItem(at: firstIP),
                   let inlinePreview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: firstCell.contentView),
-                  let webView = firstToolSubview(ofType: PiWKWebView.self, in: inlinePreview) else {
+                  let webView = firstToolSubview(ofType: ReviewCommentWKWebView.self, in: inlinePreview) else {
                 return false
             }
             let imageReady = (try? await webView.evaluateJavaScript("document.images.length === 1 && document.images[0].complete && document.images[0].naturalWidth > 0") as? Bool) == true
@@ -601,12 +601,12 @@ struct ToolExpandedSurfaceHostTests {
             container.setNeedsLayout()
             container.layoutIfNeeded()
             return firstToolSubview(ofType: AnimatedImageWebContainerView.self, in: preview) != nil
-                && firstToolSubview(ofType: PiWKWebView.self, in: preview) != nil
+                && firstToolSubview(ofType: ReviewCommentWKWebView.self, in: preview) != nil
         }
         #expect(ready)
 
         let animatedView = try #require(firstToolSubview(ofType: AnimatedImageWebContainerView.self, in: preview))
-        let webView = try #require(firstToolSubview(ofType: PiWKWebView.self, in: preview))
+        let webView = try #require(firstToolSubview(ofType: ReviewCommentWKWebView.self, in: preview))
         let singleTap = animatedView.gestureRecognizers?.contains {
             guard let tap = $0 as? UITapGestureRecognizer else { return false }
             return tap.numberOfTapsRequired == 1
@@ -773,7 +773,7 @@ struct ToolExpandedSurfaceHostTests {
             view.setNeedsLayout()
             view.layoutIfNeeded()
             guard let inlinePreview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view),
-                  let webView = firstToolSubview(ofType: PiWKWebView.self, in: inlinePreview),
+                  let webView = firstToolSubview(ofType: ReviewCommentWKWebView.self, in: inlinePreview),
                   !inlinePreview.isHidden,
                   !webView.isHidden else {
                 return false
@@ -832,7 +832,7 @@ struct ToolExpandedSurfaceHostTests {
         hostController.view.setNeedsLayout()
         hostController.view.layoutIfNeeded()
 
-        let webView = try #require(firstToolSubview(ofType: PiWKWebView.self, in: preview))
+        let webView = try #require(firstToolSubview(ofType: ReviewCommentWKWebView.self, in: preview))
         let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             hostController.view.setNeedsLayout()
             hostController.view.layoutIfNeeded()

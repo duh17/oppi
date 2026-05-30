@@ -28,7 +28,7 @@ struct ScrollStabilityTests {
             sessionId: "s-user-review-scroll",
             useAnchoredCollectionView: true
         )
-        let router = SelectedTextPiActionRouter { _ in }
+        let router = ReviewCommentSelectionRouter { _ in }
 
         var items: [ChatItem] = []
         for i in 0..<12 {
@@ -58,7 +58,7 @@ struct ScrollStabilityTests {
         }
         items.append(.assistantMessage(id: "stream-1", text: "Starting review…", timestamp: Date()))
 
-        windowed.applyItems(items, isBusy: true, streamingID: "stream-1", selectedTextPiRouter: router)
+        windowed.applyItems(items, isBusy: true, streamingID: "stream-1", reviewCommentSelectionRouter: router)
 
         let maxOffset = max(0, windowed.collectionView.contentSize.height - windowed.collectionView.bounds.height)
         windowed.collectionView.contentOffset.y = maxOffset
@@ -99,7 +99,7 @@ struct ScrollStabilityTests {
                 ))
             }
 
-            windowed.applyItems(items, isBusy: true, streamingID: "stream-1", selectedTextPiRouter: router)
+            windowed.applyItems(items, isBusy: true, streamingID: "stream-1", reviewCommentSelectionRouter: router)
             let drift = abs(windowed.collectionView.contentOffset.y - anchorOffset)
             #expect(drift < 2.0, "contentOffset drifted \(drift)pt on streaming round \(round)")
             #expect(!windowed.scrollController.isCurrentlyNearBottom)

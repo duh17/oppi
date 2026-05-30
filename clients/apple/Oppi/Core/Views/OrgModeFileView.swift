@@ -26,8 +26,8 @@ struct OrgModeFileView: View {
                         stream: nil,
                         palette: ThemeRuntimeState.currentThemeID().palette,
                         plainTextFallbackThreshold: nil,
-                        selectedTextPiRouter: nil,
-                        selectedTextSourceContext: nil
+                        reviewCommentSelectionRouter: nil,
+                        reviewCommentSourceContext: nil
                     )
                 }
 

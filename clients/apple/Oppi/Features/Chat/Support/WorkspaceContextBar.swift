@@ -65,7 +65,16 @@ enum ContextBarCrossSessionEdits {
         sessions: [Session]
     ) -> Set<String> {
         guard let currentSessionId, !displayFiles.isEmpty else { return [] }
-        let displayedPaths = displayFiles.map(\.path)
+        var originalPathByNormalizedPath: [String: String] = [:]
+        originalPathByNormalizedPath.reserveCapacity(displayFiles.count)
+        for file in displayFiles {
+            originalPathByNormalizedPath[normalizedPath(file.path)] = file.path
+        }
+
+        let displayedPathSet = Set(originalPathByNormalizedPath.keys)
+        guard !displayedPathSet.isEmpty else { return [] }
+
+        var remainingPaths = displayedPathSet
         var sharedPaths: Set<String> = []
 
         for session in sessions where session.id != currentSessionId {
@@ -74,14 +83,51 @@ enum ContextBarCrossSessionEdits {
             }
             guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { continue }
 
-            for path in displayedPaths where !sharedPaths.contains(path) {
-                if changedFiles.contains(where: { SessionScopedGitStatus.sessionPathMatches(sessionPath: $0, gitRelativePath: path) }) {
-                    sharedPaths.insert(path)
+            for changedFile in changedFiles {
+                let matches = matchingDisplayedPaths(for: changedFile, remainingDisplayedPaths: remainingPaths)
+                guard !matches.isEmpty else { continue }
+
+                for path in matches {
+                    sharedPaths.insert(originalPathByNormalizedPath[path] ?? path)
+                    remainingPaths.remove(path)
+                }
+
+                if remainingPaths.isEmpty {
+                    return sharedPaths
                 }
             }
         }
 
         return sharedPaths
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        path.replacing("\\", with: "/")
+    }
+
+    private static func matchingDisplayedPaths(
+        for sessionPath: String,
+        remainingDisplayedPaths: Set<String>
+    ) -> [String] {
+        guard !remainingDisplayedPaths.isEmpty else { return [] }
+
+        let normalizedSessionPath = normalizedPath(sessionPath)
+        let components = normalizedSessionPath.split(separator: "/", omittingEmptySubsequences: true)
+        var matches: [String] = []
+
+        func appendIfDisplayed(_ candidate: String) {
+            guard remainingDisplayedPaths.contains(candidate), !matches.contains(candidate) else { return }
+            matches.append(candidate)
+        }
+
+        appendIfDisplayed(normalizedSessionPath)
+
+        guard components.count > 1 else { return matches }
+        for index in components.indices {
+            appendIfDisplayed(components[index...].joined(separator: "/"))
+        }
+
+        return matches
     }
 }
 
@@ -212,7 +258,7 @@ struct WorkspaceContextBar: View {
     let childSessions: [Session]
     var onSelectChild: ((String) -> Void)?
     var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
-    var fileDetailActionScope: SelectedTextActionScope?
+    var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
     /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
     var collapseToken: Int = 0
     /// Called when the bar expands or collapses. Parents use this to show a dismiss overlay.
@@ -255,7 +301,7 @@ struct WorkspaceContextBar: View {
         childSessions: [Session] = [],
         onSelectChild: ((String) -> Void)? = nil,
         onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
-        fileDetailActionScope: SelectedTextActionScope? = nil,
+        fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil,
         collapseToken: Int = 0,
         onExpandedChanged: ((Bool) -> Void)? = nil
     ) {
@@ -268,30 +314,25 @@ struct WorkspaceContextBar: View {
         self.childSessions = childSessions
         self.onSelectChild = onSelectChild
         self.onReviewInCurrentSession = onReviewInCurrentSession
-        self.fileDetailActionScope = fileDetailActionScope
+        self.fileDetailReviewCommentScope = fileDetailReviewCommentScope
         self.collapseToken = collapseToken
         self.onExpandedChanged = onExpandedChanged
     }
 
     // MARK: - Session scoping
 
-    static func makeFileDetailActionScope(
-        parentScope: SelectedTextActionScope?,
-        fallbackScope: SelectedTextActionScope?,
+    static func makeFileDetailReviewCommentScope(
+        parentScope: ReviewCommentSelectionScope?,
+        fallbackScope: ReviewCommentSelectionScope?,
         dismissFileDetail: @escaping () -> Void
-    ) -> SelectedTextActionScope? {
+    ) -> ReviewCommentSelectionScope? {
         if let parentScope {
             switch parentScope {
             case .activeSession(let router):
-                return .activeSession(SelectedTextPiActionRouter(dispatch: { request in
+                return .activeSession(ReviewCommentSelectionRouter(dispatch: { request in
                     dismissFileDetail()
                     router.dispatch(request)
-                }, allowsReviewComments: router.allowsReviewComments))
-            case .quickSession(let router):
-                return .quickSession(SelectedTextPiActionRouter(dispatch: { request in
-                    dismissFileDetail()
-                    router.dispatch(request)
-                }, allowsReviewComments: router.allowsReviewComments))
+                }))
             }
         }
 
@@ -306,9 +347,6 @@ struct WorkspaceContextBar: View {
         guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { return nil }
         return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
     }
-
-    /// True when the bar is showing session-scoped files instead of the full git status.
-    private var isScoped: Bool { sessionScope != nil }
 
     // MARK: - Computed (scoped)
 
@@ -355,19 +393,6 @@ struct WorkspaceContextBar: View {
         ContextBarScoping.displayFiles(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
 
-    private var allSelected: Bool {
-        !displayFiles.isEmpty && displayFiles.allSatisfy { selectedPaths.contains($0.path) }
-    }
-
-    private var sharedEditPaths: Set<String> {
-        ContextBarCrossSessionEdits.sharedFilePaths(
-            displayFiles: displayFiles,
-            currentSessionId: sessionId,
-            workspaceId: workspaceId,
-            sessions: sessionStore.sessions
-        )
-    }
-
     private var canLaunch: Bool {
         !selectedPaths.isEmpty && launchActionInFlightTitle == nil
     }
@@ -390,7 +415,7 @@ struct WorkspaceContextBar: View {
     /// Dynamic max height for the scrollable content area.
     /// Estimates row heights to hug content; capped at 480.
     /// Note: selectionActionBar is outside the ScrollView — not counted here.
-    private var expandedMaxHeight: CGFloat {
+    private func expandedMaxHeight(displayFiles: [GitFileStatus], sharedEditPaths: Set<String>) -> CGFloat {
         let agentRows = CGFloat(childSessions.count) * 44
         let fileRows = CGFloat(displayFiles.count) * 26
         let commitRows = CGFloat(allCommits.count) * 17
@@ -424,8 +449,8 @@ struct WorkspaceContextBar: View {
                 .sheet(item: $selectedCommit) { commit in
                     NavigationStack {
                         CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
-                            .environment(\.selectedTextActionScope, Self.makeFileDetailActionScope(
-                                parentScope: fileDetailActionScope,
+                            .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
+                                parentScope: fileDetailReviewCommentScope,
                                 fallbackScope: nil,
                                 dismissFileDetail: { selectedCommit = nil }
                             ))
@@ -594,11 +619,19 @@ struct WorkspaceContextBar: View {
     // MARK: - Expanded Content
 
     private var expandedContent: some View {
-        VStack(spacing: 0) {
+        let files = displayFiles
+        let sharedPaths = ContextBarCrossSessionEdits.sharedFilePaths(
+            displayFiles: files,
+            currentSessionId: sessionId,
+            workspaceId: workspaceId,
+            sessions: sessionStore.sessions
+        )
+
+        return VStack(spacing: 0) {
             ScrollView {
-                expandedPanel
+                expandedPanel(displayFiles: files, sharedEditPaths: sharedPaths)
             }
-            .frame(maxHeight: expandedMaxHeight)
+            .frame(maxHeight: expandedMaxHeight(displayFiles: files, sharedEditPaths: sharedPaths))
 
             if isSelecting {
                 selectionActionBar
@@ -608,21 +641,23 @@ struct WorkspaceContextBar: View {
 
     // MARK: - Expanded Panel
 
-    private var expandedPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private func expandedPanel(displayFiles: [GitFileStatus], sharedEditPaths: Set<String>) -> some View {
+        let allFilesSelected = !displayFiles.isEmpty && displayFiles.allSatisfy { selectedPaths.contains($0.path) }
+
+        return VStack(alignment: .leading, spacing: 0) {
             Divider().overlay(Color.themeComment.opacity(0.2))
 
             // Selection header when selecting
             if isSelecting {
                 HStack(spacing: 8) {
                     Button {
-                        if allSelected {
+                        if allFilesSelected {
                             selectedPaths.removeAll()
                         } else {
                             selectedPaths = Set(displayFiles.map(\.path))
                         }
                     } label: {
-                        Text(allSelected ? "Deselect All" : "Select All")
+                        Text(allFilesSelected ? "Deselect All" : "Select All")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.themePurple)
                     }
@@ -670,7 +705,7 @@ struct WorkspaceContextBar: View {
                     }
 
                     ForEach(displayFiles) { file in
-                        contextBarFileRow(file: file)
+                        contextBarFileRow(file: file, isSharedEdit: sharedEditPaths.contains(file.path))
                             .background(
                                 GeometryReader { geo in
                                     Color.clear.preference(
@@ -681,7 +716,7 @@ struct WorkspaceContextBar: View {
                             )
                     }
 
-                    if !isScoped, let gitStatus, gitStatus.totalFiles > gitStatus.files.count {
+                    if sessionId == nil, let gitStatus, gitStatus.totalFiles > gitStatus.files.count {
                         Text("... and \(gitStatus.totalFiles - gitStatus.files.count) more")
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
@@ -789,7 +824,7 @@ struct WorkspaceContextBar: View {
     // MARK: - File Row
 
     @ViewBuilder
-    private func contextBarFileRow(file: GitFileStatus) -> some View {
+    private func contextBarFileRow(file: GitFileStatus, isSharedEdit: Bool) -> some View {
         let icon = FileIcon.forPath(file.path)
         let canTap = workspaceId != nil
 
@@ -818,7 +853,7 @@ struct WorkspaceContextBar: View {
 
                 Spacer(minLength: 4)
 
-                if sharedEditPaths.contains(file.path) {
+                if isSharedEdit {
                     Image(systemName: "rectangle.on.rectangle")
                         .font(.appBadgeLight)
                         .foregroundStyle(.themeOrange)
@@ -906,8 +941,8 @@ struct WorkspaceContextBar: View {
                     workspaceId: workspaceId,
                     selectedSessionId: sessionId,
                     file: file.toReviewFile(),
-                    selectedTextActionScopeOverride: Self.makeFileDetailActionScope(
-                        parentScope: fileDetailActionScope,
+                    reviewCommentSelectionScopeOverride: Self.makeFileDetailReviewCommentScope(
+                        parentScope: fileDetailReviewCommentScope,
                         fallbackScope: nil,
                         dismissFileDetail: { selectedFile = nil }
                     )
