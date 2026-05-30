@@ -31,6 +31,9 @@ enum TimelineScrollCoordinator {
         if !command.animated {
             DispatchQueue.main.async {
                 afterNonAnimatedScroll()
+                DispatchQueue.main.async {
+                    afterNonAnimatedScroll()
+                }
             }
         }
 

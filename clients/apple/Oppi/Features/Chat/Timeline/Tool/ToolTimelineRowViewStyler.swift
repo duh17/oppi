@@ -111,6 +111,8 @@ enum ToolTimelineRowViewStyler {
         expandedLabel.isEditable = false
         expandedLabel.isScrollEnabled = false
         expandedLabel.isSelectable = false
+        expandedLabel.alwaysBounceVertical = false
+        expandedLabel.bounces = false
         expandedLabel.textContainerInset = .zero
         expandedLabel.textContainer.lineFragmentPadding = 0
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping

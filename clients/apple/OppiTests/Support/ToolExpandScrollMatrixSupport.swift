@@ -518,7 +518,7 @@ struct ToolExpandScrollMatrixFixture {
     func setOffsetY(_ targetY: CGFloat) -> CGFloat {
         let clamped = clampOffsetY(targetY)
         let rawOffset = clamped - collectionView.adjustedContentInset.top
-        collectionView.contentOffset.y = rawOffset
+        setTimelineUserScrollOffsetY(collectionView, rawOffset)
         settleLayout()
         return clamped
     }

@@ -9,7 +9,11 @@ struct ToolExpandScrollMatrixTests {
     @Test(arguments: ToolExpandScrollMatrixCase.allCases)
     func expandingToolRowsDoesNotLockOuterScroll(_ toolCase: ToolExpandScrollMatrixCase) throws {
         let fixture = try #require(
-            ToolExpandScrollMatrixFixture.make(for: toolCase, sessionSuffix: "expand")
+            ToolExpandScrollMatrixFixture.make(
+                for: toolCase,
+                sessionSuffix: "expand",
+                useAnchoredCollectionView: true
+            )
         )
 
         fixture.prepareDetachedViewport()
@@ -43,7 +47,11 @@ struct ToolExpandScrollMatrixTests {
     @Test(arguments: ToolExpandScrollMatrixCase.allCases)
     func collapsingExpandedToolRowsKeepsScrollStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
         let fixture = try #require(
-            ToolExpandScrollMatrixFixture.make(for: toolCase, sessionSuffix: "collapse")
+            ToolExpandScrollMatrixFixture.make(
+                for: toolCase,
+                sessionSuffix: "collapse",
+                useAnchoredCollectionView: true
+            )
         )
 
         fixture.prepareDetachedViewport()

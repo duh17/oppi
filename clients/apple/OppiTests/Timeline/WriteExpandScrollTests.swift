@@ -62,7 +62,10 @@ struct WriteExpandScrollTests {
     @MainActor
     @Test func expandingWriteToolDoesNotLockScrollPosition() {
         // Setup: windowed collection view with write tool rows.
-        let wh = makeWindowedTimelineHarness(sessionId: "s-write-scroll")
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "s-write-scroll",
+            useAnchoredCollectionView: true
+        )
         let items = Self.makeWriteToolTimeline(
             toolArgsStore: wh.toolArgsStore,
             toolOutputStore: wh.toolOutputStore
@@ -72,12 +75,12 @@ struct WriteExpandScrollTests {
 
         // Scroll to bottom so all cells measure their real heights.
         let maxOffset = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
-        wh.collectionView.contentOffset.y = maxOffset
+        setTimelineUserScrollOffsetY(wh.collectionView, maxOffset)
         wh.collectionView.layoutIfNeeded()
 
         // Scroll to mid-point and detach.
         let midY = maxOffset * 0.5
-        wh.collectionView.contentOffset.y = midY
+        setTimelineUserScrollOffsetY(wh.collectionView, midY)
         wh.collectionView.layoutIfNeeded()
         wh.scrollController.detachFromBottomForUserScroll()
 
@@ -119,7 +122,7 @@ struct WriteExpandScrollTests {
         // In the bug scenario, the offset resets back to the expanded position.
         let scrollUpAmount: CGFloat = 200
         let targetOffset = offsetAfterExpand - scrollUpAmount
-        wh.collectionView.contentOffset.y = targetOffset
+        setTimelineUserScrollOffsetY(wh.collectionView, targetOffset)
         wh.collectionView.layoutIfNeeded()
 
         let offsetAfterScrollUp = wh.collectionView.contentOffset.y
@@ -129,7 +132,7 @@ struct WriteExpandScrollTests {
 
         // Simulate scrolling down past the expanded row.
         let scrollDownTarget = offsetAfterExpand + scrollUpAmount
-        wh.collectionView.contentOffset.y = scrollDownTarget
+        setTimelineUserScrollOffsetY(wh.collectionView, scrollDownTarget)
         wh.collectionView.layoutIfNeeded()
 
         let offsetAfterScrollDown = wh.collectionView.contentOffset.y
@@ -143,7 +146,10 @@ struct WriteExpandScrollTests {
         // The expanded write tool row contains an inner expandedScrollView
         // for horizontal scrolling of wide code lines. Verify that vertical
         // pan gestures are not consumed by this inner scroll view.
-        let wh = makeWindowedTimelineHarness(sessionId: "s-write-gesture")
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "s-write-gesture",
+            useAnchoredCollectionView: true
+        )
         let items = Self.makeWriteToolTimeline(
             count: 10,
             toolArgsStore: wh.toolArgsStore,
@@ -154,13 +160,16 @@ struct WriteExpandScrollTests {
 
         // Scroll to bottom, then back to top area.
         let maxOffset = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
-        wh.collectionView.contentOffset.y = maxOffset
+        setTimelineUserScrollOffsetY(wh.collectionView, maxOffset)
         wh.collectionView.layoutIfNeeded()
-        wh.collectionView.contentOffset.y = 100
+        setTimelineUserScrollOffsetY(wh.collectionView, 100)
         wh.collectionView.layoutIfNeeded()
 
         // Expand a visible write tool row.
         let targetIP = IndexPath(item: 1, section: 0) // first tool call is item 1
+        wh.collectionView.scrollToItem(at: targetIP, at: .centeredVertically, animated: false)
+        settleTimelineLayout(wh.collectionView)
+        wh.scrollController.detachFromBottomForUserScroll()
         wh.coordinator.collectionView(wh.collectionView, didSelectItemAt: targetIP)
         wh.collectionView.layoutIfNeeded()
 
@@ -221,7 +230,10 @@ struct WriteExpandScrollTests {
     @Test func multipleExpandedWriteToolsDoNotCompoundScrollLock() {
         // Expand multiple write tool rows, then verify the user can still
         // scroll freely through the timeline.
-        let wh = makeWindowedTimelineHarness(sessionId: "s-write-multi")
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "s-write-multi",
+            useAnchoredCollectionView: true
+        )
         let items = Self.makeWriteToolTimeline(
             count: 15,
             toolArgsStore: wh.toolArgsStore,
@@ -232,11 +244,11 @@ struct WriteExpandScrollTests {
 
         // Scroll to bottom to measure all cells.
         let maxOffset = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
-        wh.collectionView.contentOffset.y = maxOffset
+        setTimelineUserScrollOffsetY(wh.collectionView, maxOffset)
         wh.collectionView.layoutIfNeeded()
 
         // Scroll back to near-top.
-        wh.collectionView.contentOffset.y = 0
+        setTimelineUserScrollOffsetY(wh.collectionView, 0)
         wh.collectionView.layoutIfNeeded()
         wh.scrollController.detachFromBottomForUserScroll()
 
@@ -252,17 +264,22 @@ struct WriteExpandScrollTests {
         }
         wh.collectionView.layoutIfNeeded()
 
+        // Start from an interior offset so the check has room to move down even
+        // if bottom-edge expansion anchoring pushed the viewport toward an edge.
+        let newMax = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
+        let startingOffset = min(max(0, newMax * 0.25), max(0, newMax - 400))
+        setTimelineUserScrollOffsetY(wh.collectionView, startingOffset)
+        wh.collectionView.layoutIfNeeded()
         let offsetAfterExpands = wh.collectionView.contentOffset.y
 
-        // Try scrolling through the entire content in increments.
-        let newMax = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
+        // Try scrolling through the content in increments.
         let scrollStep: CGFloat = 100
         var scrollLocked = false
 
         var currentOffset = offsetAfterExpands
         for _ in 0..<20 {
             let target = min(currentOffset + scrollStep, newMax)
-            wh.collectionView.contentOffset.y = target
+            setTimelineUserScrollOffsetY(wh.collectionView, target)
             wh.collectionView.layoutIfNeeded()
 
             let actual = wh.collectionView.contentOffset.y
@@ -285,7 +302,10 @@ struct WriteExpandScrollTests {
     @MainActor
     @Test func collapsingExpandedWriteToolRestoresNormalScrolling() {
         // Expand a write tool, verify scroll works, collapse it, verify scroll still works.
-        let wh = makeWindowedTimelineHarness(sessionId: "s-write-collapse")
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "s-write-collapse",
+            useAnchoredCollectionView: true
+        )
         let items = Self.makeWriteToolTimeline(
             count: 15,
             toolArgsStore: wh.toolArgsStore,
@@ -295,11 +315,11 @@ struct WriteExpandScrollTests {
         wh.applyItems(items, isBusy: false)
 
         let maxOffset = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
-        wh.collectionView.contentOffset.y = maxOffset
+        setTimelineUserScrollOffsetY(wh.collectionView, maxOffset)
         wh.collectionView.layoutIfNeeded()
 
         let midY = maxOffset * 0.5
-        wh.collectionView.contentOffset.y = midY
+        setTimelineUserScrollOffsetY(wh.collectionView, midY)
         wh.collectionView.layoutIfNeeded()
         wh.scrollController.detachFromBottomForUserScroll()
 
@@ -326,7 +346,7 @@ struct WriteExpandScrollTests {
 
         // Verify scrolling works after collapse.
         let scrollTarget = offsetAfterCollapse - 300
-        wh.collectionView.contentOffset.y = max(0, scrollTarget)
+        setTimelineUserScrollOffsetY(wh.collectionView, max(0, scrollTarget))
         wh.collectionView.layoutIfNeeded()
 
         let drift = abs(wh.collectionView.contentOffset.y - max(0, scrollTarget))
