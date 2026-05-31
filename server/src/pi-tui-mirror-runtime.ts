@@ -1044,7 +1044,20 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       }
     });
     if (matched) return;
-    if (connection.fireAndForgetCommandIds.delete(message.id)) return;
+    if (connection.fireAndForgetCommandIds.delete(message.id)) {
+      if (!message.success) {
+        const error = new Error(message.error || "pi-tui command failed");
+        this.rejectPendingBridgeStops(connection, error);
+        log.warn("mirror_bridge.fire_and_forget_command_failed", {
+          runtime: MIRROR_RUNTIME_LOG_TAG,
+          bridgeId: connection.bridgeId,
+          sessionId: connection.sessionId,
+          commandId: message.id,
+          error: error.message,
+        });
+      }
+      return;
+    }
 
     log.warn("mirror_bridge.command_result_unmatched", {
       runtime: MIRROR_RUNTIME_LOG_TAG,

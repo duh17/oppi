@@ -280,6 +280,28 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.readyState).toBe(WebSocket.CLOSED);
   });
 
+  it("rejects stop promptly when pi-tui reports a stop command failure", async () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error("expected mirrored session");
+    session.status = "busy";
+
+    const stopPromise = runtime.stopSession(sessionId);
+    const command = await waitForLatestCommand(ws);
+    expect(command.command).toEqual({ type: "stop" });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: false,
+      error: "emptyQueue is not defined",
+    });
+
+    await expect(stopPromise).rejects.toThrow("emptyQueue is not defined");
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+  });
+
   it("backfills the first user message from the terminal session file", async () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-title-"));
     const sessionFile = join(root, "session.jsonl");

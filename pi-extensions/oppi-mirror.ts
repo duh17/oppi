@@ -475,6 +475,19 @@ export class MirrorQueueProjection {
     return { changed, queue: this.snapshot() };
   }
 
+  clear(): ProjectionChange {
+    if (this.queue.steering.length === 0 && this.queue.followUp.length === 0) {
+      return { changed: false, queue: this.snapshot() };
+    }
+
+    this.queue = {
+      version: this.queue.version + 1,
+      steering: [],
+      followUp: [],
+    };
+    return { changed: true, queue: this.snapshot() };
+  }
+
   queueFromDrafts(
     baseVersion: number,
     steering: MessageQueueDraftItem[],
@@ -1158,7 +1171,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
   function clearQueueForShutdown(ctx: ExtensionContext) {
     const previous = queueProjection.snapshot();
-    queueProjection.replace(emptyQueue());
+    const result = queueProjection.clear();
     const session = findEditableAgentSession(ctx);
     if (session) {
       try {
@@ -1173,8 +1186,11 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       sessionId: connectedSessionId,
       workspaceId: connectedWorkspaceId,
       previousVersion: previous.version,
+      version: result.queue.version,
       previousSteeringCount: previous.steering.length,
+      steeringCount: result.queue.steering.length,
       previousFollowUpCount: previous.followUp.length,
+      followUpCount: result.queue.followUp.length,
     });
     sendQueueState();
     renderIndicator();

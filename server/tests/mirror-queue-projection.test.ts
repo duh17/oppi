@@ -109,6 +109,19 @@ describe("MirrorQueueProjection", () => {
     expect(reconciled.queue).toEqual({ version: 9, steering: [], followUp: [] });
   });
 
+  it("clears queued items for shutdown without calling an external helper", () => {
+    const projection = new MirrorQueueProjection(queue(8, ["old steer"], ["old follow"]));
+
+    const cleared = projection.clear();
+
+    expect(cleared.changed).toBe(true);
+    expect(cleared.queue).toEqual({ version: 9, steering: [], followUp: [] });
+    expect(projection.clear()).toEqual({
+      changed: false,
+      queue: { version: 9, steering: [], followUp: [] },
+    });
+  });
+
   it("builds set_queue replacements from the current projection version", () => {
     const projection = new MirrorQueueProjection(queue(4, ["existing"]));
 
