@@ -392,8 +392,8 @@ private struct ContextBarOverlapPreview: View {
             mutatingToolCalls: 2,
             filesChanged: 2,
             changedFiles: [
-                "/Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
-                "/Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift",
+                "/Users/example/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
+                "/Users/example/workspace/oppi/clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift",
             ],
             changedFilesOverflow: nil,
             addedLines: 60,
@@ -408,8 +408,8 @@ private struct ContextBarOverlapPreview: View {
             mutatingToolCalls: 2,
             filesChanged: 2,
             changedFiles: [
-                "/Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift",
-                "/Users/chenda/workspace/oppi/server/src/session-events.ts",
+                "/Users/example/workspace/oppi/clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift",
+                "/Users/example/workspace/oppi/server/src/session-events.ts",
             ],
             changedFilesOverflow: nil,
             addedLines: 53,
