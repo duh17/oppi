@@ -7,6 +7,7 @@ import CoreImage.CIFilterBuiltins
 /// and shows the invite URL for copying.
 struct PairView: View {
 
+    @State private var nearbyPairing = NearbyPairingAdvertiser()
     @State private var inviteURL: String?
     @State private var serverURL: String?
     @State private var qrImage: NSImage?
@@ -35,6 +36,20 @@ struct PairView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
+            }
+
+            Section("Nearby Pairing") {
+                Text(nearbyPairing.state.statusText)
+                    .foregroundStyle({
+                        if case .failed = nearbyPairing.state {
+                            return AnyShapeStyle(.red)
+                        }
+                        return AnyShapeStyle(.secondary)
+                    }())
+
+                Text("Keep this window open to let Oppi on your iPhone discover this Mac nearby. QR and invite-link pairing still work below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if isLoading {
@@ -117,7 +132,35 @@ struct PairView: View {
         .navigationTitle(hasPairedClients ? "Pair Device" : "Pair iPhone")
         .task {
             pairedClientCount = MacAPIClient.pairedClientCount()
+            nearbyPairing.start()
             generatePairing()
+        }
+        .onDisappear {
+            nearbyPairing.stop()
+        }
+        .alert(
+            "Allow Nearby Pairing?",
+            isPresented: Binding(
+                get: { nearbyPairing.approvalRequest != nil },
+                set: { isPresented in
+                    if !isPresented, nearbyPairing.approvalRequest != nil {
+                        nearbyPairing.rejectPendingInvitation()
+                    }
+                }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {
+                nearbyPairing.rejectPendingInvitation()
+            }
+            Button("Pair") {
+                nearbyPairing.approvePendingInvitation()
+            }
+        } message: {
+            Text(
+                nearbyPairing.approvalRequest.map {
+                    "Pair \($0.peerName) with this Mac and send a fresh one-time Oppi invite?"
+                } ?? ""
+            )
         }
     }
 

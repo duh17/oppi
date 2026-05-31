@@ -53,6 +53,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_oppi._tcp</string>
+		<string>_oppi-pair._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Oppi uses the camera to take photos for agent conversations.</string>

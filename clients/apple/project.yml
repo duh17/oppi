@@ -99,6 +99,7 @@ targets:
         NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your Mac server."
         NSBonjourServices:
           - "_oppi._tcp"
+          - "_oppi-pair._tcp"
         NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
         NSSpeechRecognitionUsageDescription: "Oppi uses on-device speech recognition to convert your voice into text."
         NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
@@ -444,6 +445,9 @@ targets:
         SUPublicEDKey: "wnLCIfY048anOcj7/J/Iv6Lp9Fmba4zQ0EjCL7k/M+E="
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
+        NSLocalNetworkUsageDescription: "Oppi uses the local network to pair nearby iPhones with this Mac."
+        NSBonjourServices:
+          - "_oppi-pair._tcp"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
 

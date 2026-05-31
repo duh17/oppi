@@ -27,6 +27,12 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_oppi-pair._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Oppi uses the local network to pair nearby iPhones with this Mac.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

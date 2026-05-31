@@ -81,6 +81,18 @@ struct InviteBootstrapServiceTests {
         #expect(factoryCalled == false)
     }
 
+    @Test func decodesCredentialsFromInviteURL() throws {
+        let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"invite-token","name":"Pairing Server"}"#
+        let encodedPayload = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
+        let inviteURL = try #require(URL(string: "oppi://connect?v=3&payload=\(encodedPayload)"))
+
+        let credentials = InviteBootstrapService.credentials(from: inviteURL)
+
+        #expect(credentials?.host == host)
+        #expect(credentials?.port == 7749)
+        #expect(credentials?.token == "invite-token")
+    }
+
     @Test func pairingFailureMessageForExpiredInvite() {
         let message = InviteBootstrapService.pairingFailureMessage(
             for: APIError.server(status: 401, message: "Invalid or expired pairing token"),

@@ -5,6 +5,7 @@ struct PairingView: View {
 
     let onDone: () -> Void
 
+    @State private var nearbyPairing = NearbyPairingAdvertiser()
     @State private var pairingInfo: PairingInvite?
     @State private var qrImage: NSImage?
     @State private var error: String?
@@ -18,10 +19,26 @@ struct PairingView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("Open Oppi on your iPhone and scan this QR code.")
+                Text("Open Oppi on your iPhone and scan this QR code, or use nearby pairing if the phone is close to this Mac.")
                     .foregroundStyle(.secondary)
             }
             .padding(.top, 24)
+
+            VStack(spacing: 6) {
+                Text(nearbyPairing.state.statusText)
+                    .font(.caption)
+                    .foregroundStyle({
+                        if case .failed = nearbyPairing.state {
+                            return AnyShapeStyle(.red)
+                        }
+                        return AnyShapeStyle(.secondary)
+                    }())
+
+                Text("Nearby pairing stays active while this step is visible.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 12)
 
             Spacer()
 
@@ -90,7 +107,35 @@ struct PairingView: View {
             .padding(20)
         }
         .task {
+            nearbyPairing.start()
             generatePairing()
+        }
+        .onDisappear {
+            nearbyPairing.stop()
+        }
+        .alert(
+            "Allow Nearby Pairing?",
+            isPresented: Binding(
+                get: { nearbyPairing.approvalRequest != nil },
+                set: { isPresented in
+                    if !isPresented, nearbyPairing.approvalRequest != nil {
+                        nearbyPairing.rejectPendingInvitation()
+                    }
+                }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {
+                nearbyPairing.rejectPendingInvitation()
+            }
+            Button("Pair") {
+                nearbyPairing.approvePendingInvitation()
+            }
+        } message: {
+            Text(
+                nearbyPairing.approvalRequest.map {
+                    "Pair \($0.peerName) with this Mac and send a fresh one-time Oppi invite?"
+                } ?? ""
+            )
         }
     }
 
