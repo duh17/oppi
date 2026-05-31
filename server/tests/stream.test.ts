@@ -232,7 +232,7 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("connected", "sess-stale-mirror")[0]).toMatchObject({ currentSeq: 7 });
   });
 
-  it("resumes a stopped disconnected mirror session as a managed imported session", async () => {
+  it("resumes a stopped disconnected mirror session as an oppi imported session", async () => {
     const session = {
       ...makeSession("sess-stopped-mirror", "w1"),
       status: "stopped" as const,

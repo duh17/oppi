@@ -60,7 +60,7 @@ const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 
 const BRIDGE_PROTOCOL_VERSION = 1;
 const EVENT_RING_CAPACITY = 500;
-const MANAGED_RUNTIME_CONFLICT_RETRY_MS = 10_000;
+const OPPI_RUNTIME_CONFLICT_RETRY_MS = 10_000;
 const PI_TUI_STOP_TIMEOUT_MS = 15_000;
 const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
 
@@ -385,7 +385,7 @@ function queueShapeChanged(previous: MessageQueueState, next: MessageQueueState)
 }
 
 export interface PiTuiMirrorRuntimeOptions {
-  isManagedSessionActive?: (sessionId: string) => boolean;
+  isOppiSessionActive?: (sessionId: string) => boolean;
 }
 
 export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTransport {
@@ -1186,12 +1186,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (
       existing &&
       existing.runtime !== "pi-tui" &&
-      this.options.isManagedSessionActive?.(existing.id)
+      this.options.isOppiSessionActive?.(existing.id)
     ) {
       throw new BridgeRegistrationError(
         `Session ${existing.id} is already owned by the oppi runtime; stop it before mirroring this pi-tui session`,
-        "managed_runtime_active",
-        { sessionId: existing.id, retryAfterMs: MANAGED_RUNTIME_CONFLICT_RETRY_MS },
+        "oppi_runtime_active",
+        { sessionId: existing.id, retryAfterMs: OPPI_RUNTIME_CONFLICT_RETRY_MS },
       );
     }
 

@@ -35,7 +35,7 @@ function makeRuntime(
   options: {
     hostMount?: string;
     dataDir?: string;
-    isManagedSessionActive?: (sessionId: string) => boolean;
+    isOppiSessionActive?: (sessionId: string) => boolean;
   } = {},
 ) {
   const workspace: Workspace = {
@@ -81,7 +81,7 @@ function makeRuntime(
 
   return {
     runtime: new PiTuiMirrorRuntime(storage, {
-      isManagedSessionActive: options.isManagedSessionActive,
+      isOppiSessionActive: options.isOppiSessionActive,
     }),
     sessions,
   };
@@ -190,13 +190,13 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.closeCode).toBe(1008);
   });
 
-  it("reports managed-runtime ownership conflicts as structured retryable bridge errors", () => {
+  it("reports oppi-runtime ownership conflicts as structured retryable bridge errors", () => {
     const { runtime, sessions } = makeRuntime({
       hostMount: "/tmp/oppi-mirror-test",
-      isManagedSessionActive: (sessionId) => sessionId === "managed-1",
+      isOppiSessionActive: (sessionId) => sessionId === "oppi-1",
     });
-    sessions.set("managed-1", {
-      id: "managed-1",
+    sessions.set("oppi-1", {
+      id: "oppi-1",
       workspaceId: "w1",
       workspaceName: "Workspace",
       status: "busy",
@@ -227,8 +227,8 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.sent).toHaveLength(1);
     expect(ws.sent[0]).toMatchObject({
       type: "error",
-      code: "managed_runtime_active",
-      sessionId: "managed-1",
+      code: "oppi_runtime_active",
+      sessionId: "oppi-1",
       retryAfterMs: 10_000,
       error: expect.stringContaining("already owned by the oppi runtime"),
     });

@@ -32,8 +32,8 @@ import {
 } from "../local-sessions.js";
 import { buildPermissionMessage } from "../gate.js";
 import {
-  promoteStoppedMirrorToManaged,
-  canResumeStoppedMirrorAsManaged,
+  promoteStoppedMirrorToOppi,
+  canResumeStoppedMirrorAsOppi,
 } from "../mirror-session-resume.js";
 import {
   type ChatAttachmentRef,
@@ -1139,13 +1139,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     if (session.runtime === "pi-tui") {
       const mirrorConnected = ctx.mirrorRuntime?.isSessionConnected?.(sessionId) === true;
-      if (!canResumeStoppedMirrorAsManaged(session, mirrorConnected)) {
+      if (!canResumeStoppedMirrorAsOppi(session, mirrorConnected)) {
         const active = ctx.mirrorRuntime?.getActiveSession(sessionId) ?? session;
         helpers.json(res, { session: ctx.ensureSessionContextWindow(active) });
         return;
       }
 
-      promoteStoppedMirrorToManaged(session);
+      promoteStoppedMirrorToOppi(session);
       ctx.storage.saveSession(session);
     }
 

@@ -4,10 +4,7 @@ export function mirrorSessionResumeFile(session: Session): string | undefined {
   return session.piSessionFile ?? session.piSessionFiles?.[session.piSessionFiles.length - 1];
 }
 
-export function canResumeStoppedMirrorAsManaged(
-  session: Session,
-  mirrorConnected: boolean,
-): boolean {
+export function canResumeStoppedMirrorAsOppi(session: Session, mirrorConnected: boolean): boolean {
   return (
     session.runtime === "pi-tui" &&
     session.status === "stopped" &&
@@ -16,7 +13,7 @@ export function canResumeStoppedMirrorAsManaged(
   );
 }
 
-export function promoteStoppedMirrorToManaged(session: Session): Session {
+export function promoteStoppedMirrorToOppi(session: Session): Session {
   const resumeFile = mirrorSessionResumeFile(session);
   session.runtime = "oppi";
   session.mirror = undefined;

@@ -859,7 +859,7 @@ type MirrorIndicatorMode =
 type MirrorIndicatorColor = "success" | "error" | "warning" | "muted";
 
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
-const MANAGED_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
+const OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
 
 export default function oppiPiMirror(pi: ExtensionAPI) {
   let latestCtx: ExtensionContext | null = null;
@@ -878,8 +878,8 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   let runtimeActive = true;
   let connectionSerial = 0;
   let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
-  let lastManagedConflictSessionId: string | null = null;
-  let lastManagedConflictNotifiedAt = 0;
+  let lastOppiRuntimeConflictSessionId: string | null = null;
+  let lastOppiRuntimeConflictNotifiedAt = 0;
 
   let settings = loadSettings();
 
@@ -1497,8 +1497,8 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         connectedWorkspaceId =
           (message as { workspaceId?: string }).workspaceId ?? null;
         nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
-        lastManagedConflictSessionId = null;
-        lastManagedConflictNotifiedAt = 0;
+        lastOppiRuntimeConflictSessionId = null;
+        lastOppiRuntimeConflictNotifiedAt = 0;
         writeMirrorLog("info", "bridge_connected", {
           runtime: "pi-tui",
           bridgeId,
@@ -1523,9 +1523,8 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         };
         const errorText = err.error ?? "unknown";
         if (
-          err.code === "managed_runtime_active" ||
-          errorText.includes("already owned by the oppi runtime") ||
-          errorText.includes("already owned by the managed Oppi runtime")
+          err.code === "oppi_runtime_active" ||
+          errorText.includes("already owned by the oppi runtime")
         ) {
           const sessionId = err.sessionId ?? "this session";
           nextReconnectDelayMs =
@@ -1537,12 +1536,12 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
 
           const now = Date.now();
           const shouldNotify =
-            lastManagedConflictSessionId !== sessionId ||
-            now - lastManagedConflictNotifiedAt >
-              MANAGED_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS;
+            lastOppiRuntimeConflictSessionId !== sessionId ||
+            now - lastOppiRuntimeConflictNotifiedAt >
+              OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS;
           if (shouldNotify) {
-            lastManagedConflictSessionId = sessionId;
-            lastManagedConflictNotifiedAt = now;
+            lastOppiRuntimeConflictSessionId = sessionId;
+            lastOppiRuntimeConflictNotifiedAt = now;
             notify(
               ctx,
               `Oppi Mirror is waiting for Oppi session ${sessionId} to stop before taking over this terminal session.`,

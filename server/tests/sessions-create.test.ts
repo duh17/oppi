@@ -689,7 +689,7 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
     });
   });
 
-  it("resumes stopped disconnected mirror sessions as managed imported sessions", async () => {
+  it("resumes stopped disconnected mirror sessions as oppi imported sessions", async () => {
     const mock = createMockContext();
     const mirrorSession = makeSession({
       id: "sess-1",

@@ -545,8 +545,7 @@ export class Server {
     this.sessions.availableModelIdsResolver = () => this.models.getAll().map((m) => m.id);
 
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
-      isManagedSessionActive: (sessionId) =>
-        this.sessions.getActiveSession(sessionId) !== undefined,
+      isOppiSessionActive: (sessionId) => this.sessions.getActiveSession(sessionId) !== undefined,
     });
     this.sessionRuntimeRouter = new SessionRuntimeRouter(
       this.storage,

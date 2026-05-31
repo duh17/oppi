@@ -58,9 +58,9 @@ struct ServerMessageTests {
         #expect(session.runtime == .piTui)
     }
 
-    @Test func rejectsLegacySessionRuntimeKinds() {
+    @Test func rejectsUnknownSessionRuntimeKinds() {
         let json = """
-        {"type":"connected","session":{"id":"abc","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"runtime":"managed"}}
+        {"type":"connected","session":{"id":"abc","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"runtime":"legacy-runtime"}}
         """
         #expect(throws: DecodingError.self) {
             try ServerMessage.decode(from: json)

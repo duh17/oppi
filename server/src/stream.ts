@@ -13,8 +13,8 @@ import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.j
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
 import {
-  canResumeStoppedMirrorAsManaged,
-  promoteStoppedMirrorToManaged,
+  canResumeStoppedMirrorAsOppi,
+  promoteStoppedMirrorToOppi,
 } from "./mirror-session-resume.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
@@ -371,14 +371,14 @@ export class BoundSessionStreamMux {
       const mirrorConnected = isStoredMirrorSession
         ? mirrorRuntime?.isSessionConnected(sessionId) === true
         : false;
-      const shouldResumeMirrorAsManaged = canResumeStoppedMirrorAsManaged(session, mirrorConnected);
-      if (shouldResumeMirrorAsManaged) {
-        promoteStoppedMirrorToManaged(session);
+      const shouldResumeMirrorAsOppi = canResumeStoppedMirrorAsOppi(session, mirrorConnected);
+      if (shouldResumeMirrorAsOppi) {
+        promoteStoppedMirrorToOppi(session);
         this.ctx.storage.saveSession(session);
       } else if (isStoredMirrorSession && !mirrorRuntime) {
         throw new Error("pi-tui runtime is not available");
       }
-      const isMirrorSession = isStoredMirrorSession && !shouldResumeMirrorAsManaged;
+      const isMirrorSession = isStoredMirrorSession && !shouldResumeMirrorAsOppi;
 
       let hydratedSession = this.ctx.ensureSessionContextWindow(session);
       const hadActiveSession = isMirrorSession
