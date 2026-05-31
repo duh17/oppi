@@ -497,7 +497,10 @@ export function loadSamples(telemetryDir: string, daysBack: number): LoadResult 
     }
   }
 
-  loadServerMetrics(telemetryDir, cutoffMs, values, samples);
+  const serverResult = loadServerMetrics(telemetryDir, cutoffMs, values, samples);
+  totalSamples += serverResult.samples;
+  filesRead += serverResult.files;
+
   const opsResult = loadServerOpsMetrics(telemetryDir, cutoffMs, values, samples);
   totalSamples += opsResult.samples;
   filesRead += opsResult.files;
@@ -510,18 +513,21 @@ function loadServerMetrics(
   cutoffMs: number,
   values: Record<string, MetricBucket>,
   samples: LoadedSample[],
-): void {
+): { samples: number; files: number } {
   let files: string[] = [];
+  let totalSamples = 0;
+  let filesRead = 0;
   try {
     files = readdirSync(telemetryDir)
       .filter((f) => f.startsWith("server-metrics-") && f.endsWith(".jsonl"))
       .sort();
   } catch {
-    return;
+    return { samples: 0, files: 0 };
   }
 
   for (const file of files) {
     const text = readFileSync(join(telemetryDir, file), "utf8");
+    filesRead += 1;
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       let rec: {
@@ -530,6 +536,7 @@ function loadServerMetrics(
         memory?: { rss?: number; heapUsed?: number };
         sessions?: { total?: number };
         wsConnections?: number;
+        eventLoop?: { p99?: number };
       };
       try {
         rec = JSON.parse(line);
@@ -542,6 +549,7 @@ function loadServerMetrics(
         if (typeof val !== "number" || !Number.isFinite(val)) return;
         pushValue(values, metric, val, unit);
         pushSample(samples, { ts: rec.ts!, metric, value: val, unit });
+        totalSamples += 1;
       };
 
       push("server.cpu_total", rec.cpu?.total, "pct");
@@ -549,8 +557,11 @@ function loadServerMetrics(
       push("server.heap_mb", rec.memory?.heapUsed, "mb");
       push("server.ws_connections", rec.wsConnections, "count");
       push("server.sessions_total", rec.sessions?.total, "count");
+      push("server.event_loop_lag_ms", rec.eventLoop?.p99, "ms");
     }
   }
+
+  return { samples: totalSamples, files: filesRead };
 }
 
 function loadServerOpsMetrics(

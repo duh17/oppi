@@ -153,6 +153,7 @@ The front page should focus on metrics that map directly to user experience. Low
 | `device.memory_available_mb` | Headroom before jetsam; low is bad. |
 | `device.thermal_state` | Thermal pressure that can make the app feel slow. |
 | `server.cpu_total` | Server CPU saturation. |
+| `server.event_loop_lag_ms` | Server event-loop delay during sampler intervals. |
 | `server.rss_mb` and `server.heap_mb` | Server memory pressure. |
 | `server.sessions_total` and `server.ws_connections` | Local server concurrency pressure. |
 | MetricKit diagnostics | Crashes, hangs, CPU exceptions, and disk-write exceptions. |

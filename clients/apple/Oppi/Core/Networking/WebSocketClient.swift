@@ -371,6 +371,7 @@ final class WebSocketClient {
 
         continuation?.finish()
         continuation = nil
+        flushSuppressedReceiveErrors(reason: "disconnect")
         lastReceiveErrorFingerprint = nil
         lastReceiveErrorLogNs = 0
         suppressedReceiveErrorCount = 0
@@ -445,6 +446,13 @@ final class WebSocketClient {
         let count = suppressedReceiveErrorCount
         suppressedReceiveErrorCount = 0
         return ["suppressedReceiveErrorCount": String(count)]
+    }
+
+    private func flushSuppressedReceiveErrors(reason: String) {
+        var metadata = consumeReceiveErrorSuppressionMetadata()
+        guard !metadata.isEmpty else { return }
+        metadata["reason"] = reason
+        wsLogWarning("Suppressed WebSocket receive errors", metadata: metadata)
     }
 
     private func receiveFailureMetadata(for ws: URLSessionWebSocketTask, error: Error) -> [String: String] {

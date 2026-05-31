@@ -45,6 +45,22 @@ describe("ServerResourceSampler", () => {
 
     const sampler = new ServerResourceSampler(deps);
     sampler.recordActiveSessionCount(5);
+    let eventLoopResetCalled = false;
+    (
+      sampler as unknown as {
+        eventLoopDelay: {
+          percentile: (percentile: number) => number;
+          max: number;
+          reset: () => void;
+        };
+      }
+    ).eventLoopDelay = {
+      percentile: (percentile) => percentile * 1_000_000,
+      max: 200_000_000,
+      reset: () => {
+        eventLoopResetCalled = true;
+      },
+    };
     (
       sampler as unknown as { lastCpu: { user: number; system: number; timestamp: number } }
     ).lastCpu = {
@@ -78,7 +94,9 @@ describe("ServerResourceSampler", () => {
       memory: { heapUsed: 25, heapTotal: 50, rss: 100, external: 5 },
       sessions: { busy: 1, ready: 2, starting: 0, total: 3, peak: 5 },
       wsConnections: 7,
+      eventLoop: { p50: 50, p95: 95, p99: 99, max: 200 },
     });
+    expect(eventLoopResetCalled).toBe(true);
     expect((sampler as unknown as { activeSessionPeak: number }).activeSessionPeak).toBe(3);
   });
 

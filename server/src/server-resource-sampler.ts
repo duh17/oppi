@@ -9,6 +9,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
 import { join } from "node:path";
 import { dateString, pruneOldJsonlFiles, retentionDaysFromEnv, round2 } from "./metric-utils.js";
 import { createLogger } from "./logger.js";
@@ -17,6 +18,7 @@ const FILE_PREFIX = "server-metrics-";
 const FILE_SUFFIX = ".jsonl";
 const DEFAULT_INTERVAL_MS = 30_000; // 30s
 const DEFAULT_RETENTION_DAYS = 30;
+const NS_PER_MS = 1_000_000;
 
 const log = createLogger({ base: { component: "server_resource_sampler" } });
 
@@ -55,6 +57,7 @@ function intervalFromEnv(): number {
 export class ServerResourceSampler {
   private timer: NodeJS.Timeout | null = null;
   private lastCpu: CpuSnapshot | null = null;
+  private eventLoopDelay: IntervalHistogram | null = null;
   /** Peak active session count since last sample — reset each interval. */
   private activeSessionPeak = 0;
 
@@ -74,6 +77,15 @@ export class ServerResourceSampler {
     const usage = process.cpuUsage();
     this.lastCpu = { user: usage.user, system: usage.system, timestamp: Date.now() };
 
+    try {
+      this.eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+      this.eventLoopDelay.enable();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn("server_metrics.event_loop_delay.unavailable", { error: message });
+      this.eventLoopDelay = null;
+    }
+
     const intervalMs = intervalFromEnv();
     this.timer = setInterval(() => this.sample(), intervalMs);
     // Don't block process exit
@@ -87,6 +99,24 @@ export class ServerResourceSampler {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.eventLoopDelay?.disable();
+    this.eventLoopDelay = null;
+  }
+
+  private captureEventLoopDelay(): { p50: number; p95: number; p99: number; max: number } {
+    const histogram = this.eventLoopDelay;
+    if (!histogram) return { p50: 0, p95: 0, p99: 0, max: 0 };
+
+    const toMs = (value: number): number =>
+      Number.isFinite(value) ? round2(value / NS_PER_MS) : 0;
+    const snapshot = {
+      p50: toMs(histogram.percentile(50)),
+      p95: toMs(histogram.percentile(95)),
+      p99: toMs(histogram.percentile(99)),
+      max: toMs(histogram.max),
+    };
+    histogram.reset();
+    return snapshot;
   }
 
   private sample(): void {
@@ -113,6 +143,7 @@ export class ServerResourceSampler {
 
       const sessions = this.deps.getSessionCounts();
       const wsCount = this.deps.getWebSocketCount();
+      const eventLoop = this.captureEventLoopDelay();
 
       // CPU usage as percentage (delta since last sample)
       let cpuUser = 0;
@@ -170,6 +201,7 @@ export class ServerResourceSampler {
           peak,
         },
         wsConnections: wsCount,
+        eventLoop,
       };
 
       this.appendToFile(now, record);

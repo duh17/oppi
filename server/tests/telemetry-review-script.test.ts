@@ -1,9 +1,14 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   SLO_THRESHOLDS,
   buildTelemetryTrendSvg,
   buildTrendBuckets,
+  loadSamples,
   review,
 } from "../scripts/telemetry-review.ts";
 
@@ -47,6 +52,34 @@ describe("telemetry-review svg reporting", () => {
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.connected_dispatch_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("server.dictation_llm_correction_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.session_list_row_compute_ms");
+  });
+
+  it("counts server resource samples as telemetry data", () => {
+    const telemetryDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-review-"));
+    try {
+      const now = Date.now();
+      writeFileSync(
+        join(telemetryDir, "server-metrics-2026-05-31.jsonl"),
+        JSON.stringify({
+          ts: now,
+          cpu: { total: 12 },
+          memory: { rss: 123, heapUsed: 45 },
+          sessions: { total: 2 },
+          wsConnections: 3,
+          eventLoop: { p99: 7 },
+        }) + "\n",
+      );
+
+      const result = loadSamples(telemetryDir, 1);
+
+      expect(result.filesRead).toBe(1);
+      expect(result.totalSamples).toBe(6);
+      expect(result.samples).toHaveLength(6);
+      expect(result.values["server.cpu_total"]?.vals).toEqual([12]);
+      expect(result.values["server.event_loop_lag_ms"]?.vals).toEqual([7]);
+    } finally {
+      rmSync(telemetryDir, { recursive: true, force: true });
+    }
   });
 
   it("buckets trend samples into deterministic p95 windows", () => {

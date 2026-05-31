@@ -137,7 +137,9 @@ function formatTs(ts: number | null): string {
 }
 
 function formatWindowValue(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function inc(map: Record<string, number>, key: string, by = 1): void {
@@ -258,7 +260,8 @@ export function buildClientLogReview(options: {
   const days = Math.max(0, options.days ?? 7);
   const hours = options.hours == null ? undefined : Math.max(0, options.hours);
   const windowMs = hours != null ? hours * HOUR_MS : days * DAY_MS;
-  const windowLabel = hours != null ? `${formatWindowValue(hours)}h` : `${formatWindowValue(days)}d`;
+  const windowLabel =
+    hours != null ? `${formatWindowValue(hours)}h` : `${formatWindowValue(days)}d`;
   const cutoffMs = Date.now() - windowMs;
   const levels = options.levels;
   const levelCounts: Record<string, number> = {};
@@ -280,13 +283,14 @@ export function buildClientLogReview(options: {
       if (!line.trim()) continue;
       const record = parseJsonLine(line);
       if (!record) continue;
-      uploads += 1;
-      dropped += Math.max(0, safeNumber(record.droppedCount) ?? 0);
       const buildNumber = record.buildNumber ?? "unknown";
+      const recordFallbackTs = safeNumber(record.generatedAt) ?? safeNumber(record.receivedAt) ?? 0;
+      let recordInWindow = false;
 
       for (const entry of record.entries ?? []) {
-        const ts = safeNumber(entry.ts) ?? safeNumber(record.generatedAt) ?? 0;
+        const ts = safeNumber(entry.ts) ?? recordFallbackTs;
         if (ts < cutoffMs) continue;
+        recordInWindow = true;
         const level = normalizeLevel(entry.level);
         if (levels && !levels.has(level)) continue;
         entries += 1;
@@ -308,6 +312,14 @@ export function buildClientLogReview(options: {
             buildNumber,
           });
         }
+      }
+
+      if (!recordInWindow && (record.entries?.length ?? 0) === 0 && recordFallbackTs >= cutoffMs) {
+        recordInWindow = true;
+      }
+      if (recordInWindow) {
+        uploads += 1;
+        dropped += Math.max(0, safeNumber(record.droppedCount) ?? 0);
       }
     }
   }
