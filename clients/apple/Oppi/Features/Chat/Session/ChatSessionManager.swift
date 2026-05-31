@@ -75,6 +75,10 @@ final class ChatSessionManager {
 
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
+    /// Permission notification taps can arrive before the session summary is cached.
+    /// Keep the permission's workspace as a navigation hint so history/stream setup
+    /// does not fall back to an empty, missing-workspace timeline.
+    private var workspaceIdHint: String?
 
     /// Freshness metadata for chat timeline sync.
     private(set) var lastSuccessfulSyncAt: Date?
@@ -150,6 +154,11 @@ final class ChatSessionManager {
         }
 
         if let workspaceId = sessionStore.activeSession?.workspaceId,
+           !workspaceId.isEmpty {
+            return workspaceId
+        }
+
+        if let workspaceId = workspaceIdHint,
            !workspaceId.isEmpty {
             return workspaceId
         }
@@ -255,6 +264,10 @@ final class ChatSessionManager {
         telemetry.startSessionSwitch()
         telemetry.startSessionLoad()
         markSyncStarted()
+        if let permissionWorkspaceId = connection.permissionStore.pending(for: sessionId).first?.workspaceId,
+           !permissionWorkspaceId.isEmpty {
+            workspaceIdHint = permissionWorkspaceId
+        }
 
         let persistedLastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
         connection.sessionStreamCoordinator.seedLastSeenSeq(
