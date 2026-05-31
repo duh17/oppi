@@ -178,12 +178,18 @@ struct ChatSessionReentryTests {
         let seededSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         #expect(seededSeq >= 11, "Live events with seq > seeded currentSeq should be accepted")
 
-        // Verify live content is in the timeline
-        let hasLiveContent = manager.reducer.items.contains { item in
-            if case .assistantMessage(_, let text, _) = item {
-                return text.contains("LIVE_CONTENT")
+        // Verify live content is in the timeline. In the full suite the stream
+        // reducer can run a tick behind the seq tracker, so wait for the UI model
+        // rather than sampling it immediately after the event is accepted.
+        let hasLiveContent = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                manager.reducer.items.contains { item in
+                    if case .assistantMessage(_, let text, _) = item {
+                        return text.contains("LIVE_CONTENT")
+                    }
+                    return false
+                }
             }
-            return false
         }
         #expect(hasLiveContent, "Live events during trace fetch should appear in timeline")
 
