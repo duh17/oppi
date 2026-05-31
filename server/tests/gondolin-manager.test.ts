@@ -3,6 +3,7 @@ import {
   buildVmHttpHooks,
   GondolinManager,
   isQemuAvailable,
+  shouldShadowSandboxWorkspacePath,
   type VmFactory,
   type VmFactoryOptions,
 } from "../src/gondolin-manager.js";
@@ -78,10 +79,8 @@ describe("GondolinManager", () => {
     const vm = await manager.ensureWorkspaceVm(ws, "/home/user/project");
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({
-      hostCwd: "/home/user/project",
-      allowedHosts: [],
-    });
+    expect(calls[0].hostCwd).toBe("/home/user/project");
+    expect(calls[0].allowedHosts).toBeUndefined();
     expect(vm).toBe(vms[0]);
   });
 
@@ -140,14 +139,14 @@ describe("GondolinManager", () => {
     expect(calls[0].allowedHosts).toEqual(["api.example.com", "cdn.example.com"]);
   });
 
-  it("defaults allowedHosts to deny all", async () => {
+  it("leaves allowedHosts undefined by default to follow Gondolin", async () => {
     const { factory, calls } = makeFactory();
     manager = new GondolinManager(factory);
 
     const ws = makeWorkspace({ id: "w1" });
     await manager.ensureWorkspaceVm(ws, "/path");
 
-    expect(calls[0].allowedHosts).toEqual([]);
+    expect(calls[0].allowedHosts).toBeUndefined();
   });
 });
 
@@ -253,7 +252,69 @@ describe("isRunning / getVm", () => {
   });
 });
 
+describe("sandbox workspace shadow policy", () => {
+  it("hides common secret files and directories anywhere under the workspace mount", () => {
+    const shadowed = [
+      "/.env",
+      "/app/.env.local",
+      "/repo/.ssh/config",
+      "/repo/.aws/credentials",
+      "/repo/private.pem",
+      "/repo/service.key",
+    ];
+
+    for (const path of shadowed) {
+      expect(shouldShadowSandboxWorkspacePath({ op: "open", path })).toBe(true);
+    }
+  });
+
+  it("does not hide ordinary project files", () => {
+    const allowed = ["/README.md", "/src/config.ts", "/docs/keybindings.md", "/pem-notes.txt"];
+
+    for (const path of allowed) {
+      expect(shouldShadowSandboxWorkspacePath({ op: "open", path })).toBe(false);
+    }
+  });
+});
+
 describe("buildVmHttpHooks", () => {
+  it("passes omitted allowedHosts through to Gondolin's allow-all default", () => {
+    const createHttpHooks = vi.fn(() => ({
+      httpHooks: {
+        isIpAllowed: () => true,
+      },
+      env: {},
+    }));
+
+    buildVmHttpHooks(createHttpHooks, {});
+
+    expect(createHttpHooks).toHaveBeenCalledWith({ allowedHosts: undefined, secrets: undefined });
+  });
+
+  it("passes an explicit empty allowedHosts list to Gondolin and denies all egress", async () => {
+    const createHttpHooks = vi.fn(() => ({
+      httpHooks: {
+        isIpAllowed: () => true,
+      },
+      env: {},
+    }));
+
+    const { httpHooks } = buildVmHttpHooks(createHttpHooks, {
+      allowedHosts: [],
+    });
+
+    expect(createHttpHooks).toHaveBeenCalledWith({ allowedHosts: [], secrets: undefined });
+    await expect(
+      httpHooks.isIpAllowed?.({
+        hostname: "example.com",
+        ip: "93.184.216.34",
+        family: 4,
+        port: 443,
+        protocol: "https",
+      }),
+    ).resolves.toBe(false);
+  });
+
   it("treats an empty allowedHosts list as deny-all", async () => {
     const { httpHooks } = buildVmHttpHooks(
       () => ({

@@ -1,16 +1,16 @@
 # Sandbox workspaces
 
-Sandbox workspaces run Oppi sessions inside a Gondolin Linux micro-VM instead of executing tools directly on the host. Use them when you want the agent to inspect or change a project without giving generated code broad access to your host filesystem, host environment, or network.
+Sandbox workspaces run agent file tools and shell commands inside a local Gondolin Linux micro-VM. They are for users who want an agent to inspect or modify a project without giving generated code broad access to the host filesystem or host environment, while keeping network policy explicit and configurable.
 
-Oppi uses Gondolin for the sandbox boundary and Pi's SDK tool plumbing to route `read`, `bash`, `edit`, and `write` into the VM.
+Oppi uses [`@earendil-works/gondolin`](https://www.npmjs.com/package/@earendil-works/gondolin) as the sandbox runtime and Pi's SDK tool plumbing to route `read`, `bash`, `edit`, and `write` into the VM.
 
 ## Quick start
 
 Prerequisite: install QEMU on the server host.
 
 ```bash
-brew install qemu              # macOS
-sudo apt install qemu-system-arm # Debian/Ubuntu on ARM64
+brew install qemu                 # macOS
+sudo apt install qemu-system-arm  # Debian/Ubuntu on ARM64
 ```
 
 Create a sandbox workspace from the app:
@@ -18,43 +18,65 @@ Create a sandbox workspace from the app:
 1. Open **Workspaces**.
 2. Tap **+**.
 3. Turn on **Sandbox**.
-4. Pick a project or leave the path empty.
+4. Pick a project path, or leave it empty for a dedicated sandbox folder.
 5. Create the workspace.
-6. Start a session.
+6. Start a new session.
 
 The first session boots a VM for that workspace. Inside the session, the agent sees the workspace at:
 
 ```text
-/workspace/<workspace-name>
+/workspace/<workspace-slug>
 ```
 
 Host paths such as `/Users/alice/...` are not part of the sandbox prompt or tool cwd.
 
+## Expected behavior
+
+A sandbox workspace has two sides:
+
+- **Trusted host side:** Oppi and Pi run the model loop, provider authentication, session storage, UI extensions, and server APIs.
+- **Sandbox guest side:** Gondolin runs agent file tools and shell commands in the VM.
+
+Expected behavior for new sandbox sessions:
+
+- The visible cwd is `/workspace/<workspace-slug>`.
+- If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host.
+- `read`, `bash`, `edit`, and `write` operate against the VM workspace mount.
+- Model API calls still work from the host process; the VM does not need provider API keys for normal agent operation.
+- Oppi/Pi provider API keys are not forwarded into the VM by default.
+- Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all.
+- Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`.
+- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model.
+- Global host agent instructions are not exposed to sandbox sessions.
+
+Existing running sessions may keep their old cwd and VM until restarted. Start a new session after changing sandbox settings that affect cwd, mounts, or network policy.
+
 ## Default safety model
 
-New sandbox workspaces start restrictive. Loosen them only when the task needs it.
+Sandbox workspaces separate host and guest surfaces. Configure network access deliberately for the task.
 
 | Surface | Default | How to change it |
 | --- | --- | --- |
-| Compute | Runs commands in a QEMU Linux micro-VM | Requires QEMU on the server |
-| Workspace path | `/workspace/<workspace-name>` inside the VM | Workspace name determines the slug |
-| Host filesystem | Only the selected workspace backing directory is mounted | Pick a project path, or leave blank for a dedicated `~/sandbox/<slug>` backing directory |
+| Compute | Commands run in a QEMU Linux micro-VM | Requires QEMU on the server |
+| Workspace path | `/workspace/<workspace-slug>` inside the VM | Workspace name determines the slug |
+| Host filesystem | Only the selected workspace backing directory is mounted | Pick a project path, or leave blank for `~/sandbox/<slug>` |
 | Secret files | Common secret paths are hidden from the workspace mount, including `.env*`, `.npmrc`, `.ssh`, `.aws`, `*.pem`, and `*.key` | Keep secrets outside the mounted project when possible |
-| Network egress | Denied: `allowedHosts: []` | Edit **Allowed Hosts** in the workspace editor |
-| Secrets | No Oppi/Pi provider API keys are injected into the VM by default | Future explicit secret bridge only |
+| Network egress | Gondolin default: omitted `allowedHosts` allows all HTTP/TLS egress | Edit **Allowed Hosts** in the workspace editor; use an empty list to deny all |
+| Provider secrets | Not injected into the VM | Future secret bridging must be explicit and scoped |
 | Tools | VM-backed `read`, `bash`, `edit`, `write` | Server/API/admin can set an authoritative tool allowlist |
-| Context | Workspace-local `AGENTS.md` / `CLAUDE.md` are allowed; global host agent config is hidden | Put sandbox-specific instructions in the workspace or Oppi workspace prompt |
+| Context | Workspace-local context is allowed; global host agent config is hidden | Put sandbox-specific instructions in the workspace or Oppi workspace prompt |
 
-Existing sandbox workspaces keep their saved network settings. If an older workspace has `allowedHosts: ["*"]`, clear the Allowed Hosts field to return to deny-all.
+Existing sandbox workspaces keep their saved network settings. Omitted `allowedHosts` and `allowedHosts: ["*"]` both allow all. Clear the Allowed Hosts field to store `allowedHosts: []` and deny all.
 
 ## Configure network access
 
 Open **Edit Workspace → Sandbox → Allowed Hosts**.
 
-- Empty field: deny all network egress.
+- Omitted `allowedHosts`: follow Gondolin's default and allow all HTTP/TLS egress.
+- Empty field in the editor: store `allowedHosts: []` and deny all network egress.
 - One host per line: allow those hosts.
 - Wildcards are supported, for example `*.github.com`.
-- `*` allows all HTTP/TLS egress and is rarely the right default.
+- `*` also allows all HTTP/TLS egress.
 
 Examples:
 
@@ -70,11 +92,17 @@ raw.githubusercontent.com
 ```
 
 ```text
-# broad, use only when you intentionally accept exfiltration risk
+# allow all, same effective behavior as omitted allowedHosts
 *
 ```
 
 Allowed hosts can receive any data the guest can read. Treat every allowed destination as an exfiltration destination.
+
+## Provider keys and guest network are separate
+
+Do not add `api.openai.com`, `api.anthropic.com`, or another model provider host just to make the agent work. Normal model requests happen on the trusted host side.
+
+Allow a provider host only if you intentionally want commands inside the VM to call that provider. Even then, the VM has no provider credential unless you explicitly provide one through a future scoped secret bridge or a workspace-specific environment variable.
 
 ## Configure tools and extensions
 
@@ -87,7 +115,7 @@ Oppi's sandbox replaces Pi's host-backed built-in tools with VM-backed versions 
 
 If `workspace.tools` is unset, those tools are active by default. If `workspace.tools` is set, it becomes an allowlist across built-in, custom, and extension tools.
 
-Host-side extensions are different from VM tools. Extensions such as `ask`, `subagents`, `voice`, or installed Pi package tools run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. Enable them deliberately.
+Host-side extensions are different from VM tools. Extensions such as `ask`, `subagents`, `voice`, `oppi-admin`, or installed Pi package tools run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. Enable extensions deliberately.
 
 ## Context files in sandbox workspaces
 
@@ -106,7 +134,7 @@ Sandbox workspaces do not expose the global host agent files to the model. Oppi 
 
 Put public project instructions in `AGENTS.md`. Put workspace-specific operating instructions in the Oppi workspace prompt. Do not rely on global host agent files for sandbox behavior.
 
-## What Gondolin provides
+## Security boundary and limitations
 
 Gondolin's security model is: untrusted code runs in a real Linux VM, while host-controlled code mediates I/O.
 
@@ -116,11 +144,13 @@ Relevant Gondolin guarantees and constraints:
 - Host filesystem access exists only through explicit VFS mounts.
 - `RealFSProvider` exposes a host directory; `ReadonlyProvider` makes mounts read-only; `ShadowProvider` can hide secret paths.
 - HTTP/TLS egress is mediated by host hooks and host allowlists.
-- `allowedHosts: undefined` means allow all in raw Gondolin; Oppi passes an explicit empty list for deny-all.
+- Raw Gondolin treats omitted `allowedHosts` as allow-all. Oppi follows that default. Set `allowedHosts: []` to deny all.
 - `createHttpHooks` blocks internal IP ranges by default and rechecks redirects.
 - Non-HTTP/TLS traffic is dropped unless an explicit SSH or mapped-TCP exception is configured.
 - HTTP/2, HTTP/3, QUIC, and WebRTC are not supported today.
 - Gondolin is not a defense against a malicious host, VM escape bugs, same-user local attackers, side channels, or denial of service.
+
+The sandbox keeps provider secrets out of the VM by default and hides common workspace secret paths, but default network egress is still broad unless you configure it. It does not make untrusted code safe to run without judgment.
 
 ## How this differs from Pi's sandbox story
 
@@ -133,25 +163,20 @@ Pi itself does not ship a first-party sandbox boundary. Pi keeps the core small 
 - pluggable tool operations for delegating tools to SSH, containers, or other runtimes
 - example extensions for permission gates, protected paths, and sandboxed bash
 
-Pi's example `examples/extensions/sandbox/` uses `@anthropic-ai/sandbox-runtime` to wrap bash commands with OS-level sandboxing. That example is useful as a reference, but it mostly demonstrates how to override tools. Oppi's sandbox is broader: it uses Gondolin and routes file tools plus bash into the same VM-backed workspace.
+Pi's example `examples/extensions/sandbox/` uses `@anthropic-ai/sandbox-runtime` to wrap bash commands with OS-level sandboxing. That example is useful as a reference for overriding tools. Oppi's sandbox is broader: it uses Gondolin and routes file tools plus bash into the same VM-backed workspace.
 
-## Teaching users
+## Troubleshooting
 
-Use this framing in product copy and docs:
+- **QEMU is missing:** install QEMU on the server host and start a new session.
+- **A command should not reach the network:** clear **Allowed Hosts** to deny all, or add only the required hosts.
+- **A command cannot reach an expected host:** add that host to **Allowed Hosts**, then start a new session if the VM was already running.
+- **A command cannot read `.env` or `.ssh`:** this is expected. Common secret paths are hidden from the workspace mount.
+- **The session still shows an old cwd:** stop the old session and start a new one so the session picks up the sandbox cwd.
 
-1. **Start with the promise:** “Run this workspace in an isolated Linux VM.”
-2. **Show the visible result:** “The agent works in `/workspace/<name>`, not your host home directory.”
-3. **Name the default:** “Network is off until you allow hosts.”
-4. **Teach one safe exception:** “Add `api.github.com` when a task needs GitHub API access.”
-5. **Warn about allowed hosts:** “Anything the VM can read can be uploaded to an allowed host.”
-6. **Explain host-side extensions separately:** “Some tools are VM-backed; extensions may still run on the server.”
+## Upstream references
 
-Short user-facing version:
-
-> Sandbox workspaces run agent commands in a local Linux micro-VM. Files live under `/workspace/<name>` inside the VM. Network access starts off; add allowed hosts only when a task needs them. Avoid `*` unless you intentionally trust any destination to receive workspace data.
-
-## References
-
+- Gondolin package: <https://www.npmjs.com/package/@earendil-works/gondolin>
+- Gondolin repository: <https://github.com/earendil-works/gondolin>
 - Gondolin documentation: <https://earendil-works.github.io/gondolin/>
 - Gondolin security design: <https://earendil-works.github.io/gondolin/security/>
 - Gondolin VFS providers: <https://earendil-works.github.io/gondolin/vfs/>

@@ -321,7 +321,7 @@ struct WorkspaceCreateView: View {
 
                     Text(
                         sandboxMode
-                            ? "Leave empty to let Oppi create a sandbox folder. Network starts denied by default; edit the workspace later to allow specific hosts. For a custom path, use Create this folder when the path is missing."
+                            ? "Leave empty to let Oppi create a sandbox folder. Network follows Gondolin’s default; edit the workspace later to restrict or deny hosts. For a custom path, use Create this folder when the path is missing."
                             : "Leave empty to use the server home folder. If the path doesn’t exist, use Create this folder below; Oppi asks before creating one directory."
                     )
                     .font(.caption)
@@ -765,7 +765,7 @@ struct WorkspaceCreateView: View {
             hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,
             gitStatusEnabled: gitStatusEnabled,
             runtime: sandboxMode ? .sandbox : nil,
-            sandboxConfig: sandboxMode ? SandboxConfig(allowedHosts: []) : nil
+            sandboxConfig: nil
         )
 
         do {

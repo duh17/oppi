@@ -33,10 +33,12 @@ function createTempStorage(): Storage {
   return new Storage(dataDir);
 }
 
-function createMockProcess(overrides: {
-  exitCode?: number;
-  stdout?: string;
-} = {}): GondolinProcess {
+function createMockProcess(
+  overrides: {
+    exitCode?: number;
+    stdout?: string;
+  } = {},
+): GondolinProcess {
   const { exitCode = 0, stdout = "" } = overrides;
   const result: GondolinExecResult = {
     exitCode,
@@ -65,7 +67,9 @@ function createMockVm(): GondolinVm & { close: ReturnType<typeof vi.fn> } {
   };
 }
 
-function createMockFactory(vms: Array<GondolinVm & { close: ReturnType<typeof vi.fn> }>): VmFactory {
+function createMockFactory(
+  vms: Array<GondolinVm & { close: ReturnType<typeof vi.fn> }>,
+): VmFactory {
   let idx = 0;
   return async (_options: VmFactoryOptions) => {
     const vm = vms[idx++] ?? createMockVm();
@@ -265,7 +269,7 @@ describe("GondolinManager secret forwarding", () => {
     await manager.ensureWorkspaceVm(workspace, "/tmp/ws");
 
     expect(factoryArgs[0].secrets).toBeUndefined();
-    expect(factoryArgs[0].allowedHosts).toEqual([]); // default deny-all
+    expect(factoryArgs[0].allowedHosts).toBeUndefined(); // Gondolin default allow-all
 
     await manager.stopAll();
   });

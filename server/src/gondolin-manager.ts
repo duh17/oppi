@@ -49,11 +49,30 @@ const DEFAULT_SHADOW_PATHS = [
 const DEFAULT_SHADOW_FILE_NAMES = new Set([".env", ".envrc", ".npmrc", ".pypirc", ".netrc"]);
 const DEFAULT_SHADOW_DIR_NAMES = new Set([".aws", ".azure", ".gnupg", ".ssh"]);
 
+export function shouldShadowSandboxWorkspacePath(ctx: { op: string; path: string }): boolean {
+  const normalized = posix.normalize(ctx.path.startsWith("/") ? ctx.path : `/${ctx.path}`);
+  if (DEFAULT_SHADOW_PATHS.includes(normalized)) return true;
+
+  const segments = normalized
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => segment.toLowerCase());
+  if (segments.some((segment) => DEFAULT_SHADOW_DIR_NAMES.has(segment))) return true;
+
+  const name = posix.basename(normalized).toLowerCase();
+  return (
+    DEFAULT_SHADOW_FILE_NAMES.has(name) ||
+    name.startsWith(".env.") ||
+    name.endsWith(".pem") ||
+    name.endsWith(".key")
+  );
+}
+
 export interface VmFactoryOptions {
   hostCwd: string;
   /** Guest path where hostCwd is mounted. Defaults to /workspace. */
   guestWorkspacePath?: string;
-  allowedHosts: string[];
+  allowedHosts?: string[];
   /** Secret definitions for host-mediated HTTP injection. Keys are env var names. */
   secrets?: Record<string, { value: string; headerName?: string }>;
   /** Additional host paths to mount read-only. Strings mount at the same guest path. */
@@ -77,7 +96,7 @@ export function buildVmHttpHooks(
     ? Object.fromEntries(
         Object.entries(options.secrets).map(([key, { value }]) => [
           key,
-          { hosts: options.allowedHosts, value },
+          { hosts: options.allowedHosts ?? ["*"], value },
         ]),
       )
     : undefined;
@@ -89,7 +108,7 @@ export function buildVmHttpHooks(
 
   // Keep the workspace contract explicit: [] means deny all network egress,
   // while undefined is never passed through as Gondolin's allow-all default.
-  if (options.allowedHosts.length === 0) {
+  if (options.allowedHosts?.length === 0) {
     return {
       httpHooks: {
         ...baseHttpHooks,
@@ -106,40 +125,15 @@ export async function defaultVmFactory(
   options: VmFactoryOptions,
 ): Promise<GondolinVm & { close(): Promise<void> }> {
   // Dynamic import — only loaded when sandbox mode is used.
-  const {
-    VM,
-    RealFSProvider,
-    ReadonlyProvider,
-    ShadowProvider,
-    createShadowPathPredicate,
-    createHttpHooks,
-  } = await import("@earendil-works/gondolin");
+  const { VM, RealFSProvider, ReadonlyProvider, ShadowProvider, createHttpHooks } =
+    await import("@earendil-works/gondolin");
 
   const { httpHooks, env } = buildVmHttpHooks(createHttpHooks, options);
 
   // Build VFS mounts: workspace + any read-only paths (skills, agent config)
   const workspaceGuestPath = options.guestWorkspacePath ?? GUEST_WORKSPACE;
-  const shadowFixedPath = createShadowPathPredicate(DEFAULT_SHADOW_PATHS);
-  const shouldShadowWorkspacePath = (ctx: { op: string; path: string }): boolean => {
-    if (shadowFixedPath(ctx)) return true;
-
-    const segments = ctx.path
-      .split("/")
-      .filter(Boolean)
-      .map((segment) => segment.toLowerCase());
-    if (segments.some((segment) => DEFAULT_SHADOW_DIR_NAMES.has(segment))) return true;
-
-    const name = posix.basename(ctx.path).toLowerCase();
-    return (
-      DEFAULT_SHADOW_FILE_NAMES.has(name) ||
-      name.startsWith(".env.") ||
-      name.endsWith(".pem") ||
-      name.endsWith(".key")
-    );
-  };
-
   const workspaceProvider = new ShadowProvider(new RealFSProvider(options.hostCwd), {
-    shouldShadow: shouldShadowWorkspacePath,
+    shouldShadow: shouldShadowSandboxWorkspacePath,
     writeMode: "deny",
   });
 
@@ -265,7 +259,7 @@ export class GondolinManager {
     extraEnv?: Record<string, string>,
     guestWorkspacePath?: string,
   ): Promise<GondolinVm & { close(): Promise<void> }> {
-    const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? [];
+    const allowedHosts = workspace.sandboxConfig?.allowedHosts;
     log.info("gondolin.vm_starting", {
       workspaceId: workspace.id,
       cwd: hostCwd,

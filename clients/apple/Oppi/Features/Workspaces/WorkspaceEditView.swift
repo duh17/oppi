@@ -257,7 +257,7 @@ struct WorkspaceEditView: View {
                             .textInputAutocapitalization(.never)
                             .scrollContentBackground(.hidden)
                             .themedTextInputCard()
-                        Text("One host pattern per line. Leave empty to deny all network. Use * to allow all.")
+                        Text("One host pattern per line. Leave empty to deny all network. Use * to allow all, matching Gondolin’s default.")
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
                     }
@@ -520,7 +520,7 @@ struct WorkspaceEditView: View {
         gitStatusEnabled = source.gitStatusEnabled ?? true
         setSelectedExtensionNames(source.extensions ?? [])
         runtime = source.runtime
-        allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? ""
+        allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? "*"
     }
 
     @MainActor
