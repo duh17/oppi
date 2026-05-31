@@ -63,7 +63,11 @@ export const GUEST_WORKSPACE = "/workspace";
  * Paths that escape the workspace (e.g. /etc/passwd) are resolved as-is
  * inside the guest — the VM filesystem boundary provides the real guard.
  */
-export function toGuestPath(localCwd: string, localPath: string): string {
+export function toGuestPath(
+  localCwd: string,
+  localPath: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): string {
   const resolved = resolve(localPath);
   const rel = relative(localCwd, resolved);
 
@@ -72,7 +76,7 @@ export function toGuestPath(localCwd: string, localPath: string): string {
     return resolved;
   }
 
-  return posix.join(GUEST_WORKSPACE, rel.split(/[\\/]/).join("/"));
+  return posix.join(guestWorkspace, rel.split(/[\\/]/).join("/"));
 }
 
 /** Wrap a value in single quotes, escaping embedded single quotes. */
@@ -82,7 +86,11 @@ function shellQuote(value: string): string {
 
 // ─── Bash ───
 
-export function createGondolinBashOps(vm: GondolinVm, localCwd: string): BashOperations {
+export function createGondolinBashOps(
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): BashOperations {
   return {
     async exec(
       command: string,
@@ -94,7 +102,7 @@ export function createGondolinBashOps(vm: GondolinVm, localCwd: string): BashOpe
         env?: NodeJS.ProcessEnv;
       },
     ) {
-      const guestCwd = toGuestPath(localCwd, cwd);
+      const guestCwd = toGuestPath(localCwd, cwd, guestWorkspace);
       // Filter host env: keep string values, strip HOME/USER/LOGNAME to prevent
       // host identity leaking into the VM (~ would expand to host home dir).
       const STRIP_ENV = new Set(["HOME", "USER", "LOGNAME", "SHELL", "PATH"]);
@@ -126,10 +134,14 @@ export function createGondolinBashOps(vm: GondolinVm, localCwd: string): BashOpe
 
 // ─── Read ───
 
-export function createGondolinReadOps(vm: GondolinVm, localCwd: string): ReadOperations {
+export function createGondolinReadOps(
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): ReadOperations {
   return {
     async readFile(absolutePath: string) {
-      const guestPath = toGuestPath(localCwd, absolutePath);
+      const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
       const result = await vm.exec(["/bin/cat", guestPath]);
       if (!result.ok) {
         throw new Error(`Failed to read ${guestPath}: ${result.stdout || "file not found"}`);
@@ -138,7 +150,7 @@ export function createGondolinReadOps(vm: GondolinVm, localCwd: string): ReadOpe
     },
 
     async access(absolutePath: string) {
-      const guestPath = toGuestPath(localCwd, absolutePath);
+      const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
       // Use ls rather than test -r or stat — FUSE-mounted VFS may not support them reliably.
       const result = await vm.exec(["/bin/ls", "-d", guestPath]);
       if (!result.ok) {
@@ -147,7 +159,7 @@ export function createGondolinReadOps(vm: GondolinVm, localCwd: string): ReadOpe
     },
 
     async detectImageMimeType(absolutePath: string) {
-      const guestPath = toGuestPath(localCwd, absolutePath);
+      const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
       const result = await vm.exec(["/usr/bin/file", "--mime-type", "-b", guestPath]);
       if (!result.ok) return null;
 
@@ -159,10 +171,14 @@ export function createGondolinReadOps(vm: GondolinVm, localCwd: string): ReadOpe
 
 // ─── Write ───
 
-export function createGondolinWriteOps(vm: GondolinVm, localCwd: string): WriteOperations {
+export function createGondolinWriteOps(
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): WriteOperations {
   return {
     async writeFile(absolutePath: string, content: string) {
-      const guestPath = toGuestPath(localCwd, absolutePath);
+      const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
       const dir = posix.dirname(guestPath);
       // Base64-encode content to avoid shell quoting issues with arbitrary file content.
       const b64 = Buffer.from(content, "utf-8").toString("base64");
@@ -175,7 +191,7 @@ export function createGondolinWriteOps(vm: GondolinVm, localCwd: string): WriteO
     },
 
     async mkdir(dir: string) {
-      const guestDir = toGuestPath(localCwd, dir);
+      const guestDir = toGuestPath(localCwd, dir, guestWorkspace);
       const result = await vm.exec(["/bin/mkdir", "-p", guestDir]);
       if (!result.ok) {
         throw new Error(`Failed to mkdir ${guestDir}: ${result.stdout || "mkdir failed"}`);
@@ -191,9 +207,13 @@ export function createGondolinWriteOps(vm: GondolinVm, localCwd: string): WriteO
  * The pi SDK edit tool reads the file, applies the diff in-process,
  * then writes the result back — so we only need readFile, writeFile, access.
  */
-export function createGondolinEditOps(vm: GondolinVm, localCwd: string): EditOperations {
-  const readOps = createGondolinReadOps(vm, localCwd);
-  const writeOps = createGondolinWriteOps(vm, localCwd);
+export function createGondolinEditOps(
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): EditOperations {
+  const readOps = createGondolinReadOps(vm, localCwd, guestWorkspace);
+  const writeOps = createGondolinWriteOps(vm, localCwd, guestWorkspace);
 
   return {
     readFile: readOps.readFile,

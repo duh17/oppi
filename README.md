@@ -151,6 +151,7 @@ Requirements: macOS 15+, [pi](https://github.com/badlogic/pi-mono) CLI.
 - [Voice replies / TTS](server/docs/tts.md) — voice extension setup
 - [Policy engine](server/docs/policy-engine.md) — permission rules and heuristics
 - [Extensions](docs/extensions.md) — Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
+- [Sandbox workspaces](docs/sandbox.md) — Gondolin VM isolation, network boundaries, tools, and safe defaults
 - [Custom themes](server/docs/themes.md) — creating color themes for the iOS app
 - [Telemetry and privacy](docs/telemetry.md) — what data is collected (short answer: none)
 - [Security](SECURITY.md) — security model and privacy

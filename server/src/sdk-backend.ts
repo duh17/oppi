@@ -7,9 +7,9 @@
 
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
 import {
   createAgentSession,
@@ -23,6 +23,8 @@ import {
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionFactory,
+  type ResourceDiagnostic,
+  type Skill,
   SessionManager as PiSessionManager,
   DefaultResourceLoader,
   AuthStorage,
@@ -49,6 +51,7 @@ import type { Storage } from "./storage.js";
 import { SdkUiBridge, type ExtensionUIResponsePayload } from "./sdk-ui-bridge.js";
 import { extensionNameFromPath } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
+import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { Session, SubagentConfig, Workspace } from "./types.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
@@ -98,19 +101,28 @@ function getLoadedExtensionName(ext: { path: string; resolvedPath: string }): st
  * producing cwd values like "<server-cwd>/~/workspace/...". Normalize here
  * before passing cwd into SDK components.
  */
+function sandboxWorkspaceSlug(workspace: Workspace): string {
+  return (
+    (workspace.name || workspace.id)
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || workspace.id
+  );
+}
+
+export function resolveSandboxGuestCwd(workspace: Workspace): string {
+  return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
+}
+
 export function resolveSdkSessionCwd(workspace?: Workspace): string {
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
     if (workspace?.runtime === "sandbox") {
       // Auto-create a dedicated sandbox directory. Permanent, per-workspace.
-      // Slug the name to a safe directory name, fall back to id.
-      const slug =
-        (workspace.name || workspace.id)
-          .toLowerCase()
-          .replace(/[^a-z0-9-_]/g, "-")
-          .replace(/-+/g, "-")
-          .replace(/^-|-$/g, "") || workspace.id;
-      const sandboxDir = join(homedir(), "sandbox", slug);
+      // The host path is never exposed to the sandboxed agent; it only backs
+      // the VM mount at resolveSandboxGuestCwd(workspace).
+      const sandboxDir = join(homedir(), "sandbox", sandboxWorkspaceSlug(workspace));
       mkdirSync(sandboxDir, { recursive: true });
       return sandboxDir;
     }
@@ -118,6 +130,74 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
   }
 
   return resolveHostPath(rawHostMount);
+}
+
+export function resolveSdkSessionDisplayCwd(workspace?: Workspace): string {
+  if (workspace?.runtime === "sandbox") {
+    return resolveSandboxGuestCwd(workspace);
+  }
+  return resolveSdkSessionCwd(workspace);
+}
+
+type AgentContextFile = { path: string; content: string };
+
+type SkillLoadResult = {
+  skills: Skill[];
+  diagnostics: ResourceDiagnostic[];
+};
+
+function isPathWithin(parent: string, child: string): boolean {
+  const resolvedParent = resolvePath(parent);
+  const resolvedChild = resolvePath(child);
+  const rel = relative(resolvedParent, resolvedChild);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function hostWorkspacePathToGuest(
+  hostCwd: string,
+  guestCwd: string,
+  hostPath: string,
+): string | null {
+  if (!isPathWithin(hostCwd, hostPath)) {
+    return null;
+  }
+
+  const rel = relative(resolvePath(hostCwd), resolvePath(hostPath));
+  return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
+}
+
+function safeGuestSegment(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "resource"
+  );
+}
+
+function replaceAllLiteral(value: string, search: string, replacement: string): string {
+  return search ? value.split(search).join(replacement) : value;
+}
+
+function redactHostEnvironment(value: string, hostCwd: string, guestCwd: string): string {
+  let redacted = replaceAllLiteral(value, hostCwd, guestCwd);
+  const home = homedir();
+  redacted = replaceAllLiteral(redacted, home, "/workspace/.host-home");
+  redacted = replaceAllLiteral(redacted, basename(home), "host-user");
+  return redacted;
+}
+
+function sandboxSystemPrompt(): string {
+  return `You are an expert coding assistant operating inside a sandboxed pi workspace. You help users by reading files, executing commands, editing code, and writing new files.
+
+You are inside an isolated VM. Treat the current working directory as the workspace root and the only filesystem environment available to you. Do not infer, use, or mention host paths, host usernames, host home directories, server runtime paths, or host machine details. If an implementation detail exposes a host path, ignore it and continue using sandbox paths.
+
+Guidelines:
+- Use bash for file operations like ls, rg, find.
+- Use read to examine files instead of cat or sed.
+- Be concise in your responses.
+- Show sandbox file paths clearly when working with files.`;
 }
 
 export interface BuiltInExtensionContext {
@@ -213,15 +293,21 @@ export class SdkBackend {
   private shutdownCleanupPromise: Promise<void> | null = null;
   private shutdownCleanupCompleted = false;
   private readonly shutdownCleanupListeners = new Set<() => void>();
+  private readonly sessionCwdExistsOverride?: string;
+  private readonly sessionManagerDisplayCwd?: string;
   private disposed = false;
 
   private constructor(
     runtime: AgentSessionRuntime,
     emitEvent: (event: SessionBackendEvent) => void,
+    cwdOverrides?: { existsCwd: string; displayCwd: string },
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
+    this.sessionCwdExistsOverride = cwdOverrides?.existsCwd;
+    this.sessionManagerDisplayCwd = cwdOverrides?.displayCwd;
     this.uiBridge = new SdkUiBridge(emitEvent, () => this.disposed);
+    this.restoreSessionManagerDisplayCwd();
     this.subscribeToCurrentSession();
   }
 
@@ -233,24 +319,62 @@ export class SdkBackend {
     return this.runtime.services.modelRegistry;
   }
 
-  private static createPiSessionManager(session: Session, cwd: string): PiSessionManager {
+  private restoreSessionManagerDisplayCwd(): void {
+    if (!this.sessionManagerDisplayCwd) {
+      return;
+    }
+
+    // Pi's cwd-existence guard runs in the host process, so sandbox session
+    // switches need a host cwd override. Keep the live session manager aligned
+    // with the sandbox-visible cwd after that guard has passed, so host paths do
+    // not leak through extension/session-manager APIs.
+    (this.piSession.sessionManager as unknown as { cwd?: string }).cwd =
+      this.sessionManagerDisplayCwd;
+  }
+
+  private static createPiSessionManager(
+    session: Session,
+    cwd: string,
+    cwdExistsOverride: string = cwd,
+  ): PiSessionManager {
     const piSessionFile = session.piSessionFile;
     if (session.ephemeral) {
       return PiSessionManager.inMemory(cwd);
     }
-    return piSessionFile ? PiSessionManager.open(piSessionFile) : PiSessionManager.create(cwd);
+    if (piSessionFile) {
+      return PiSessionManager.open(piSessionFile, undefined, cwdExistsOverride);
+    }
+
+    const manager = PiSessionManager.create(cwd);
+    const sessionFile = manager.getSessionFile();
+    if (cwdExistsOverride === cwd || !sessionFile) {
+      return manager;
+    }
+
+    const header = manager.getHeader();
+    if (header) {
+      writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
+    }
+    return PiSessionManager.open(sessionFile, undefined, cwdExistsOverride);
   }
 
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
     const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
-    const initialCwd = resolveSdkSessionCwd(workspace);
+    const initialHostCwd = resolveSdkSessionCwd(workspace);
+    const initialCwd = resolveSdkSessionDisplayCwd(workspace);
+    const sandboxMode = workspace?.runtime === "sandbox";
+    const runtimeAssertCwd = sandboxMode ? initialHostCwd : initialCwd;
     const hostMountError = hostMountValidationError(workspace?.hostMount);
     if (hostMountError) {
       throw new Error(hostMountError);
     }
     const agentDir = getAgentDir();
-    const initialSessionManager = SdkBackend.createPiSessionManager(session, initialCwd);
+    const initialSessionManager = SdkBackend.createPiSessionManager(
+      session,
+      initialCwd,
+      runtimeAssertCwd,
+    );
 
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
       cwd,
@@ -258,9 +382,13 @@ export class SdkBackend {
       sessionManager,
       sessionStartEvent,
     }) => {
+      const hostCwd = sandboxMode ? initialHostCwd : cwd;
+      const guestCwd = sandboxMode && workspace ? resolveSandboxGuestCwd(workspace) : cwd;
+      const sessionCwd = sandboxMode ? guestCwd : cwd;
+      const sandboxReadonlyMounts = new Map<string, ReadonlyMount>();
       const authStorage = AuthStorage.create(join(runtimeAgentDir, "auth.json"));
       const modelRegistry = ModelRegistry.create(authStorage, join(runtimeAgentDir, "models.json"));
-      const settingsManager = SettingsManager.create(cwd, runtimeAgentDir);
+      const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
 
       const shouldSeedFromSessionState = !sessionStartEvent;
       const model =
@@ -278,7 +406,12 @@ export class SdkBackend {
       const useGate = config.gate && config.permissionGate !== false;
       if (useGate && config.gate) {
         extensionFactories.push(
-          createPermissionGateFactory(config.gate, session.id, config.workspaceId || "", cwd),
+          createPermissionGateFactory(
+            config.gate,
+            session.id,
+            config.workspaceId || "",
+            sessionCwd,
+          ),
         );
       }
       extensionFactories.push(
@@ -297,7 +430,7 @@ export class SdkBackend {
       // run and the pi extension blocks commands it considers "dangerous" with
       // no UI to approve them (ctx.hasUI is false in oppi sessions).
       const loader = new DefaultResourceLoader({
-        cwd,
+        cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
         additionalSkillPaths: config.skillPaths ?? [],
@@ -305,6 +438,43 @@ export class SdkBackend {
         noThemes: true,
         extensionFactories,
         appendSystemPrompt: workspace?.systemPrompt ? [workspace.systemPrompt] : undefined,
+        ...(sandboxMode
+          ? {
+              systemPrompt: sandboxSystemPrompt(),
+              agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
+                agentsFiles: base.agentsFiles.flatMap((file) => {
+                  const guestPath = hostWorkspacePathToGuest(hostCwd, guestCwd, file.path);
+                  if (!guestPath) return [];
+                  return [
+                    {
+                      path: guestPath,
+                      content: redactHostEnvironment(file.content, hostCwd, guestCwd),
+                    },
+                  ];
+                }),
+              }),
+              skillsOverride: (base: SkillLoadResult): SkillLoadResult => ({
+                skills: base.skills.map((skill) => {
+                  const guestBaseDir = posix.join(
+                    guestCwd,
+                    ".pi",
+                    "skills",
+                    safeGuestSegment(skill.name),
+                  );
+                  sandboxReadonlyMounts.set(guestBaseDir, {
+                    hostPath: skill.baseDir,
+                    guestPath: guestBaseDir,
+                  });
+                  return {
+                    ...skill,
+                    baseDir: guestBaseDir,
+                    filePath: posix.join(guestBaseDir, basename(skill.filePath)),
+                  };
+                }),
+                diagnostics: base.diagnostics,
+              }),
+            }
+          : {}),
         extensionsOverride: (base) => {
           // 1. Filter out names owned directly by oppi-server from host paths.
           //    Built-ins are injected above as inline factories when enabled.
@@ -376,59 +546,46 @@ export class SdkBackend {
         }
         const manager = SdkBackend._gondolinManager;
 
-        // Extract LLM provider API keys as secrets for host-mediated injection.
-        // The VM gets placeholder values; real keys are injected by the host HTTP proxy.
+        // Do not inject Oppi/pi provider credentials into the guest by default.
+        // The host process owns model calls; sandbox commands must opt into any
+        // future secret bridge explicitly instead of inheriting LLM API keys.
         const secrets: Record<string, { value: string; headerName?: string }> = {};
-        try {
-          const allCreds = authStorage.getAll();
-          for (const [provider, cred] of Object.entries(allCreds)) {
-            if (cred.type === "api_key" && cred.key) {
-              secrets[`${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`] = {
-                value: cred.key,
-                headerName: "Authorization",
-              };
-            }
-          }
-        } catch {
-          // Auth extraction failed — proceed without secrets
-        }
 
-        // Mount specific subdirectories read-only so the agent can read
-        // SKILL.md files and extensions at the paths referenced in the system prompt.
-        // Do NOT mount agentDir itself — it contains auth.json (API keys).
-        const readonlyMounts: string[] = [];
-        if (config.skillPaths) {
-          readonlyMounts.push(...config.skillPaths);
-        }
-        // Mount only safe subdirectories, not the whole agentDir.
-        // skills/ is already covered by skillPaths above.
-        // extensions/ is needed for loaded extensions to resolve their own files.
-        const extensionsDir = join(runtimeAgentDir, "extensions");
-        if (existsSync(extensionsDir)) {
-          readonlyMounts.push(extensionsDir);
-        }
+        // Mount only the read-only resources whose paths were rewritten into
+        // sandbox-visible locations. Do NOT mount agentDir itself — it contains
+        // auth.json and host-specific configuration.
+        const readonlyMounts = [...sandboxReadonlyMounts.values()];
 
         const extraEnv = workspace.sandboxConfig?.env;
         const vm = await manager.ensureWorkspaceVm(
           workspace,
-          cwd,
+          hostCwd,
           secrets,
           readonlyMounts,
           extraEnv,
+          guestCwd,
         );
 
         sandboxTools = [
-          createReadToolDefinition(cwd, { operations: createGondolinReadOps(vm, cwd) }),
-          createBashToolDefinition(cwd, { operations: createGondolinBashOps(vm, cwd) }),
-          createEditToolDefinition(cwd, { operations: createGondolinEditOps(vm, cwd) }),
-          createWriteToolDefinition(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
+          createReadToolDefinition(sessionCwd, {
+            operations: createGondolinReadOps(vm, sessionCwd, guestCwd),
+          }),
+          createBashToolDefinition(sessionCwd, {
+            operations: createGondolinBashOps(vm, sessionCwd, guestCwd),
+          }),
+          createEditToolDefinition(sessionCwd, {
+            operations: createGondolinEditOps(vm, sessionCwd, guestCwd),
+          }),
+          createWriteToolDefinition(sessionCwd, {
+            operations: createGondolinWriteOps(vm, sessionCwd, guestCwd),
+          }),
         ];
         log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
       }
 
       const workspaceTools = workspace?.tools?.length ? workspace.tools : undefined;
       const createResult = await createAgentSession({
-        cwd,
+        cwd: sessionCwd,
         agentDir: runtimeAgentDir,
         authStorage,
         modelRegistry,
@@ -451,7 +608,7 @@ export class SdkBackend {
       return {
         ...createResult,
         services: {
-          cwd,
+          cwd: sessionCwd,
           agentDir: runtimeAgentDir,
           authStorage,
           settingsManager,
@@ -464,12 +621,16 @@ export class SdkBackend {
     };
 
     const runtime = await createAgentSessionRuntime(createRuntimeFactory, {
-      cwd: initialCwd,
+      cwd: runtimeAssertCwd,
       agentDir,
       sessionManager: initialSessionManager,
     });
 
-    const backend = new SdkBackend(runtime, onEvent);
+    const backend = new SdkBackend(
+      runtime,
+      onEvent,
+      sandboxMode ? { existsCwd: runtimeAssertCwd, displayCwd: initialCwd } : undefined,
+    );
 
     const preBindMs = Date.now() - createStartMs;
     config.metrics?.record("server.session_create_sdk_ms", preBindMs);
@@ -557,6 +718,7 @@ export class SdkBackend {
     const parentSession = this.piSession.sessionFile;
     const result = await this.runtime.newSession({ parentSession });
     if (!result.cancelled) {
+      this.restoreSessionManagerDisplayCwd();
       await this.refreshRuntimeSessionBindings();
     }
     return result;
@@ -567,8 +729,12 @@ export class SdkBackend {
       return { cancelled: true };
     }
 
-    const result = await this.runtime.switchSession(sessionPath);
+    const result = await this.runtime.switchSession(
+      sessionPath,
+      this.sessionCwdExistsOverride ? { cwdOverride: this.sessionCwdExistsOverride } : undefined,
+    );
     if (!result.cancelled) {
+      this.restoreSessionManagerDisplayCwd();
       await this.refreshRuntimeSessionBindings();
     }
     return result;
@@ -581,6 +747,7 @@ export class SdkBackend {
 
     const result = await this.runtime.fork(entryId);
     if (!result.cancelled) {
+      this.restoreSessionManagerDisplayCwd();
       await this.refreshRuntimeSessionBindings();
     }
     return result;

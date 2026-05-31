@@ -46,6 +46,13 @@ describe("toGuestPath", () => {
     expect(result).toBe("/workspace/deep/nested/path/file.ts");
     expect(result).not.toContain("\\");
   });
+
+  it("can map into a named sandbox workspace root", () => {
+    expect(toGuestPath(cwd, `${cwd}/README.md`, "/workspace/myproject")).toBe(
+      "/workspace/myproject/README.md",
+    );
+    expect(toGuestPath(cwd, cwd, "/workspace/myproject")).toBe("/workspace/myproject");
+  });
 });
 
 describe("GUEST_WORKSPACE", () => {
@@ -135,6 +142,20 @@ describe("createGondolinBashOps", () => {
     await ops.exec("ls", `${localCwd}/src`, { onData: () => {} });
 
     expect(calls[0].options).toMatchObject({ cwd: "/workspace/src" });
+  });
+
+  it("starts in the named guest workspace when the session cwd is virtual", async () => {
+    const calls: Array<{ args: string[] | string; options: Record<string, unknown> }> = [];
+    const vm = createMockVm((args, options) => {
+      calls.push({ args, options: options ?? {} });
+      return createMockProcess();
+    });
+
+    const guestCwd = "/workspace/myproject";
+    const ops = createGondolinBashOps(vm, guestCwd, guestCwd);
+    await ops.exec("pwd", guestCwd, { onData: () => {} });
+
+    expect(calls[0].options).toMatchObject({ cwd: guestCwd });
   });
 
   it("streams output chunks via onData", async () => {

@@ -6,9 +6,10 @@
  * teardown or server shutdown.
  */
 
+import { posix } from "node:path";
 import type { CreateHttpHooksOptions, CreateHttpHooksResult } from "@earendil-works/gondolin";
 import type { Workspace } from "./types.js";
-import type { GondolinVm } from "./gondolin-ops.js";
+import { GUEST_WORKSPACE, type GondolinVm } from "./gondolin-ops.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 
@@ -22,13 +23,41 @@ export type VmFactory = (
   options: VmFactoryOptions,
 ) => Promise<GondolinVm & { close(): Promise<void> }>;
 
+export interface ReadonlyMount {
+  hostPath: string;
+  guestPath: string;
+}
+
+export type ReadonlyMountSpec = string | ReadonlyMount;
+
+const DEFAULT_SHADOW_PATHS = [
+  "/.env",
+  "/.env.local",
+  "/.env.development",
+  "/.env.production",
+  "/.envrc",
+  "/.npmrc",
+  "/.pypirc",
+  "/.netrc",
+  "/.aws",
+  "/.azure",
+  "/.config/gcloud",
+  "/.gnupg",
+  "/.ssh",
+];
+
+const DEFAULT_SHADOW_FILE_NAMES = new Set([".env", ".envrc", ".npmrc", ".pypirc", ".netrc"]);
+const DEFAULT_SHADOW_DIR_NAMES = new Set([".aws", ".azure", ".gnupg", ".ssh"]);
+
 export interface VmFactoryOptions {
   hostCwd: string;
+  /** Guest path where hostCwd is mounted. Defaults to /workspace. */
+  guestWorkspacePath?: string;
   allowedHosts: string[];
   /** Secret definitions for host-mediated HTTP injection. Keys are env var names. */
   secrets?: Record<string, { value: string; headerName?: string }>;
-  /** Additional host paths to mount read-only at the same path inside the VM. */
-  readonlyMounts?: string[];
+  /** Additional host paths to mount read-only. Strings mount at the same guest path. */
+  readonlyMounts?: ReadonlyMountSpec[];
   /** Extra environment variables for the guest VM. */
   extraEnv?: Record<string, string>;
 }
@@ -58,9 +87,8 @@ export function buildVmHttpHooks(
     secrets: gondolinSecrets,
   });
 
-  // Gondolin interprets an empty allowlist as "allow all". Our workspace
-  // contract treats [] as "deny all network egress", so wrap the generated
-  // policy to enforce that behavior explicitly.
+  // Keep the workspace contract explicit: [] means deny all network egress,
+  // while undefined is never passed through as Gondolin's allow-all default.
   if (options.allowedHosts.length === 0) {
     return {
       httpHooks: {
@@ -78,23 +106,56 @@ export async function defaultVmFactory(
   options: VmFactoryOptions,
 ): Promise<GondolinVm & { close(): Promise<void> }> {
   // Dynamic import — only loaded when sandbox mode is used.
-  const { VM, RealFSProvider, ReadonlyProvider, createHttpHooks } =
-    await import("@earendil-works/gondolin");
+  const {
+    VM,
+    RealFSProvider,
+    ReadonlyProvider,
+    ShadowProvider,
+    createShadowPathPredicate,
+    createHttpHooks,
+  } = await import("@earendil-works/gondolin");
 
   const { httpHooks, env } = buildVmHttpHooks(createHttpHooks, options);
 
   // Build VFS mounts: workspace + any read-only paths (skills, agent config)
+  const workspaceGuestPath = options.guestWorkspacePath ?? GUEST_WORKSPACE;
+  const shadowFixedPath = createShadowPathPredicate(DEFAULT_SHADOW_PATHS);
+  const shouldShadowWorkspacePath = (ctx: { op: string; path: string }): boolean => {
+    if (shadowFixedPath(ctx)) return true;
+
+    const segments = ctx.path
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => segment.toLowerCase());
+    if (segments.some((segment) => DEFAULT_SHADOW_DIR_NAMES.has(segment))) return true;
+
+    const name = posix.basename(ctx.path).toLowerCase();
+    return (
+      DEFAULT_SHADOW_FILE_NAMES.has(name) ||
+      name.startsWith(".env.") ||
+      name.endsWith(".pem") ||
+      name.endsWith(".key")
+    );
+  };
+
+  const workspaceProvider = new ShadowProvider(new RealFSProvider(options.hostCwd), {
+    shouldShadow: shouldShadowWorkspacePath,
+    writeMode: "deny",
+  });
+
   const mounts: Record<
     string,
-    InstanceType<typeof RealFSProvider> | InstanceType<typeof ReadonlyProvider>
+    | InstanceType<typeof RealFSProvider>
+    | InstanceType<typeof ReadonlyProvider>
+    | InstanceType<typeof ShadowProvider>
   > = {
-    "/workspace": new RealFSProvider(options.hostCwd),
+    [workspaceGuestPath]: workspaceProvider,
   };
   if (options.readonlyMounts) {
-    for (const hostPath of options.readonlyMounts) {
-      // Mount at the same absolute path inside the VM so system prompt
-      // references (e.g. /Users/me/.pi/agent/skills/...) resolve.
-      mounts[hostPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
+    for (const mount of options.readonlyMounts) {
+      const hostPath = typeof mount === "string" ? mount : mount.hostPath;
+      const guestPath = typeof mount === "string" ? mount : mount.guestPath;
+      mounts[guestPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
     }
   }
 
@@ -133,8 +194,9 @@ export class GondolinManager {
     workspace: Workspace,
     hostCwd: string,
     secrets?: Record<string, { value: string; headerName?: string }>,
-    readonlyMounts?: string[],
+    readonlyMounts?: ReadonlyMountSpec[],
     extraEnv?: Record<string, string>,
+    guestWorkspacePath?: string,
   ): Promise<GondolinVm> {
     const id = workspace.id;
 
@@ -146,7 +208,14 @@ export class GondolinManager {
     const inflight = this.starting.get(id);
     if (inflight) return inflight;
 
-    const promise = this.startVm(workspace, hostCwd, secrets, readonlyMounts, extraEnv);
+    const promise = this.startVm(
+      workspace,
+      hostCwd,
+      secrets,
+      readonlyMounts,
+      extraEnv,
+      guestWorkspacePath,
+    );
     this.starting.set(id, promise);
 
     try {
@@ -192,10 +261,11 @@ export class GondolinManager {
     workspace: Workspace,
     hostCwd: string,
     secrets?: Record<string, { value: string; headerName?: string }>,
-    readonlyMounts?: string[],
+    readonlyMounts?: ReadonlyMountSpec[],
     extraEnv?: Record<string, string>,
+    guestWorkspacePath?: string,
   ): Promise<GondolinVm & { close(): Promise<void> }> {
-    const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? ["*"];
+    const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? [];
     log.info("gondolin.vm_starting", {
       workspaceId: workspace.id,
       cwd: hostCwd,
@@ -203,7 +273,14 @@ export class GondolinManager {
       roMounts: readonlyMounts?.length ?? 0,
     });
 
-    const vm = await this.factory({ hostCwd, allowedHosts, secrets, readonlyMounts, extraEnv });
+    const vm = await this.factory({
+      hostCwd,
+      guestWorkspacePath,
+      allowedHosts,
+      secrets,
+      readonlyMounts,
+      extraEnv,
+    });
 
     log.info("gondolin.vm_ready", { workspaceId: workspace.id });
     return vm;

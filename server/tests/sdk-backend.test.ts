@@ -5,8 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
 import { hostMountValidationError } from "../src/host.js";
+import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import {
+  resolveSandboxGuestCwd,
   resolveSdkSessionCwd,
+  resolveSdkSessionDisplayCwd,
   SdkBackend,
   type BuiltInExtensionContext,
 } from "../src/sdk-backend.js";
@@ -32,6 +35,34 @@ describe("resolveSdkSessionCwd", () => {
     const mount = resolvePath(homedir(), "workspace", "oppi");
     const workspace = { hostMount: mount } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(mount);
+  });
+});
+
+describe("resolveSdkSessionDisplayCwd", () => {
+  it("uses a sandbox guest path instead of the host backing path", () => {
+    const uniqueName = `Oppi Sandbox Display ${Date.now()}`;
+    const slug = uniqueName.toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+    const workspace = {
+      id: "ws-sandbox",
+      name: uniqueName,
+      runtime: "sandbox",
+    } as Workspace;
+    const hostBackingDir = resolvePath(homedir(), "sandbox", slug);
+
+    try {
+      expect(resolveSandboxGuestCwd(workspace)).toBe(`/workspace/${slug}`);
+      expect(resolveSdkSessionDisplayCwd(workspace)).toBe(`/workspace/${slug}`);
+      expect(resolveSdkSessionCwd(workspace)).toBe(hostBackingDir);
+    } finally {
+      rmSync(hostBackingDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps host workspaces on their resolved host cwd", () => {
+    const mount = resolvePath(homedir(), "workspace", "oppi");
+    const workspace = { hostMount: mount, runtime: "host" } as Workspace;
+
+    expect(resolveSdkSessionDisplayCwd(workspace)).toBe(mount);
   });
 });
 
@@ -131,6 +162,113 @@ function makeBuiltInContext(): BuiltInExtensionContext {
     },
   };
 }
+
+describe("SdkBackend sandbox", () => {
+  it("does not forward provider auth secrets into the VM", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-secrets-"));
+    const skillDir = join(cwd, "skills", "sandbox-review");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: sandbox-review",
+        "description: Review sandbox behavior for tests.",
+        "---",
+        "Review the sandbox behavior.",
+      ].join("\n"),
+    );
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = {
+      exitCode: 0,
+      stdout: "",
+      stdoutBuffer: Buffer.alloc(0),
+      ok: true,
+    };
+    const vm = {
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      ),
+    };
+    const manager = {
+      ensureWorkspaceVm: vi.fn(async () => vm),
+    };
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession(),
+        workspace: {
+          id: "w1",
+          name: "Sandbox Secrets Test",
+          runtime: "sandbox",
+          hostMount: cwd,
+          sandboxConfig: { allowedHosts: ["api.example.com"] },
+          extensions: [],
+        } as Workspace,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+        skillPaths: [skillDir],
+      });
+
+      expect(manager.ensureWorkspaceVm).toHaveBeenCalled();
+      expect(manager.ensureWorkspaceVm.mock.calls[0][2]).toEqual({});
+      expect(manager.ensureWorkspaceVm.mock.calls[0][3]).toEqual([
+        {
+          hostPath: skillDir,
+          guestPath: "/workspace/sandbox-secrets-test/.pi/skills/sandbox-review",
+        },
+      ]);
+
+      const runtime = (
+        backend as unknown as {
+          runtime: {
+            services: { cwd: string };
+            session: {
+              sessionManager: {
+                getCwd: () => string;
+                getHeader: () => { cwd: string } | null;
+                getSessionDir: () => string;
+              };
+            };
+          };
+        }
+      ).runtime;
+      expect(runtime.services.cwd).toBe("/workspace/sandbox-secrets-test");
+      expect(runtime.session.sessionManager.getCwd()).toBe("/workspace/sandbox-secrets-test");
+      expect(runtime.session.sessionManager.getHeader()?.cwd).toBe(
+        "/workspace/sandbox-secrets-test",
+      );
+
+      const targetSession = PiSdk.SessionManager.create(
+        "/workspace/sandbox-secrets-test",
+        runtime.session.sessionManager.getSessionDir(),
+      );
+      const targetSessionFile = targetSession.getSessionFile();
+      const targetHeader = targetSession.getHeader();
+      expect(targetSessionFile).toBeDefined();
+      expect(targetHeader?.cwd).toBe("/workspace/sandbox-secrets-test");
+      writeFileSync(targetSessionFile!, `${JSON.stringify(targetHeader)}\n`);
+
+      await backend.switchSession(targetSessionFile!);
+
+      expect(runtime.services.cwd).toBe("/workspace/sandbox-secrets-test");
+      expect(runtime.session.sessionManager.getCwd()).toBe("/workspace/sandbox-secrets-test");
+      expect(runtime.session.sessionManager.getHeader()?.cwd).toBe(
+        "/workspace/sandbox-secrets-test",
+      );
+    } finally {
+      if (backend) await backend.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("SdkBackend built-in extensions", () => {
   it("injects explicitly enabled built-ins without file package paths", async () => {
@@ -332,6 +470,42 @@ describe("SdkBackend.setModel", () => {
 });
 
 describe("SdkBackend.createPiSessionManager", () => {
+  it("opens existing session files with the effective cwd override", () => {
+    const cwd = "/workspace/clanker-farm";
+    const session = {
+      id: "sess-1",
+      status: "starting",
+      createdAt: 0,
+      lastActivity: 0,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      piSessionFile: "/tmp/session.jsonl",
+    } as Session;
+
+    const persistedManager = { kind: "persisted" } as unknown as PiSdk.SessionManager;
+    const inMemorySpy = vi.spyOn(PiSdk.SessionManager, "inMemory");
+    const createSpy = vi.spyOn(PiSdk.SessionManager, "create");
+    const openSpy = vi.spyOn(PiSdk.SessionManager, "open").mockReturnValue(persistedManager);
+
+    try {
+      const manager = (
+        SdkBackend as unknown as {
+          createPiSessionManager: (session: Session, cwd: string) => PiSdk.SessionManager;
+        }
+      ).createPiSessionManager(session, cwd);
+
+      expect(manager).toBe(persistedManager);
+      expect(openSpy).toHaveBeenCalledWith("/tmp/session.jsonl", undefined, cwd);
+      expect(inMemorySpy).not.toHaveBeenCalled();
+      expect(createSpy).not.toHaveBeenCalled();
+    } finally {
+      inMemorySpy.mockRestore();
+      createSpy.mockRestore();
+      openSpy.mockRestore();
+    }
+  });
+
   it("uses pi's in-memory session manager for incognito sessions", () => {
     const cwd = resolvePath(homedir(), "workspace", "oppi");
     const session = {

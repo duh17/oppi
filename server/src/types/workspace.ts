@@ -10,7 +10,7 @@ export interface WorkspaceAllowedPath {
 }
 
 export interface WorkspaceSandboxConfig {
-  /** Allowed egress hosts for network access. Default: ["*"] (all). */
+  /** Allowed egress hosts for network access. Default: [] (deny all). */
   allowedHosts?: string[];
   /** Extra environment variables injected into the sandbox VM. */
   env?: Record<string, string>;

@@ -80,7 +80,7 @@ describe("GondolinManager", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
       hostCwd: "/home/user/project",
-      allowedHosts: ["*"],
+      allowedHosts: [],
     });
     expect(vm).toBe(vms[0]);
   });
@@ -140,14 +140,14 @@ describe("GondolinManager", () => {
     expect(calls[0].allowedHosts).toEqual(["api.example.com", "cdn.example.com"]);
   });
 
-  it("defaults allowedHosts to wildcard", async () => {
+  it("defaults allowedHosts to deny all", async () => {
     const { factory, calls } = makeFactory();
     manager = new GondolinManager(factory);
 
     const ws = makeWorkspace({ id: "w1" });
     await manager.ensureWorkspaceVm(ws, "/path");
 
-    expect(calls[0].allowedHosts).toEqual(["*"]);
+    expect(calls[0].allowedHosts).toEqual([]);
   });
 });
 

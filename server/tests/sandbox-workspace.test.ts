@@ -214,6 +214,37 @@ describe("GondolinManager secret forwarding", () => {
     await manager.stopAll();
   });
 
+  it("passes a named guest workspace mount when provided", async () => {
+    const factoryArgs: VmFactoryOptions[] = [];
+    const factory: VmFactory = async (options) => {
+      factoryArgs.push(options);
+      return createMockVm();
+    };
+
+    const manager = new GondolinManager(factory);
+    const workspace: Workspace = {
+      id: "ws-guest-path",
+      name: "Guest Path",
+      skills: [],
+      runtime: "sandbox",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    await manager.ensureWorkspaceVm(
+      workspace,
+      "/tmp/ws",
+      undefined,
+      undefined,
+      undefined,
+      "/workspace/guest-path",
+    );
+
+    expect(factoryArgs[0].guestWorkspacePath).toBe("/workspace/guest-path");
+
+    await manager.stopAll();
+  });
+
   it("works without secrets", async () => {
     const factoryArgs: VmFactoryOptions[] = [];
     const factory: VmFactory = async (options) => {
@@ -234,7 +265,7 @@ describe("GondolinManager secret forwarding", () => {
     await manager.ensureWorkspaceVm(workspace, "/tmp/ws");
 
     expect(factoryArgs[0].secrets).toBeUndefined();
-    expect(factoryArgs[0].allowedHosts).toEqual(["*"]); // default
+    expect(factoryArgs[0].allowedHosts).toEqual([]); // default deny-all
 
     await manager.stopAll();
   });
