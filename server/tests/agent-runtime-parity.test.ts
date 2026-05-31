@@ -154,10 +154,32 @@ function makeMirrorHarness(): {
   };
 }
 
+function normalizeSessionForParity(session: Session): Session {
+  const clone = structuredClone(session) as Session;
+  delete clone.runtime;
+  delete clone.mirror;
+  delete clone.piSessionFile;
+  delete clone.piSessionFiles;
+  delete clone.piSessionId;
+  delete clone.currentTurnStartedAt;
+  delete clone.firstMessage;
+  delete clone.lastActivity;
+  delete clone.lastAgentReplyAt;
+  return clone;
+}
+
 function normalizeMessages(messages: ServerMessage[]): ServerMessage[] {
   return messages.map((message) => {
     const clone = structuredClone(message) as ServerMessage & { seq?: number };
     delete clone.seq;
+    if (clone.type === "state" || clone.type === "connected") {
+      clone.session = normalizeSessionForParity(clone.session);
+    } else if (clone.type === "session_summary") {
+      clone.summary = {
+        ...clone.summary,
+        session: normalizeSessionForParity(clone.summary.session),
+      };
+    }
     return clone;
   });
 }

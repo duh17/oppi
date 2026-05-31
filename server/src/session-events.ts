@@ -56,6 +56,59 @@ function terminalOnlyStatusText(req: ExtensionUIRequest): string | undefined {
   return req.statusText;
 }
 
+function estimateCharsFromContent(content: unknown): number {
+  if (typeof content === "string") {
+    return content.length;
+  }
+
+  if (!Array.isArray(content)) {
+    return 0;
+  }
+
+  let chars = 0;
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const record = block as Record<string, unknown>;
+    if (typeof record.text === "string") {
+      chars += record.text.length;
+    }
+    if (typeof record.thinking === "string") {
+      chars += record.thinking.length;
+    }
+    if (record.type === "toolCall") {
+      if (typeof record.name === "string") {
+        chars += record.name.length;
+      }
+      if (record.arguments !== undefined) {
+        chars += JSON.stringify(record.arguments).length;
+      }
+    }
+  }
+  return chars;
+}
+
+function estimatePiMessageChars(message: unknown): number {
+  if (!message || typeof message !== "object") {
+    return 0;
+  }
+  const record = message as Record<string, unknown>;
+  return estimateCharsFromContent(record.content);
+}
+
+function estimateToolResultChars(result: unknown): number {
+  if (!result || typeof result !== "object") {
+    return 0;
+  }
+  const record = result as Record<string, unknown>;
+  return estimateCharsFromContent(record.content);
+}
+
+function estimateTokensFromChars(chars: number): number {
+  return Math.ceil(Math.max(0, chars) / 4);
+}
+
 /** Server-side state for a pending first-class ask request. */
 export interface PendingAskState {
   requestId: string;
@@ -93,6 +146,14 @@ export interface EventProcessorSessionState {
   turnToolCallCount?: number;
   /** Timestamp (ms) when auto-compaction started (for duration tracking). */
   compactionStartedAt?: number;
+  /** Authoritative context usage at the start of the active turn/estimate window. */
+  contextUsageBaselineTokens?: number;
+  /** Estimated chars added to context after the authoritative baseline. */
+  contextUsageTrailingChars?: number;
+  /** Last live context usage state broadcast timestamp (ms). */
+  contextUsageLastBroadcastAt?: number;
+  /** Last live context usage token estimate broadcast. */
+  contextUsageLastBroadcastTokens?: number;
 }
 
 export interface SessionEventProcessorDeps {
@@ -115,6 +176,8 @@ export interface SessionEventProcessorDeps {
 export class SessionEventProcessor {
   private gitStatusTimers: Map<string, NodeJS.Timeout> = new Map();
   private static readonly GIT_STATUS_DEBOUNCE_MS = 2000;
+  private static readonly CONTEXT_USAGE_BROADCAST_MIN_INTERVAL_MS = 500;
+  private static readonly CONTEXT_USAGE_BROADCAST_MIN_TOKEN_DELTA = 128;
 
   constructor(private readonly deps: SessionEventProcessorDeps) {}
 
@@ -208,6 +271,10 @@ export class SessionEventProcessor {
         active.turnStartedAt = now;
         active.turnFirstTokenRecorded = false;
         active.turnToolCallCount = 0;
+        active.contextUsageBaselineTokens = session.contextTokens ?? 0;
+        active.contextUsageTrailingChars = 0;
+        active.contextUsageLastBroadcastAt = 0;
+        active.contextUsageLastBroadcastTokens = session.contextTokens;
         break;
       }
 
@@ -243,6 +310,13 @@ export class SessionEventProcessor {
         active.turnStartedAt = undefined;
         break;
 
+      case "message_start": {
+        if (event.message.role === "user") {
+          this.addEstimatedContextChars(key, active, estimatePiMessageChars(event.message));
+        }
+        break;
+      }
+
       case "message_update": {
         // Track server-side TTFT: first text_delta or thinking_delta in the turn
         const evt = "assistantMessageEvent" in event ? event.assistantMessageEvent : undefined;
@@ -255,6 +329,11 @@ export class SessionEventProcessor {
         ) {
           metrics.record("server.turn_ttft_ms", Date.now() - active.turnStartedAt, { sessionId });
           active.turnFirstTokenRecorded = true;
+        }
+        if (evt?.type === "text_delta" && typeof evt.delta === "string") {
+          this.addEstimatedContextChars(key, active, evt.delta.length);
+        } else if (evt?.type === "thinking_delta" && typeof evt.delta === "string") {
+          this.addEstimatedContextChars(key, active, evt.delta.length);
         }
         break;
       }
@@ -269,6 +348,7 @@ export class SessionEventProcessor {
 
       case "tool_execution_end":
         this.maybeEmitGitStatus(key, session, event.toolName);
+        this.addEstimatedContextChars(key, active, estimateToolResultChars(event.result));
         break;
 
       case "message_end":
@@ -283,6 +363,12 @@ export class SessionEventProcessor {
           }
         } else {
           applyMessageEndToSession(session, event.message);
+          if (event.message.role === "assistant") {
+            active.contextUsageBaselineTokens =
+              session.contextTokens ?? active.contextUsageBaselineTokens;
+            active.contextUsageTrailingChars = 0;
+            this.broadcastContextUsageState(key, active, { force: true });
+          }
         }
 
         // Record token usage and cost from message_end
@@ -353,6 +439,57 @@ export class SessionEventProcessor {
       return;
     }
 
+    this.deps.markSessionDirty(key);
+  }
+
+  private addEstimatedContextChars(
+    key: string,
+    active: EventProcessorSessionState,
+    chars: number,
+  ): void {
+    if (chars <= 0) {
+      return;
+    }
+
+    active.contextUsageBaselineTokens ??= active.session.contextTokens ?? 0;
+    active.contextUsageTrailingChars = (active.contextUsageTrailingChars ?? 0) + chars;
+    this.broadcastContextUsageState(key, active);
+  }
+
+  private broadcastContextUsageState(
+    key: string,
+    active: EventProcessorSessionState,
+    options: { force?: boolean } = {},
+  ): void {
+    const baseline = active.contextUsageBaselineTokens ?? active.session.contextTokens;
+    if (baseline === undefined) {
+      return;
+    }
+
+    const estimatedTokens =
+      baseline + estimateTokensFromChars(active.contextUsageTrailingChars ?? 0);
+    const previousTokens = active.contextUsageLastBroadcastTokens;
+    const tokenDelta =
+      previousTokens === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.abs(estimatedTokens - previousTokens);
+    const now = Date.now();
+    const elapsedMs = now - (active.contextUsageLastBroadcastAt ?? 0);
+
+    if (
+      !options.force &&
+      tokenDelta < SessionEventProcessor.CONTEXT_USAGE_BROADCAST_MIN_TOKEN_DELTA &&
+      elapsedMs < SessionEventProcessor.CONTEXT_USAGE_BROADCAST_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    if (active.session.contextTokens !== estimatedTokens) {
+      active.session.contextTokens = estimatedTokens;
+    }
+    active.contextUsageLastBroadcastAt = now;
+    active.contextUsageLastBroadcastTokens = estimatedTokens;
+    this.deps.broadcast(key, { type: "state", session: active.session });
     this.deps.markSessionDirty(key);
   }
 
