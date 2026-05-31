@@ -341,6 +341,14 @@ final class MessageSender {
         errorKind: String? = nil
     ) {
         let elapsedMs = Int(elapsed / .milliseconds(1))
+        guard shouldRecordCommandMetric(
+            metric: metric,
+            command: command,
+            outcome: outcome,
+            elapsedMs: elapsedMs,
+            errorKind: errorKind
+        ) else { return }
+
         var tags: [String: String] = [
             "command": command,
             "transport": transport,
@@ -359,6 +367,25 @@ final class MessageSender {
         }
     }
 
+    private func shouldRecordCommandMetric(
+        metric: ChatMetricName,
+        command: String,
+        outcome: String,
+        elapsedMs: Int,
+        errorKind: String?
+    ) -> Bool {
+        if outcome != "ok" || errorKind != nil { return true }
+        guard command == "get_queue" else { return true }
+
+        switch metric {
+        case .commandSendMs:
+            return elapsedMs >= 50
+        case .commandRoundtripMs:
+            return elapsedMs >= 500
+        default:
+            return true
+        }
+    }
 
     private func waitForCommandResult(
         waiter: CommandResultWaiter,
@@ -423,6 +450,7 @@ final class MessageSender {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
         let metricSessionId = sessionIdOverride ?? targetSessionId
+        let metricTransport = transportPathProvider?().rawValue ?? "unknown"
         let startedAt = ContinuousClock.now
 
         do {
@@ -435,10 +463,14 @@ final class MessageSender {
             ) {
                 .steer(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
             }
-            Self.recordQueueAckMetric(command: "steer", startedAt: startedAt, status: "ok", sessionId: metricSessionId)
+            Self.recordQueueAckMetric(
+                command: "steer", startedAt: startedAt, status: "ok",
+                transport: metricTransport, sessionId: metricSessionId
+            )
         } catch {
             Self.recordQueueAckMetric(
                 command: "steer", startedAt: startedAt, status: "error",
+                transport: metricTransport,
                 errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
             )
             throw error
@@ -455,6 +487,7 @@ final class MessageSender {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
         let metricSessionId = sessionIdOverride ?? targetSessionId
+        let metricTransport = transportPathProvider?().rawValue ?? "unknown"
         let startedAt = ContinuousClock.now
 
         do {
@@ -467,10 +500,14 @@ final class MessageSender {
             ) {
                 .followUp(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
             }
-            Self.recordQueueAckMetric(command: "follow_up", startedAt: startedAt, status: "ok", sessionId: metricSessionId)
+            Self.recordQueueAckMetric(
+                command: "follow_up", startedAt: startedAt, status: "ok",
+                transport: metricTransport, sessionId: metricSessionId
+            )
         } catch {
             Self.recordQueueAckMetric(
                 command: "follow_up", startedAt: startedAt, status: "error",
+                transport: metricTransport,
                 errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
             )
             throw error
@@ -900,6 +937,7 @@ final class MessageSender {
         command: String,
         startedAt: ContinuousClock.Instant,
         status: String,
+        transport: String,
         errorKind: String? = nil,
         sessionId: String?
     ) {
@@ -908,6 +946,7 @@ final class MessageSender {
             var tags: [String: String] = [
                 "command": command,
                 "status": status,
+                "transport": transport,
             ]
             if let errorKind {
                 tags["error_kind"] = errorKind

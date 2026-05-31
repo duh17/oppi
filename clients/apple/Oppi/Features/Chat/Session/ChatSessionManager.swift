@@ -787,14 +787,6 @@ final class ChatSessionManager {
             ))
 
         case .toolUpdate(let tool, let args, let toolCallId, let callSegments):
-            ChatSessionTelemetry.recordCountMetric(
-                .toolUpdateCount,
-                sessionId: sessionId,
-                tags: [
-                    "tool": tool,
-                    "has_segments": (callSegments?.isEmpty == false) ? "1" : "0",
-                ]
-            )
             coalescer.receive(toolCallCorrelator.update(
                 sessionId: sessionId, tool: tool, args: args,
                 toolCallId: toolCallId, callSegments: callSegments

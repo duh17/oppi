@@ -282,10 +282,10 @@ extension ServerConnection {
 
     func emitSessionUsageMetricsIfNeeded(_ session: Session) {
         let snapshot = sessionUsageMetricSnapshot(from: session)
-        if sessionUsageMetricSnapshots[session.id] == snapshot {
-            return
-        }
+        let now = Date()
+        guard shouldEmitSessionUsageMetrics(for: session, snapshot: snapshot, now: now) else { return }
         sessionUsageMetricSnapshots[session.id] = snapshot
+        sessionUsageMetricLastEmittedAt[session.id] = now
 
         let sessionId = session.id
         let workspaceId = session.workspaceId
@@ -318,6 +318,23 @@ extension ServerConnection {
                 )
             }
         }
+    }
+
+    func shouldEmitSessionUsageMetrics(
+        for session: Session,
+        snapshot: SessionUsageMetricSnapshot,
+        now: Date = Date()
+    ) -> Bool {
+        guard snapshot.hasUsageSignal else { return false }
+        guard sessionUsageMetricSnapshots[session.id] != snapshot else { return false }
+
+        if session.status == .stopped || session.status == .error {
+            return true
+        }
+
+        guard session.status.isTerminal else { return false }
+        guard let lastEmittedAt = sessionUsageMetricLastEmittedAt[session.id] else { return true }
+        return now.timeIntervalSince(lastEmittedAt) >= Self.sessionUsageMetricMinimumInterval
     }
 
     func sessionUsageMetricSnapshot(from session: Session) -> SessionUsageMetricSnapshot {

@@ -4,7 +4,7 @@ import UIKit
 ///
 /// Uses `AssistantMarkdownContentView` for both streaming and done states.
 /// During streaming, the incremental markdown pipeline (tail-only CommonMark
-/// parse + structural segment diffing) renders formatted content at 30fps.
+/// parse + structural segment diffing) renders formatted content on coalescer ticks.
 /// Text appears immediately on each coalescer flush — no per-character
 /// animation — keeping CPU cost minimal.
 struct AssistantTimelineRowConfiguration: UIContentConfiguration {

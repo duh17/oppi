@@ -189,6 +189,34 @@ function normalizePathPattern(path: string): string {
     .replace(/\/[0-9a-f]{16,}/gi, "/:id");
 }
 
+const ROUTINE_HTTP_METRIC_PATTERNS = new Set([
+  "/health",
+  "/server/info",
+  "/server/stats",
+  "/workspaces",
+  "/skills",
+  "/sessions/recent",
+  "/workspaces/:workspaceId/attention",
+  "/workspaces/:workspaceId/paths",
+  "/workspaces/:workspaceId/review/comments",
+  "/policy/fallback",
+  "/models",
+  "/telemetry/chat-metrics",
+  "/telemetry/client-logs",
+  "/telemetry/metrickit",
+]);
+const ROUTINE_HTTP_METRIC_SLOW_MS = 50;
+
+function shouldRecordHttpRequestMetric(
+  pathPattern: string,
+  statusCode: number,
+  durationMs: number,
+): boolean {
+  if (statusCode >= 400) return true;
+  if (durationMs >= ROUTINE_HTTP_METRIC_SLOW_MS) return true;
+  return !ROUTINE_HTTP_METRIC_PATTERNS.has(pathPattern);
+}
+
 function normalizeBindHost(host: string): string {
   const trimmed = host.trim().toLowerCase();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
@@ -1353,11 +1381,18 @@ export class Server {
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     res.setHeader("X-Oppi-Protocol", "2");
 
-    // Record HTTP request duration when the response finishes
+    // Record HTTP request duration when the response finishes. Routine health,
+    // stats, capability, and telemetry upload routes are threshold-gated so
+    // they do not dominate diagnostics volume while still surfacing slow/error cases.
     res.on("finish", () => {
-      this.opsMetrics.record("server.http_request_ms", Date.now() - startTime, {
+      const durationMs = Date.now() - startTime;
+      const pathPattern = normalizePathPattern(path);
+      if (!shouldRecordHttpRequestMetric(pathPattern, res.statusCode, durationMs)) {
+        return;
+      }
+      this.opsMetrics.record("server.http_request_ms", durationMs, {
         method,
-        path_pattern: normalizePathPattern(path),
+        path_pattern: pathPattern,
         status_code: String(res.statusCode),
       });
     });

@@ -9,7 +9,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const DAY_MS = 24 * 60 * 60 * 1_000;
+const HOUR_MS = 60 * 60 * 1_000;
+const DAY_MS = 24 * HOUR_MS;
 const CLIENT_LOG_PREFIX = "client-logs-";
 const JSONL_SUFFIX = ".jsonl";
 
@@ -73,6 +74,7 @@ interface RecentEntry {
 
 export interface ClientLogReviewResult {
   days: number;
+  windowLabel: string;
   telemetryDir: string;
   filesRead: number;
   uploads: number;
@@ -102,6 +104,7 @@ export interface ClientLogReviewResult {
 interface ParsedArgs {
   dataDir?: string;
   days: number;
+  hours?: number;
   json: boolean;
   help: boolean;
   limit: number;
@@ -133,6 +136,10 @@ function formatTs(ts: number | null): string {
   return new Date(ts).toISOString().replace("T", " ").replace(".000Z", "Z");
 }
 
+function formatWindowValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 function inc(map: Record<string, number>, key: string, by = 1): void {
   map[key] = (map[key] ?? 0) + by;
 }
@@ -147,7 +154,10 @@ function signatureParts(entry: ClientLogEntry, normalizedLevel: string): string[
     "errorDomain",
     "errorCode",
     "urlErrorCode",
+    "httpStatusCode",
+    "webSocketCloseCode",
     "transportPath",
+    "streamRole",
     "phase",
     "reason",
     "capabilityStatus",
@@ -166,7 +176,10 @@ function displaySignature(entry: ClientLogEntry): string {
     "errorDomain",
     "errorCode",
     "urlErrorCode",
+    "httpStatusCode",
+    "webSocketCloseCode",
     "transportPath",
+    "streamRole",
     "phase",
     "reason",
     "capabilityStatus",
@@ -236,12 +249,17 @@ function parseJsonLine(line: string): ClientLogRecord | null {
 
 export function buildClientLogReview(options: {
   dataDir: string;
-  days: number;
+  days?: number;
+  hours?: number;
   limit?: number;
   levels?: Set<string> | null;
 }): ClientLogReviewResult {
   const dir = telemetryDir(options.dataDir);
-  const cutoffMs = Date.now() - options.days * DAY_MS;
+  const days = Math.max(0, options.days ?? 7);
+  const hours = options.hours == null ? undefined : Math.max(0, options.hours);
+  const windowMs = hours != null ? hours * HOUR_MS : days * DAY_MS;
+  const windowLabel = hours != null ? `${formatWindowValue(hours)}h` : `${formatWindowValue(days)}d`;
+  const cutoffMs = Date.now() - windowMs;
   const levels = options.levels;
   const levelCounts: Record<string, number> = {};
   const categoryCounts: Record<string, number> = {};
@@ -298,7 +316,8 @@ export function buildClientLogReview(options: {
   const limit = Math.max(1, options.limit ?? 20);
 
   return {
-    days: options.days,
+    days: windowMs / DAY_MS,
+    windowLabel,
     telemetryDir: dir,
     filesRead,
     uploads,
@@ -330,7 +349,7 @@ export function buildClientLogReview(options: {
 }
 
 function printHuman(result: ClientLogReviewResult): void {
-  console.log(`Oppi Client Log Review (last ${result.days}d)`);
+  console.log(`Oppi Client Log Review (last ${result.windowLabel})`);
   console.log(`  telemetry: ${result.telemetryDir}`);
   console.log(
     `  files=${result.filesRead} uploads=${result.uploads} entries=${result.entries} dropped=${result.dropped}`,
@@ -398,7 +417,11 @@ function parseArgs(argv: string[]): ParsedArgs {
         args.dataDir = argv[++i];
         break;
       case "--days":
-        args.days = Math.max(1, Number.parseInt(argv[++i] ?? "7", 10) || 7);
+        args.days = Math.max(1, Number.parseFloat(argv[++i] ?? "7") || 7);
+        args.hours = undefined;
+        break;
+      case "--hours":
+        args.hours = Math.max(0.1, Number.parseFloat(argv[++i] ?? "") || 0);
         break;
       case "--limit":
         args.limit = Math.max(1, Number.parseInt(argv[++i] ?? "20", 10) || 20);
@@ -431,11 +454,13 @@ function printHelp(): void {
 
   bun server/scripts/client-log-review.ts
   bun server/scripts/client-log-review.ts --days 1 --limit 30
+  bun server/scripts/client-log-review.ts --hours 3 --limit 30
   bun server/scripts/client-log-review.ts --level warn,error --json
 
 Options:
   --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
   --days <n>            Days of uploaded client logs (default: 7)
+  --hours <n>           Hours of uploaded client logs; overrides --days
   --limit <n>           Number of top/recent entries (default: 20)
   --level <levels>      Comma-separated levels: debug,info,warn,error
   --json                Machine-readable JSON
@@ -456,6 +481,7 @@ function main(): void {
   const result = buildClientLogReview({
     dataDir,
     days: args.days,
+    hours: args.hours,
     limit: args.limit,
     levels: args.levels,
   });

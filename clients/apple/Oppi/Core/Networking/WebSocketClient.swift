@@ -43,6 +43,9 @@ final class WebSocketClient {
     let credentials: ServerCredentials
     private var preferredEndpoint: EndpointSelection?
     private var streamURL: URL?
+    private var diagnosticSessionId: String?
+    private var diagnosticWorkspaceId: String?
+    private let diagnosticRole: String
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
@@ -59,11 +62,13 @@ final class WebSocketClient {
     init(
         credentials: ServerCredentials,
         preferredEndpoint: EndpointSelection? = nil,
+        diagnosticRole: String = "focused_session",
         waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5)
     ) {
         self.credentials = credentials
         self.preferredEndpoint = preferredEndpoint
+        self.diagnosticRole = diagnosticRole
         self.waitForConnectionTimeout = waitForConnectionTimeout
         self.sendTimeout = sendTimeout
         self.trustDelegate = PinnedServerTrustDelegate(
@@ -128,8 +133,10 @@ final class WebSocketClient {
         preferredEndpoint = endpoint
     }
 
-    func setStreamURL(_ url: URL?) {
+    func setStreamURL(_ url: URL?, sessionId: String? = nil, workspaceId: String? = nil) {
         streamURL = url
+        diagnosticSessionId = sessionId
+        diagnosticWorkspaceId = workspaceId
     }
 
     // MARK: - Send
@@ -376,9 +383,22 @@ final class WebSocketClient {
 
     private func wsLogMetadata(extra: [String: String] = [:]) -> [String: String] {
         var metadata = extra
+        metadata.merge(
+            ClientLog.endpointMetadata(streamURL ?? preferredEndpoint?.baseURL, prefix: "ws")
+        ) { current, _ in current }
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
         metadata["transportPath"] = preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
+        metadata["streamRole"] = diagnosticRole
+        if let diagnosticSessionId {
+            metadata["sessionId"] = diagnosticSessionId
+        }
+        if let diagnosticWorkspaceId {
+            metadata["workspaceId"] = diagnosticWorkspaceId
+        }
+        if let lastHTTPStatusCode {
+            metadata["httpStatusCode"] = String(lastHTTPStatusCode)
+        }
         return metadata
     }
 
@@ -395,6 +415,10 @@ final class WebSocketClient {
 
     private func wsLogInfo(_ message: String, metadata: [String: String] = [:]) {
         ClientLog.info("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
+    }
+
+    private func wsLogWarning(_ message: String, metadata: [String: String] = [:]) {
+        ClientLog.warning("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
     }
 
     private func wsLogError(_ message: String, metadata: [String: String] = [:]) {
@@ -423,6 +447,23 @@ final class WebSocketClient {
         return ["suppressedReceiveErrorCount": String(count)]
     }
 
+    private func receiveFailureMetadata(for ws: URLSessionWebSocketTask, error: Error) -> [String: String] {
+        var metadata = ClientLog.networkErrorMetadata(error)
+        if let statusCode = (ws.response as? HTTPURLResponse)?.statusCode {
+            metadata["httpStatusCode"] = String(statusCode)
+        }
+        metadata["webSocketCloseCode"] = String(ws.closeCode.rawValue)
+        return metadata
+    }
+
+    private func isNonRetryableHandshakeStatus(_ statusCode: Int) -> Bool {
+        [400, 401, 403, 404, 410, 426].contains(statusCode)
+    }
+
+    private func isOptionalStreamUnavailableStatus(_ statusCode: Int) -> Bool {
+        diagnosticRole == "user_events" && statusCode == 404
+    }
+
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         guard let url = streamURL else {
             logger.error("Invalid stream URL — disconnecting")
@@ -442,6 +483,7 @@ final class WebSocketClient {
 
     private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         receiveTask = Task { [weak self] in
+            var shouldAttemptReconnect = true
             while !Task.isCancelled {
                 do {
                     let wsMessage = try await ws.receive()
@@ -500,15 +542,33 @@ final class WebSocketClient {
 
                     continuation.yield(frameEvent)
                 } catch {
-                    if let statusCode = (ws.response as? HTTPURLResponse)?.statusCode {
+                    let statusCode = (ws.response as? HTTPURLResponse)?.statusCode
+                    if let statusCode {
                         self?.lastHTTPStatusCode = statusCode
                     }
                     if Task.isCancelled { break }
-                    if let self, self.shouldLogReceiveError(error) {
+                    if let self, let statusCode, self.isNonRetryableHandshakeStatus(statusCode) {
+                        shouldAttemptReconnect = false
+                        let metadata = self.receiveFailureMetadata(for: ws, error: error)
+                            .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
+                        if self.isOptionalStreamUnavailableStatus(statusCode) {
+                            logger.warning("Optional WebSocket stream unavailable with HTTP \(statusCode)")
+                            self.wsLogWarning(
+                                "WebSocket handshake rejected",
+                                metadata: metadata
+                            )
+                        } else {
+                            logger.error("WebSocket handshake rejected with HTTP \(statusCode)")
+                            self.wsLogError(
+                                "WebSocket handshake rejected",
+                                metadata: metadata
+                            )
+                        }
+                    } else if let self, self.shouldLogReceiveError(error) {
                         logger.error("WebSocket receive error: \(error)")
                         self.wsLogError(
                             "WebSocket receive error",
-                            metadata: ClientLog.networkErrorMetadata(error)
+                            metadata: self.receiveFailureMetadata(for: ws, error: error)
                                 .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
                         )
                     } else {
@@ -518,9 +578,13 @@ final class WebSocketClient {
                 }
             }
 
-            // Connection lost — attempt reconnect
+            // Connection lost — attempt reconnect unless the server rejected the endpoint/auth.
             await MainActor.run {
-                self?.attemptReconnect()
+                if shouldAttemptReconnect {
+                    self?.attemptReconnect()
+                } else {
+                    self?.disconnect()
+                }
             }
         }
     }

@@ -5,15 +5,18 @@ services:
     restart: unless-stopped
     working_dir: /app
     command:
-      - node
-      - /app/scripts/manual/telemetry-import-sqlite.mjs
-      - --watch
-      - --interval-ms
-      - ${OPPI_TELEMETRY_IMPORT_INTERVAL_MS:-15000}
-      - --telemetry-dir
-      - /var/lib/oppi-telemetry-jsonl
-      - --db
-      - /var/lib/oppi-telemetry-db/telemetry.db
+      - sh
+      - -lc
+      - >
+        umask 0002;
+        mkdir -p /var/lib/oppi-telemetry-db;
+        chmod 2775 /var/lib/oppi-telemetry-db;
+        if [ -f /var/lib/oppi-telemetry-db/telemetry.db ]; then chmod g+rw /var/lib/oppi-telemetry-db/telemetry.db; fi;
+        node /app/scripts/manual/telemetry-import-sqlite.mjs
+        --watch
+        --interval-ms ${OPPI_TELEMETRY_IMPORT_INTERVAL_MS:-15000}
+        --telemetry-dir /var/lib/oppi-telemetry-jsonl
+        --db /var/lib/oppi-telemetry-db/telemetry.db
     volumes:
       - ./:/app:ro
       - ${OPPI_DATA_DIR:-${HOME}/.config/oppi}/diagnostics/telemetry:/var/lib/oppi-telemetry-jsonl:ro
@@ -36,7 +39,7 @@ services:
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - oppi-telemetry-sqlite:/var/lib/oppi-telemetry-db:ro
+      - oppi-telemetry-sqlite:/var/lib/oppi-telemetry-db
 
 volumes:
   oppi-telemetry-sqlite:

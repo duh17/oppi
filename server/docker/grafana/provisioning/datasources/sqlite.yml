@@ -10,5 +10,5 @@ datasources:
     jsonData:
       path: /var/lib/oppi-telemetry-db/telemetry.db
       pathPrefix: "file:"
-      pathOptions: mode=ro
+      pathOptions: mode=rw
       attachLimit: 0

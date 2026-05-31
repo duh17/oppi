@@ -77,6 +77,121 @@ describe("ServerMetricCollector", () => {
     expect(collector.bufferedCount).toBe(0);
   });
 
+  it("aggregates high-volume WebSocket counters by metric and tags", () => {
+    const writer = new MockWriter();
+    const collector = new ServerMetricCollector(writer);
+
+    collector.record("server.ws_message_sent", 1, {
+      path: "bound_session_stream",
+      type: "text_delta",
+    });
+    collector.record("server.ws_message_sent", 1, {
+      type: "text_delta",
+      path: "bound_session_stream",
+    });
+    collector.record("server.ws_message_sent", 1, {
+      path: "bound_session_stream",
+      type: "tool_update",
+    });
+    collector.flush();
+
+    expect(writer.batches).toHaveLength(1);
+    expect(writer.batches[0]).toHaveLength(2);
+    expect(writer.batches[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "server.ws_message_sent",
+          value: 2,
+          tags: { path: "bound_session_stream", type: "text_delta" },
+        }),
+        expect.objectContaining({
+          metric: "server.ws_message_sent",
+          value: 1,
+          tags: { path: "bound_session_stream", type: "tool_update" },
+        }),
+      ]),
+    );
+  });
+
+  it("aggregates turn token and cost counters by sum", () => {
+    const writer = new MockWriter();
+    const collector = new ServerMetricCollector(writer);
+
+    collector.record("server.turn_input_tokens", 100, { sessionId: "s1" });
+    collector.record("server.turn_input_tokens", 40, { sessionId: "s1" });
+    collector.record("server.turn_cost", 12, { sessionId: "s1" });
+    collector.record("server.turn_cost", 3, { sessionId: "s1" });
+    collector.flush();
+
+    expect(writer.batches).toHaveLength(1);
+    expect(writer.batches[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "server.turn_input_tokens",
+          value: 140,
+          tags: { sessionId: "s1" },
+        }),
+        expect.objectContaining({
+          metric: "server.turn_cost",
+          value: 15,
+          tags: { sessionId: "s1" },
+        }),
+      ]),
+    );
+  });
+
+  it("aggregates high-volume gauge metrics by max value", () => {
+    const writer = new MockWriter();
+    const collector = new ServerMetricCollector(writer);
+
+    collector.record("server.event_ring_utilization", 0.1, { ring: "session" });
+    collector.record("server.event_ring_utilization", 0.7, { ring: "session" });
+    collector.record("server.event_ring_utilization", 0.3, { ring: "user_stream" });
+    collector.flush();
+
+    expect(writer.batches).toHaveLength(1);
+    expect(writer.batches[0]).toHaveLength(2);
+    expect(writer.batches[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "server.event_ring_utilization",
+          value: 0.7,
+          tags: { ring: "session" },
+        }),
+        expect.objectContaining({
+          metric: "server.event_ring_utilization",
+          value: 0.3,
+          tags: { ring: "user_stream" },
+        }),
+      ]),
+    );
+  });
+
+  it("does not aggregate non-finite values", () => {
+    const writer = new MockWriter();
+    const collector = new ServerMetricCollector(writer);
+
+    collector.record("server.ws_message_sent", 1, { type: "text_delta" });
+    collector.record("server.ws_message_sent", Number.NaN, { type: "text_delta" });
+    collector.flush();
+
+    expect(writer.batches).toHaveLength(1);
+    expect(writer.batches[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "server.ws_message_sent",
+          value: 1,
+          tags: { type: "text_delta" },
+        }),
+        expect.objectContaining({
+          metric: "server.ws_message_sent",
+          value: Number.NaN,
+          tags: { type: "text_delta" },
+        }),
+      ]),
+    );
+  });
+
   it("stop() flushes remaining samples", () => {
     const writer = new MockWriter();
     const collector = new ServerMetricCollector(writer);

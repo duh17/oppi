@@ -1,9 +1,9 @@
 import Foundation
 
-/// Batches high-frequency stream deltas for smooth 30fps rendering.
+/// Batches high-frequency stream deltas for smooth rendering.
 ///
 /// Rules:
-/// - `textDelta` / `thinkingDelta` / `toolOutput`: buffer and flush every 33ms
+/// - `textDelta` / `thinkingDelta` / `toolOutput`: buffer and flush about every 50ms
 /// - Repeated `toolUpdate` / duplicate `toolStart` events for the same tool
 ///   call are also coalesced so streamed args (for example write/edit content)
 ///   don't thrash the reducer and collection layout on every chunk.
@@ -24,7 +24,7 @@ final class DeltaCoalescer {
 
     private var buffer: [AgentEvent] = []
     private var flushTask: Task<Void, Never>?
-    private let flushInterval: Duration = .milliseconds(33)
+    private let flushInterval: Duration = .milliseconds(50)
     private var activeToolStarts: Set<ToolStartKey> = []
     private var previewToolStarts: Set<ToolStartKey> = []
 
@@ -33,12 +33,16 @@ final class DeltaCoalescer {
     private let maxBufferedBytes = 256 * 1024
     private var bufferedBytes = 0
 
-    // Telemetry accumulator — aggregate over ~1s window instead of emitting
-    // per-flush (~30/sec). Cuts telemetry volume from ~60 samples/sec to ~2.
+    // Telemetry accumulator — aggregate over ~10s of active flushes instead
+    // of emitting per-flush (~30/sec). Flush/disconnect drains partial windows
+    // only when they contain enough signal to explain render/coalescing cost.
     private var telemetryWindowEvents = 0
     private var telemetryWindowBytes = 0
     private var telemetryWindowFlushes = 0
-    private static let telemetryFlushesPerWindow = 30
+    private static let telemetryFlushesPerWindow = 200
+    private static let telemetryDrainMinimumFlushes = 10
+    private static let telemetryDrainMinimumEvents = 20
+    private static let telemetryDrainMinimumBytes = 64 * 1024
 
     /// When true, high-frequency events accumulate but don't flush on timer.
     /// Immediate events (tool start, permissions, etc.) still flush + deliver.
@@ -139,6 +143,39 @@ final class DeltaCoalescer {
 
     /// Emit any accumulated telemetry that hasn't hit the window threshold yet.
     private func drainTelemetryWindow() {
+        emitTelemetryWindow(force: false)
+    }
+
+    // MARK: - Private
+
+    private func scheduleFlushIfNeeded() {
+        guard flushTask == nil, !isPaused else { return }
+        flushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: self?.flushInterval ?? .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            self?.deliverBuffer()
+            self?.flushTask = nil
+        }
+    }
+
+    private func deliverBuffer() {
+        guard !buffer.isEmpty else { return }
+        let events = buffer
+        let flushedBytes = bufferedBytes
+        buffer.removeAll(keepingCapacity: true)
+        bufferedBytes = 0
+        onFlush?(events)
+
+        telemetryWindowEvents += events.count
+        telemetryWindowBytes += flushedBytes
+        telemetryWindowFlushes += 1
+
+        if telemetryWindowFlushes >= Self.telemetryFlushesPerWindow {
+            emitTelemetryWindow(force: true)
+        }
+    }
+
+    private func emitTelemetryWindow(force: Bool) {
         guard telemetryWindowFlushes > 0 else { return }
         let windowEvents = telemetryWindowEvents
         let windowBytes = telemetryWindowBytes
@@ -147,6 +184,12 @@ final class DeltaCoalescer {
         telemetryWindowEvents = 0
         telemetryWindowBytes = 0
         telemetryWindowFlushes = 0
+
+        guard force || Self.shouldRecordTelemetryWindow(
+            events: windowEvents,
+            bytes: windowBytes,
+            flushes: windowFlushes
+        ) else { return }
 
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
@@ -166,58 +209,10 @@ final class DeltaCoalescer {
         }
     }
 
-    // MARK: - Private
-
-    private func scheduleFlushIfNeeded() {
-        guard flushTask == nil, !isPaused else { return }
-        flushTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: self?.flushInterval ?? .milliseconds(33))
-            guard !Task.isCancelled else { return }
-            self?.deliverBuffer()
-            self?.flushTask = nil
-        }
-    }
-
-    private func deliverBuffer() {
-        guard !buffer.isEmpty else { return }
-        let events = buffer
-        let flushedBytes = bufferedBytes
-        buffer.removeAll(keepingCapacity: true)
-        bufferedBytes = 0
-        onFlush?(events)
-
-        // Accumulate telemetry over ~1s window (~30 flushes at 33ms)
-        // instead of emitting 2 samples per flush.
-        telemetryWindowEvents += events.count
-        telemetryWindowBytes += flushedBytes
-        telemetryWindowFlushes += 1
-
-        if telemetryWindowFlushes >= Self.telemetryFlushesPerWindow {
-            let windowEvents = telemetryWindowEvents
-            let windowBytes = telemetryWindowBytes
-            let windowFlushes = telemetryWindowFlushes
-            let sid = sessionId
-            telemetryWindowEvents = 0
-            telemetryWindowBytes = 0
-            telemetryWindowFlushes = 0
-
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .coalescerFlushEvents,
-                    value: Double(windowEvents),
-                    unit: .count,
-                    sessionId: sid,
-                    tags: ["flushes": String(windowFlushes)]
-                )
-                await ChatMetricsService.shared.record(
-                    metric: .coalescerFlushBytes,
-                    value: Double(windowBytes),
-                    unit: .count,
-                    sessionId: sid,
-                    tags: ["flushes": String(windowFlushes)]
-                )
-            }
-        }
+    private static func shouldRecordTelemetryWindow(events: Int, bytes: Int, flushes: Int) -> Bool {
+        flushes >= telemetryDrainMinimumFlushes
+            || events >= telemetryDrainMinimumEvents
+            || bytes >= telemetryDrainMinimumBytes
     }
 
     private func appendBuffered(_ event: AgentEvent) {

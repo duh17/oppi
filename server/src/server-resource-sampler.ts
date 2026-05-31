@@ -33,7 +33,7 @@ export interface ServerMetricsDeps {
   getSessionCounts: () => { busy: number; ready: number; starting: number; total: number };
   /** Returns count of open WebSocket connections. */
   getWebSocketCount: () => number;
-  /** Optional: record to the operational metrics collector (for session_active_peak). */
+  /** Optional: record selected drill-down samples to the operational metrics collector. */
   recordOpsMetric?: (metric: string, value: number, tags?: Record<string, string>) => void;
   /** Returns event ring snapshots for utilization sampling. */
   getEventRingSnapshots?: () => EventRingSnapshot[];
@@ -136,9 +136,9 @@ export class ServerResourceSampler {
       const peak = this.activeSessionPeak;
       this.activeSessionPeak = sessions.total; // reset for next interval
 
-      if (peak > 0) {
-        this.deps.recordOpsMetric?.("server.session_active_peak", peak);
-      }
+      // `peak` is written in the structured server resource sample below.
+      // Do not also mirror it into server-ops metrics; that produced a noisy
+      // duplicate no-SLO row every sampler interval.
 
       // Sample event ring utilization
       const ringSnapshots = this.deps.getEventRingSnapshots?.() ?? [];

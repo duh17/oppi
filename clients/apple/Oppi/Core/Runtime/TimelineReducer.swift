@@ -24,7 +24,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private var currentAssistantID: String?
     private var assistantBuffer: String = ""
     /// Stable timestamp for the streaming assistant message — avoids
-    /// creating a new Date() on every 33ms upsert, which would cause
+    /// creating a new Date() on every streaming upsert, which would cause
     /// unnecessary Equatable mismatches and ForEach re-diffs.
     private var currentAssistantTimestamp: Date?
 
@@ -69,7 +69,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Separate store for full tool output.
     let toolOutputStore = ToolOutputStore()
 
-    /// O(1) item lookup by ID — avoids linear scans on every 33ms upsert.
+    /// O(1) item lookup by ID — avoids linear scans on every streaming upsert.
     /// Invalidated on insert, remove, and reset.
     private let itemIndex = TimelineItemIndex()
 

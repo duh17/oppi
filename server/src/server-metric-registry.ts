@@ -66,7 +66,8 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.user_stream_event": {
     unit: "count",
-    description: "Notification-level event recorded in the user event ring. Tagged by type.",
+    description:
+      "Notification-level event recorded in the user event ring. Tagged by type. Aggregated by sum before storage.",
   },
   "server.user_stream_fanout": {
     unit: "count",
@@ -96,7 +97,8 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.session_active_peak": {
     unit: "count",
-    description: "Peak concurrent active sessions observed in the sampling interval.",
+    description:
+      "Legacy ops-metric mirror for peak concurrent active sessions. Current sampler writes peak in server resource samples instead.",
   },
 
   // ── P1: Turn / LLM Performance ──
@@ -110,15 +112,18 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.turn_input_tokens": {
     unit: "count",
-    description: "Input tokens consumed in a single turn (from message_end usage).",
+    description:
+      "Input tokens consumed by turns (from message_end usage). Aggregated by sum before storage.",
   },
   "server.turn_output_tokens": {
     unit: "count",
-    description: "Output tokens produced in a single turn (from message_end usage).",
+    description:
+      "Output tokens produced by turns (from message_end usage). Aggregated by sum before storage.",
   },
   "server.turn_cost": {
     unit: "count",
-    description: "Turn cost in microdollars (usage.cost * 1_000_000, integer).",
+    description:
+      "Turn cost in microdollars (usage.cost * 1_000_000, integer). Aggregated by sum before storage.",
   },
   "server.turn_tool_calls": {
     unit: "count",
@@ -132,11 +137,13 @@ export const SERVER_METRIC_REGISTRY = {
   // ── P1: Permission Gate ──
   "server.gate_check_ms": {
     unit: "ms",
-    description: "Gate policy evaluation latency (checkToolCall -> decision).",
+    description:
+      "Slow gate policy evaluation latency (checkToolCall -> decision). Tagged by action; emitted only for slow checks.",
   },
   "server.gate_decision": {
     unit: "count",
-    description: "Gate decisions. Tagged by action (allow, deny, ask).",
+    description:
+      "Gate decisions. Tagged by action (allow, deny, ask). Aggregated by sum before storage.",
   },
   "server.gate_approval_wait_ms": {
     unit: "ms",
@@ -165,11 +172,13 @@ export const SERVER_METRIC_REGISTRY = {
   // ── P2: Capacity / Throughput ──
   "server.http_request_ms": {
     unit: "ms",
-    description: "HTTP request duration. Tagged by method, path_pattern, status_code.",
+    description:
+      "HTTP request duration. Tagged by method, path_pattern, status_code. Fast successful routine/navigation routes are threshold-gated.",
   },
   "server.event_ring_utilization": {
     unit: "ratio",
-    description: "Event ring fill ratio (len/capacity). Tagged by ring (session, user_stream).",
+    description:
+      "Event ring fill ratio (len/capacity). Tagged by ring (session, user_stream). Aggregated by max before storage.",
   },
   "server.catchup_events": {
     unit: "count",
@@ -189,7 +198,8 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.broadcast_fanout": {
     unit: "count",
-    description: "Subscriber count at time of broadcast. Sampled on durable messages only.",
+    description:
+      "Subscriber count at time of durable broadcasts. Tagged by type. Aggregated by max before storage.",
   },
 
   // ── P2: Error Tracking ──

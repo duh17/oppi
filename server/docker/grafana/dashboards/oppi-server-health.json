@@ -799,7 +799,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_cost' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(value) AS value FROM server_ops_metric_samples WHERE metric = 'server.turn_cost' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -1017,7 +1017,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.turn_input_tokens' THEN value END AS input, CASE WHEN metric = 'server.turn_output_tokens' THEN value END AS output FROM server_ops_metric_samples WHERE metric IN ('server.turn_input_tokens', 'server.turn_output_tokens') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(CASE WHEN metric = 'server.turn_input_tokens' THEN value ELSE 0 END) AS input, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) AS output FROM server_ops_metric_samples WHERE metric IN ('server.turn_input_tokens', 'server.turn_output_tokens') AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -1286,7 +1286,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.gate_decision' THEN value END AS decisions, CASE WHEN metric = 'server.gate_timeout' THEN value END AS timeouts FROM server_ops_metric_samples WHERE metric IN ('server.gate_decision', 'server.gate_timeout') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(CASE WHEN metric = 'server.gate_decision' THEN value ELSE 0 END) AS decisions, SUM(CASE WHEN metric = 'server.gate_timeout' THEN value ELSE 0 END) AS timeouts FROM server_ops_metric_samples WHERE metric IN ('server.gate_decision', 'server.gate_timeout') AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }

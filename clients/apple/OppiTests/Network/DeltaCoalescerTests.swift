@@ -201,7 +201,7 @@ struct DeltaCoalescerTests {
 
         coalescer.receive(.textDelta(sessionId: "s1", delta: "hello"))
 
-        // Should NOT have flushed yet (buffered for 33ms)
+        // Should NOT have flushed yet (buffered for a short streaming tick)
         #expect(flushed.isEmpty)
     }
 

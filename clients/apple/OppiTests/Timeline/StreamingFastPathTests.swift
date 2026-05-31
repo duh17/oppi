@@ -464,7 +464,7 @@ struct StreamingFastPathTests {
         ], streamingAssistantID: streamingID)
 
         // Step 2: assistant text IDENTICAL, but tool output arrived.
-        // The 33ms coalescer may deliver tool output in a tick where
+        // The streaming coalescer may deliver tool output in a tick where
         // no new assistant text was flushed.
         h.apply(items: [
             .assistantMessage(id: streamingID, text: "Running command", timestamp: timestamp),

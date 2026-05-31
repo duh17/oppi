@@ -146,6 +146,16 @@ final class ServerConnection {
         let removedLines: Int
         let contextTokens: Int
         let contextWindow: Int
+
+        var hasUsageSignal: Bool {
+            messageCount > 0
+                || totalTokens > 0
+                || mutatingToolCalls > 0
+                || filesChanged > 0
+                || addedLines > 0
+                || removedLines > 0
+                || contextTokens > 0
+        }
     }
 
     // periphery:ignore - test seam used by ServerConnection*Tests via @testable import
@@ -231,8 +241,13 @@ final class ServerConnection {
     /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
     var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
 
+    /// Minimum spacing for repeated per-session usage snapshots. These are
+    /// capacity/cost diagnostics, not live UX counters.
+    static let sessionUsageMetricMinimumInterval: TimeInterval = 60
+
     /// Last emitted per-session usage snapshot to avoid duplicate metric spam.
     @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
+    @ObservationIgnored var sessionUsageMetricLastEmittedAt: [String: Date] = [:]
 
     init() {
         // Wire silence watchdog probe to request a state refresh.
@@ -301,13 +316,15 @@ final class ServerConnection {
         )
         self.wsClient = WebSocketClient(
             credentials: credentials,
-            preferredEndpoint: selection
+            preferredEndpoint: selection,
+            diagnosticRole: "focused_session"
         )
         self.wsClient?.setStreamURL(nil)
         self.attentionWsClient?.disconnect()
         self.attentionWsClient = WebSocketClient(
             credentials: credentials,
-            preferredEndpoint: selection
+            preferredEndpoint: selection,
+            diagnosticRole: "user_events"
         )
         self.attentionWsClient?.setStreamURL(makeUserEventsStreamURL(selection: selection))
         sender.wsClient = self.wsClient
@@ -519,6 +536,7 @@ final class ServerConnection {
         }
         sessionEventContinuations.removeAll()
         sessionUsageMetricSnapshots.removeAll()
+        sessionUsageMetricLastEmittedAt.removeAll()
         serverDictationAvailable = false
         clearFocusedSessionStreamEndpoint()
         wsClient?.disconnect()
@@ -718,6 +736,7 @@ final class ServerConnection {
 
         guard resolved, let receivedAtMs = meta?.receivedAtMs else { return }
         let lagMs = max(0, Date.nowMs() - receivedAtMs)
+        guard shouldRecordCommandResolveLag(command: command, success: success, lagMs: Int(lagMs)) else { return }
         let transport = meta?.transportPath.rawValue ?? transportPath.rawValue
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
@@ -731,6 +750,12 @@ final class ServerConnection {
                 ]
             )
         }
+    }
+
+    private func shouldRecordCommandResolveLag(command: String, success: Bool, lagMs: Int) -> Bool {
+        if !success { return true }
+        guard command == "get_queue" else { return true }
+        return lagMs >= 50
     }
 
     /// Handle focused session stream reconnection.
@@ -883,7 +908,7 @@ final class ServerConnection {
         focusedSessionStreamWorkspaceId = workspaceId
         focusedSessionStreamURL = sessionStreamURL
         wsClient?.setPreferredEndpoint(selection)
-        wsClient?.setStreamURL(sessionStreamURL)
+        wsClient?.setStreamURL(sessionStreamURL, sessionId: sessionId, workspaceId: workspaceId)
 
         if let previousURL, previousURL != sessionStreamURL {
             var metadata: [String: String] = [
@@ -1026,6 +1051,7 @@ final class ServerConnection {
         closeSessionStreamContinuations(sessionId)
         messageQueueStore.clear(sessionId: sessionId)
         sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
+        sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
     }
 

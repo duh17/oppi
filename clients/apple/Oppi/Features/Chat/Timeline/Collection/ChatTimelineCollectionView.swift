@@ -567,7 +567,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Streaming fast path: when the item list is structurally unchanged
             // (same count, same streaming ID, same busy/hidden state), skip
             // the full plan build + snapshot apply. This avoids O(n) dedup,
-            // Set construction, and UIKit snapshot diffing on every 33ms tick.
+            // Set construction, and UIKit snapshot diffing on every streaming tick.
             let structurallyUnchanged = configuration.items.count == previousItemCount
                 && configuration.streamingAssistantID == previousStreamingAssistantID
                 && configuration.isBusy == isTimelineBusy

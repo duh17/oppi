@@ -133,6 +133,9 @@ export interface GateServerOptions {
 }
 
 const AUTO_REVIEW_UNAVAILABLE = "Auto review unavailable, asking human";
+const GATE_CHECK_SLOW_MS = 10;
+
+type GateMetricAction = "allow" | "deny" | "ask" | "auto_allow" | "auto_ask";
 
 export class GateServer extends EventEmitter {
   private defaultPolicy: PolicyEngine;
@@ -190,6 +193,17 @@ export class GateServer extends EventEmitter {
   /** Get the policy engine for a session (falls back to default). */
   private getPolicy(sessionId: string): PolicyEngine {
     return this.sessionPolicies.get(sessionId) || this.defaultPolicy;
+  }
+
+  private recordGateDecisionMetric(action: GateMetricAction, checkStart: number): void {
+    if (!this.metrics) return;
+    try {
+      const durationMs = Date.now() - checkStart;
+      if (durationMs >= GATE_CHECK_SLOW_MS) {
+        this.metrics.record("server.gate_check_ms", durationMs, { action });
+      }
+      this.metrics.record("server.gate_decision", 1, { action });
+    } catch {}
   }
 
   /**
@@ -492,12 +506,7 @@ export class GateServer extends EventEmitter {
         ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_allowed", { sessionId: guard.sessionId, ...req, decision });
-      if (this.metrics) {
-        try {
-          this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
-          this.metrics.record("server.gate_decision", 1, { action: "allow" });
-        } catch {}
-      }
+      this.recordGateDecisionMetric("allow", checkStart);
       return { action: "allow" };
     }
 
@@ -514,12 +523,7 @@ export class GateServer extends EventEmitter {
         ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_denied", { sessionId: guard.sessionId, ...req, decision });
-      if (this.metrics) {
-        try {
-          this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
-          this.metrics.record("server.gate_decision", 1, { action: "deny" });
-        } catch {}
-      }
+      this.recordGateDecisionMetric("deny", checkStart);
       return { action: "deny", reason: decision.reason };
     }
 
@@ -582,12 +586,7 @@ export class GateServer extends EventEmitter {
           decision: { ...decision, action: "allow" as const, reason: autoReview.reason },
         });
         this.emit("auto_reviewed", autoReviewEventFromAudit(auditEntry, autoReviewDetails));
-        if (this.metrics) {
-          try {
-            this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
-            this.metrics.record("server.gate_decision", 1, { action: "auto_allow" });
-          } catch {}
-        }
+        this.recordGateDecisionMetric("auto_allow", checkStart);
         return { action: "allow" };
       }
 
@@ -611,14 +610,7 @@ export class GateServer extends EventEmitter {
     }
 
     // action === "ask" or auto-review deferred — create pending decision, wait for phone
-    if (this.metrics) {
-      try {
-        this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
-        this.metrics.record("server.gate_decision", 1, {
-          action: decision.action === "auto" ? "auto_ask" : "ask",
-        });
-      } catch {}
-    }
+    this.recordGateDecisionMetric(decision.action === "auto" ? "auto_ask" : "ask", checkStart);
     const response = await new Promise<GateResponse>((resolve) => {
       const createdAt = Date.now();
       const expires = this.approvalTimeoutMs > 0;

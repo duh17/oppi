@@ -484,6 +484,11 @@ enum ChatTimelinePerf {
         // Discard suspension-inflated samples.
         guard durationMs < suspensionCeilingMs else { return }
 
+        // Keep signposts for every render strategy, but skip zero-millisecond
+        // telemetry rows. They are common, add upload/task overhead, and do not
+        // help diagnose user-visible render cost.
+        guard durationMs >= 1 else { return }
+
         let sid = resolvedSessionId(sessionId)
         Task.detached(priority: .utility) {
             var tags = [

@@ -20,7 +20,7 @@ describe("ServerResourceSampler", () => {
     rmSync(telemetryDir, { recursive: true, force: true });
   });
 
-  it("writes a deterministic sample record and emits ops metrics", () => {
+  it("writes a deterministic sample record and emits drill-down ops metrics", () => {
     const opsMetrics: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
     const deps: ServerMetricsDeps = {
       telemetryDir,
@@ -45,7 +45,9 @@ describe("ServerResourceSampler", () => {
 
     const sampler = new ServerResourceSampler(deps);
     sampler.recordActiveSessionCount(5);
-    (sampler as unknown as { lastCpu: { user: number; system: number; timestamp: number } }).lastCpu = {
+    (
+      sampler as unknown as { lastCpu: { user: number; system: number; timestamp: number } }
+    ).lastCpu = {
       user: 0,
       system: 0,
       timestamp: 1_000,
@@ -60,7 +62,6 @@ describe("ServerResourceSampler", () => {
     }).not.toThrow();
 
     expect(opsMetrics).toEqual([
-      { metric: "server.session_active_peak", value: 5, tags: undefined },
       { metric: "server.event_ring_utilization", value: 0.75, tags: { ring: "timeline" } },
     ]);
 
@@ -78,9 +79,7 @@ describe("ServerResourceSampler", () => {
       sessions: { busy: 1, ready: 2, starting: 0, total: 3, peak: 5 },
       wsConnections: 7,
     });
-    expect(
-      (sampler as unknown as { activeSessionPeak: number }).activeSessionPeak,
-    ).toBe(3);
+    expect((sampler as unknown as { activeSessionPeak: number }).activeSessionPeak).toBe(3);
   });
 
   it("uses the default interval for invalid env values and custom values when valid", () => {

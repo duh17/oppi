@@ -196,6 +196,7 @@ extension ServerConnection {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
+            sessionUsageMetricLastEmittedAt.removeValue(forKey: deletedId)
             activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
             syncLiveActivityPermissions()
