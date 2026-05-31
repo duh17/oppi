@@ -27,6 +27,7 @@ struct RenderableDocumentWrapper: View {
     let presentation: FileContentPresentation
     let fullScreenContent: FullScreenCodeContent
     let renderedViewFactory: @MainActor () -> UIView
+    let reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -38,6 +39,7 @@ struct RenderableDocumentWrapper: View {
         filePath: String?,
         presentation: FileContentPresentation,
         fullScreenContent: FullScreenCodeContent,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         renderedViewFactory: @escaping @MainActor () -> UIView
     ) {
         self.config = config
@@ -45,11 +47,16 @@ struct RenderableDocumentWrapper: View {
         self.filePath = filePath
         self.presentation = presentation
         self.fullScreenContent = fullScreenContent
+        self.reviewCommentSelectionContext = reviewCommentSelectionContext
         self.renderedViewFactory = renderedViewFactory
     }
 
     private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
-        reviewCommentSelectionScope?.makeContext()
+        reviewCommentSelectionContext ?? reviewCommentSelectionScope?.makeContext(
+            sourceLabel: config.label,
+            filePath: filePath,
+            languageHint: config.sourceLanguage
+        )
     }
 
     var body: some View {
@@ -60,6 +67,7 @@ struct RenderableDocumentWrapper: View {
             presentation: presentation,
             renderedViewFactory: renderedViewFactory,
             allowsFullScreenExpansion: allowsFullScreenExpansion,
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
             onExpandFullScreen: { showFullScreen = true }
         )
         .fullScreenViewer(
@@ -79,6 +87,7 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
     let presentation: FileContentPresentation
     let renderedViewFactory: @MainActor () -> UIView
     let allowsFullScreenExpansion: Bool
+    let reviewCommentSelectionContext: ReviewCommentSelectionContext?
     let onExpandFullScreen: () -> Void
 
     func makeUIView(context: Context) -> RenderableDocumentView {
@@ -88,7 +97,8 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
             filePath: filePath,
             presentation: presentation,
             renderedContentView: renderedViewFactory(),
-            allowsFullScreenExpansion: allowsFullScreenExpansion
+            allowsFullScreenExpansion: allowsFullScreenExpansion,
+            reviewCommentSelectionContext: reviewCommentSelectionContext
         )
         view.onExpandFullScreen = onExpandFullScreen
         return view

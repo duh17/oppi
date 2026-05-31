@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -51,6 +52,77 @@ struct FileBrowserReviewCommentSelectionTests {
         let menu = try #require(textView.delegate?.textView?(
             textView,
             editMenuForTextIn: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+    }
+
+    @Test func markdownDocumentShowsCommentMenuWhenEnvironmentScopeSet() throws {
+        let host = UIHostingController(rootView:
+            MarkdownFileView(
+                content: "Alpha beta gamma",
+                filePath: "docs/sandbox.md",
+                presentation: .document
+            )
+            .environment(\.reviewCommentSelectionScope, .activeSession(ReviewCommentSelectionRouter { _ in }))
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: host.view).first {
+            timelineRenderedText(of: $0).contains("Alpha beta gamma")
+        })
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 5),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+    }
+
+    @Test func markdownDocumentSourceToggleShowsCommentMenuWhenEnvironmentScopeSet() throws {
+        let host = UIHostingController(rootView:
+            MarkdownFileView(
+                content: "# Heading\n\nRaw source body",
+                filePath: "docs/sandbox.md",
+                presentation: .document
+            )
+            .environment(\.reviewCommentSelectionScope, .activeSession(ReviewCommentSelectionRouter { _ in }))
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let sourceButton = try #require(timelineAllViews(in: host.view).compactMap { $0 as? UIButton }.first {
+            $0.configuration?.title == "Source"
+        })
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        sourceButton.sendActions(for: .touchUpInside)
+        UIView.setAnimationsEnabled(animationsWereEnabled)
+        host.view.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: host.view).first {
+            timelineRenderedText(of: $0).contains("# Heading")
+        })
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 9),
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 

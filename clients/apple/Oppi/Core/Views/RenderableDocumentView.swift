@@ -86,6 +86,7 @@ final class RenderableDocumentView: UIView {
     private let isInline: Bool
     private let maxContentHeight: CGFloat?
     private let showExpand: Bool
+    private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
     private var showingSource = false
 
     // Views
@@ -114,7 +115,8 @@ final class RenderableDocumentView: UIView {
         filePath: String?,
         presentation: FileContentPresentation,
         renderedContentView: UIView,
-        allowsFullScreenExpansion: Bool
+        allowsFullScreenExpansion: Bool,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext?
     ) {
         self.config = config
         self.content = content
@@ -123,6 +125,7 @@ final class RenderableDocumentView: UIView {
         self.maxContentHeight = presentation.viewportMaxHeight
         self.showExpand = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
         self.renderedContentView = renderedContentView
+        self.reviewCommentSelectionContext = reviewCommentSelectionContext
 
         super.init(frame: .zero)
 
@@ -232,8 +235,13 @@ final class RenderableDocumentView: UIView {
                     startLine: 1,
                     palette: palette,
                     alwaysBounceVertical: !isInline,
-                    reviewCommentSelectionRouter: nil,
-                    reviewCommentSourceContext: nil
+                    reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                    reviewCommentSourceContext: reviewCommentSelectionContext?.sourceContext(
+                        surface: .fullScreenSource,
+                        sourceLabel: reviewCommentSelectionContext?.sourceLabel ?? config.label,
+                        filePath: filePath,
+                        languageHint: config.sourceLanguage
+                    )
                 )
             }
             if let sv = sourceView {

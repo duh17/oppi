@@ -20,6 +20,27 @@ struct MarkdownFileView: View {
     var workspaceID: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var reviewCommentSelectionContext: ReviewCommentSelectionContext?
+
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+
+    private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
+        let sourceLabel = reviewCommentSelectionContext?.sourceLabel
+            ?? filePath?.lastPathComponentForDisplay
+            ?? "Markdown"
+        if let reviewCommentSelectionContext {
+            return reviewCommentSelectionContext.overriding(
+                sourceLabel: sourceLabel,
+                filePath: filePath,
+                languageHint: "markdown"
+            )
+        }
+        return reviewCommentSelectionScope?.makeContext(
+            sourceLabel: sourceLabel,
+            filePath: filePath,
+            languageHint: "markdown"
+        )
+    }
 
     /// Workspace context for fullscreen expansion. When the user taps expand,
     /// the fullscreen viewer needs the same workspace context to render images.
@@ -33,6 +54,13 @@ struct MarkdownFileView: View {
     }
 
     var body: some View {
+        let reviewContext = effectiveReviewCommentSelectionContext
+        let reviewSourceContext = reviewContext?.sourceContext(
+            surface: .fullScreenMarkdown,
+            filePath: filePath,
+            languageHint: "markdown"
+        )
+
         RenderableDocumentWrapper(
             config: .markdown,
             content: content,
@@ -43,15 +71,16 @@ struct MarkdownFileView: View {
                 filePath: filePath,
                 workspaceContext: fullScreenWorkspaceContext
             ),
-            renderedViewFactory: { [content, filePath, workspaceID, serverBaseURL, fetchWorkspaceFile, presentation] in
+            reviewCommentSelectionContext: reviewContext,
+            renderedViewFactory: { [content, filePath, workspaceID, serverBaseURL, fetchWorkspaceFile, presentation, reviewContext, reviewSourceContext] in
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
                         content: content,
                         stream: nil,
                         palette: ThemeRuntimeState.currentThemeID().palette,
                         plainTextFallbackThreshold: nil,
-                        reviewCommentSelectionRouter: nil,
-                        reviewCommentSourceContext: nil,
+                        reviewCommentSelectionRouter: reviewContext?.dispatcher,
+                        reviewCommentSourceContext: reviewSourceContext,
                         workspaceID: workspaceID,
                         serverBaseURL: serverBaseURL,
                         sourceFilePath: filePath,
@@ -68,6 +97,8 @@ struct MarkdownFileView: View {
                     themeID: ThemeRuntimeState.currentThemeID(),
                     textSelectionEnabled: true,
                     plainTextFallbackThreshold: AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
+                    reviewCommentSelectionRouter: reviewContext?.dispatcher,
+                    reviewCommentSourceContext: reviewSourceContext,
                     workspaceID: workspaceID,
                     serverBaseURL: serverBaseURL,
                     sourceFilePath: filePath
