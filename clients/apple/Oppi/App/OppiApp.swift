@@ -438,11 +438,9 @@ struct OppiApp: App {
     ) {
         coordinator.switchToServer(serverId)
         connection.sessionStore.activeSessionId = sessionId
+        connection.prepareForSessionReentry(sessionId)
         navigation.selectedTab = .workspaces
-        navigation.workspacePath = NavigationPath()
-        navigation.workspacePath.append(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId)
-        )
+        navigation.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId)
     }
 
     private func pendingPermissionLocation(id: String) -> PendingPermissionLocation? {

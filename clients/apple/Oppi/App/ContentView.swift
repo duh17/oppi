@@ -3,7 +3,6 @@ import SwiftUI
 struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(SessionStore.self) private var sessionStore
     @Environment(AppNavigation.self) private var navigation
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
     @State private var showCrossSessionPermissionSheet = false
@@ -11,7 +10,7 @@ struct ContentView: View {
     /// Pending permissions from ALL servers, excluding the active session's
     /// (those are shown inline in the chat view's PermissionOverlay).
     private var crossSessionPending: [PermissionRequest] {
-        let activeSessionId = sessionStore.activeSessionId
+        let activeSessionId = coordinator.activeConnection.sessionStore.activeSessionId
         return coordinator.allPendingPermissions
             .filter { request in
                 guard let activeSessionId else {
@@ -230,11 +229,9 @@ struct ContentView: View {
         if let found = coordinator.findSession(id: request.sessionId) {
             coordinator.switchToServer(found.serverId)
             found.connection.sessionStore.activeSessionId = request.sessionId
+            found.connection.prepareForSessionReentry(request.sessionId)
             navigation.selectedTab = .workspaces
-            navigation.workspacePath = NavigationPath()
-            navigation.workspacePath.append(
-                WorkspaceSessionNavTarget(serverId: found.serverId, sessionId: request.sessionId)
-            )
+            navigation.setWorkspaceSessionPath(serverId: found.serverId, sessionId: request.sessionId)
             return
         }
 

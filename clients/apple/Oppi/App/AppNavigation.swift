@@ -33,6 +33,21 @@ final class AppNavigation {
     /// Set externally (e.g. by QuickSessionSheet) to deep-link to a session.
     var workspacePath = NavigationPath()
 
+    /// Replace the workspace stack with a session destination in one state write.
+    ///
+    /// Avoid clearing the path and appending in separate writes: SwiftUI may
+    /// briefly re-appear the previous chat view during the intermediate empty
+    /// stack, and that old view can steal the focused session stream back.
+    func setWorkspaceSessionPath(serverId: String, sessionId: String) {
+        workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId)
+    }
+
+    static func workspaceSessionPath(serverId: String, sessionId: String) -> NavigationPath {
+        var path = NavigationPath()
+        path.append(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId))
+        return path
+    }
+
     /// Pending workspace creation deep-link payload.
     /// Consumed once by WorkspaceHomeView, then cleared.
     var pendingWorkspaceDeepLink: WorkspaceDeepLink.Payload?

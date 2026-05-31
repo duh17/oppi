@@ -103,6 +103,40 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    @Test func onDisappearDoesNotDisconnectPrefocusedNotificationTargetSession() async {
+        let previousSessionId = "previous-\(UUID().uuidString)"
+        let targetSessionId = "target-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let (connection, _) = makeTestConnection(sessionId: previousSessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(makeTestSession(id: previousSessionId, workspaceId: workspaceId, status: .busy))
+        connection.sessionStore.upsert(makeTestSession(id: targetSessionId, workspaceId: workspaceId, status: .busy))
+
+        let host = makeHost(connection: connection, sessionId: previousSessionId)
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == previousSessionId }
+        }
+        #expect(appeared)
+
+        // Regression: notification/deep-link navigation pre-focuses the target
+        // before the old chat view disappears. The disappearing old view must
+        // not disconnect the newly focused stream.
+        connection.prepareForSessionReentry(targetSessionId)
+        #expect(connection.focusedSessionId == targetSessionId)
+
+        host.hide()
+        try? await Task.sleep(for: .milliseconds(120))
+
+        #expect(
+            connection.focusedSessionId == targetSessionId,
+            "Old ChatView disappearance must not clear the notification target session"
+        )
+
+        host.teardown()
+        connection.disconnectStream()
+    }
+
     @Test func onDisappearDuringLocalPlaybackDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: sessionId)
