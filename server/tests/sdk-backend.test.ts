@@ -667,6 +667,48 @@ describe("SdkBackend custom UI compatibility", () => {
     expect(requests[0].widgetLines).toEqual(["Review session active"]);
   });
 
+  it("re-renders component widgets when they request a render", async () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+    let renderCount = 0;
+    let requestRender: (() => void) | undefined;
+
+    ui.setWidget("goal", (tui) => {
+      requestRender = (tui as { requestRender: () => void }).requestRender;
+      return {
+        render: () => [`Goal tick ${renderCount}`],
+      };
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].widgetLines).toEqual(["Goal tick 0"]);
+
+    renderCount = 1;
+    requestRender?.();
+    await Promise.resolve();
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1].method).toBe("setWidget");
+    expect(requests[1].widgetLines).toEqual(["Goal tick 1"]);
+  });
+
+  it("disposes component widgets when clearing them", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+    let disposed = false;
+
+    ui.setWidget("goal", () => ({
+      render: () => ["Goal active"],
+      dispose: () => {
+        disposed = true;
+      },
+    }));
+    ui.setWidget("goal", undefined);
+
+    expect(disposed).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(requests[1].method).toBe("setWidget");
+    expect(requests[1].widgetLines).toBeUndefined();
+  });
+
   it("emits a direct ask request and parses structured answers", async () => {
     const answerPayload = { scope: "small", tools: ["jest", "vitest"] };
     const { ui, requests } = makeCustomUIHarness((request) => {

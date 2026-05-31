@@ -40,6 +40,11 @@ interface CustomUIComponent {
   dispose?: () => void;
 }
 
+interface ActiveWidgetComponent {
+  component: CustomUIComponent;
+  placement?: string;
+}
+
 type CustomUIControl = "up" | "down" | "enter" | "type" | "cancel";
 
 const MAX_EXTENSION_AUDIO_CHUNK_BASE64_BYTES = 512 * 1024;
@@ -292,6 +297,8 @@ function createCustomUICompatKeybindings(): {
 
 export class SdkUiBridge {
   private readonly pendingResponses = new Map<string, PendingExtensionUIResponse>();
+  private readonly activeWidgets = new Map<string, ActiveWidgetComponent>();
+  private readonly pendingWidgetRenders = new Set<string>();
 
   constructor(
     private readonly emitEvent: (event: SessionBackendEvent) => void,
@@ -381,6 +388,8 @@ export class SdkUiBridge {
       },
 
       setWidget: (key, content, options) => {
+        this.disposeWidget(key);
+
         if (content === undefined || Array.isArray(content)) {
           this.emitExtensionUIRequest({
             id: randomUUID(),
@@ -394,20 +403,13 @@ export class SdkUiBridge {
 
         try {
           const component = content(
-            { requestRender: () => {} } as never,
+            { requestRender: () => this.scheduleWidgetSnapshot(key) } as never,
             createCustomUICompatTheme() as never,
           ) as CustomUIComponent;
-          const lines = renderWidgetSnapshotLines(component);
-          component.dispose?.();
-
-          this.emitExtensionUIRequest({
-            id: randomUUID(),
-            method: "setWidget",
-            widgetKey: key,
-            widgetLines: lines,
-            widgetPlacement: options?.placement,
-          });
+          this.activeWidgets.set(key, { component, placement: options?.placement });
+          this.emitWidgetSnapshot(key);
         } catch (error) {
+          this.disposeWidget(key);
           this.emitExtensionUIRequest({
             id: randomUUID(),
             method: "notify",
@@ -543,6 +545,48 @@ export class SdkUiBridge {
       pending.cancel();
     }
     this.pendingResponses.clear();
+    for (const key of this.activeWidgets.keys()) {
+      this.disposeWidget(key);
+    }
+    this.pendingWidgetRenders.clear();
+  }
+
+  private disposeWidget(key: string): void {
+    this.pendingWidgetRenders.delete(key);
+    const active = this.activeWidgets.get(key);
+    this.activeWidgets.delete(key);
+    active?.component.dispose?.();
+  }
+
+  private scheduleWidgetSnapshot(key: string): void {
+    if (this.isDisposed() || this.pendingWidgetRenders.has(key)) {
+      return;
+    }
+
+    this.pendingWidgetRenders.add(key);
+    queueMicrotask(() => {
+      this.pendingWidgetRenders.delete(key);
+      this.emitWidgetSnapshot(key);
+    });
+  }
+
+  private emitWidgetSnapshot(key: string): void {
+    if (this.isDisposed()) {
+      return;
+    }
+
+    const active = this.activeWidgets.get(key);
+    if (!active) {
+      return;
+    }
+
+    this.emitExtensionUIRequest({
+      id: randomUUID(),
+      method: "setWidget",
+      widgetKey: key,
+      widgetLines: renderWidgetSnapshotLines(active.component),
+      widgetPlacement: active.placement,
+    });
   }
 
   private emitExtensionUIRequest(request: Omit<ExtensionUIRequestEvent, "type">): void {
