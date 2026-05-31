@@ -129,7 +129,6 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     gate,
     skillRegistry: {},
     userSkillStore: {},
-    userEventStore: { recordEvent: vi.fn() },
     providerAuth: {},
     ensureSessionContextWindow: (session: Session) => session,
     resolveWorkspaceForSession: () => workspace,
@@ -411,9 +410,7 @@ describe("workspace session list routes", () => {
         }),
       ];
     });
-    mock.gate.getPendingForUser.mockReturnValue([
-      { sessionId: "ws-1-row", workspaceId: "ws-1" },
-    ]);
+    mock.gate.getPendingForUser.mockReturnValue([{ sessionId: "ws-1-row", workspaceId: "ws-1" }]);
     mock.sessions.getActiveSessionIds.mockReturnValue(["ws-2-row"]);
     mock.sessions.getPendingAskMessage.mockImplementation((sessionId: string) =>
       sessionId === "ws-2-row"

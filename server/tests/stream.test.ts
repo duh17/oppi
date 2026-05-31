@@ -123,7 +123,7 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("stream_connected")).toHaveLength(1);
     expect(ws.sentOfType("connected", "sess-bound")).toHaveLength(1);
     expect(ws.sentOfType("state", "sess-bound")).toHaveLength(1);
-    expect(ctx.trackConnection).toHaveBeenCalledWith(ws, { userBroadcast: false });
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws);
     expect(ctx.sessions.startSession).toHaveBeenCalledWith("sess-bound", undefined);
 
     ws.sent.length = 0;
@@ -436,7 +436,7 @@ describe("SessionAudioStreamMux", () => {
     const mux = new SessionAudioStreamMux(ctx);
     const ws = new FakeWebSocket();
     mux.handleWebSocket("w1", "s-audio", ws as unknown as WebSocket);
-    expect(ctx.trackConnection).toHaveBeenCalledWith(ws, { userBroadcast: false });
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws);
 
     ws.receive({ type: "dictation_start" } as ClientMessage);
     ws.receiveBinary(Buffer.from([1, 2, 3]));

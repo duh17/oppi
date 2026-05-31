@@ -64,15 +64,6 @@ export const SERVER_METRIC_REGISTRY = {
     unit: "count",
     description: "Ping timeout terminations (dead connections detected).",
   },
-  "server.user_stream_event": {
-    unit: "count",
-    description:
-      "Notification-level event recorded in the user event ring. Tagged by type. Aggregated by sum before storage.",
-  },
-  "server.user_stream_fanout": {
-    unit: "count",
-    description: "Live notification fanout count. Tagged by type.",
-  },
 
   // ── P1: Session Lifecycle ──
   "server.session_create_ms": {
@@ -178,11 +169,11 @@ export const SERVER_METRIC_REGISTRY = {
   "server.event_ring_utilization": {
     unit: "ratio",
     description:
-      "Event ring fill ratio (len/capacity). Tagged by ring (session, user_stream). Aggregated by max before storage.",
+      "Event ring fill ratio (len/capacity). Tagged by ring. Aggregated by max before storage.",
   },
   "server.catchup_events": {
     unit: "count",
-    description: "Events replayed during catch-up. Tagged by ring (session, user_stream).",
+    description: "Events replayed during catch-up. Tagged by ring.",
   },
   "server.catchup_miss": {
     unit: "count",

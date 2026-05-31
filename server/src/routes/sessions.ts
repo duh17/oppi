@@ -1697,13 +1697,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const deletedMessage = {
-      type: "session_deleted" as const,
-      sessionId,
-    };
-
-    ctx.userEventStore.recordEvent(sessionId, deletedMessage);
-
     ctx.storage.deleteSession(sessionId);
     ctx.searchIndex?.deleteSession(sessionId);
     const deletedGeneratedMediaAttachments = deleteSessionAttachments(

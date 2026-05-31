@@ -234,7 +234,7 @@ Use the same tag names across clients, server metrics, logs, and dashboards when
 | `result` | Domain result, such as catch-up result: `applied`, `no_gap`, `ring_miss`, `fetch_failed`. |
 | `reason` | Why an event happened, such as `capabilityRefreshFailed` or `idle_timeout`. |
 | `transport` | User-selected or active transport path for metric samples: `lan`, `paired`, or `unknown`. |
-| `streamRole` | WebSocket role in client logs: `focused_session`, `user_events` (the app-wide owner notification stream for cross-session attention events and capability state), or another low-cardinality stream name. |
+| `streamRole` | WebSocket role in client logs, such as `focused_session` or another low-cardinality stream name. |
 | `error_kind` | Coarse error class for metrics: `network`, `timeout`, `decode`, `cancelled`, `not_connected`, or `other`. |
 
 Prefer logs over metrics for raw platform error details such as `NSURLErrorDomain`, HTTP status, or WebSocket close code. Use metrics for bounded counts, durations, and ratios.

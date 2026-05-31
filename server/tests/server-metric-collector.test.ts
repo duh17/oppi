@@ -146,7 +146,7 @@ describe("ServerMetricCollector", () => {
 
     collector.record("server.event_ring_utilization", 0.1, { ring: "session" });
     collector.record("server.event_ring_utilization", 0.7, { ring: "session" });
-    collector.record("server.event_ring_utilization", 0.3, { ring: "user_stream" });
+    collector.record("server.event_ring_utilization", 0.3, { ring: "workspace" });
     collector.flush();
 
     expect(writer.batches).toHaveLength(1);
@@ -161,7 +161,7 @@ describe("ServerMetricCollector", () => {
         expect.objectContaining({
           metric: "server.event_ring_utilization",
           value: 0.3,
-          tags: { ring: "user_stream" },
+          tags: { ring: "workspace" },
         }),
       ]),
     );

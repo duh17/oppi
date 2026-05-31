@@ -460,10 +460,6 @@ final class WebSocketClient {
         [400, 401, 403, 404, 410, 426].contains(statusCode)
     }
 
-    private func isOptionalStreamUnavailableStatus(_ statusCode: Int) -> Bool {
-        diagnosticRole == "user_events" && statusCode == 404
-    }
-
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         guard let url = streamURL else {
             logger.error("Invalid stream URL — disconnecting")
@@ -551,19 +547,11 @@ final class WebSocketClient {
                         shouldAttemptReconnect = false
                         let metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
-                        if self.isOptionalStreamUnavailableStatus(statusCode) {
-                            logger.warning("Optional WebSocket stream unavailable with HTTP \(statusCode)")
-                            self.wsLogWarning(
-                                "WebSocket handshake rejected",
-                                metadata: metadata
-                            )
-                        } else {
-                            logger.error("WebSocket handshake rejected with HTTP \(statusCode)")
-                            self.wsLogError(
-                                "WebSocket handshake rejected",
-                                metadata: metadata
-                            )
-                        }
+                        logger.error("WebSocket handshake rejected with HTTP \(statusCode)")
+                        self.wsLogError(
+                            "WebSocket handshake rejected",
+                            metadata: metadata
+                        )
                     } else if let self, self.shouldLogReceiveError(error) {
                         logger.error("WebSocket receive error: \(error)")
                         self.wsLogError(

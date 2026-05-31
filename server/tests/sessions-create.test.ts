@@ -112,9 +112,6 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     gate: {} as RouteContext["gate"],
     skillRegistry: {} as RouteContext["skillRegistry"],
     userSkillStore: {} as RouteContext["userSkillStore"],
-    userEventStore: {
-      recordEvent: vi.fn(),
-    } as unknown as RouteContext["userEventStore"],
     ensureSessionContextWindow: (session: Session) => session,
     resolveWorkspaceForSession: () => ws,
     refreshModelCatalog: vi.fn().mockResolvedValue(undefined),
@@ -751,8 +748,9 @@ describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
       status: "busy",
     });
     mock.storage.getSession.mockReturnValue(session);
-    (mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } })
-      .mirrorRuntime = {
+    (
+      mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } }
+    ).mirrorRuntime = {
       stopSession: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -760,9 +758,11 @@ describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
 
     expect(mock.sessions.stopSession).not.toHaveBeenCalled();
     expect(
-      (mock.ctx as RouteContext & {
-        mirrorRuntime?: { stopSession: ReturnType<typeof vi.fn> };
-      }).mirrorRuntime?.stopSession,
+      (
+        mock.ctx as RouteContext & {
+          mirrorRuntime?: { stopSession: ReturnType<typeof vi.fn> };
+        }
+      ).mirrorRuntime?.stopSession,
     ).toHaveBeenCalledWith("sess-1");
     expect(mock.responses).toHaveLength(1);
     expect((mock.responses[0]!.data as { ok: boolean }).ok).toBe(true);
@@ -777,9 +777,12 @@ describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
       status: "busy",
     });
     mock.storage.getSession.mockReturnValue(session);
-    (mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } })
-      .mirrorRuntime = {
-      stopSession: vi.fn().mockRejectedValue(new Error("pi-tui is not connected; stop it from the terminal")),
+    (
+      mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } }
+    ).mirrorRuntime = {
+      stopSession: vi
+        .fn()
+        .mockRejectedValue(new Error("pi-tui is not connected; stop it from the terminal")),
     };
 
     await dispatchStop(mock);
@@ -854,11 +857,6 @@ describe("workspace-scoped session route ownership", () => {
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
         deleteSession: vi.fn(),
       };
-      (mock.ctx as unknown as Record<string, unknown>).userEventStore = {
-        recordUserStreamEvent: vi.fn(),
-        recordEvent: vi.fn(),
-      };
-
       const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
       const handled = await dispatcher({
         method,
@@ -926,22 +924,10 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
         deleteSession: vi.fn(),
       };
-      (mock.ctx as unknown as Record<string, unknown>).userEventStore = {
-        recordUserStreamEvent: vi.fn(),
-        recordEvent: vi.fn(),
-      };
-
       await dispatchDelete(mock);
 
       expect(mock.sessions.stopSession).toHaveBeenCalledWith("sess-1");
-      expect(mock.ctx.userEventStore.recordEvent).toHaveBeenCalledWith("sess-1", {
-        type: "session_deleted",
-        sessionId: "sess-1",
-      });
       expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
-      expect(
-        vi.mocked(mock.ctx.userEventStore.recordEvent).mock.invocationCallOrder[0],
-      ).toBeLessThan(vi.mocked(mock.storage.deleteSession).mock.invocationCallOrder[0]!);
       expect(existsSync(jsonlA)).toBe(false);
       expect(existsSync(jsonlB)).toBe(false);
       expect(mock.responses).toEqual([
@@ -983,10 +969,6 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       mock.storage.deleteSession = vi.fn().mockReturnValue(true);
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
         deleteSession: vi.fn(),
-      };
-      (mock.ctx as unknown as Record<string, unknown>).userEventStore = {
-        recordUserStreamEvent: vi.fn(),
-        recordEvent: vi.fn(),
       };
 
       await dispatchDelete(mock);

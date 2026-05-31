@@ -186,11 +186,6 @@ final class ServerConnection {
     /// Test seam: replace WebSocket opening with a deterministic stream.
     var _connectStreamForTesting: (() -> AsyncStream<StreamFrameEvent>)?
 
-    /// User-wide attention stream for local notifications while the app is launched.
-    private var attentionWsClient: WebSocketClient?
-    private var attentionStreamTask: Task<Void, Never>?
-    private var attentionStreamGeneration: UInt64 = 0
-
     /// Test seam: override the cache actor used by list refresh paths.
     var _cacheForTesting: TimelineCache?
 
@@ -320,18 +315,10 @@ final class ServerConnection {
             diagnosticRole: "focused_session"
         )
         self.wsClient?.setStreamURL(nil)
-        self.attentionWsClient?.disconnect()
-        self.attentionWsClient = WebSocketClient(
-            credentials: credentials,
-            preferredEndpoint: selection,
-            diagnosticRole: "user_events"
-        )
-        self.attentionWsClient?.setStreamURL(makeUserEventsStreamURL(selection: selection))
         sender.wsClient = self.wsClient
         sender.focusedSessionProvider = { [weak self] in
             self?.focusedSessionStore.focused
         }
-        startAttentionStreamIfNeeded()
 
         return true
     }
@@ -369,8 +356,6 @@ final class ServerConnection {
 
         endpointSelection = selection
         transportPath = selection.transportPath
-        attentionWsClient?.setPreferredEndpoint(selection)
-        attentionWsClient?.setStreamURL(makeUserEventsStreamURL(selection: selection))
 
         if previousSelection?.transportPath != selection.transportPath {
             ClientLog.info(
@@ -391,7 +376,6 @@ final class ServerConnection {
                 token: credentials.token,
                 tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
             )
-            restartAttentionStreamIfNeeded()
         }
     }
 
@@ -544,61 +528,6 @@ final class ServerConnection {
         if ReleaseFeatures.liveActivitiesEnabled {
             LiveActivityManager.shared.removeConnection(liveActivityConnectionId)
         }
-    }
-
-    private func makeUserEventsStreamURL(selection: EndpointSelection) -> URL? {
-        guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
-        components.path = "/user/events/stream"
-        return components.url
-    }
-
-    private func startAttentionStreamIfNeeded() {
-        guard ReleaseFeatures.localAttentionNotificationsEnabled,
-              let attentionWsClient else {
-            return
-        }
-        if let task = attentionStreamTask, !task.isCancelled,
-           attentionWsClient.status != .disconnected {
-            return
-        }
-
-        let stream = attentionWsClient.connect()
-        attentionStreamGeneration &+= 1
-        let generation = attentionStreamGeneration
-        attentionStreamTask = Task { [weak self] in
-            for await frameEvent in stream {
-                guard let self, !Task.isCancelled else { break }
-                self.handleAttentionStreamMessage(frameEvent)
-            }
-            await MainActor.run { [weak self] in
-                guard let self, self.attentionStreamGeneration == generation else { return }
-                self.attentionStreamTask = nil
-            }
-        }
-    }
-
-    private func restartAttentionStreamIfNeeded() {
-        guard ReleaseFeatures.localAttentionNotificationsEnabled else { return }
-        attentionStreamTask?.cancel()
-        attentionStreamTask = nil
-        attentionWsClient?.disconnect()
-        startAttentionStreamIfNeeded()
-    }
-
-    private func handleAttentionStreamMessage(_ frameEvent: StreamFrameEvent) {
-        if case .streamConnected(_, let available) = frameEvent.message {
-            serverDictationAvailable = available
-            return
-        }
-
-        guard let sessionId = frameEvent.sessionId,
-              !isFocusedSession(sessionId) else {
-            return
-        }
-        handleCrossSessionMessage(frameEvent.message, sessionId: sessionId)
     }
 
     func refreshStreamCapabilitiesIfNeeded() async {

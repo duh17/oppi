@@ -36,7 +36,7 @@ export interface StreamContext {
     send: (msg: ServerMessage) => void,
     meta?: { connId?: string },
   ) => Promise<void>;
-  trackConnection: (ws: WebSocket, options?: { userBroadcast?: boolean }) => void;
+  trackConnection: (ws: WebSocket) => void;
   untrackConnection: (ws: WebSocket) => void;
   dictationManager?: DictationManager;
   createDictationManager?: () => DictationManager | undefined;
@@ -226,7 +226,7 @@ export class BoundSessionStreamMux {
       path,
     });
 
-    this.ctx.trackConnection(ws, { userBroadcast: false });
+    this.ctx.trackConnection(ws);
     const stopPing = startServerPing(ws, path, PING_INTERVAL_MS, metrics, connId);
 
     let msgSent = 0;
@@ -701,7 +701,7 @@ export class SessionAudioStreamMux {
       serverDictationAvailable: Boolean(dictationManager),
     });
 
-    this.ctx.trackConnection(ws, { userBroadcast: false });
+    this.ctx.trackConnection(ws);
     const stopPing = startServerPing(ws, path, PING_INTERVAL_MS, metrics, connId);
 
     let msgSent = 0;

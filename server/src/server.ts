@@ -22,8 +22,7 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
-import { BoundSessionStreamMux, SessionAudioStreamMux, startServerPing } from "./stream.js";
-import { UserEventStore } from "./user-event-store.js";
+import { BoundSessionStreamMux, SessionAudioStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { ModelCatalog } from "./model-catalog.js";
@@ -401,9 +400,6 @@ export class Server {
 
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
-  // Subset of connections that should receive user-wide control-plane broadcasts.
-  // Bound session/audio streams have their own scoped lifecycle and must not receive user-wide broadcasts.
-  private userBroadcastConnections: Set<WebSocket> = new Set();
 
   // Server resource utilization sampler (CPU, memory, sessions)
   private resourceSampler: ServerResourceSampler;
@@ -416,8 +412,6 @@ export class Server {
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
-  // User-wide notification/event ring for push fallback and diagnostics.
-  private userEventStore!: UserEventStore;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private sessionAudioStreamMux!: SessionAudioStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
@@ -582,15 +576,13 @@ export class Server {
         send: (msg: ServerMessage) => void,
         meta?: { connId?: string },
       ) => this.wsMessageHandler.handleClientMessage(session, msg, send, meta),
-      trackConnection: (ws: WebSocket, options?: { userBroadcast?: boolean }) =>
-        this.trackConnection(ws, options),
+      trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       dictationManager: this.dictationManager,
       createDictationManager: () => this.createDictationManager(),
     };
 
     // Create split session/audio stream muxes.
-    this.userEventStore = new UserEventStore(this.opsMetrics);
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.sessionAudioStreamMux = new SessionAudioStreamMux(streamContext);
 
@@ -623,15 +615,6 @@ export class Server {
             snapshots.push({ ring: "session", length: ring.length, capacity: ring.capacity });
           }
         }
-        // User-stream event ring
-        const userRing = this.userEventStore.getEventRingStats();
-        if (userRing) {
-          snapshots.push({
-            ring: "user_stream",
-            length: userRing.length,
-            capacity: userRing.capacity,
-          });
-        }
         return snapshots;
       },
     });
@@ -657,12 +640,8 @@ export class Server {
           }
         }
       },
-      broadcastSessionUpdate: (sessionId) => {
-        const active = this.sessions.getActiveSession(sessionId);
-        const session = active ?? this.storage.getSession(sessionId);
-        if (session) {
-          this.broadcastToUser({ type: "state", session, sessionId });
-        }
+      broadcastSessionUpdate: () => {
+        // Workspace/session list refreshes pick up title changes.
       },
       onMetrics: (metrics) => {
         this.opsMetrics.record("server.session_title_gen_ms", metrics.durationMs, {
@@ -676,21 +655,6 @@ export class Server {
 
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
       this.liveActivity.handleSessionEvent(payload);
-
-      if (!this.userEventStore.isNotificationLevelMessage(payload.event)) {
-        return;
-      }
-
-      // Record in the user-level event ring for push fallback and diagnostics,
-      // separate from the per-session EventRing used by session catch-up.
-      this.userEventStore.recordEvent(payload.sessionId, payload.event);
-
-      // Ask requests are emitted by the session broadcaster, not the gate.
-      // Forward them to launched clients on the user-wide attention stream so
-      // the app can schedule local notifications while APNs remains disabled.
-      if (payload.event.type === "extension_ui_request") {
-        this.broadcastToUser(payload.event, { recordEvent: false });
-      }
     };
     this.sessions.on("session_event", handleSessionEvent);
     this.mirrorRuntime.on("session_event", handleSessionEvent);
@@ -713,7 +677,6 @@ export class Server {
       gate: this.gate,
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
-      userEventStore: this.userEventStore,
       providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
@@ -749,7 +712,7 @@ export class Server {
       this.handleUpgrade(req, socket, head);
     });
 
-    // Wire gate events → phone WebSocket + Live Activity updates
+    // Wire gate events → bound session stream, push fallback, and Live Activity updates
     this.gate.on("approval_needed", (pending: PendingDecision) => {
       this.forwardPermissionRequest(pending);
     });
@@ -766,9 +729,7 @@ export class Server {
             sessionId,
           };
           const boundDeliveries = this.boundSessionStreamMux.sendToSession(sessionId, message);
-          this.broadcastToUser(message, {
-            forcePushFallback: boundDeliveries === 0,
-          });
+          if (boundDeliveries === 0) this.pushFallback(message);
           this.liveActivity.queueUpdate({
             sessionId,
             lastEvent: "Permission expired",
@@ -796,7 +757,6 @@ export class Server {
           sessionId,
         };
         this.boundSessionStreamMux.sendToSession(sessionId, message);
-        this.broadcastToUser(message);
         this.liveActivity.queueUpdate({
           sessionId,
           lastEvent: action === "allow" ? "Permission approved" : "Permission denied",
@@ -821,10 +781,7 @@ export class Server {
           id: requestId,
           sessionId,
         };
-        const boundDeliveries = this.boundSessionStreamMux.sendToSession(sessionId, message);
-        this.broadcastToUser(message, {
-          forcePushFallback: boundDeliveries === 0,
-        });
+        this.boundSessionStreamMux.sendToSession(sessionId, message);
         this.liveActivity.queueUpdate({
           sessionId,
           lastEvent: reason,
@@ -852,11 +809,7 @@ export class Server {
         tokens: decision.tokens,
         promptHash: decision.promptHash,
       };
-      const boundDeliveries = this.sessions.broadcastSessionMessage(decision.sessionId, message);
-      this.broadcastToUser(message, {
-        forcePushFallback: boundDeliveries === 0,
-        recordEvent: false,
-      });
+      this.sessions.broadcastSessionMessage(decision.sessionId, message);
       this.liveActivity.queueUpdate({
         sessionId: decision.sessionId,
         lastEvent:
@@ -1147,9 +1100,7 @@ export class Server {
   private forwardPermissionRequest(pending: PendingDecision): void {
     const message = buildPermissionMessage(pending);
     const boundDeliveries = this.boundSessionStreamMux.sendToSession(pending.sessionId, message);
-    this.broadcastToUser(message, {
-      forcePushFallback: boundDeliveries === 0,
-    });
+    if (boundDeliveries === 0) this.pushFallback(message);
     this.liveActivity.queueUpdate({
       sessionId: pending.sessionId,
       lastEvent: "Permission required",
@@ -1163,50 +1114,12 @@ export class Server {
     });
   }
 
-  // ─── User Connection Tracking ───
-
-  private broadcastToUser(
-    msg: ServerMessage,
-    options?: { forcePushFallback?: boolean; recordEvent?: boolean },
-  ): void {
-    const outbound = msg;
-    if (
-      options?.recordEvent !== false &&
-      msg.sessionId &&
-      this.userEventStore.isNotificationLevelMessage(msg)
-    ) {
-      this.userEventStore.recordEvent(msg.sessionId, msg);
-    }
-
-    const broadcastConns = this.userBroadcastConnections;
-    const hasOpenBroadcastConnection = Array.from(broadcastConns).some(
-      (ws) => ws.readyState === WebSocket.OPEN,
-    );
-    if (hasOpenBroadcastConnection) {
-      const json = JSON.stringify(outbound);
-      for (const ws of broadcastConns) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(json);
-      }
-      return;
-    }
-
-    if (options?.forcePushFallback) {
-      this.pushFallback(outbound);
-      return;
-    }
-
-    const hasAnyOpenConnection = Array.from(this.connections).some(
-      (ws) => ws.readyState === WebSocket.OPEN,
-    );
-    if (!hasAnyOpenConnection) {
-      // No WebSocket connected — fall back to push notification.
-      this.pushFallback(outbound);
-    }
-  }
+  // ─── Push Fallback ───
 
   /**
-   * Send a push notification when no WebSocket client is connected.
-   * Only fires for permission requests and session lifecycle events.
+   * Send a push notification for attention-worthy events not delivered by a
+   * bound session stream. Only fires for permission requests and selected
+   * session lifecycle events.
    */
   private createDictationManager(): DictationManager | undefined {
     if (!this.dictationConfig?.sttEndpoint) return undefined;
@@ -1278,16 +1191,12 @@ export class Server {
     return sessions.find((s) => s.status === "stopped") || sessions[0];
   }
 
-  private trackConnection(ws: WebSocket, options?: { userBroadcast?: boolean }): void {
+  private trackConnection(ws: WebSocket): void {
     this.connections.add(ws);
-    if (options?.userBroadcast !== false) {
-      this.userBroadcastConnections.add(ws);
-    }
   }
 
   private untrackConnection(ws: WebSocket): void {
     this.connections.delete(ws);
-    this.userBroadcastConnections.delete(ws);
   }
 
   private closeActiveConnections(code: number, reason: string): void {
@@ -1467,68 +1376,6 @@ export class Server {
 
   // ─── WebSocket ───
 
-  private handleUserEventsWebSocket(ws: WebSocket, upgradeReceivedAt?: number): void {
-    const connectedAt = Date.now();
-    const connId = `user-${connectedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const path = "/user/events/stream";
-
-    if (upgradeReceivedAt) {
-      this.opsMetrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
-        path: "user_events_stream",
-      });
-    }
-
-    log.info("ws.user_events_stream_connected", {
-      connId,
-      owner: this.storage.getOwnerName(),
-      path,
-    });
-
-    this.trackConnection(ws, { userBroadcast: true });
-    const stopPing = startServerPing(ws, path, undefined, this.opsMetrics, connId);
-    let msgSent = 0;
-    const send = (msg: ServerMessage): void => {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      msgSent += 1;
-      ws.send(JSON.stringify(msg));
-    };
-
-    send({
-      type: "stream_connected",
-      userName: this.storage.getOwnerName(),
-      serverDictationAvailable: !!this.dictationConfig?.sttEndpoint,
-    });
-
-    ws.on("close", (code, reason) => {
-      stopPing();
-      this.untrackConnection(ws);
-      this.opsMetrics.record("server.ws_session_duration_ms", Date.now() - connectedAt, {
-        path: "user_events_stream",
-      });
-      this.opsMetrics.record("server.ws_messages_sent", msgSent, {
-        path: "user_events_stream",
-      });
-      this.opsMetrics.record("server.ws_close_code", 1, {
-        code: String(code),
-        path: "user_events_stream",
-      });
-      log.info("ws.user_events_stream_disconnected", {
-        connId,
-        code,
-        reason: reason.toString() || undefined,
-        sent: msgSent,
-        durationMs: Date.now() - connectedAt,
-      });
-    });
-
-    ws.on("error", (err) => {
-      log.warn("ws.user_events_stream_error", {
-        connId,
-        error: safeErrorMessage(err),
-      });
-    });
-  }
-
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     (socket as Socket).setNoDelay?.(true);
 
@@ -1552,7 +1399,6 @@ export class Server {
     const sessionStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
     );
-    const userEventsStreamMatch = url.pathname === "/user/events/stream";
     // TODO(dictation): Remove this legacy session-bound ASR route after old
     // iOS clients that do not know `/dictation/stream` are no longer supported.
     const sessionAudioStreamMatch = url.pathname.match(
@@ -1562,7 +1408,6 @@ export class Server {
     const mirrorBridgeMatch = url.pathname === "/mirror/v1/bridge";
     if (
       !sessionStreamMatch &&
-      !userEventsStreamMatch &&
       !sessionAudioStreamMatch &&
       !dictationStreamMatch &&
       !mirrorBridgeMatch
@@ -1589,10 +1434,6 @@ export class Server {
 
     const upgradeReceivedAt = Date.now();
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      if (userEventsStreamMatch) {
-        this.handleUserEventsWebSocket(ws, upgradeReceivedAt);
-        return;
-      }
       if (sessionStreamMatch) {
         const workspaceId = decodeURIComponent(sessionStreamMatch[1]);
         const sessionId = decodeURIComponent(sessionStreamMatch[2]);
@@ -1618,7 +1459,7 @@ export class Server {
         return;
       }
       if (mirrorBridgeMatch) {
-        this.trackConnection(ws, { userBroadcast: false });
+        this.trackConnection(ws);
         ws.on("close", () => this.untrackConnection(ws));
         this.mirrorRuntime.handleBridgeWebSocket(ws);
         return;

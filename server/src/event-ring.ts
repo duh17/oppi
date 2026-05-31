@@ -1,8 +1,8 @@
 /**
  * Bounded ring buffer of sequenced durable events.
  *
- * Used by SessionManager (per-session) and user event rings.
- * to support reconnect catch-up without unbounded memory growth.
+ * Used by SessionManager to support per-session reconnect catch-up without
+ * unbounded memory growth.
  *
  * Implementation uses a circular buffer with head/tail pointers
  * to avoid O(n) Array.shift() on every push at capacity.
