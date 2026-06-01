@@ -243,6 +243,58 @@ describe("sessions module", () => {
     });
   });
 
+  it("routes pi-tui mirror session event catch-up through mirror runtime", async () => {
+    const session = {
+      id: "mirror-1",
+      workspaceId: "ws-1",
+      runtime: "pi-tui",
+      status: "busy",
+      createdAt: 0,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const mirrorCatchUp = {
+      events: [{ type: "compaction_start", reason: "threshold", seq: 4 }],
+      currentSeq: 4,
+      session,
+      catchUpComplete: true,
+    };
+    const managedGetCatchUp = vi.fn();
+    const mirrorGetCatchUp = vi.fn(() => mirrorCatchUp);
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn(() => session),
+      },
+      sessions: {
+        getCatchUp: managedGetCatchUp,
+      },
+      mirrorRuntime: {
+        getCatchUp: mirrorGetCatchUp,
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/mirror-1/events",
+      url: new URL("http://localhost/workspaces/ws-1/sessions/mirror-1/events?since=3"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(mirrorGetCatchUp).toHaveBeenCalledWith("mirror-1", 3);
+    expect(managedGetCatchUp).not.toHaveBeenCalled();
+    expect(JSON.parse(res.body)).toEqual(mirrorCatchUp);
+  });
+
   it("validates since param on session events", async () => {
     const ctx = {
       storage: {

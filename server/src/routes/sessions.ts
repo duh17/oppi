@@ -1596,7 +1596,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const catchUp = ctx.sessions.getCatchUp(sessionId, sinceSeq);
+    const session = ctx.storage.getSession(sessionId);
+    const catchUp =
+      session?.runtime === "pi-tui"
+        ? ctx.mirrorRuntime?.getCatchUp(sessionId, sinceSeq)
+        : ctx.sessions.getCatchUp(sessionId, sinceSeq);
     if (!catchUp) {
       helpers.error(res, 404, "Session not active");
       return;

@@ -132,6 +132,10 @@ describe("SessionBroadcaster", () => {
       "session_ended",
       "session_deleted",
       "error",
+      "compaction_start",
+      "compaction_end",
+      "retry_start",
+      "retry_end",
     ];
 
     for (const durableType of expectedDurableTypes) {
@@ -155,10 +159,6 @@ describe("SessionBroadcaster", () => {
       "state",
       "connected",
       "command_result",
-      "compaction_start",
-      "compaction_end",
-      "retry_start",
-      "retry_end",
     ];
 
     for (const ephType of expectedEphemeralTypes) {

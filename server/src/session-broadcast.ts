@@ -46,6 +46,10 @@ export class SessionBroadcaster {
     "session_ended",
     "session_deleted",
     "error",
+    "compaction_start",
+    "compaction_end",
+    "retry_start",
+    "retry_end",
   ]);
 
   private dirtySessions: Set<string> = new Set();

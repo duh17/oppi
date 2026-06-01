@@ -427,6 +427,12 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
         tokensBefore: 180000,
       }),
     );
+    const catchUp = runtime.getCatchUp(sessionId, 0);
+    expect(catchUp?.currentSeq).toBe(2);
+    expect(catchUp?.events.map((event) => event.type)).toEqual([
+      "compaction_start",
+      "compaction_end",
+    ]);
     expect(runtime.getActiveSession(sessionId)?.changeStats?.compactionCount).toBe(1);
   });
 
