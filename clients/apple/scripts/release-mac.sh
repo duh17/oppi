@@ -32,9 +32,40 @@ PI_AGENT_VERSION=$(node -e "const pkg = require(process.argv[1]); console.log(pk
 
 BUILD_DIR="$APPLE_DIR/build/release-mac-${VERSION}"
 DEVELOPMENT_TEAM="${OPPI_DEVELOPMENT_TEAM:-$(grep -A40 'OppiMac:' "$PROJECT_YML" | grep 'DEVELOPMENT_TEAM:' | head -1 | awk '{print $2}')}"
-SIGNING_IDENTITY="${OPPI_MAC_SIGNING_IDENTITY:-Developer ID Application}"
+REQUESTED_SIGNING_IDENTITY="${OPPI_MAC_SIGNING_IDENTITY:-}"
 GITHUB_URL="${OPPI_GITHUB_URL:-$(git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null | sed -E 's#^git@github.com:#https://github.com/#; s#\.git$##')}"
 DMG_NAME="Oppi-${VERSION}-mac.dmg"
+
+resolve_signing_identity() {
+    if [[ -n "$REQUESTED_SIGNING_IDENTITY" ]]; then
+        printf '%s\n' "$REQUESTED_SIGNING_IDENTITY"
+        return 0
+    fi
+
+    local identities matches count
+    identities=$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F'"' '/Developer ID Application:/{print $2}' \
+        | sort -u)
+
+    if [[ -n "$DEVELOPMENT_TEAM" ]]; then
+        matches=$(printf '%s\n' "$identities" | grep -F "($DEVELOPMENT_TEAM)" || true)
+    else
+        matches="$identities"
+    fi
+
+    count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
+    if [[ "$count" == "1" ]]; then
+        printf '%s\n' "$matches"
+        return 0
+    fi
+
+    echo "ERROR: Could not resolve a unique Developer ID Application signing identity." >&2
+    echo "Set OPPI_MAC_SIGNING_IDENTITY to the full identity name, for example:" >&2
+    echo "  OPPI_MAC_SIGNING_IDENTITY='Developer ID Application: Example Corp (TEAMID)'" >&2
+    exit 1
+}
+
+SIGNING_IDENTITY="$(resolve_signing_identity)"
 
 clean_npm_env() {
     env \
@@ -93,6 +124,8 @@ echo "=== Oppi Mac Release Build ==="
 echo "Version:    $VERSION (build $BUILD_NUMBER)"
 echo "Tag:        $TAG"
 echo "Build dir:  $BUILD_DIR"
+echo "Team:       ${DEVELOPMENT_TEAM:-auto}"
+echo "Signing:    $SIGNING_IDENTITY"
 echo "Publish:    $PUBLISH"
 echo ""
 
