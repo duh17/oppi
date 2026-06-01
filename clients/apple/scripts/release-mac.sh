@@ -24,6 +24,8 @@ PROJECT_YML="$APPLE_DIR/project.yml"
 # Read version from project.yml (OppiMac target)
 VERSION=$(grep -A40 'OppiMac:' "$PROJECT_YML" | grep 'MARKETING_VERSION:' | head -1 | awk -F'"' '{print $2}')
 BUILD_NUMBER=$(grep -A40 'OppiMac:' "$PROJECT_YML" | grep 'CURRENT_PROJECT_VERSION:' | head -1 | awk '{print $2}')
+SERVER_VERSION=$(node -e "const pkg = require(process.argv[1]); console.log(pkg.version);" "$SERVER_DIR/package.json")
+PI_AGENT_VERSION=$(node -e "const pkg = require(process.argv[1]); console.log(pkg.dependencies['@earendil-works/pi-coding-agent'] || pkg.dependencies['@mariozechner/pi-coding-agent'] || 'unknown');" "$SERVER_DIR/package.json")
 
 BUILD_DIR="$APPLE_DIR/build/release-mac-${VERSION}"
 SIGNING_IDENTITY="Developer ID Application: Da Chen (AZAQMY4SPZ)"
@@ -363,14 +365,17 @@ if $PUBLISH; then
     RELEASE_NOTES=$(cat <<EOF
 ## Oppi $VERSION (Mac)
 
-Self-hosted coding agent with mobile supervision.
+Oppi $VERSION aligns mobile supervision with the current Pi runtime: live terminal mirroring, a mobile bridge for Pi extension UI, broader extension API compatibility, and clearer iPad workspace navigation.
 
-### What's included
-- Oppi Mac app (menu bar) — manages the local server, session monitoring
-- Bundled server seed + pi coding agent runtime assets
+### What's new
+- Mirror live Pi terminal sessions into Oppi while the terminal remains the execution owner.
+- Bridge most standard Pi extension UI to Apple clients, including input and confirm flows from extensions.
+- Use Pi extension API compatibility instead of custom Oppi server policy UI.
+- Improve the iPad workspace shell so workspaces, sessions, and chat are easier to move between.
+- Bundle \`oppi-server@$SERVER_VERSION\` with \`@earendil-works/pi-*\` $PI_AGENT_VERSION.
 
 ### Prerequisites
-- macOS 15.0+
+- macOS 26.0+
 - Node.js 23.6.0 or newer installed on the Mac
 
 ### Install

@@ -4,9 +4,7 @@ Oppi runs a coding agent on your machine with filesystem and tool access. It is 
 
 ## Permission prompts
 
-Oppi no longer ships a server-side policy engine. SDK sessions load the user's global Pi `permission-gate` extension by default (`~/.pi/agent/extensions/permission-gate.ts`), and Oppi relays that extension's standard Pi UI dialogs to the client.
-
-Treat this as user-owned defense in depth, not the hard security boundary. The extension can ask before high-impact actions and block obvious hazards, but real containment should come from workspace isolation, TLS/auth, and least-privilege host configuration.
+Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same mobile bridge as other Pi extension UI.
 
 ## Authentication
 

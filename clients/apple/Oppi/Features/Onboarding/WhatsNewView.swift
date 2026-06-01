@@ -41,34 +41,28 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "questionmark.bubble",
+            icon: "terminal",
             iconColor: .themeGreen,
-            title: String(localized: "Ask Cards"),
-            description: String(localized: "Agent questions appear as interactive cards with tappable options. Pending questions persist across session switches.")
+            title: String(localized: "Pi Terminal Mirroring"),
+            description: String(localized: "Keep working in a Pi terminal while Oppi mirrors the same session on iPhone or iPad. Watch output, steer, queue follow-ups, and reconnect without taking ownership from the terminal.")
         ),
         WhatsNewFeature(
-            icon: "arrow.triangle.branch",
+            icon: "puzzlepiece.extension",
             iconColor: .themePurple,
-            title: String(localized: "Sub-Agent Sessions"),
-            description: String(localized: "Agents spawn child sessions for parallel work. Collapsible tree shows status and cost per branch.")
+            title: String(localized: "Extension UI on Mobile"),
+            description: String(localized: "Oppi bridges most standard Pi extension UI to device, including input and confirm flows from extensions.")
         ),
         WhatsNewFeature(
-            icon: "doc.richtext",
+            icon: "checkmark.shield",
             iconColor: .themeOrange,
-            title: String(localized: "Inline Rendering"),
-            description: String(localized: "Mermaid diagrams, LaTeX math, and images render directly in the chat timeline with pinch-to-zoom.")
+            title: String(localized: "Extension API Compatibility"),
+            description: String(localized: "Oppi uses the standard Pi extension UI API for input and confirm flows instead of custom server policy UI.")
         ),
         WhatsNewFeature(
-            icon: "folder",
+            icon: "ipad.landscape",
             iconColor: .themeCyan,
-            title: String(localized: "File Browser"),
-            description: String(localized: "Browse and search workspace files. Renders markdown, HTML, PDF, code, images, and video. Export via share sheet.")
-        ),
-        WhatsNewFeature(
-            icon: "paintpalette",
-            iconColor: .themeYellow,
-            title: String(localized: "Themes and Appearance"),
-            description: String(localized: "Dark, OLED, Light, and Night themes with custom import. Configurable assistant avatar and code font.")
+            title: String(localized: "iPad Workspace Layout"),
+            description: String(localized: "The workspace shell adapts to iPad, with a split layout that keeps workspaces, sessions, and chat easier to move between.")
         ),
     ]
 

@@ -17,7 +17,7 @@ The approach: [just talk to it](https://steipete.me/posts/just-talk-to-it), [fee
 
 ## How it works
 
-The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and standard Pi extension UI. Oppi loads the user's global `permission-gate` Pi extension by default and relays its dialogs over WebSocket.
+The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and standard Pi extension UI. Oppi bridges most Pi extension input and confirm UI to mobile through Pi's standard extension API.
 
 ```
 ┌─────────┐        WSS / HTTPS        ┌──────────────┐

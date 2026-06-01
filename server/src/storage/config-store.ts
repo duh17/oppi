@@ -354,8 +354,8 @@ function normalizeConfig(
   }
 
   if ("policy" in obj) {
-    // Legacy custom policy config is accepted for config-file compatibility,
-    // but server-side policy evaluation has moved to the global Pi extension.
+    // Legacy custom policy config is accepted for config-file compatibility.
+    // Runtime confirmation flows now use Pi extension API compatibility instead.
   } else {
     changed = true;
   }
@@ -405,8 +405,8 @@ function normalizeConfig(
   }
 
   if ("autoPermission" in obj) {
-    // Legacy server auto-permission config is ignored. Configure the global
-    // Pi permission-gate extension instead.
+    // Legacy server auto-permission config is ignored. Extension-driven
+    // confirmation flows use Pi extension API compatibility instead.
   }
 
   // ASR / dictation pipeline config

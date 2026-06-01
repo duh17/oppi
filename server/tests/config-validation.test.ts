@@ -142,6 +142,17 @@ describe("Storage config validation", () => {
     expect(result.config?.policy).toBeUndefined();
   });
 
+  it("accepts permissionGate config for compatibility", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      permissionGate: false,
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.permissionGate).toBe(false);
+  });
+
   it("accepts extensions.subagents config with all fields", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),

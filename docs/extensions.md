@@ -19,7 +19,7 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 | Surface | Enabled by | Declared in | Loaded by | Notes |
 |---|---|---|---|---|
 | Host pi extensions | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader | Must work without Oppi server services |
-| Global `permission-gate` | `permissionGate` server config, default `true` | `~/.pi/agent/extensions/permission-gate.ts` | pi resource loader via Oppi SDK session setup | Loaded as a normal Pi host extension even when workspace allowlists omit it |
+| Configured global host extension | `permissionGate` server config, default `true` | `~/.pi/agent/extensions/permission-gate.ts` | pi resource loader via Oppi SDK session setup | Loaded as a normal Pi extension even when workspace allowlists omit it |
 | Oppi built-ins | Workspace `extensions` allowlist | `server/extensions/` | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
 | Mobile UI compatibility | Native Oppi client + server bridge | Protocol and UI bridge code | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs |
 
@@ -56,11 +56,11 @@ pi -e <package-or-path>
 Oppi keeps pi's extension system, then adds these rules:
 
 1. **Built-in workspace extensions**: `ask`, `subagents`, `voice`, and `oppi-admin`.
-2. **Global permission gate loading**: `permission-gate` is loaded from the user's Pi extension directory when `permissionGate` is enabled.
+2. **Configured host extension compatibility** through `permissionGate`.
 3. **Workspace allowlist filtering** through `workspace.extensions`.
-4. **Mobile UI compatibility** for common extension UI calls.
+4. **Mobile UI compatibility** for most standard extension input and confirm UI calls.
 
-Oppi does not replace pi discovery. It filters host-loaded extensions and injects server-owned built-ins when the workspace explicitly enables them.
+Oppi does not replace pi discovery. It filters host-loaded extensions and injects server-owned built-ins when the workspace explicitly enables them. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
 
 ## How extension loading works
 
@@ -70,7 +70,7 @@ At session startup, Oppi begins with pi's normal extension sources for the sessi
 - settings-declared extension paths (`settings.json` `extensions` arrays)
 - package-provided extensions installed through pi (`pi install`)
 
-Oppi then filters host paths according to the workspace allowlist, keeps the configured global `permission-gate` extension loaded, drops project-local duplicate `permission-gate` paths when the global gate is active, and injects enabled built-ins as in-process factories.
+Oppi then filters host paths according to the workspace allowlist, keeps the configured global host extension loaded as a normal Pi extension, drops project-local duplicate `permission-gate` paths when that global extension is active, and injects enabled built-ins as in-process factories.
 
 ## Reload behavior
 
@@ -97,7 +97,7 @@ That means:
 
 - include `ask`, `subagents`, `voice`, or `oppi-admin` explicitly if you want them
 - omitting one of those names disables it for that workspace
-- `permission-gate` is loaded globally when `permissionGate` is enabled, even if this allowlist omits it
+- the configured global host extension is loaded when `permissionGate` is enabled, even if this allowlist omits it
 
 If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves Oppi built-ins off by default.
 
@@ -112,7 +112,7 @@ The picker response:
 - includes package-installed extensions
 - includes settings-declared local extension paths
 - includes Oppi built-ins (`ask`, `subagents`, `voice`, `oppi-admin`)
-- includes global host extensions such as `permission-gate`
+- includes configured global host extensions
 - deduplicates by extension name using Oppi built-ins first, then pi host extensions
 
 ## Mobile rendering differences

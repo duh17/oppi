@@ -49,13 +49,15 @@ Workspace defaults are stored on each workspace as `defaultModel` in canonical `
 
 Use `sessionIdleTimeoutMs` in config files.
 
-### Permission Gate Extension
+### Extension UI Compatibility
+
+Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
+
+Compatibility config keys are still accepted so existing server configs continue to start:
 
 | Setting          | Type    | Default | Description                                                                                                                           |
 | ---------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `permissionGate` | boolean | `true`  | When `true`, SDK sessions load the user's global Pi `permission-gate` extension. When `false`, Oppi does not add that global extension. |
-
-The permission gate is a Pi extension loaded from `~/.pi/agent/extensions/permission-gate.ts`. Oppi relays its standard extension UI dialogs; it does not maintain a server-side policy/rules engine.
+| `permissionGate` | boolean | `true`  | Keeps the configured global host extension available as a normal Pi extension. When `false`, Oppi does not add that global extension. |
 
 ### Runtime Environment
 
@@ -207,7 +209,6 @@ Controls client-side preprocessing for image attachments before upload.
   "workspaceIdleTimeoutMs": 1800000,
   "maxSessionsPerWorkspace": 20,
   "maxSessionsGlobal": 40,
-  "permissionGate": true,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
   "tls": { "mode": "tailscale" },

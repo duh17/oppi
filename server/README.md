@@ -184,7 +184,7 @@ The server ships four built-in extension names:
 - **oppi-admin** — workspace and theme administration tools, including `build_theme`. See [Custom themes](docs/themes.md).
 
 Oppi built-in names are `ask`, `subagents`, `voice`, and `oppi-admin`.
-`permission-gate` is a normal Pi host extension; when `permissionGate` is enabled, Oppi SDK sessions load the global host extension even if a workspace has an explicit extension allowlist.
+Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
 
 Workspace extension behavior is explicit:
 
@@ -214,7 +214,6 @@ Key config sections:
 | `tls`    | HTTPS mode: `self-signed`, `tailscale`, `manual`, or explicit insecure HTTP |
 | `asr`    | Dictation pipeline: STT backend endpoint                                    |
 | `images` | Image attachment preprocessing before upload                                |
-| `permissionGate` | Enables loading the global Pi `permission-gate` extension by default |
 
 Model routing and API keys are managed by pi (`pi auth`), not the oppi config.
 

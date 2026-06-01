@@ -33,7 +33,7 @@ export interface ServerConfig {
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
-  /** Set to false to stop loading the global Pi permission-gate extension. */
+  /** Compatibility switch for the configured global host extension. */
   permissionGate?: boolean;
 
   /** PATH entries used for runtime tool execution. */

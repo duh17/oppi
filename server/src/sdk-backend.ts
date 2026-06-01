@@ -294,7 +294,7 @@ export interface SdkBackendConfig {
   onEvent: (event: SessionBackendEvent) => void;
   /** Called when the session ends. */
   onEnd: (reason: string) => void;
-  /** Whether to load the global Pi permission-gate extension. Default: true. */
+  /** Whether to keep the configured global host extension available. Default: true. */
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
@@ -477,7 +477,7 @@ export class SdkBackend {
 
       // Build extension factories for Oppi-owned in-process tools.
       // Permission gating is intentionally not injected here; SDK sessions load
-      // the user's global Pi permission-gate extension through the resource loader.
+      // the configured global host extension through the resource loader.
       const extensionFactories: ExtensionFactory[] = [];
       const usePermissionGate = config.permissionGate !== false;
       const permissionGateExtensionPath = usePermissionGate
