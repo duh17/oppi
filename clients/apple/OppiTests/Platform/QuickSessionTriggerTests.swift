@@ -357,6 +357,31 @@ struct StartQuickSessionIntentTests {
     }
 }
 
+// MARK: - Quick session sheet layout
+
+@Suite("QuickSessionSheetLayout")
+struct QuickSessionSheetLayoutTests {
+
+    @Test func zeroContentKeepsCompactDetent() {
+        #expect(
+            QuickSessionSheetLayout.detentHeight(forContentHeight: 0)
+                == QuickSessionSheetLayout.compactDetentHeight
+        )
+    }
+
+    @Test func shortComposerKeepsCompactDetent() {
+        #expect(
+            QuickSessionSheetLayout.detentHeight(forContentHeight: 120)
+                == QuickSessionSheetLayout.compactDetentHeight
+        )
+    }
+
+    @Test func tallComposerExpandsDetentPastCompactHeight() {
+        #expect(QuickSessionSheetLayout.normalizedContentHeight(181) == 184)
+        #expect(QuickSessionSheetLayout.detentHeight(forContentHeight: 181) == 202)
+    }
+}
+
 // MARK: - AskOppiIntent (static properties)
 
 @Suite("AskOppiIntent")

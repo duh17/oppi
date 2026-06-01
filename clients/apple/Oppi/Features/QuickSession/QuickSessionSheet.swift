@@ -13,6 +13,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Quic
 /// **Flow**: Pick workspace → compose message → send → session created →
 /// navigate to ChatView.
 struct QuickSessionSheet: View {
+    let onContentHeightChange: (CGFloat) -> Void
+
     @Environment(ChatSessionState.self) private var chatState
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
@@ -126,7 +128,8 @@ struct QuickSessionSheet: View {
                 onForceStop: {},
                 onExpand: { showExpandedComposer = true },
                 externalFocusRequestID: composerFocusRequestID,
-                appliesOuterPadding: false,
+                appliesOuterPadding: true,
+                alwaysShowActionRow: true,
                 actionRow: {
                     workspaceNavBarItem
                     SessionToolbar(
@@ -139,9 +142,13 @@ struct QuickSessionSheet: View {
                 }
             )
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
+        .padding(.top, 6)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            onContentHeightChange(height)
+        }
     }
 
     private func selectModel(_ model: ModelInfo) {

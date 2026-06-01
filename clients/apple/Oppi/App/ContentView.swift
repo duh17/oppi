@@ -1,10 +1,32 @@
 import SwiftUI
 
+enum QuickSessionSheetLayout {
+    static let compactDetentHeight: CGFloat = 150
+
+    private static let sheetChromeAllowance: CGFloat = 18
+    private static let detentIncrement: CGFloat = 4
+
+    static func normalizedContentHeight(_ height: CGFloat) -> CGFloat {
+        guard height.isFinite, height > 0 else { return 0 }
+        return ceil(height / detentIncrement) * detentIncrement
+    }
+
+    static func detentHeight(forContentHeight height: CGFloat) -> CGFloat {
+        let contentHeight = normalizedContentHeight(height)
+        guard contentHeight > 0 else { return compactDetentHeight }
+        return max(compactDetentHeight, contentHeight + sheetChromeAllowance)
+    }
+}
+
 struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
+    @State private var quickSessionMeasuredContentHeight: CGFloat = 0
+    @State private var quickSessionSelectedDetent: PresentationDetent = .height(
+        QuickSessionSheetLayout.compactDetentHeight
+    )
     @State private var showCrossSessionPermissionSheet = false
 
     /// Pending permissions from ALL servers, excluding the active session's
@@ -30,12 +52,17 @@ struct ContentView: View {
         crossSessionPending.first
     }
 
-    private let quickSessionCompactDetentHeight: CGFloat = 150
+    /// Sheet detents: keep Quick Session compact at rest, but let the composer
+    /// grow to its measured chat-input height for dictation and attachments.
+    private var quickSessionDetentHeight: CGFloat {
+        QuickSessionSheetLayout.detentHeight(forContentHeight: quickSessionMeasuredContentHeight)
+    }
 
-    /// Sheet detents: keep Quick Session as a compact composer instead of
-    /// expanding into a mostly empty half sheet when the keyboard appears.
     private var quickSessionDetents: Set<PresentationDetent> {
-        [.height(quickSessionCompactDetentHeight)]
+        [
+            .height(QuickSessionSheetLayout.compactDetentHeight),
+            .height(quickSessionDetentHeight),
+        ]
     }
 
     var body: some View {
@@ -106,14 +133,23 @@ struct ContentView: View {
         }
         .sheet(isPresented: $nav.showQuickSession, onDismiss: {
             completePendingQuickSessionNavigation()
+            quickSessionMeasuredContentHeight = 0
+            quickSessionSelectedDetent = .height(QuickSessionSheetLayout.compactDetentHeight)
         }, content: {
-            QuickSessionSheet()
-                .presentationDetents(quickSessionDetents)
-                .presentationDragIndicator(.visible)
-                .presentationBackgroundInteraction(
-                    .enabled(upThrough: .height(quickSessionCompactDetentHeight))
+            QuickSessionSheet { height in
+                let normalized = QuickSessionSheetLayout.normalizedContentHeight(height)
+                guard quickSessionMeasuredContentHeight != normalized else { return }
+                quickSessionMeasuredContentHeight = normalized
+                quickSessionSelectedDetent = .height(
+                    QuickSessionSheetLayout.detentHeight(forContentHeight: normalized)
                 )
-                .presentationCornerRadius(24)
+            }
+            .presentationDetents(quickSessionDetents, selection: $quickSessionSelectedDetent)
+            .presentationDragIndicator(.visible)
+            .presentationBackgroundInteraction(
+                .enabled(upThrough: .height(quickSessionDetentHeight))
+            )
+            .presentationCornerRadius(24)
         })
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             handleQuickSessionPresentationRequestChange(newValue)
