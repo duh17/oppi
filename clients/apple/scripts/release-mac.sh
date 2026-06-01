@@ -8,10 +8,13 @@
 #   ./scripts/release-mac.sh --publish --tag v0.1.0   # Explicit tag
 #
 # Prerequisites:
-#   - Xcode with Developer ID signing (team AZAQMY4SPZ)
+#   - Xcode with Developer ID signing
 #   - XcodeGen installed (brew install xcodegen)
 #   - gh CLI authenticated (gh auth login)
 #   - Node.js installed (for server build and bundled server runtime dependencies)
+#
+# Optional overrides:
+#   OPPI_DEVELOPMENT_TEAM, OPPI_MAC_SIGNING_IDENTITY, OPPI_GITHUB_URL
 #
 set -euo pipefail
 
@@ -28,7 +31,9 @@ SERVER_VERSION=$(node -e "const pkg = require(process.argv[1]); console.log(pkg.
 PI_AGENT_VERSION=$(node -e "const pkg = require(process.argv[1]); console.log(pkg.dependencies['@earendil-works/pi-coding-agent'] || pkg.dependencies['@mariozechner/pi-coding-agent'] || 'unknown');" "$SERVER_DIR/package.json")
 
 BUILD_DIR="$APPLE_DIR/build/release-mac-${VERSION}"
-SIGNING_IDENTITY="Developer ID Application: Da Chen (AZAQMY4SPZ)"
+DEVELOPMENT_TEAM="${OPPI_DEVELOPMENT_TEAM:-$(grep -A40 'OppiMac:' "$PROJECT_YML" | grep 'DEVELOPMENT_TEAM:' | head -1 | awk '{print $2}')}"
+SIGNING_IDENTITY="${OPPI_MAC_SIGNING_IDENTITY:-Developer ID Application}"
+GITHUB_URL="${OPPI_GITHUB_URL:-$(git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null | sed -E 's#^git@github.com:#https://github.com/#; s#\.git$##')}"
 DMG_NAME="Oppi-${VERSION}-mac.dmg"
 
 clean_npm_env() {
@@ -144,7 +149,7 @@ xcodebuild archive \
     -configuration Release \
     -destination 'generic/platform=macOS' \
     CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
-    DEVELOPMENT_TEAM=AZAQMY4SPZ \
+    DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
     2>&1 | tee "$BUILD_DIR/archive.log" | tail -5
 
 if [[ ! -d "$BUILD_DIR/OppiMac.xcarchive" ]]; then
@@ -402,7 +407,11 @@ EOF
         "$DMG_PATH" \
         2>&1
 
-    echo "Release published: https://github.com/duh17/oppi/releases/tag/$TAG"
+    if [[ -n "$GITHUB_URL" ]]; then
+        echo "Release published: ${GITHUB_URL}/releases/tag/$TAG"
+    else
+        echo "Release published: $TAG"
+    fi
 else
     echo ""
     echo "--- Build complete (not published) ---"

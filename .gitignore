@@ -1,79 +1,54 @@
-# Server
-server/node_modules/
+# Dependencies and build outputs
+node_modules/
 server/dist/
-
-# Apple client (iOS + macOS)
+server/coverage/
 clients/apple/build/
 clients/apple/.build/
 clients/apple/docs/
 clients/apple/*.xcodeproj/
-# clients/apple/OppiMacTests/  # Un-ignored: Mac tests should be tracked
-clients/apple/.env.testflight.local
+*.tsbuildinfo
+*.tgz
 
-# Scripts — build-wired + selected ops scripts are tracked
+# Tracked script allowlists
 scripts/*
 !scripts/duplication-scan.ts
-!clients/apple/scripts/
-!server/scripts/
-server/scripts/*
-!server/scripts/architecture-layer-rules.mjs
-!server/scripts/check-architecture-boundaries.ts
-!server/scripts/check-testing-policy.ts
-!server/scripts/testing-gates.ts
-!server/scripts/telemetry-review.ts
-!server/scripts/client-log-review.ts
-!server/scripts/metrickit-review.ts
-!server/scripts/server-log-review.ts
-!server/scripts/diagnostics-review.ts
-!server/scripts/manual/
-!server/scripts/manual/telemetry-import-sqlite.mjs
 clients/apple/scripts/*
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts
 !clients/apple/scripts/ipad-shell-diagnostic.sh
-!server/docker/entrypoint.sh
+server/scripts/manual/*
+!server/scripts/manual/telemetry-import-sqlite.mjs
 
-# CI / internal tooling
+# Local/private workspace data
 .github/
 .reviews/
-
-# Agent
 .internal/
 .pi/
 .imagen/
 .claude/
 
-# Secrets & credentials (never commit)
+# Local Apple config
+clients/apple/.env.testflight.local
+clients/apple/Local.xcconfig
+
+# Secrets and credentials
 auth.json
 *.p8
 *.pem
 **/identity/private*.json
 **/identity/*.pem
-clients/apple/Local.xcconfig
 
-# Runtime data
+# Runtime and diagnostics artifacts
 session-traces/
 *.log
-
-# General
-*.tsbuildinfo
-*.tgz
-.DS_Store
 *.ips
-node_modules/
-server/coverage/
+.DS_Store
 .ruff_cache/
 
-# Performance artifacts (never commit)
+# Performance and recording artifacts
 *.tailspin.gz
 .bench-output.txt
-
-# Screen recordings (large, accidental commits)
 ScreenRecording_*.mov
-
-server/extensions/
-!server/extensions/
-!server/extensions/**
 
 # Autoresearch session artifacts (regenerated each run)
 **/autoresearch.md
