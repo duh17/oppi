@@ -275,31 +275,6 @@ actor APIClient: ClientLogUploading {
         _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(sessionId)")
     }
 
-    // MARK: - Permissions
-
-    // periphery:ignore - used by APIClientTests via @testable import
-    /// Resolve a pending permission request through REST.
-    ///
-    /// Used by action surfaces that may not have a live WebSocket (for example,
-    /// Live Activity intents waking the app process).
-    func respondToPermission(
-        id: String,
-        action: PermissionAction,
-        scope: PermissionScope = .once,
-        expiresInMs: Int? = nil
-    ) async throws {
-        struct Body: Encodable {
-            let action: String
-            let scope: String
-            let expiresInMs: Int?
-        }
-
-        _ = try await post(
-            "/permissions/\(id)/respond",
-            body: Body(action: action.rawValue, scope: scope.rawValue, expiresInMs: expiresInMs)
-        )
-    }
-
     // MARK: - Models
 
     /// Fetch available models from the server.
@@ -413,29 +388,6 @@ actor APIClient: ClientLogUploading {
     func setAutoTitleConfig(_ config: AutoTitleConfig) async throws -> AutoTitleConfig {
         let data = try await put("/server/auto-title", body: config)
         return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
-    }
-
-    // MARK: - Auto Permission Review
-
-    /// Server-side auto permission review configuration.
-    struct AutoPermissionConfig: Codable, Sendable {
-        var model: String?
-        var prompt: String?
-        var timeoutMs: Int?
-        var maxTokens: Int?
-    }
-
-    /// Fetch the current auto permission review configuration.
-    func getAutoPermissionConfig() async throws -> AutoPermissionConfig {
-        let data = try await get("/server/auto-permission")
-        return try JSONDecoder().decode(AutoPermissionConfig.self, from: data)
-    }
-
-    /// Update the auto permission review configuration.
-    @discardableResult
-    func setAutoPermissionConfig(_ config: AutoPermissionConfig) async throws -> AutoPermissionConfig {
-        let data = try await put("/server/auto-permission", body: config)
-        return try JSONDecoder().decode(AutoPermissionConfig.self, from: data)
     }
 
     // MARK: - Themes
@@ -680,82 +632,6 @@ actor APIClient: ClientLogUploading {
             body: Body(ids: ids, sessionId: sessionId)
         )
         return try JSONDecoder().decode(ReviewCommentsResponse.self, from: data).comments
-    }
-
-    // MARK: - Safety Policy
-
-    /// Get the global default fallback action when no rule matches.
-    func getPolicyFallback() async throws -> PolicyFallbackDecision {
-        let data = try await get("/policy/fallback")
-        return try JSONDecoder().decode(PolicyFallbackResponse.self, from: data).fallback
-    }
-
-    /// Update the global default fallback action when no rule matches.
-    func patchPolicyFallback(_ fallback: PolicyFallbackDecision) async throws -> PolicyFallbackDecision {
-        struct Body: Encodable { let fallback: String }
-        let (data, response) = try await request(
-            "PATCH",
-            path: "/policy/fallback",
-            body: Body(fallback: fallback.rawValue)
-        )
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(PolicyFallbackResponse.self, from: data).fallback
-    }
-
-    /// List effective learned/manual policy rules visible to the user.
-    func listPolicyRules(workspaceId: String? = nil) async throws -> [PolicyRuleRecord] {
-        var route = "/policy/rules"
-        if let workspaceId {
-            try route += "?workspaceId=\(encodeQueryPath(workspaceId))"
-        }
-        let data = try await get(route)
-        struct Response: Decodable { let rules: [PolicyRuleRecord] }
-        return try JSONDecoder().decode(Response.self, from: data).rules
-    }
-
-    /// Create a remembered policy rule.
-    func createPolicyRule(request body: PolicyRuleCreateRequest) async throws -> PolicyRuleRecord {
-        let (data, response) = try await request("POST", path: "/policy/rules", body: body)
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(PolicyRuleMutationResponse.self, from: data).rule
-    }
-
-    /// Update an existing remembered policy rule.
-    func patchPolicyRule(ruleId: String, request body: PolicyRulePatchRequest) async throws -> PolicyRuleRecord {
-        let (data, response) = try await request("PATCH", path: "/policy/rules/\(ruleId)", body: body)
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(PolicyRuleMutationResponse.self, from: data).rule
-    }
-
-    /// Delete a remembered policy rule by id.
-    func deletePolicyRule(ruleId: String) async throws {
-        let (data, response) = try await request("DELETE", path: "/policy/rules/\(ruleId)")
-        try checkStatus(response, data: data)
-    }
-
-    /// Fetch recent policy audit decisions for the workspace/user.
-    func listPolicyAudit(
-        workspaceId: String? = nil,
-        sessionId: String? = nil,
-        limit: Int = 50,
-        before: Date? = nil
-    ) async throws -> [PolicyAuditEntry] {
-        var query = ["limit=\(limit)"]
-        if let workspaceId {
-            try query.append("workspaceId=\(encodeQueryPath(workspaceId))")
-        }
-        if let sessionId {
-            try query.append("sessionId=\(encodeQueryPath(sessionId))")
-        }
-        if let before {
-            let ms = Int(before.timeIntervalSince1970 * 1000)
-            query.append("before=\(ms)")
-        }
-
-        let route = "/policy/audit?\(query.joined(separator: "&"))"
-        let data = try await get(route)
-        struct Response: Decodable { let entries: [PolicyAuditEntry] }
-        return try JSONDecoder().decode(Response.self, from: data).entries
     }
 
     // MARK: - Skills

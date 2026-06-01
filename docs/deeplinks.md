@@ -10,7 +10,6 @@ The app registers only the `oppi` scheme.
 oppi://connect?v=3&invite=<base64url-signed-invite>
 oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi&server=sha256:<server-fingerprint>
 oppi://session/<session-id>
-oppi://permission/<permission-id>
 ```
 
 Simulator test helper:
@@ -27,13 +26,10 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://pair?v=3&invite=<payload>` | Signed pairing invite | Same as `connect`. |
 | `oppi://workspace?path=<path>&name=<name>&server=<fingerprint>` | `path`; `name` and `server` are optional | Opens Workspaces and presents Create Workspace with the path/name prefilled. The user confirms creation. |
 | `oppi://session/<session-id>` | Session ID | Opens the session if it is already known locally. If not found, opens the Workspaces tab. |
-| `oppi://permission/<permission-id>` | Permission ID | Opens the session that owns the pending permission. |
-| `oppi://permission?id=<permission-id>` | Permission ID | Same as the path form. Useful when the ID contains reserved path characters. |
 
 Supported route forms:
 
 - Invite and workspace links accept host-route and path-route forms: `oppi://workspace?...` and `oppi:///workspace?...`.
-- Permission links accept `oppi://permission/<id>`, `oppi://permission?id=<id>`, and `oppi:///permission/<id>`.
 - Session links use the host-route form: `oppi://session/<id>`.
 
 Use lowercase parameter names. Route names are case-insensitive.

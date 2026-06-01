@@ -73,15 +73,6 @@ enum ClientMessage: Sendable {
         requestId: String? = nil
     )
 
-    // ── Permission gate ──
-    case permissionResponse(
-        id: String,
-        action: PermissionAction,
-        scope: PermissionScope? = nil,
-        expiresInMs: Int? = nil,
-        requestId: String? = nil
-    )
-
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
 
@@ -402,15 +393,6 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(redactionPolicy?.normalized, forKey: .redactionPolicy)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        // ── Permission gate ──
-        case .permissionResponse(let id, let action, let scope, let expiresInMs, let reqId):
-            try c.encode("permission_response", forKey: .type)
-            try c.encode(id, forKey: .id)
-            try c.encode(action, forKey: .action)
-            try c.encodeIfPresent(scope, forKey: .scope)
-            try c.encodeIfPresent(expiresInMs, forKey: .expiresInMs)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         // ── Extension UI ──
         case .extensionUIResponse(let id, let value, let confirmed, let cancelled, let reqId):
             try c.encode("extension_ui_response", forKey: .type)
@@ -432,7 +414,7 @@ extension ClientMessage: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case type, message, attachments, images, streamingBehavior, requestId, clientTurnId
-        case id, action, redactionPolicy, scope, expiresInMs, value, confirmed, cancelled
+        case id, action, redactionPolicy, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, filterMode
         case targetId, summarize, replaceInstructions, label
@@ -479,7 +461,6 @@ extension ClientMessage {
         case .abortBash: return "abort_bash"
         case .getCommands: return "get_commands"
         case .shareSession: return "share_session"
-        case .permissionResponse: return "permission_response"
         case .extensionUIResponse: return "extension_ui_response"
         case .dictationStart: return "dictation_start"
         case .dictationStop: return "dictation_stop"

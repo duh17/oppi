@@ -98,12 +98,7 @@ final class MessageSender {
 
     /// Returns true for messages that don't require a focused session envelope.
     private static func isSessionLevelCommand(_ message: ClientMessage) -> Bool {
-        switch message {
-        case .permissionResponse:
-            return true
-        default:
-            return false
-        }
+        false
     }
 
     /// Standard timeout policy for command requests.

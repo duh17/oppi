@@ -416,7 +416,6 @@ targets:
         excludes:
           - "PiSessionAttributes.swift"
           - "LiveActivityPresentation.swift"
-          - "PermissionLiveActivityIntents.swift"
           - "SharedConstants.swift"
     dependencies:
       - package: Sparkle

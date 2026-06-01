@@ -54,26 +54,6 @@ struct ClientMessageTests {
         #expect(steering?.first?["message"] as? String == "steer this")
     }
 
-    @Test func encodesPermissionResponse() throws {
-        let msg = ClientMessage.permissionResponse(id: "perm1", action: .allow)
-        let json = try decode(msg)
-        #expect(json["type"] as? String == "permission_response")
-        #expect(json["id"] as? String == "perm1")
-        #expect(json["action"] as? String == "allow")
-    }
-
-    @Test func encodesPermissionResponseWithScopeAndExpiry() throws {
-        let msg = ClientMessage.permissionResponse(
-            id: "perm2",
-            action: .allow,
-            scope: .global,
-            expiresInMs: 3_600_000
-        )
-        let json = try decode(msg)
-        #expect(json["scope"] as? String == "global")
-        #expect(json["expiresInMs"] as? Int == 3_600_000)
-    }
-
     @Test func encodesExtensionUIResponse() throws {
         let msg = ClientMessage.extensionUIResponse(id: "ext1", value: "option_a")
         let json = try decode(msg)
@@ -143,12 +123,6 @@ struct ClientMessageTests {
         let str = try msg.jsonString()
         #expect(str.contains("\"type\":\"prompt\""))
         #expect(str.contains("\"message\":\"hello\""))
-    }
-
-    @Test func permissionResponseDeny() throws {
-        let msg = ClientMessage.permissionResponse(id: "p1", action: .deny)
-        let json = try decode(msg)
-        #expect(json["action"] as? String == "deny")
     }
 
     // MARK: - New RPC Commands

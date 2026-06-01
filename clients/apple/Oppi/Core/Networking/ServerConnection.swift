@@ -194,7 +194,6 @@ final class ServerConnection {
 
     // periphery:ignore - used by ServerConnectionPermissionTests via @testable import
     /// Test seam: override REST permission responses without opening a real HTTP server.
-    var _respondToPermissionRESTForTesting: ((String, PermissionAction, PermissionScope, Int?) async throws -> Void)?
 
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
@@ -227,10 +226,7 @@ final class ServerConnection {
     /// ChatSessionManager checks this to suppress auto-reconnect.
     var fatalSetupError = false
 
-    /// Callback for permission resolution UI feedback.
-    /// Set by the active ChatSessionManager so `respondToPermission` can
-    /// update the per-session reducer immediately (before the server echoes
-    /// the event back over WS).
+    /// Callback for historical permission timeline fixtures.
     var onPermissionResolved: ((_ id: String, _ outcome: PermissionOutcome, _ tool: String, _ summary: String) -> Void)?
 
     /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
@@ -1123,62 +1119,6 @@ final class ServerConnection {
     }
 
     func getForkMessages() async throws -> [ForkMessage] { try await sender.getForkMessages() }
-
-    /// Respond to a permission request (has store side effects — stays on ServerConnection).
-    func respondToPermission(id: String, action: PermissionAction, scope: PermissionScope = .once, expiresInMs: Int? = nil) async throws {
-        let tool = permissionStore.pending.first(where: { $0.id == id })?.tool ?? ""
-        let normalizedChoice = PermissionApprovalPolicy.normalizedChoice(
-            tool: tool,
-            choice: PermissionResponseChoice(action: action, scope: scope, expiresInMs: expiresInMs)
-        )
-
-        do {
-            try await sender.dispatchSend(
-                .permissionResponse(
-                    id: id,
-                    action: normalizedChoice.action,
-                    scope: normalizedChoice.scope == .once ? nil : normalizedChoice.scope,
-                    expiresInMs: normalizedChoice.expiresInMs,
-                    requestId: nil
-                )
-            )
-        } catch {
-            if let respondToPermissionREST = _respondToPermissionRESTForTesting {
-                try await respondToPermissionREST(
-                    id,
-                    normalizedChoice.action,
-                    normalizedChoice.scope,
-                    normalizedChoice.expiresInMs
-                )
-            } else if let apiClient {
-                try await apiClient.respondToPermission(
-                    id: id,
-                    action: normalizedChoice.action,
-                    scope: normalizedChoice.scope,
-                    expiresInMs: normalizedChoice.expiresInMs
-                )
-            } else {
-                throw error
-            }
-        }
-
-        let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
-        if let request = permissionStore.take(id: id) {
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: request.workspaceId,
-                sessionId: request.sessionId
-            ) {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            if isFocusedSession(request.sessionId) {
-                onPermissionResolved?(id, outcome, request.tool, request.displaySummary)
-            }
-        }
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            PermissionNotificationService.shared.cancelNotification(permissionId: id)
-        }
-        syncLiveActivityPermissions()
-    }
 
     /// Respond to an extension UI dialog (has UI side effects — stays on ServerConnection).
     func respondToExtensionUI(

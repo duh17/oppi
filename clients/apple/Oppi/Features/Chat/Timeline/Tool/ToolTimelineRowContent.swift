@@ -43,7 +43,6 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
     var reviewComments: [ReviewComment] = []
-    var onAddBashCommandPolicyRule: (@MainActor (BashCommandPolicyRuleDecision) async throws -> Void)? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -81,14 +80,6 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     func withSessionFileDataFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
         var copy = self
         copy.sessionFileDataFetcher = fetcher
-        return copy
-    }
-
-    func withBashCommandPolicyRuleAction(
-        _ action: (@MainActor (BashCommandPolicyRuleDecision) async throws -> Void)?
-    ) -> Self {
-        var copy = self
-        copy.onAddBashCommandPolicyRule = action
         return copy
     }
 
@@ -2044,11 +2035,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 )
                 self.copy(text: output, feedbackView: feedbackView)
             },
-            onAddBashCommandPolicyRule: currentConfiguration.onAddBashCommandPolicyRule.map { _ in
-                { [weak self] decision in
-                    self?.addBashCommandPolicyRule(decision)
-                }
-            },
             onOpenFullScreenContent: { [weak self] in
                 self?.showFullScreenContent()
             },
@@ -2069,54 +2055,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     func copy(text: String, feedbackView: UIView) {
         TimelineCopyFeedback.copy(text, feedbackView: feedbackView)
-    }
-
-    private func addBashCommandPolicyRule(_ decision: BashCommandPolicyRuleDecision) {
-        guard let handler = currentConfiguration.onAddBashCommandPolicyRule else { return }
-        let feedbackView = commandContainer
-
-        Task { @MainActor [weak self, handler] in
-            do {
-                try await handler(decision)
-                self?.showPolicyRuleSuccessFeedback(feedbackView: feedbackView)
-            } catch {
-                self?.showPolicyRuleFailure(error)
-            }
-        }
-    }
-
-    private func showPolicyRuleSuccessFeedback(feedbackView: UIView) {
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        UIView.animate(
-            withDuration: 0.08,
-            delay: 0,
-            options: [.allowUserInteraction, .curveEaseOut]
-        ) {
-            feedbackView.alpha = 0.72
-        } completion: { _ in
-            UIView.animate(
-                withDuration: 0.14,
-                delay: 0,
-                options: [.allowUserInteraction, .curveEaseOut]
-            ) {
-                feedbackView.alpha = 1
-            }
-        }
-    }
-
-    private func showPolicyRuleFailure(_ error: Error) {
-        UINotificationFeedbackGenerator().notificationOccurred(.error)
-        guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else {
-            return
-        }
-
-        let alert = UIAlertController(
-            title: String(localized: "Policy Rule Not Added"),
-            message: error.localizedDescription,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .default))
-        presenter.present(alert, animated: true)
     }
 
     /// Flags set by render strategies during apply(). Consumed at the end of

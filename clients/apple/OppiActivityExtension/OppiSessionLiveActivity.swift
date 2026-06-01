@@ -1,5 +1,4 @@
 import ActivityKit
-import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -97,8 +96,8 @@ struct PiSessionLiveActivity: Widget {
                             }
                         }
 
-                        if let permissionId = context.state.topPermissionId {
-                            permissionReviewControls(permissionId: permissionId, isStale: context.isStale)
+                        if context.state.topPermissionId != nil {
+                            OpenAppReviewHint()
                         }
                     }
                     .padding(.horizontal, 6)
@@ -228,8 +227,8 @@ private struct LockScreenView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
 
-            if let permissionId = context.state.topPermissionId {
-                permissionReviewControls(permissionId: permissionId, isStale: context.isStale)
+            if context.state.topPermissionId != nil {
+                OpenAppReviewHint()
             }
         }
         .padding(16)
@@ -426,30 +425,6 @@ private struct TimerPill: View {
     }
 }
 
-private struct PermissionActionButtons: View {
-    let permissionId: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button(intent: DenyPermissionIntent(permissionId: permissionId)) {
-                Label("Deny", systemImage: "xmark")
-                    .font(.caption2.bold())
-            }
-            .buttonStyle(.bordered)
-            .tint(.red)
-            .accessibilityLabel("Deny permission request")
-
-            Button(intent: ApprovePermissionIntent(permissionId: permissionId)) {
-                Label("Approve", systemImage: "checkmark")
-                    .font(.caption2.bold())
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
-            .accessibilityLabel("Approve permission request")
-        }
-    }
-}
-
 private struct StaleStatusView: View {
     let message: LocalizedStringKey
 
@@ -480,15 +455,6 @@ private struct OpenAppReviewHint: View {
                 Capsule().strokeBorder(neutralSurfaceBorderColor(), lineWidth: 0.8)
             )
             .accessibilityLabel("Open Oppi to review this request")
-    }
-}
-
-@ViewBuilder
-private func permissionReviewControls(permissionId: String, isStale: Bool) -> some View {
-    if isStale {
-        OpenAppReviewHint()
-    } else {
-        PermissionActionButtons(permissionId: permissionId)
     }
 }
 
@@ -664,13 +630,8 @@ private func accessibilitySummary(
 /// Deep link URL for tapping the Live Activity.
 ///
 /// HIG: "Take people directly to related details and actions."
-/// - Permission pending → `oppi://permission/<id>` (navigates to approval UI)
-/// - Otherwise → `oppi://session/<id>` (opens the primary session)
+/// - Opens the primary session for both normal activity and pending approval state.
 private func deepLinkURL(for state: PiSessionAttributes.ContentState) -> URL? {
-    if let permissionId = state.topPermissionId,
-       let encoded = permissionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
-        return URL(string: "oppi://permission/\(encoded)")
-    }
     if let sessionId = state.primarySessionId,
        let encoded = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
         return URL(string: "oppi://session/\(encoded)")

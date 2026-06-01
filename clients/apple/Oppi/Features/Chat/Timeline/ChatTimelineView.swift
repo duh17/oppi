@@ -111,10 +111,6 @@ struct ChatTimelineView: View {
                 reviewComments: reviewComments
             )
         )
-        .overlay(alignment: .bottom) {
-            PermissionOverlay(sessionId: sessionId)
-                .padding(.bottom, bottomOverlap)
-        }
         .background(Color.themeBg)
         .overlay {
             if reducer.items.isEmpty && !isBusy {

@@ -452,7 +452,7 @@ struct LiveActivityDeepLinkTests {
 
     @Test("permission deep link is preferred when topPermissionId exists")
     func permissionDeepLinkPreferred() {
-        // When a permission is pending, the deep link should point to the permission
+        // Pending approval state should preserve the owning session.
         let state = PiSessionAttributes.ContentState(
             primaryPhase: .needsApproval,
             primarySessionId: "s1",
@@ -472,7 +472,6 @@ struct LiveActivityDeepLinkTests {
             pendingApprovalCount: 1,
             sessionStartDate: nil
         )
-        // The widget helper would produce oppi://permission/perm-456
         #expect(state.topPermissionId == "perm-456")
         #expect(state.primarySessionId == "s1")
     }

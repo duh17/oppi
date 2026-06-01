@@ -1,12 +1,12 @@
 import Testing
 @testable import Oppi
 
-@Suite("PermissionNotificationService")
-struct PermissionNotificationServiceTests {
+@Suite("AttentionNotificationService")
+struct AttentionNotificationServiceTests {
 
     @Test func notifiesWhenAppIsBackgrounded() {
         #expect(
-            PermissionNotificationService.shouldNotify(
+            AttentionNotificationService.shouldNotify(
                 isAppActive: false,
                 requestSessionId: "s1",
                 activeSessionId: "s1"
@@ -16,7 +16,7 @@ struct PermissionNotificationServiceTests {
 
     @Test func notifiesWhenForegroundedForDifferentSession() {
         #expect(
-            PermissionNotificationService.shouldNotify(
+            AttentionNotificationService.shouldNotify(
                 isAppActive: true,
                 requestSessionId: "s2",
                 activeSessionId: "s1"
@@ -26,7 +26,7 @@ struct PermissionNotificationServiceTests {
 
     @Test func doesNotNotifyWhenForegroundedForActiveSession() {
         #expect(
-            !PermissionNotificationService.shouldNotify(
+            !AttentionNotificationService.shouldNotify(
                 isAppActive: true,
                 requestSessionId: "s1",
                 activeSessionId: "s1"
@@ -36,7 +36,7 @@ struct PermissionNotificationServiceTests {
 
     @Test func notifiesWhenForegroundedWithoutActiveSession() {
         #expect(
-            PermissionNotificationService.shouldNotify(
+            AttentionNotificationService.shouldNotify(
                 isAppActive: true,
                 requestSessionId: "s1",
                 activeSessionId: nil

@@ -147,20 +147,6 @@ enum ChatSessionTelemetry {
         )
     }
 
-    // MARK: - Permission Overlay
-
-    static func recordPermissionOverlay(
-        durationMs: Int64,
-        sessionId: String,
-        action: String
-    ) {
-        emit(
-            .permissionOverlayMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            tags: ["action": action]
-        )
-    }
-
     // MARK: - Shared helpers
 
     static func recordTimingMetric(

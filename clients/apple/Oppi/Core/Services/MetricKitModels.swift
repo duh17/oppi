@@ -110,7 +110,6 @@ enum ChatMetricName: String, Codable, Sendable {
     case quickSessionCreateMs = "chat.quick_session_create_ms"
     case quickSessionError = "chat.quick_session_error"
     case toolUpdateCount = "chat.tool_update_count"
-    case permissionOverlayMs = "chat.permission_overlay_ms"
     case sessionListComputeMs = "chat.session_list_compute_ms"
     case sessionListBodyRate = "chat.session_list_body_rate"
     case sessionListRowComputeMs = "chat.session_list_row_compute_ms"

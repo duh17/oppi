@@ -324,7 +324,7 @@ struct FuzzyMatchTests {
             "server/src/routes/workspace-files.test.ts",
             "server/src/server.ts",
             "server/src/types.ts",
-            "server/src/policy.ts",
+            "server/src/sdk-backend.ts",
             "README.md",
             "ARCHITECTURE.md",
             "package.json",

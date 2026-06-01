@@ -11,29 +11,14 @@ private let notificationLogger = Logger(subsystem: AppIdentifiers.subsystem, cat
 /// - App is backgrounded/inactive (lock screen/banner)
 /// - App is foregrounded but the request is for a different session
 ///
-/// This keeps permission prompts and agent questions visible during multi-session supervision
+/// This keeps agent questions and extension prompts visible during multi-session supervision
 /// without enabling remote APNs push registration.
 @MainActor
-final class PermissionNotificationService: NSObject, UNUserNotificationCenterDelegate {
-    static let shared = PermissionNotificationService()
-
-    nonisolated static let categoryId = "PERMISSION_REQUEST"
-    nonisolated static let allowActionId = "ALLOW_PERMISSION"
-    nonisolated static let denyActionId = "DENY_PERMISSION"
-
-    /// Category ID for biometric-gated permissions (deny-only from lock screen).
-    nonisolated static let biometricCategoryId = "PERMISSION_BIOMETRIC"
+final class AttentionNotificationService: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = AttentionNotificationService()
 
     /// Category ID for agent questions. Tapping opens the owning session.
     nonisolated static let askCategoryId = "ASK_REQUEST"
-
-    /// Called when the user responds to a notification action.
-    /// The handler should route the response to the WebSocket.
-    var onPermissionResponse: ((String, PermissionAction) -> Void)?
-
-    /// Called when the user taps a permission notification body (not an action button).
-    /// Navigate to the session containing this permission.
-    var onNavigateToPermission: ((String, String) -> Void)?  // (permissionId, sessionId)
 
     /// Called when the user taps an ask notification body.
     /// Navigate to the session containing this ask request.
@@ -41,7 +26,6 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
 
     // Test seams
     var _applicationStateForTesting: UIApplication.State?
-    var _onNotifyDecisionForTesting: ((PermissionRequest, String?, Bool) -> Void)?
     var _skipSchedulingForTesting = false
 
     private var didConfigureForLaunch = false
@@ -66,84 +50,16 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
         }
         didConfigureForLaunch = true
 
-        let allow = UNNotificationAction(
-            identifier: Self.allowActionId,
-            title: String(localized: "Allow"),
-            options: []
-        )
-        let deny = UNNotificationAction(
-            identifier: Self.denyActionId,
-            title: String(localized: "Deny"),
-            options: [.destructive]
-        )
-        let standardCategory = UNNotificationCategory(
-            identifier: Self.categoryId,
-            actions: [allow, deny],
-            intentIdentifiers: []
-        )
-
-        // Biometric-gated: Deny only — user must open app for Allow (triggers Face ID)
-        let biometricCategory = UNNotificationCategory(
-            identifier: Self.biometricCategoryId,
-            actions: [deny],
-            intentIdentifiers: []
-        )
-
         let askCategory = UNNotificationCategory(
             identifier: Self.askCategoryId,
             actions: [],
             intentIdentifiers: []
         )
 
-        center.setNotificationCategories([standardCategory, biometricCategory, askCategory])
+        center.setNotificationCategories([askCategory])
     }
 
     // MARK: - Fire Notifications
-
-    /// Schedule a local notification for a permission request.
-    ///
-    /// Fires when:
-    /// - App is backgrounded/inactive (always)
-    /// - App is active, but permission is for a non-active session
-    ///
-    /// This prevents missed approvals when multiple sessions run in parallel.
-    func notifyIfNeeded(_ request: PermissionRequest, activeSessionId: String?) {
-        let appState = _applicationStateForTesting ?? UIApplication.shared.applicationState
-        let isAppActive = appState == .active
-        let shouldNotify = Self.shouldNotify(
-            isAppActive: isAppActive,
-            requestSessionId: request.sessionId,
-            activeSessionId: activeSessionId
-        )
-        _onNotifyDecisionForTesting?(request, activeSessionId, shouldNotify)
-        guard shouldNotify else {
-            return
-        }
-
-        let needsBiometric = BiometricService.shared.requiresBiometric
-
-        let content = UNMutableNotificationContent()
-        content.title = needsBiometric ? String(localized: "⚠ Permission Required") : String(localized: "Permission Required")
-        content.subtitle = request.tool
-        content.body = needsBiometric
-            ? "Open app to approve with \(BiometricService.shared.biometricName)"
-            : request.displaySummary
-        content.categoryIdentifier = needsBiometric ? Self.biometricCategoryId : Self.categoryId
-        content.userInfo = [
-            "kind": "permission",
-            "permissionId": request.id,
-            "sessionId": request.sessionId,
-        ]
-        content.threadIdentifier = request.sessionId
-        content.targetContentIdentifier = request.sessionId
-        content.sound = .default
-        content.interruptionLevel = .timeSensitive
-
-        schedule(
-            identifier: "perm-\(request.id)",
-            content: content
-        )
-    }
 
     /// Schedule a local notification for an agent question.
     func notifyAskIfNeeded(_ ask: AskRequest, activeSessionId: String?) {
@@ -198,14 +114,6 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
             return true
         }
         return requestSessionId != activeSessionId
-    }
-
-    /// Cancel notification when permission is resolved before user sees it.
-    func cancelNotification(permissionId: String) {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: ["perm-\(permissionId)"])
-        UNUserNotificationCenter.current()
-            .removeDeliveredNotifications(withIdentifiers: ["perm-\(permissionId)"])
     }
 
     /// Cancel ask notification when the ask is answered or superseded.
@@ -264,7 +172,7 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    /// Handle notification action (Allow/Deny from lock screen).
+    /// Handle taps on local attention notifications.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
@@ -284,32 +192,6 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
             return
         }
 
-        guard let permissionId = userInfo["permissionId"] as? String else {
-            completionHandler()
-            return
-        }
-
-        let action: PermissionAction?
-        switch response.actionIdentifier {
-        case Self.allowActionId:
-            action = .allow
-        case Self.denyActionId:
-            action = .deny
-        default:
-            action = nil  // User tapped the notification itself — open app
-        }
-
-        if let action {
-            Task { @MainActor in
-                onPermissionResponse?(permissionId, action)
-            }
-        } else {
-            // User tapped the notification body — navigate to the session
-            Task { @MainActor in
-                onNavigateToPermission?(permissionId, sessionId)
-            }
-        }
-
         completionHandler()
     }
 
@@ -320,7 +202,7 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         switch notification.request.content.categoryIdentifier {
-        case Self.categoryId, Self.biometricCategoryId, Self.askCategoryId:
+        case Self.askCategoryId:
             completionHandler([.banner, .sound])
         default:
             completionHandler([])

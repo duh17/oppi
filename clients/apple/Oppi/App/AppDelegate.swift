@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
         ChatSessionTelemetry.warmProcessStartTime()
         if ReleaseFeatures.localAttentionNotificationsEnabled {
-            PermissionNotificationService.shared.configureForLaunch()
+            AttentionNotificationService.shared.configureForLaunch()
         }
         return true
     }

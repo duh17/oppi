@@ -54,43 +54,6 @@ private struct ThemeColorSchemeSyncView: View {
     }
 }
 
-enum PermissionDeepLink {
-    static func permissionID(from url: URL) -> String? {
-        guard url.scheme?.lowercased() == "oppi" else {
-            return nil
-        }
-
-        let host = url.host?.lowercased()
-        let pathParts = url.path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        if host == "permission" {
-            if let first = pathParts.first, !first.isEmpty {
-                return first.removingPercentEncoding ?? first
-            }
-
-            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-               let queryItems = components.queryItems,
-               let rawId = queryItems.first(where: { $0.name == "id" })?.value,
-               !rawId.isEmpty {
-                return rawId.removingPercentEncoding ?? rawId
-            }
-
-            return nil
-        }
-
-        if host == nil || host?.isEmpty == true,
-           pathParts.count >= 2,
-           pathParts[0].lowercased() == "permission" {
-            let rawId = pathParts[1]
-            return rawId.removingPercentEncoding ?? rawId
-        }
-
-        return nil
-    }
-}
-
 enum WorkspaceDeepLink {
     struct Payload: Equatable, Sendable {
         let path: String
@@ -302,12 +265,6 @@ struct OppiApp: App {
         var id: String { url.absoluteString }
     }
 
-    private struct PendingPermissionLocation {
-        let serverId: String
-        let sessionId: String
-        let connection: ServerConnection
-    }
-
     @MainActor
     private func handleIncomingURL(_ url: URL) async {
 #if DEBUG
@@ -317,9 +274,6 @@ struct OppiApp: App {
             e2eInviteProcessedThisProcess = true
         }
 #endif
-        if await handleIncomingPermissionURL(url) {
-            return
-        }
         if handleIncomingSessionURL(url) {
             return
         }
@@ -398,39 +352,6 @@ struct OppiApp: App {
     }
 
     @MainActor
-    private func handleIncomingPermissionURL(_ url: URL) async -> Bool {
-        guard let permissionId = PermissionDeepLink.permissionID(from: url) else {
-            return false
-        }
-
-        if let location = pendingPermissionLocation(id: permissionId) {
-            location.connection.syncLiveActivityPermissions()
-            openWorkspaceSession(
-                serverId: location.serverId,
-                sessionId: location.sessionId,
-                connection: location.connection
-            )
-            return true
-        }
-
-        // Best-effort refresh when app woke from deep link before local stores synced.
-        await coordinator.refreshAllServers()
-
-        if let location = pendingPermissionLocation(id: permissionId) {
-            location.connection.syncLiveActivityPermissions()
-            openWorkspaceSession(
-                serverId: location.serverId,
-                sessionId: location.sessionId,
-                connection: location.connection
-            )
-            return true
-        }
-
-        connection.extensionToast = "Permission request no longer pending"
-        return true
-    }
-
-    @MainActor
     private func openWorkspaceSession(
         serverId: String,
         sessionId: String,
@@ -441,19 +362,6 @@ struct OppiApp: App {
         connection.prepareForSessionReentry(sessionId)
         navigation.selectedTab = .workspaces
         navigation.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId)
-    }
-
-    private func pendingPermissionLocation(id: String) -> PendingPermissionLocation? {
-        for (serverId, conn) in coordinator.connections {
-            if let request = conn.permissionStore.pending.first(where: { $0.id == id }) {
-                return PendingPermissionLocation(
-                    serverId: serverId,
-                    sessionId: request.sessionId,
-                    connection: conn
-                )
-            }
-        }
-        return nil
     }
 
     @MainActor
@@ -692,34 +600,18 @@ struct OppiApp: App {
             return
         }
 
-        let notificationService = PermissionNotificationService.shared
+        let notificationService = AttentionNotificationService.shared
         notificationService.configureForLaunch()
-
-        // Wire notification actions back to the correct server's connection.
-        // Permission responses go over WebSocket — find the right connection.
-        let coord = coordinator
-        notificationService.onPermissionResponse = { [weak coord] permissionId, action in
-            guard let coord else { return }
-            Task { @MainActor in
-                // Find which server has this permission and respond via its connection
-                for (_, conn) in coord.connections where conn.permissionStore.pending.contains(where: { $0.id == permissionId }) {
-                    try? await conn.respondToPermission(id: permissionId, action: action)
-                    return
-                }
-                // Fallback: try active connection
-                try? await coord.activeConnection.respondToPermission(id: permissionId, action: action)
-            }
-        }
 
         // Configure remote push registration only when the APNs lane is enabled.
         if ReleaseFeatures.remotePushNotificationsEnabled {
             PushRegistration.shared.configure(connection: connection)
         }
 
-        let navigateToSessionFromNotification: (String) -> Void = { [weak coord] sessionId in
-            guard let coord, !sessionId.isEmpty else { return }
+        let navigateToSessionFromNotification: (String) -> Void = { [weak coordinator] sessionId in
+            guard let coordinator, !sessionId.isEmpty else { return }
             Task { @MainActor in
-                if let found = coord.findSession(id: sessionId) {
+                if let found = coordinator.findSession(id: sessionId) {
                     openWorkspaceSession(
                         serverId: found.serverId,
                         sessionId: sessionId,
@@ -734,9 +626,6 @@ struct OppiApp: App {
 
         // Navigate to session when user taps an attention notification body.
         // Cross-server: find which server owns the session and switch to it.
-        notificationService.onNavigateToPermission = { _, sessionId in
-            navigateToSessionFromNotification(sessionId)
-        }
         notificationService.onNavigateToSession = { sessionId in
             navigateToSessionFromNotification(sessionId)
         }

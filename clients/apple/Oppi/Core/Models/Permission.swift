@@ -7,9 +7,7 @@ enum PermissionScope: String, Codable, Sendable {
     case global
 }
 
-/// A permission request from the agent, awaiting user approval.
-///
-/// Maps to server's `permission_request` WebSocket message.
+/// Historical permission request model retained for local fixtures and old cached timeline rows.
 struct PermissionRequest: Identifiable, Sendable, Equatable {
     let id: String
     let sessionId: String
@@ -243,27 +241,5 @@ struct AutoReviewTimelineItem: Identifiable, Codable, Sendable, Equatable {
         self.promptHash = promptHash
     }
 
-    init?(auditEntry: PolicyAuditEntry) {
-        guard auditEntry.resolvedBy == "auto_review",
-              let review = auditEntry.autoReview,
-              let outcome = AutoReviewOutcome(rawValue: review.outcome) else {
-            return nil
-        }
 
-        self.init(
-            id: auditEntry.id,
-            timestamp: auditEntry.timestamp,
-            tool: auditEntry.tool,
-            displaySummary: auditEntry.displaySummary,
-            outcome: outcome,
-            status: review.status,
-            reason: review.reason,
-            model: review.model,
-            riskLevel: review.riskLevel,
-            confidence: review.confidence,
-            durationMs: review.durationMs,
-            tokens: review.tokens,
-            promptHash: review.promptHash
-        )
-    }
 }

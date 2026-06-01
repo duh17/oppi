@@ -161,8 +161,6 @@ struct WorkspaceNavigationServerScopeTests {
             return makeResponse(request: request, body: #"{"skills":[]}"#)
         case "/sessions/recent":
             return makeResponse(request: request, body: #"{"sessions":[]}"#)
-        case "/policy/fallback":
-            return makeResponse(request: request, body: #"{"fallback":"allow"}"#)
         default:
             if path.hasSuffix("/sessions") {
                 let workspaceId = workspaceId(in: path)

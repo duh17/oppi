@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum QuickSessionSheetLayout {
     static let compactDetentHeight: CGFloat = 150
@@ -27,31 +28,6 @@ struct ContentView: View {
     @State private var quickSessionSelectedDetent: PresentationDetent = .height(
         QuickSessionSheetLayout.compactDetentHeight
     )
-    @State private var showCrossSessionPermissionSheet = false
-
-    /// Pending permissions from ALL servers, excluding the active session's
-    /// (those are shown inline in the chat view's PermissionOverlay).
-    private var crossSessionPending: [PermissionRequest] {
-        let activeSessionId = coordinator.activeConnection.sessionStore.activeSessionId
-        return coordinator.allPendingPermissions
-            .filter { request in
-                guard let activeSessionId else {
-                    return true
-                }
-                return request.sessionId != activeSessionId
-            }
-            .sorted { lhs, rhs in
-                if lhs.timeoutAt != rhs.timeoutAt {
-                    return lhs.timeoutAt < rhs.timeoutAt
-                }
-                return lhs.id < rhs.id
-            }
-    }
-
-    private var crossSessionPrimary: PermissionRequest? {
-        crossSessionPending.first
-    }
-
     /// Sheet detents: keep Quick Session compact at rest, but let the composer
     /// grow to its measured chat-input height for dictation and attachments.
     private var quickSessionDetentHeight: CGFloat {
@@ -88,20 +64,17 @@ struct ContentView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             topInsetBanners
         }
-        .sheet(isPresented: $showCrossSessionPermissionSheet) {
-            PermissionSheet(
-                requests: crossSessionPending,
-                onRespond: handleCrossSessionPermissionChoice
+        .sheet(
+            item: Binding<ExtensionUIRequest?>(
+                get: {
+                    guard liveConnection.activeExtensionDialog?.shouldPresentAsSheet == true else { return nil }
+                    return liveConnection.activeExtensionDialog
+                },
+                set: { value in
+                    liveConnection.activeExtensionDialog = value
+                }
             )
-            .presentationDetents([.height(340), .medium, .large])
-            .presentationDragIndicator(.visible)
-        }
-        .onChange(of: crossSessionPending.isEmpty) { _, isEmpty in
-            if isEmpty {
-                showCrossSessionPermissionSheet = false
-            }
-        }
-        .sheet(item: $liveConnection.activeExtensionDialog) { request in
+        ) { request in
             ExtensionDialogSheet(request: request)
                 .interactiveDismissDisabled()
                 .presentationDetents(request.method == "editor" ? [.large] : [.medium, .large])
@@ -172,20 +145,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var topInsetBanners: some View {
-        if !navigation.showOnboarding,
-           let request = crossSessionPrimary {
-            CrossSessionPermissionBanner(
-                request: request,
-                totalCount: crossSessionPending.count,
-                sessionLabel: sessionLabel(for: request.sessionId),
-                serverLabel: serverLabel(for: request),
-                onReview: reviewCrossSessionPermissions
-            )
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
-            .padding(.bottom, 4)
-            .transition(.move(edge: .top).combined(with: .opacity))
-        }
+        EmptyView()
     }
 
     private func handleQuickSessionPresentationRequestChange(_ newValue: Int) {
@@ -221,86 +181,6 @@ struct ContentView: View {
             ),
             workspace: pending.target
         )
-    }
-
-    private func sessionLabel(for sessionId: String) -> String {
-        if let found = coordinator.findSession(id: sessionId) {
-            return found.session.displayTitle
-        }
-        return "Session \(String(sessionId.prefix(8)))"
-    }
-
-    /// Find the server name for a permission request (for cross-server context).
-    private func serverLabel(for request: PermissionRequest) -> String? {
-        guard coordinator.connections.count > 1 else { return nil }
-        // Find which server owns this permission
-        for (serverId, conn) in coordinator.connections
-        where conn.permissionStore.pending.contains(where: { $0.id == request.id }) {
-            if let server = coordinator.serverStore.server(for: serverId) {
-                return server.name
-            }
-        }
-        return nil
-    }
-
-    private func reviewCrossSessionPermissions() {
-        guard crossSessionPending.count == 1, let request = crossSessionPrimary else {
-            navigation.selectedTab = .workspaces
-            showCrossSessionPermissionSheet = true
-            return
-        }
-
-        openSessionForPermission(request)
-    }
-
-    private func openSessionForPermission(_ request: PermissionRequest) {
-        if let found = coordinator.findSession(id: request.sessionId) {
-            coordinator.switchToServer(found.serverId)
-            found.connection.sessionStore.activeSessionId = request.sessionId
-            found.connection.prepareForSessionReentry(request.sessionId)
-            navigation.selectedTab = .workspaces
-            navigation.setWorkspaceSessionPath(serverId: found.serverId, sessionId: request.sessionId)
-            return
-        }
-
-        navigation.selectedTab = .workspaces
-        showCrossSessionPermissionSheet = true
-    }
-
-    private func handleCrossSessionPermissionChoice(_ id: String, _ choice: PermissionResponseChoice) {
-        Task { @MainActor in
-            // Find the correct server connection for this permission
-            let targetConnection = findConnectionForPermission(id: id) ?? connection
-
-            if choice.action == .allow,
-               BiometricService.shared.requiresBiometric,
-               let request = targetConnection.permissionStore.pending.first(where: { $0.id == id }) {
-                let reason = "Approve \(request.tool): \(request.displaySummary)"
-                let authenticated = await BiometricService.shared.authenticate(reason: reason)
-                guard authenticated else {
-                    return
-                }
-            }
-
-            do {
-                try await targetConnection.respondToPermission(
-                    id: id,
-                    action: choice.action,
-                    scope: choice.scope,
-                    expiresInMs: choice.expiresInMs
-                )
-            } catch {
-                connection.extensionToast = "Failed to respond to permission: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    /// Find which server's connection holds a specific permission.
-    private func findConnectionForPermission(id: String) -> ServerConnection? {
-        for (_, conn) in coordinator.connections where conn.permissionStore.pending.contains(where: { $0.id == id }) {
-            return conn
-        }
-        return nil
     }
 }
 
@@ -381,81 +261,6 @@ private struct E2EWebSocketDiagnosticsView: View {
 }
 #endif
 
-private struct CrossSessionPermissionBanner: View {
-    let request: PermissionRequest
-    let totalCount: Int
-    let sessionLabel: String
-    let serverLabel: String?
-    let onReview: () -> Void
-
-    var body: some View {
-        Button(action: onReview) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.shield")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeOrange)
-                    .padding(.top, 2)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    if let serverLabel {
-                        Text("[\(serverLabel)] Approval needed in \(sessionLabel)")
-                            .font(.caption.bold())
-                            .foregroundStyle(.themeFg)
-                            .lineLimit(1)
-                    } else {
-                        Text("Approval needed in \(sessionLabel)")
-                            .font(.caption.bold())
-                            .foregroundStyle(.themeFg)
-                            .lineLimit(1)
-                    }
-
-                    Text(request.displaySummary)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-
-                    if !request.reason.isEmpty {
-                        Text(request.reason)
-                            .font(.caption2)
-                            .foregroundStyle(.themeComment)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    if totalCount > 1 {
-                        Text("+\(totalCount - 1)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.themeFg)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(.themeComment.opacity(0.18), in: Capsule())
-                    }
-
-                    if request.hasExpiry {
-                        Text(request.timeoutAt, style: .timer)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.themeOrange.opacity(0.45), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Cross-session permission request")
-        .accessibilityHint(totalCount == 1 ? "Opens the session needing approval" : "Opens approval sheet")
-    }
-}
-
 private struct ExtensionDialogSheet: View {
     let request: ExtensionUIRequest
 
@@ -464,6 +269,8 @@ private struct ExtensionDialogSheet: View {
 
     @State private var inputValue: String = ""
     @State private var isSubmitting = false
+    @State private var editorKeyboardLanguage: String?
+    @State private var editorFocusRequestID = 0
 
     var body: some View {
         NavigationStack {
@@ -500,8 +307,12 @@ private struct ExtensionDialogSheet: View {
         }
     }
 
+    @ViewBuilder
     private var nativeDialogContent: some View {
-        Form {
+        if request.method == "editor" {
+            extensionEditorContent
+        } else {
+            Form {
             if let message = request.message, !message.isEmpty {
                 Section {
                     Text(message)
@@ -558,17 +369,7 @@ private struct ExtensionDialogSheet: View {
                 }
 
             case "editor":
-                Section {
-                    TextEditor(text: $inputValue)
-                        .font(.body)
-                        .frame(minHeight: 240)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .scrollContentBackground(.hidden)
-                        .themedTextInputCard()
-                } header: {
-                    Text(request.placeholder ?? "Edit text")
-                }
+                EmptyView()
 
             default:
                 Section {
@@ -586,8 +387,44 @@ private struct ExtensionDialogSheet: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            }
+            .themedListSurface()
         }
-        .themedListSurface()
+    }
+
+    private var extensionEditorContent: some View {
+        VStack(spacing: 0) {
+            if let message = request.message, !message.isEmpty {
+                Text(message)
+                    .font(.body)
+                    .foregroundStyle(.themeFg)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.themeBgDark)
+            }
+
+            FullSizeTextView(
+                text: $inputValue,
+                keyboardLanguage: $editorKeyboardLanguage,
+                font: .preferredFont(forTextStyle: .body),
+                textColor: UIColor(Color.themeFg),
+                tintColor: UIColor(Color.themeBlue),
+                volatileSuffixLength: 0,
+                correctionRanges: [],
+                autocorrectionEnabled: true,
+                onPasteImages: { _ in },
+                onCommandEnter: submitCurrentValue,
+                onAlternateEnter: submitCurrentValue,
+                autoFocusOnAppear: true,
+                focusRequestID: editorFocusRequestID,
+                suppressKeyboard: false,
+                allowKeyboardRestoreOnTap: true,
+                onKeyboardRestoreRequest: nil
+            )
+            .background(Color.themeBg)
+        }
     }
 
     private var compatibilityContent: some View {

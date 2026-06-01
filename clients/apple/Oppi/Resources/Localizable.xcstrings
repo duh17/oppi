@@ -842,16 +842,6 @@
         }
       }
     },
-    "Cross-session permission request": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "跨会话权限请求"
-          }
-        }
-      }
-    },
     "Danger Zone": {
       "localizations": {
         "zh-Hans": {
@@ -1559,26 +1549,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "配对服务器以开始使用。"
-          }
-        }
-      }
-    },
-    "Permission Request": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "权限请求"
-          }
-        }
-      }
-    },
-    "Permission Required": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要权限"
           }
         }
       }
@@ -2583,16 +2553,6 @@
         }
       }
     },
-    "π": {},
-    "⚠ Permission Required": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "⚠ 需要权限"
-          }
-        }
-      }
-    }
+    "π": {}
   }
 }
