@@ -139,12 +139,8 @@ struct SessionRow: View {
         session.ephemeral == true
     }
 
-    private var terminalMirrorIndicator: (accessibilityLabel: String, color: Color, isAnimated: Bool)? {
-        guard session.runtime == .piTui else { return nil }
-        if session.mirror?.status == "connected" {
-            return ("pi-tui live", .themeGreen, true)
-        }
-        return ("pi-tui offline", .themeComment, false)
+    private var terminalMirrorIndicator: TerminalMirrorIndicatorPresentation? {
+        TerminalMirrorIndicatorPresentation(session: session)
     }
 
     private var currentTurnStartedAt: Date? {
@@ -214,11 +210,7 @@ struct SessionRow: View {
                 Spacer(minLength: 8)
 
                 if let terminalMirrorIndicator {
-                    TerminalMirrorIndicatorView(
-                        accessibilityLabel: terminalMirrorIndicator.accessibilityLabel,
-                        color: terminalMirrorIndicator.color,
-                        isAnimated: terminalMirrorIndicator.isAnimated
-                    )
+                    TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
                 }
             }
 
@@ -299,48 +291,6 @@ struct SessionRow: View {
             .padding(.vertical, 1)
             .background(Color.themePurple.opacity(0.14), in: Capsule())
             .accessibilityLabel("Incognito session")
-    }
-
-    private struct TerminalMirrorIndicatorView: View {
-        let accessibilityLabel: String
-        let color: Color
-        let isAnimated: Bool
-
-        @Environment(\.accessibilityReduceMotion) private var reduceMotion
-        @State private var breathing = false
-
-        private var shouldAnimate: Bool {
-            isAnimated && !reduceMotion
-        }
-
-        private var iconOpacity: Double {
-            guard shouldAnimate else { return 0.88 }
-            return breathing ? 0.98 : 0.90
-        }
-
-        var body: some View {
-            Image(systemName: "terminal.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(color)
-                .opacity(iconOpacity)
-                .frame(width: 18, height: 16, alignment: .trailing)
-                .accessibilityLabel(accessibilityLabel)
-                .onAppear(perform: updateBreathing)
-                .onChange(of: shouldAnimate) { _, _ in
-                    updateBreathing()
-                }
-        }
-
-        private func updateBreathing() {
-            guard shouldAnimate else {
-                breathing = false
-                return
-            }
-            breathing = false
-            withAnimation(ThemeMotion.animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), reduceMotion: reduceMotion)) {
-                breathing = true
-            }
-        }
     }
 
     // MARK: - Model Summary

@@ -54,7 +54,6 @@ struct ChatView: View {
     @State private var childSessionToOpen: ChildSessionRoute?
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    @State private var copiedSessionID = false
     @State private var forkedSessionToOpen: ForkRoute?
     @State private var showShareRedactionSheet = false
     @State private var shareRedactionPolicy = AppPreferences.Share.redactionPolicy
@@ -772,10 +771,9 @@ struct ChatView: View {
                         .fixedSize()
                 }
 
-                Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
-                    .font(.caption2)
-                    .foregroundStyle(copiedSessionID ? .themeGreen : .themeComment)
-                    .fixedSize()
+                if let terminalMirrorIndicator = TerminalMirrorIndicatorPresentation(session: session) {
+                    TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
+                }
             }
         }
         .frame(maxWidth: chatPrincipalTitleMaxWidth)
@@ -1408,11 +1406,6 @@ struct ChatView: View {
 
     private func copySessionID() {
         UIPasteboard.general.string = sessionId
-        copiedSessionID = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.2))
-            copiedSessionID = false
-        }
     }
 
     private func shareSessionFromTitleMenu() {
