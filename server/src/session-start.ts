@@ -1,7 +1,6 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { EventRing } from "./event-ring.js";
-import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -51,7 +50,6 @@ export interface SessionStartCoordinatorDeps {
   storage: Storage;
   runtimeManager: WorkspaceRuntime;
   config: ServerConfig;
-  gate: GateServer;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   getAndClearPendingExtensionFactories: (sessionId: string) => ExtensionFactory[];
@@ -94,7 +92,7 @@ export class SessionStartCoordinator {
       this.deps.persistSessionNow(key, session);
 
       try {
-        const useGate = this.deps.config.permissionGate !== false;
+        const usePermissionGate = this.deps.config.permissionGate !== false;
         const skillPathResolver = this.deps.getSkillPathResolver();
         const skillPaths =
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
@@ -142,9 +140,7 @@ export class SessionStartCoordinator {
           workspace,
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
-          gate: useGate ? this.deps.gate : undefined,
-          workspaceId: identity.workspaceId,
-          permissionGate: useGate,
+          permissionGate: usePermissionGate,
           skillPaths,
           builtInExtensionContext: {
             storage: this.deps.storage,
@@ -204,7 +200,6 @@ export class SessionStartCoordinator {
         session.currentTurnStartedAt = undefined;
         session.lastActivity = Date.now();
         this.deps.persistSessionNow(key, session);
-        this.deps.gate.destroySessionGuard(sessionId);
         this.deps.runtimeManager.releaseSession(identity);
         throw err;
       }

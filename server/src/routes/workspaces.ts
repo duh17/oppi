@@ -198,12 +198,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     );
 
     const nowMs = Date.now();
-    const permissionWorkspaceIds = new Set(
-      ctx.gate
-        .getPendingForUser()
-        .filter((pending) => pending.expires !== true || pending.timeoutAt > nowMs)
-        .map((pending) => pending.workspaceId),
-    );
     const askWorkspaceIds = new Set<string>();
     for (const sessionId of ctx.sessions.getActiveSessionIds()) {
       const session = ctx.sessions.getActiveSession(sessionId);
@@ -211,23 +205,20 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         continue;
       }
 
-      const message = ctx.sessions.getPendingAskMessage(sessionId);
-      if (
-        message &&
-        message.type === "extension_ui_request" &&
-        message.method === "ask" &&
-        message.questions
-      ) {
+      const askMessage = ctx.sessions.getPendingAskMessage(sessionId);
+      const hasPendingAsk =
+        askMessage?.type === "extension_ui_request" &&
+        askMessage.method === "ask" &&
+        Boolean(askMessage.questions);
+      const hasPendingGenericUI = ctx.sessions.getPendingUIRequestMessages(sessionId).length > 0;
+      if (hasPendingAsk || hasPendingGenericUI) {
         askWorkspaceIds.add(session.workspaceId);
       }
     }
 
     const summaries: WorkspaceListSummary[] = workspaces.map((workspace) => {
       const snapshot = snapshotByWorkspaceId.get(workspace.id);
-      const hasAttention =
-        permissionWorkspaceIds.has(workspace.id) ||
-        askWorkspaceIds.has(workspace.id) ||
-        snapshot?.hasErrorRoot === true;
+      const hasAttention = askWorkspaceIds.has(workspace.id) || snapshot?.hasErrorRoot === true;
 
       return {
         workspaceId: workspace.id,

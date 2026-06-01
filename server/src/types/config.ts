@@ -1,52 +1,5 @@
 // ─── Server Config ───
 
-export type PolicyDecision = "allow" | "auto" | "ask" | "block";
-
-export interface PolicyMatch {
-  tool?: string;
-  executable?: string;
-  commandMatches?: string;
-  pathMatches?: string;
-  pathWithin?: string;
-  domain?: string;
-}
-
-export interface PolicyPermission {
-  id: string;
-  decision: PolicyDecision;
-
-  label?: string;
-  reason?: string;
-  match: PolicyMatch;
-}
-
-/**
- * Named heuristics — complex detection logic that can't be expressed as globs.
- * Each key maps to the action taken when the heuristic triggers.
- * Set to `false` to disable a heuristic entirely.
- */
-export interface PolicyHeuristics {
-  /** Detect `| sh`, `| bash` — arbitrary code execution via pipe. Default: "ask" */
-  pipeToShell?: PolicyDecision | false;
-  /** Detect curl -d, wget --post-data, etc. — outbound data transfer. Default: "ask" */
-  dataEgress?: PolicyDecision | false;
-  /** Detect $API_KEY, $SECRET in curl URLs — credential leakage. Default: "ask" */
-  secretEnvInUrl?: PolicyDecision | false;
-  /** Detect reads of ~/.ssh/, ~/.aws/, .env, etc. via cat/head/read. Default: "block" */
-  secretFileAccess?: PolicyDecision | false;
-}
-
-export interface PolicyConfig {
-  schemaVersion: 1;
-  mode?: string;
-  description?: string;
-  fallback: PolicyDecision;
-  guardrails: PolicyPermission[];
-  permissions: PolicyPermission[];
-  /** Named heuristics for complex pattern detection. Omit to use defaults. */
-  heuristics?: PolicyHeuristics;
-}
-
 export type TlsMode = "auto" | "tailscale" | "cloudflare" | "self-signed" | "manual" | "disabled";
 
 export interface TlsConfig {
@@ -80,9 +33,7 @@ export interface ServerConfig {
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
-  /** Permission approval timeout in milliseconds. Set to 0 to disable expiry. */
-  approvalTimeoutMs?: number;
-  /** Set to false to disable the permission gate. All tool calls run without approval. */
+  /** Set to false to stop loading the global Pi permission-gate extension. */
   permissionGate?: boolean;
 
   /** PATH entries used for runtime tool execution. */
@@ -93,8 +44,8 @@ export interface ServerConfig {
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 
-  /** Declarative global policy config (guardrails + permissions). */
-  policy?: PolicyConfig;
+  /** Legacy custom server policy config; accepted but ignored. */
+  policy?: unknown;
 
   // Owner/admin bearer token
   token?: string;
@@ -117,17 +68,6 @@ export interface ServerConfig {
   autoTitle?: {
     enabled: boolean;
     model?: string; // "provider/model-id" (e.g. "anthropic/claude-haiku-3")
-  };
-
-  /**
-   * Auto permission review configuration. Policy decisions of "auto" call a
-   * model that can only allow or ask the human.
-   */
-  autoPermission?: {
-    model?: string; // "provider/model-id"
-    prompt?: string;
-    timeoutMs?: number;
-    maxTokens?: number;
   };
 
   /**

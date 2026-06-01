@@ -40,11 +40,6 @@ export class SessionBroadcaster {
     "message_end",
     "tool_start",
     "tool_end",
-    "permission_request",
-    "permission_expired",
-    "permission_cancelled",
-    "permission_resolved",
-    "permission_auto_reviewed",
     "stop_requested",
     "stop_confirmed",
     "stop_failed",
@@ -195,7 +190,8 @@ export class SessionBroadcaster {
     if (
       message.type === "state" ||
       message.type === "session_summary" ||
-      message.type === "extension_ui_request"
+      message.type === "extension_ui_request" ||
+      message.type === "extension_ui_settled"
     ) {
       this.deps.emitSessionEvent({
         sessionId: active.session.id,

@@ -282,52 +282,6 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       attempt: 2,
     },
 
-    // Permission gate
-    permission_request: {
-      type: "permission_request",
-      id: "perm-001",
-      sessionId: "test-session-1",
-      workspaceId: "ws-1",
-      tool: "bash",
-      input: { command: "rm -rf node_modules" },
-      displaySummary: "Run: rm -rf node_modules",
-      reason: "Destructive file operation",
-      timeoutAt: 1739750520000,
-      expires: true,
-    },
-    permission_expired: {
-      type: "permission_expired",
-      id: "perm-002",
-      reason: "Approval timeout (30s)",
-    },
-    permission_cancelled: {
-      type: "permission_cancelled",
-      id: "perm-003",
-    },
-    permission_resolved: {
-      type: "permission_resolved",
-      id: "perm-004",
-      action: "allow",
-    },
-    permission_auto_reviewed: {
-      type: "permission_auto_reviewed",
-      id: "audit-001",
-      timestamp: 1739750521000,
-      sessionId: "test-session-1",
-      workspaceId: "ws-1",
-      tool: "bash",
-      displaySummary: "git status",
-      outcome: "allow",
-      status: "allow",
-      reason: "read-only workspace inspection",
-      model: "openai-codex/gpt-5.4-mini",
-      riskLevel: "low",
-      confidence: 0.95,
-      durationMs: 1200,
-      tokens: 128,
-      promptHash: "0123456789abcdef",
-    },
-
     // Extension UI
     extension_ui_request: {
       type: "extension_ui_request",
@@ -353,6 +307,11 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       widgetKey: "review",
       widgetLines: ["Review session active", "Run /end-review when done"],
       widgetPlacement: "above-editor",
+    },
+    extension_ui_settled: {
+      type: "extension_ui_settled",
+      id: "ui-001",
+      sessionId: "test-session-1",
     },
     git_status: {
       type: "git_status",
@@ -467,13 +426,9 @@ describe("protocol snapshots", () => {
       "compaction_end",
       "retry_start",
       "retry_end",
-      "permission_request",
-      "permission_expired",
-      "permission_cancelled",
-      "permission_resolved",
-      "permission_auto_reviewed",
       "extension_ui_request",
       "extension_ui_notification",
+      "extension_ui_settled",
       "git_status",
       "dictation_ready",
       "dictation_result",
@@ -519,9 +474,5 @@ describe("protocol snapshots", () => {
     // Unix ms should be > 1e12 (year ~2001)
     expect(session.createdAt).toBeGreaterThan(1e12);
     expect(session.lastActivity).toBeGreaterThan(1e12);
-
-    // Permission timeoutAt too
-    const perm = messages.permission_request as { timeoutAt: number };
-    expect(perm.timeoutAt).toBeGreaterThan(1e12);
   });
 });

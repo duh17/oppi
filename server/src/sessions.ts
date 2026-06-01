@@ -1,8 +1,8 @@
 /**
  * Session manager — pi agent lifecycle via SDK.
  *
- * Pi runs in-process via createAgentSession(). Tool calls are gated
- * through the in-process permission extension factory.
+ * Pi runs in-process via createAgentSession(). Permission prompts flow
+ * through native Pi extensions and generic extension UI dialogs.
  *
  * Handles:
  * - Session lifecycle (start, stop, idle timeout)
@@ -24,8 +24,6 @@ import type {
   Workspace,
 } from "./types.js";
 import type { Storage } from "./storage.js";
-import type { GateServer } from "./gate.js";
-
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
 import { type PiStateSnapshot, type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -108,7 +106,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
   private readonly uiCoordinator: SessionCoordinatorBundle["uiCoordinator"];
 
-  constructor(storage: Storage, gate: GateServer, metrics?: ServerMetricCollector) {
+  constructor(storage: Storage, metrics?: ServerMetricCollector) {
     super();
     this.storage = storage;
     if (metrics) this.opsMetrics = metrics;
@@ -120,7 +118,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const bundle = createSessionCoordinatorBundle({
       storage,
       config,
-      gate,
       runtimeManager,
       active: this.active,
       mobileRenderers: this.mobileRenderers,

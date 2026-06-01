@@ -162,16 +162,6 @@ export type ClientMessage = // ── Prompting ──
         redactionPolicy?: ShareSessionRedactionPolicy;
         requestId?: string;
       }
-    // ── Permission gate ──
-    | {
-        type: "permission_response";
-        id: string;
-        action: "allow" | "deny";
-        scope?: "once" | "session" | "global";
-        /** Optional TTL for learned rule persistence (milliseconds). Ignored for scope="once". */
-        expiresInMs?: number;
-        requestId?: string;
-      }
     // ── Extension UI dialog responses ──
     | {
         type: "extension_ui_response";
@@ -326,40 +316,6 @@ export type ServerMessage = // ── Connection ──
         errorMessage: string;
       }
     | { type: "retry_end"; success: boolean; attempt: number; finalError?: string }
-    // ── Permission gate ──
-    | {
-        type: "permission_request";
-        id: string;
-        sessionId: string;
-        workspaceId: string;
-        tool: string;
-        input: Record<string, unknown>;
-        displaySummary: string;
-        reason: string;
-        timeoutAt: number;
-        expires?: boolean;
-      }
-    | { type: "permission_expired"; id: string; reason: string }
-    | { type: "permission_cancelled"; id: string }
-    | { type: "permission_resolved"; id: string; action: "allow" | "deny" }
-    | {
-        type: "permission_auto_reviewed";
-        id: string;
-        timestamp: number;
-        sessionId: string;
-        workspaceId: string;
-        tool: string;
-        displaySummary: string;
-        outcome: "allow" | "ask";
-        status: string;
-        reason: string;
-        model?: string;
-        riskLevel?: string;
-        confidence?: number;
-        durationMs?: number;
-        tokens?: number;
-        promptHash?: string;
-      }
     // ── Extension UI forwarding ──
     | {
         type: "extension_ui_request";
@@ -389,6 +345,11 @@ export type ServerMessage = // ── Connection ──
         widgetKey?: string;
         widgetLines?: string[];
         widgetPlacement?: string;
+      }
+    | {
+        type: "extension_ui_settled";
+        id: string;
+        sessionId: string;
       }
     // ── Git status (workspace-level, pushed after file-mutating tool calls) ──
     | {

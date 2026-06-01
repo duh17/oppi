@@ -81,6 +81,7 @@ interface MockRouteContext {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
     getPendingAskMessage: ReturnType<typeof vi.fn>;
+    getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
   };
   gate: {
     getPendingForUser: ReturnType<typeof vi.fn>;
@@ -117,6 +118,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     getActiveSessionIds: vi.fn().mockReturnValue([]),
     getActiveSession: vi.fn(),
     getPendingAskMessage: vi.fn(),
+    getPendingUIRequestMessages: vi.fn().mockReturnValue([]),
   };
 
   const gate = {
@@ -416,10 +418,26 @@ describe("workspace session list routes", () => {
       sessionId === "ws-2-row"
         ? {
             type: "extension_ui_request",
+            id: "ask-1",
+            sessionId,
             method: "ask",
-            questions: [{ id: "q1", question: "Pick one", options: [] }],
+            questions: [{ id: "q1", question: "Pick one", options: [{ value: "yes", label: "Yes" }] }],
           }
         : undefined,
+    );
+    mock.sessions.getPendingUIRequestMessages.mockImplementation((sessionId: string) =>
+      sessionId === "ws-2-row"
+        ? [
+            {
+              type: "extension_ui_request",
+              id: "select-1",
+              sessionId,
+              method: "select",
+              title: "Dangerous command",
+              options: ["Allow once", "Deny"],
+            },
+          ]
+        : [],
     );
 
     const handled = await dispatch(
@@ -440,17 +458,67 @@ describe("workspace session list routes", () => {
     expect(response.sessions[0]).toMatchObject({
       id: "ws-2-row",
       pendingPermissionCount: 0,
-      pendingAskCount: 1,
+      pendingAskCount: 2,
     });
     expect(response.sessions[1]).toMatchObject({
       id: "ws-1-row",
-      pendingPermissionCount: 1,
+      pendingPermissionCount: 0,
       pendingAskCount: 0,
     });
     expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
     expect(response.sessions[0]).not.toHaveProperty("warnings");
     expect(response.sessions[1]).not.toHaveProperty("piSessionFile");
     expect(response.sessions[1]).not.toHaveProperty("warnings");
+  });
+
+  it("counts pending mirror extension dialogs as workspace row attention", async () => {
+    const mock = createMockContext();
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    const mirrorSession = makeSession({
+      id: "mirror-row",
+      status: "busy",
+      runtime: "pi-tui",
+      lastActivity: now,
+    });
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([mirrorSession]);
+    mock.ctx.mirrorRuntime = {
+      getActiveSessionIds: () => new Set(["mirror-row"]),
+      getActiveSession: (sessionId: string) => (sessionId === "mirror-row" ? mirrorSession : undefined),
+      getPendingAskMessage: () => undefined,
+      getPendingUIRequestMessages: (sessionId: string) =>
+        sessionId === "mirror-row"
+          ? [
+              {
+                type: "extension_ui_request",
+                id: "mirror-select-1",
+                sessionId,
+                method: "select",
+                title: "Dangerous command",
+                options: ["Allow once", "Deny"],
+              },
+            ]
+          : [],
+    } as unknown as RouteContext["mirrorRuntime"];
+
+    const handled = await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      "https://localhost/workspaces/ws-1/sessions?status=active",
+    );
+
+    expect(handled).toBe(true);
+    expect(mock.errors).toHaveLength(0);
+
+    const response = mock.responses[0]?.data as {
+      active: Array<Record<string, unknown>>;
+    };
+
+    expect(response.active).toHaveLength(1);
+    expect(response.active[0]).toMatchObject({
+      id: "mirror-row",
+      pendingPermissionCount: 0,
+      pendingAskCount: 1,
+    });
   });
 
   it("returns only the requested stopped bucket contents", async () => {

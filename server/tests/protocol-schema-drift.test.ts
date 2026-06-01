@@ -90,29 +90,6 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
       expect(parsed.args.futureArg).toEqual([1, 2, 3]);
     });
 
-    it("permission_request with extra security fields", () => {
-      const parsed = roundTrip(
-        withExtraFields(
-          {
-            type: "permission_request" as const,
-            id: "p1",
-            sessionId: "s1",
-            workspaceId: "w1",
-            tool: "bash",
-            input: { command: "rm -rf /" },
-            displaySummary: "Run: rm -rf /",
-            reason: "destructive",
-            timeoutAt: Date.now() + 30000,
-            expires: true,
-          },
-          { riskScore: 0.95, policyVersion: 3 },
-        ),
-      ) as Record<string, unknown>;
-
-      expect(parsed.type).toBe("permission_request");
-      expect(parsed.riskScore).toBe(0.95);
-    });
-
     it("command_result with unknown data shape", () => {
       const parsed = roundTrip<ServerMessage>({
         type: "command_result",
@@ -221,21 +198,9 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           errorMessage: "err",
         },
         { type: "retry_end", success: true, attempt: 1 },
-        {
-          type: "permission_request",
-          id: "p1",
-          sessionId: "s1",
-          workspaceId: "w1",
-          tool: "bash",
-          input: {},
-          displaySummary: "run",
-          reason: "ask",
-          timeoutAt: Date.now(),
-        },
-        { type: "permission_expired", id: "p1", reason: "timeout" },
-        { type: "permission_cancelled", id: "p1" },
         { type: "extension_ui_request", id: "u1", sessionId: "s1", method: "select" },
         { type: "extension_ui_notification", method: "notify" },
+        { type: "extension_ui_settled", id: "u1", sessionId: "s1" },
         {
           type: "git_status",
           workspaceId: "w1",
@@ -318,23 +283,6 @@ describe("RQ-PROTO-002: ClientMessage schema drift", () => {
     expect(parsed.message).toBe("hello");
   });
 
-  it("permission_response with extra fields round-trips", () => {
-    const parsed = roundTrip(
-      withExtraFields<ClientMessage>(
-        {
-          type: "permission_response",
-          id: "p1",
-          action: "allow",
-          scope: "session",
-        },
-        { approvedBy: "user", confidence: 0.9 },
-      ),
-    ) as Record<string, unknown>;
-
-    expect(parsed.type).toBe("permission_response");
-    expect(parsed.approvedBy).toBe("user");
-  });
-
   it("set_queue with extra item fields", () => {
     const msg: ClientMessage = {
       type: "set_queue",
@@ -364,31 +312,6 @@ describe("RQ-PROTO-002: cross-platform invariants", () => {
 
     expect((connected as { session: Session }).session.id).toBeTypeOf("string");
     expect((state as { session: Session }).session).toBeDefined();
-  });
-
-  it("permission_request required fields are present", () => {
-    const parsed = roundTrip<ServerMessage>({
-      type: "permission_request",
-      id: "p1",
-      sessionId: "s1",
-      workspaceId: "w1",
-      tool: "bash",
-      input: { command: "echo" },
-      displaySummary: "Run: echo",
-      reason: "needs approval",
-      timeoutAt: Date.now() + 30000,
-    }) as Extract<ServerMessage, { type: "permission_request" }>;
-
-    expect(parsed).toMatchObject({
-      id: expect.any(String),
-      sessionId: expect.any(String),
-      workspaceId: expect.any(String),
-      tool: expect.any(String),
-      input: expect.any(Object),
-      displaySummary: expect.any(String),
-      reason: expect.any(String),
-      timeoutAt: expect.any(Number),
-    });
   });
 
   it("turn_ack required fields are present and stage is recognized", () => {

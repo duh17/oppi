@@ -2,8 +2,7 @@
  * HTTP + WebSocket server.
  *
  * Bridges phone clients to locally running pi sessions.
- * Handles: auth, session CRUD, WebSocket streaming, permission gate
- * forwarding, and extension UI request relay.
+ * Handles: auth, session CRUD, WebSocket streaming, and extension UI request relay.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -35,21 +34,6 @@ import { WsMessageHandler } from "./ws-message-handler.js";
 import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import { SessionRuntimeRouter } from "./runtime-router.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
-import {
-  PolicyEngine,
-  defaultPolicy,
-  policyRulesFromDeclarativeConfig,
-  policyRuntimeConfig,
-} from "./policy.js";
-import {
-  GateServer,
-  buildPermissionMessage,
-  type AutoReviewDecisionEvent,
-  type PendingDecision,
-} from "./gate.js";
-import { RuleStore } from "./rules.js";
-import { AuditLog } from "./audit.js";
-
 import { SkillRegistry, UserSkillStore } from "./skills.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
@@ -76,7 +60,6 @@ import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
 import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
 import { getPackageInfo } from "./version.js";
-import { AutoPermissionReviewer } from "./auto-permission-reviewer.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
@@ -166,15 +149,6 @@ export function formatUnauthorizedAuthLog(opts: {
   return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
 }
 
-export function formatPermissionRequestLog(opts: {
-  requestId: string;
-  sessionId: string;
-  tool: string;
-  displaySummary: string;
-}): string {
-  return `${ts()} [gate] Permission request ${opts.requestId} (session=${opts.sessionId}, tool=${opts.tool}, summaryChars=${opts.displaySummary.length})`;
-}
-
 /**
  * Collapse dynamic path segments (UUIDs, hex IDs) into `:id` placeholders
  * so HTTP request metrics aggregate by route pattern, not by resource.
@@ -198,7 +172,6 @@ const ROUTINE_HTTP_METRIC_PATTERNS = new Set([
   "/workspaces/:workspaceId/attention",
   "/workspaces/:workspaceId/paths",
   "/workspaces/:workspaceId/review/comments",
-  "/policy/fallback",
   "/models",
   "/telemetry/chat-metrics",
   "/telemetry/client-logs",
@@ -378,8 +351,6 @@ export class Server {
 
   private storage: Storage;
   private sessions: SessionManager;
-  private policy: PolicyEngine;
-  private gate: GateServer;
   private skillRegistry: SkillRegistry;
   private skillsInitialized = false;
   private userSkillStore: UserSkillStore;
@@ -476,53 +447,11 @@ export class Server {
     const config = storage.getConfig();
     const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
     this.identityFingerprint = identity.fingerprint;
-    const configuredPolicy = config.policy || defaultPolicy();
-
-    // Runtime policy engine only handles fallback + heuristics.
-    // Allow/ask/deny rules live in RuleStore (single runtime source of truth).
-    this.policy = new PolicyEngine(policyRuntimeConfig(configuredPolicy));
-
-    // v2 policy infrastructure
-    const rulesPath = join(dataDir, "rules.json");
-    const ruleStore = new RuleStore(rulesPath);
-    ruleStore.seedIfEmpty(policyRulesFromDeclarativeConfig(configuredPolicy));
-
-    // Protect config and rules files from silent agent modification.
-    // Hard-coded guard — can't be overridden by rules in the store.
-    const configPath = storage.getConfigPath();
-    this.policy.setProtectedPaths([rulesPath, configPath]);
-    const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
-
-    // Server operational metrics collector (event-driven latencies, counts)
-    // Created before GateServer so we can inject it for gate metrics.
+    // Server operational metrics collector (event-driven latencies, counts).
     this.opsMetrics = new ServerMetricCollector(
       new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
     );
 
-    const autoPermissionReviewer = new AutoPermissionReviewer({
-      getConfig: () => this.storage.getConfig().autoPermission ?? {},
-      modelRegistry: this.modelRegistry,
-      onMetrics: (metrics) => {
-        const tags = {
-          model: metrics.model || "unconfigured",
-          outcome: metrics.outcome,
-          status: metrics.status,
-          ...(metrics.riskLevel ? { risk_level: metrics.riskLevel } : {}),
-          ...(metrics.promptHash ? { prompt_hash: metrics.promptHash } : {}),
-        };
-        this.opsMetrics.record("server.gate_auto_review", 1, tags);
-        this.opsMetrics.record("server.gate_auto_review_ms", metrics.durationMs, tags);
-        if (metrics.tokens > 0) {
-          this.opsMetrics.record("server.gate_auto_review_tokens", metrics.tokens, tags);
-        }
-      },
-    });
-
-    this.gate = new GateServer(this.policy, ruleStore, auditLog, {
-      approvalTimeoutMs: config.approvalTimeoutMs,
-      metrics: this.opsMetrics,
-      autoPermissionReviewer,
-    });
     // Scan both host skills (~/.pi/agent/skills/) and bundled skills (server/skills/).
     const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     const bundledSkillsDir = join(serverRoot, "skills");
@@ -531,8 +460,8 @@ export class Server {
     this.userSkillStore.init();
 
     this.push = createPushClient(apnsConfig, this.opsMetrics);
-    this.liveActivity = new LiveActivityBridge(this.push, this.storage, this.gate);
-    this.sessions = new SessionManager(storage, this.gate, this.opsMetrics);
+    this.liveActivity = new LiveActivityBridge(this.push, this.storage);
+    this.sessions = new SessionManager(storage, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
@@ -549,7 +478,6 @@ export class Server {
 
     this.wsMessageHandler = new WsMessageHandler({
       sessions: this.sessionRuntimeRouter,
-      gate: this.gate,
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
     });
@@ -565,7 +493,6 @@ export class Server {
       storage: this.storage,
       sessions: this.sessions,
       mirrorRuntime: this.mirrorRuntime,
-      gate: this.gate,
       metrics: this.opsMetrics,
       ensureSessionContextWindow: (session: Session) =>
         this.models.ensureSessionContextWindow(session),
@@ -674,7 +601,6 @@ export class Server {
       storage: this.storage,
       sessions: this.sessions,
       mirrorRuntime: this.mirrorRuntime,
-      gate: this.gate,
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
       providerAuth: this.providerAuth,
@@ -710,112 +636,6 @@ export class Server {
 
     this.httpServer.on("upgrade", (req, socket, head) => {
       this.handleUpgrade(req, socket, head);
-    });
-
-    // Wire gate events → bound session stream, push fallback, and Live Activity updates
-    this.gate.on("approval_needed", (pending: PendingDecision) => {
-      this.forwardPermissionRequest(pending);
-    });
-
-    this.gate.on(
-      "approval_timeout",
-      ({ requestId, sessionId }: { requestId: string; sessionId: string }) => {
-        const session = this.findSessionById(sessionId);
-        if (session) {
-          const message: ServerMessage = {
-            type: "permission_expired",
-            id: requestId,
-            reason: "Approval timeout",
-            sessionId,
-          };
-          const boundDeliveries = this.boundSessionStreamMux.sendToSession(sessionId, message);
-          if (boundDeliveries === 0) this.pushFallback(message);
-          this.liveActivity.queueUpdate({
-            sessionId,
-            lastEvent: "Permission expired",
-            priority: 5,
-          });
-        }
-      },
-    );
-
-    this.gate.on(
-      "approval_resolved",
-      ({
-        requestId,
-        sessionId,
-        action,
-      }: {
-        requestId: string;
-        sessionId: string;
-        action: "allow" | "deny";
-      }) => {
-        const message: ServerMessage = {
-          type: "permission_resolved",
-          id: requestId,
-          action,
-          sessionId,
-        };
-        this.boundSessionStreamMux.sendToSession(sessionId, message);
-        this.liveActivity.queueUpdate({
-          sessionId,
-          lastEvent: action === "allow" ? "Permission approved" : "Permission denied",
-          priority: action === "deny" ? 10 : 5,
-        });
-      },
-    );
-
-    this.gate.on(
-      "approval_cancelled",
-      ({
-        requestId,
-        sessionId,
-        reason,
-      }: {
-        requestId: string;
-        sessionId: string;
-        reason: string;
-      }) => {
-        const message: ServerMessage = {
-          type: "permission_cancelled",
-          id: requestId,
-          sessionId,
-        };
-        this.boundSessionStreamMux.sendToSession(sessionId, message);
-        this.liveActivity.queueUpdate({
-          sessionId,
-          lastEvent: reason,
-          priority: 5,
-        });
-      },
-    );
-
-    this.gate.on("auto_reviewed", (decision: AutoReviewDecisionEvent) => {
-      const message: ServerMessage = {
-        type: "permission_auto_reviewed",
-        id: decision.id,
-        timestamp: decision.timestamp,
-        sessionId: decision.sessionId,
-        workspaceId: decision.workspaceId,
-        tool: decision.tool,
-        displaySummary: decision.displaySummary,
-        outcome: decision.outcome,
-        status: decision.status,
-        reason: decision.reason,
-        model: decision.model,
-        riskLevel: decision.riskLevel,
-        confidence: decision.confidence,
-        durationMs: decision.durationMs,
-        tokens: decision.tokens,
-        promptHash: decision.promptHash,
-      };
-      this.sessions.broadcastSessionMessage(decision.sessionId, message);
-      this.liveActivity.queueUpdate({
-        sessionId: decision.sessionId,
-        lastEvent:
-          decision.outcome === "allow" ? "Permission auto-approved" : "Permission auto-asked",
-        priority: 5,
-      });
     });
   }
 
@@ -940,7 +760,6 @@ export class Server {
     this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
     await this.sessions.stopAll();
-    await this.gate.shutdown();
     this.liveActivity.shutdown();
     this.push.shutdown();
     this.searchIndex?.close();
@@ -1095,31 +914,11 @@ export class Server {
     }
   }
 
-  // ─── Permission Forwarding ───
-
-  private forwardPermissionRequest(pending: PendingDecision): void {
-    const message = buildPermissionMessage(pending);
-    const boundDeliveries = this.boundSessionStreamMux.sendToSession(pending.sessionId, message);
-    if (boundDeliveries === 0) this.pushFallback(message);
-    this.liveActivity.queueUpdate({
-      sessionId: pending.sessionId,
-      lastEvent: "Permission required",
-      priority: 10,
-    });
-    log.info("gate.permission_request", {
-      requestId: pending.id,
-      sessionId: pending.sessionId,
-      tool: pending.tool,
-      summaryChars: pending.displaySummary.length,
-    });
-  }
-
   // ─── Push Fallback ───
 
   /**
    * Send a push notification for attention-worthy events not delivered by a
-   * bound session stream. Only fires for permission requests and selected
-   * session lifecycle events.
+   * bound session stream. Only fires for selected session lifecycle events.
    */
   private createDictationManager(): DictationManager | undefined {
     if (!this.dictationConfig?.sttEndpoint) return undefined;
@@ -1137,27 +936,7 @@ export class Server {
     const tokens = this.storage.getPushDeviceTokens();
     if (tokens.length === 0) return;
 
-    if (msg.type === "permission_request") {
-      const session = this.findSessionById(msg.sessionId);
-      for (const token of tokens) {
-        this.push
-          .sendPermissionPush(token, {
-            permissionId: msg.id,
-            sessionId: msg.sessionId,
-            sessionName: session?.name,
-            tool: msg.tool,
-            displaySummary: msg.displaySummary,
-            reason: msg.reason,
-            timeoutAt: msg.timeoutAt,
-            expires: msg.expires,
-          })
-          .then((ok) => {
-            if (!ok) {
-              // Token might be expired — don't remove yet, APNs 410 handler does that
-            }
-          });
-      }
-    } else if (msg.type === "session_ended") {
+    if (msg.type === "session_ended") {
       const session = this.findSessionByReason(msg);
       for (const token of tokens) {
         this.push.sendSessionEventPush(token, {
@@ -1237,14 +1016,6 @@ export class Server {
       log.warn("skills.workspace_skill_not_found", { skill: name });
     }
     return paths;
-  }
-
-  private findSessionById(sessionId: string): Session | undefined {
-    if (!this.storage.isPaired()) return undefined;
-
-    const sessions = this.storage.listSessions();
-    const match = sessions.find((s) => s.id === sessionId);
-    return match ? this.models.ensureSessionContextWindow(match) : undefined;
   }
 
   // ─── Auth ───

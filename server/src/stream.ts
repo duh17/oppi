@@ -7,7 +7,6 @@
 
 import { WebSocket, type RawData } from "ws";
 import type { SessionManager } from "./sessions.js";
-import { buildPermissionMessage, type GateServer, type PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -26,7 +25,6 @@ export interface StreamContext {
   storage: Storage;
   sessions: SessionManager;
   mirrorRuntime?: PiTuiMirrorRuntime;
-  gate: GateServer;
   metrics?: ServerMetricCollector;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
@@ -237,7 +235,6 @@ export class BoundSessionStreamMux {
     const liveConnectionCleanup: { run?: () => void } = {};
     let connectionClosed = false;
     let queue: Promise<void> = Promise.resolve();
-    let setupComplete = false;
 
     const cleanupBoundConnection = (code: number, reason?: Buffer): void => {
       if (connectionClosed) return;
@@ -321,48 +318,6 @@ export class BoundSessionStreamMux {
       }
     };
 
-    // Register the permission response path before session startup finishes.
-    // A guarded startup can block on a pending approval, and a fast client tap
-    // must be able to unblock the gate before the full session handler exists.
-    ws.on("message", (data, isBinary) => {
-      if (setupComplete || isBinary) return;
-      const parsed = parseIncomingClientMessage(data);
-      if (!parsed.ok || parsed.message.type !== "permission_response") return;
-
-      msgRecv += 1;
-      if (!firstMessageRecorded && metrics) {
-        firstMessageRecorded = true;
-        metrics.record("server.ws_first_message_ms", Date.now() - connectedAt, {
-          path: "bound_session_stream",
-        });
-      }
-
-      const msg = parsed.message;
-      metrics?.record("server.ws_message_received", 1, {
-        type: msg.type,
-        path: "bound_session_stream",
-      });
-      const scope = msg.scope || "once";
-      const resolved = this.ctx.gate.resolveDecision(msg.id, msg.action, scope, msg.expiresInMs);
-      if (!resolved) {
-        send({
-          type: "error",
-          error: `Permission request not found: ${msg.id}`,
-          sessionId,
-        });
-        return;
-      }
-      if (msg.requestId) {
-        send({
-          type: "command_result",
-          command: "permission_response",
-          requestId: msg.requestId,
-          success: true,
-          sessionId,
-        });
-      }
-    });
-
     send(streamConnectedMessage(this.ctx, owner));
 
     try {
@@ -427,22 +382,13 @@ export class BoundSessionStreamMux {
         session: this.ctx.ensureSessionContextWindow(activeSession),
       });
 
-      const pendingPerms = isMirrorSession
-        ? []
-        : this.ctx.gate
-            .getPendingForUser()
-            .filter((p: PendingDecision) => p.sessionId === sessionId);
-      for (const pending of pendingPerms) {
-        send(buildPermissionMessage(pending));
-      }
-
       const pendingAskMsg = isMirrorSession
-        ? undefined
+        ? mirrorRuntime?.getPendingAskMessage(sessionId)
         : this.ctx.sessions.getPendingAskMessage(sessionId);
       if (pendingAskMsg) send(pendingAskMsg);
 
       const pendingUIMsgs = isMirrorSession
-        ? []
+        ? (mirrorRuntime?.getPendingUIRequestMessages(sessionId) ?? [])
         : this.ctx.sessions.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
         send(pendingUIMsg);
@@ -455,7 +401,7 @@ export class BoundSessionStreamMux {
         catchup_requested: "false",
         catchup_complete: "true",
         started_session: isMirrorSession ? "false" : hadActiveSession ? "false" : "true",
-        pending_permissions: countBucketForTag(pendingPerms.length),
+        pending_permissions: countBucketForTag(0),
         pending_ui_requests: countBucketForTag((pendingAskMsg ? 1 : 0) + pendingUIMsgs.length),
       });
 
@@ -522,34 +468,6 @@ export class BoundSessionStreamMux {
                 } as ServerMessage);
                 return;
 
-              case "permission_response": {
-                const scope = msg.scope || "once";
-                const resolved = this.ctx.gate.resolveDecision(
-                  msg.id,
-                  msg.action,
-                  scope,
-                  msg.expiresInMs,
-                );
-                if (!resolved) {
-                  send({
-                    type: "error",
-                    error: `Permission request not found: ${msg.id}`,
-                    sessionId,
-                  });
-                  return;
-                }
-                if (msg.requestId) {
-                  send({
-                    type: "command_result",
-                    command: "permission_response",
-                    requestId: msg.requestId,
-                    success: true,
-                    sessionId,
-                  });
-                }
-                return;
-              }
-
               default: {
                 const targetSessionId = msg.sessionId ?? sessionId;
                 if (targetSessionId !== sessionId) {
@@ -593,7 +511,6 @@ export class BoundSessionStreamMux {
             send({ type: "error", error: message, sessionId });
           });
       });
-      setupComplete = true;
     } catch (err: unknown) {
       const message = safeErrorMessage(err);
       metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {

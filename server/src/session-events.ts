@@ -1,5 +1,10 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import {
+  buildExtensionUINotificationMessage,
+  buildExtensionUIRequestMessage,
+  isExtensionUIFireAndForgetMethod,
+} from "./extension-ui-contract.js";
 import { getGitStatus } from "./git-status.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -37,15 +42,6 @@ export interface ExtensionUIRequest {
   questions?: AskQuestion[];
   allowCustom?: boolean;
 }
-
-/** Fire-and-forget UI methods (no response needed) */
-const FIRE_AND_FORGET_METHODS = new Set([
-  "notify",
-  "setStatus",
-  "setWidget",
-  "setTitle",
-  "set_editor_text",
-]);
 
 const TERMINAL_ONLY_STATUS_KEYS = new Set(["oppi-mirror"]);
 
@@ -212,27 +208,18 @@ export class SessionEventProcessor {
     active: EventProcessorSessionState,
     req: ExtensionUIRequest,
   ): void {
-    if (FIRE_AND_FORGET_METHODS.has(req.method)) {
-      this.deps.broadcast(key, {
-        type: "extension_ui_notification",
-        method: req.method,
-        message: req.message,
-        notifyType: req.notifyType,
-        statusKey: req.statusKey,
-        statusText: terminalOnlyStatusText(req),
-        title: req.title,
-        text: req.text,
-        widgetKey: req.widgetKey,
-        widgetLines: req.widgetLines,
-        widgetPlacement: req.widgetPlacement,
-      });
+    if (isExtensionUIFireAndForgetMethod(req.method)) {
+      this.deps.broadcast(
+        key,
+        buildExtensionUINotificationMessage(req, { statusText: terminalOnlyStatusText(req) }),
+      );
       return;
     }
 
     active.pendingUIRequests.set(req.id, req);
 
     if (req.method === "ask") {
-      const broadcastMessage = this.buildAskBroadcastMessage(active.session.id, req);
+      const broadcastMessage = buildExtensionUIRequestMessage(active.session.id, req);
       active.pendingAsk = {
         requestId: req.id,
         questionCount: req.questions?.length ?? 0,
@@ -243,7 +230,7 @@ export class SessionEventProcessor {
       return;
     }
 
-    this.broadcastDialogRequest(key, active.session.id, req);
+    this.deps.broadcast(key, buildExtensionUIRequestMessage(active.session.id, req));
   }
 
   /**
@@ -491,41 +478,6 @@ export class SessionEventProcessor {
     active.contextUsageLastBroadcastTokens = estimatedTokens;
     this.deps.broadcast(key, { type: "state", session: active.session });
     this.deps.markSessionDirty(key);
-  }
-
-  private buildAskBroadcastMessage(
-    sessionId: string,
-    req: Pick<
-      ExtensionUIRequest,
-      "id" | "method" | "questions" | "allowCustom" | "timeout" | "timeoutAt"
-    >,
-  ): ServerMessage {
-    return {
-      type: "extension_ui_request",
-      id: req.id,
-      sessionId,
-      method: req.method,
-      questions: req.questions,
-      allowCustom: req.allowCustom,
-      timeout: req.timeout,
-      timeoutAt: req.timeoutAt,
-    };
-  }
-
-  private broadcastDialogRequest(key: string, sessionId: string, req: ExtensionUIRequest): void {
-    this.deps.broadcast(key, {
-      type: "extension_ui_request",
-      id: req.id,
-      sessionId,
-      method: req.method,
-      title: req.title,
-      options: req.options,
-      message: req.message,
-      placeholder: req.placeholder,
-      prefill: req.prefill,
-      timeout: req.timeout,
-      timeoutAt: req.timeoutAt,
-    });
   }
 
   completeAskRequest(

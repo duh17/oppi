@@ -10,6 +10,7 @@ import {
   resolveSandboxGuestCwd,
   resolveSdkSessionCwd,
   resolveSdkSessionDisplayCwd,
+  filterSdkLoadedExtensions,
   SdkBackend,
   type BuiltInExtensionContext,
 } from "../src/sdk-backend.js";
@@ -96,6 +97,51 @@ describe("hostMountValidationError", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("filterSdkLoadedExtensions", () => {
+  function ext(path: string, resolvedPath = path): { path: string; resolvedPath: string } {
+    return { path, resolvedPath };
+  }
+
+  it("keeps global permission-gate outside workspace allowlists", () => {
+    const permissionGate = "/home/user/.pi/agent/extensions/permission-gate.ts";
+    const filtered = filterSdkLoadedExtensions(
+      [ext(permissionGate), ext("/home/user/.pi/agent/extensions/memory.ts")],
+      {
+        workspaceExtensions: ["memory"],
+        permissionGateEnabled: true,
+        permissionGatePath: permissionGate,
+      },
+    );
+
+    expect(filtered.map((item) => item.path)).toEqual([
+      permissionGate,
+      "/home/user/.pi/agent/extensions/memory.ts",
+    ]);
+  });
+
+  it("filters project-local permission-gate when a global gate path is configured", () => {
+    const globalGate = "/home/user/.pi/agent/extensions/permission-gate.ts";
+    const projectGate = "/workspace/.pi/extensions/permission-gate.ts";
+    const filtered = filterSdkLoadedExtensions([ext(projectGate), ext(globalGate)], {
+      permissionGateEnabled: true,
+      permissionGatePath: globalGate,
+    });
+
+    expect(filtered.map((item) => item.path)).toEqual([globalGate]);
+  });
+
+  it("filters permission-gate when disabled even if the workspace lists it", () => {
+    const permissionGate = "/home/user/.pi/agent/extensions/permission-gate.ts";
+    const filtered = filterSdkLoadedExtensions([ext(permissionGate)], {
+      workspaceExtensions: ["permission-gate"],
+      permissionGateEnabled: false,
+      permissionGatePath: permissionGate,
+    });
+
+    expect(filtered).toEqual([]);
   });
 });
 

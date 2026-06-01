@@ -2,9 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
-import { defaultPolicy } from "../policy-presets.js";
 import type {
-  PolicyHeuristics,
   ServerConfig,
   SubagentConfig,
   SubagentModelPolicyConfig,
@@ -62,13 +60,11 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 20,
     maxSessionsGlobal: 40,
-    approvalTimeoutMs: 120 * 1000,
     permissionGate: true,
 
     runtimePathEntries: defaultRuntimePathEntries(),
     runtimeEnv: {},
     tls: { mode: "self-signed" },
-    policy: defaultPolicy(),
     images: {
       autoResize: false,
     },
@@ -229,11 +225,6 @@ function normalizeConfig(
     config.maxSessionsGlobal = maxSessionsGlobal;
   }
 
-  const approvalTimeoutMs = readNumber("approvalTimeoutMs", { min: 0 });
-  if (approvalTimeoutMs !== undefined) {
-    config.approvalTimeoutMs = approvalTimeoutMs;
-  }
-
   if (typeof raw.permissionGate === "boolean") {
     config.permissionGate = raw.permissionGate;
   }
@@ -362,316 +353,9 @@ function normalizeConfig(
     changed = true;
   }
 
-  const parsePolicyConfig = (
-    value: unknown,
-    path: string,
-  ): NonNullable<ServerConfig["policy"]> | null => {
-    if (!isRecord(value)) {
-      errors.push(`${path}: expected object`);
-      changed = true;
-      return null;
-    }
-
-    const allowed = new Set([
-      "schemaVersion",
-      "mode",
-      "description",
-      "fallback",
-      "guardrails",
-      "permissions",
-      "heuristics",
-    ]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(value)) {
-        if (!allowed.has(key)) {
-          errors.push(`${path}.${key}: unknown key`);
-        }
-      }
-    }
-
-    const parseDecision = (
-      rawDecision: unknown,
-      decisionPath: string,
-    ): "allow" | "auto" | "ask" | "block" | null => {
-      if (
-        rawDecision === "allow" ||
-        rawDecision === "auto" ||
-        rawDecision === "ask" ||
-        rawDecision === "block"
-      ) {
-        return rawDecision;
-      }
-      errors.push(`${decisionPath}: expected one of allow|auto|ask|block`);
-      changed = true;
-      return null;
-    };
-
-    const parseMatch = (
-      rawMatch: unknown,
-      matchPath: string,
-    ): {
-      tool?: string;
-      executable?: string;
-      commandMatches?: string;
-      pathMatches?: string;
-      pathWithin?: string;
-      domain?: string;
-    } | null => {
-      if (!isRecord(rawMatch)) {
-        errors.push(`${matchPath}: expected object`);
-        changed = true;
-        return null;
-      }
-
-      const allowedMatchKeys = new Set([
-        "tool",
-        "executable",
-        "commandMatches",
-        "pathMatches",
-        "pathWithin",
-        "domain",
-      ]);
-
-      if (strictUnknown) {
-        for (const key of Object.keys(rawMatch)) {
-          if (!allowedMatchKeys.has(key)) {
-            errors.push(`${matchPath}.${key}: unknown key`);
-          }
-        }
-      }
-
-      const out: {
-        tool?: string;
-        executable?: string;
-        commandMatches?: string;
-        pathMatches?: string;
-        pathWithin?: string;
-        domain?: string;
-      } = {};
-
-      const readOptionalString = (k: keyof typeof out): void => {
-        if (!(k in rawMatch)) return;
-        const v = rawMatch[k];
-        if (typeof v !== "string" || v.trim().length === 0) {
-          errors.push(`${matchPath}.${k}: expected non-empty string`);
-          changed = true;
-          return;
-        }
-        out[k] = v;
-      };
-
-      readOptionalString("tool");
-      readOptionalString("executable");
-      readOptionalString("commandMatches");
-      readOptionalString("pathMatches");
-      readOptionalString("pathWithin");
-      readOptionalString("domain");
-
-      if (Object.keys(out).length === 0) {
-        errors.push(`${matchPath}: expected at least one match field`);
-        changed = true;
-        return null;
-      }
-
-      return out;
-    };
-
-    const parsePermission = (
-      rawPermission: unknown,
-      permPath: string,
-    ): {
-      id: string;
-      decision: "allow" | "auto" | "ask" | "block";
-      label?: string;
-      reason?: string;
-      match: {
-        tool?: string;
-        executable?: string;
-        commandMatches?: string;
-        pathMatches?: string;
-        pathWithin?: string;
-        domain?: string;
-      };
-    } | null => {
-      if (!isRecord(rawPermission)) {
-        errors.push(`${permPath}: expected object`);
-        changed = true;
-        return null;
-      }
-
-      const allowedPermKeys = new Set(["id", "decision", "risk", "label", "reason", "match"]);
-
-      if (strictUnknown) {
-        for (const key of Object.keys(rawPermission)) {
-          if (!allowedPermKeys.has(key)) {
-            errors.push(`${permPath}.${key}: unknown key`);
-          }
-        }
-      }
-
-      if (
-        typeof rawPermission.id !== "string" ||
-        !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(rawPermission.id)
-      ) {
-        errors.push(`${permPath}.id: expected slug-like id (3-64 chars)`);
-        changed = true;
-        return null;
-      }
-
-      const decision = parseDecision(rawPermission.decision, `${permPath}.decision`);
-      if (!decision) return null;
-
-      // "risk" is ignored when present.
-      let label: string | undefined;
-      if ("label" in rawPermission) {
-        if (typeof rawPermission.label === "string" && rawPermission.label.trim().length > 0) {
-          label = rawPermission.label;
-        } else {
-          errors.push(`${permPath}.label: expected non-empty string`);
-          changed = true;
-        }
-      }
-
-      let reason: string | undefined;
-      if ("reason" in rawPermission) {
-        if (typeof rawPermission.reason === "string" && rawPermission.reason.trim().length > 0) {
-          reason = rawPermission.reason;
-        } else {
-          errors.push(`${permPath}.reason: expected non-empty string`);
-          changed = true;
-        }
-      }
-
-      const match = parseMatch(rawPermission.match, `${permPath}.match`);
-      if (!match) return null;
-
-      return {
-        id: rawPermission.id,
-        decision,
-        label,
-        reason,
-        match,
-      };
-    };
-
-    if (value.schemaVersion !== 1) {
-      errors.push(`${path}.schemaVersion: expected 1`);
-      changed = true;
-      return null;
-    }
-
-    let mode: string | undefined;
-    if ("mode" in value) {
-      if (typeof value.mode === "string" && value.mode.trim().length > 0) {
-        mode = value.mode;
-      } else {
-        errors.push(`${path}.mode: expected non-empty string`);
-        changed = true;
-      }
-    }
-
-    let description: string | undefined;
-    if ("description" in value) {
-      if (typeof value.description === "string") {
-        description = value.description;
-      } else {
-        errors.push(`${path}.description: expected string`);
-        changed = true;
-      }
-    }
-
-    const fallback = parseDecision(value.fallback, `${path}.fallback`);
-    if (!fallback) return null;
-
-    if (!Array.isArray(value.guardrails)) {
-      errors.push(`${path}.guardrails: expected array`);
-      changed = true;
-      return null;
-    }
-    if (!Array.isArray(value.permissions)) {
-      errors.push(`${path}.permissions: expected array`);
-      changed = true;
-      return null;
-    }
-
-    const guardrails = value.guardrails
-      .map((entry, i) => parsePermission(entry, `${path}.guardrails[${i}]`))
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-
-    const permissions = value.permissions
-      .map((entry, i) => parsePermission(entry, `${path}.permissions[${i}]`))
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-
-    // Parse heuristics (optional — omitted means use defaults)
-    let heuristics: PolicyHeuristics | undefined;
-    if ("heuristics" in value && value.heuristics !== undefined && value.heuristics !== null) {
-      if (!isRecord(value.heuristics)) {
-        errors.push(`${path}.heuristics: expected object`);
-        changed = true;
-      } else {
-        const h = value.heuristics;
-        const validHeuristicKeys = new Set([
-          "pipeToShell",
-          "dataEgress",
-          "secretEnvInUrl",
-          "secretFileAccess",
-        ]);
-
-        if (strictUnknown) {
-          for (const key of Object.keys(h)) {
-            if (!validHeuristicKeys.has(key)) {
-              errors.push(`${path}.heuristics.${key}: unknown key`);
-            }
-          }
-        }
-
-        const parseHeuristicValue = (
-          rawHeuristic: unknown,
-          hPath: string,
-        ): "allow" | "auto" | "ask" | "block" | false | undefined => {
-          if (rawHeuristic === undefined) return undefined;
-          if (rawHeuristic === false) return false;
-          if (
-            rawHeuristic === "allow" ||
-            rawHeuristic === "auto" ||
-            rawHeuristic === "ask" ||
-            rawHeuristic === "block"
-          ) {
-            return rawHeuristic;
-          }
-          errors.push(`${hPath}: expected one of allow|auto|ask|block or false`);
-          changed = true;
-          return undefined;
-        };
-
-        heuristics = {};
-        for (const key of validHeuristicKeys) {
-          if (key in h) {
-            const val = parseHeuristicValue(h[key], `${path}.heuristics.${key}`);
-            if (val !== undefined) {
-              (heuristics as Record<string, unknown>)[key] = val;
-            }
-          }
-        }
-      }
-    }
-
-    const result: NonNullable<ServerConfig["policy"]> = {
-      schemaVersion: 1,
-      mode,
-      description,
-      fallback,
-      guardrails,
-      permissions,
-    };
-    if (heuristics) result.heuristics = heuristics;
-    return result;
-  };
-
   if ("policy" in obj) {
-    const parsed = parsePolicyConfig(obj.policy, "config.policy");
-    if (parsed) config.policy = parsed;
+    // Legacy custom policy config is accepted for config-file compatibility,
+    // but server-side policy evaluation has moved to the global Pi extension.
   } else {
     changed = true;
   }
@@ -720,33 +404,9 @@ function normalizeConfig(
     config.autoTitle = autoTitle;
   }
 
-  // Auto-permission reviewer configuration
-  if ("autoPermission" in obj && isRecord(obj.autoPermission)) {
-    const ap = obj.autoPermission;
-    const allowedAutoPermissionKeys = new Set(["model", "prompt", "timeoutMs", "maxTokens"]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(ap)) {
-        if (!allowedAutoPermissionKeys.has(key)) {
-          errors.push(`config.autoPermission.${key}: unknown key`);
-        }
-      }
-    }
-
-    const autoPermission: NonNullable<ServerConfig["autoPermission"]> = {};
-    if (typeof ap.model === "string" && ap.model.trim().length > 0) {
-      autoPermission.model = ap.model.trim();
-    }
-    if (typeof ap.prompt === "string" && ap.prompt.trim().length > 0) {
-      autoPermission.prompt = ap.prompt.trim();
-    }
-    if (typeof ap.timeoutMs === "number" && Number.isFinite(ap.timeoutMs) && ap.timeoutMs > 0) {
-      autoPermission.timeoutMs = Math.floor(ap.timeoutMs);
-    }
-    if (typeof ap.maxTokens === "number" && Number.isFinite(ap.maxTokens) && ap.maxTokens > 0) {
-      autoPermission.maxTokens = Math.floor(ap.maxTokens);
-    }
-    config.autoPermission = autoPermission;
+  if ("autoPermission" in obj) {
+    // Legacy server auto-permission config is ignored. Configure the global
+    // Pi permission-gate extension instead.
   }
 
   // ASR / dictation pipeline config

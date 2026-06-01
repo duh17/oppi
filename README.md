@@ -9,7 +9,7 @@
   <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/">Screenshots</a>
 </p>
 
-There are many clankers and this one is mine. iPhone app + self-hosted server + Mac companion for running [pi](https://github.com/badlogic/pi-mono) coding agent sessions from your phone. Stream output, approve tool calls, steer sessions, dictate prompts, attach screenshots — with native rendering that makes LLM output actually readable (no flickering).
+There are many clankers and this one is mine. iPhone app + self-hosted server + Mac companion for running [pi](https://github.com/badlogic/pi-mono) coding agent sessions from your phone. Stream output, answer extension prompts, steer sessions, dictate prompts, attach screenshots — with native rendering that makes LLM output actually readable (no flickering).
 
 All the code is written by agents. I haven't written or reviewed most of it — I describe features, try them on device, file bugs, and add tests so neither the agent nor I are hallucinating. I spent the last year doing Tailscale + tmux + Termius to use Claude Code from my phone. It worked until it didn't: no dictation, no image input, Ctrl-A N nightmares. So I built this.
 
@@ -17,12 +17,12 @@ The approach: [just talk to it](https://steipete.me/posts/just-talk-to-it), [fee
 
 ## How it works
 
-The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and a policy-driven permission gate. The iOS app connects over WebSocket to stream output and handle approvals.
+The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and standard Pi extension UI. Oppi loads the user's global `permission-gate` Pi extension by default and relays its dialogs over WebSocket.
 
 ```
 ┌─────────┐        WSS / HTTPS        ┌──────────────┐
 │  iPhone  │  ◄──────────────────────► │  oppi-server │
-│  (Oppi)  │   stream, approvals, UI  │  (Node.js)   │
+│  (Oppi)  │  stream, extension UI    │  (Node.js)   │
 └─────────┘                            └──────┬───────┘
                                               │
                                       pi SDK (in-process)
@@ -145,11 +145,10 @@ Requirements: macOS 15+, [pi](https://github.com/badlogic/pi-mono) CLI.
 - [Changelog](CHANGELOG.md) — release history and versioning policy
 - [Server README](server/README.md) — server setup, Docker, development
 - [Onboarding and pairing](docs/onboarding.md) — intended first-run user flow
-- [Deep links](docs/deeplinks.md) — custom URL schemes for pairing, workspaces, sessions, and permissions
+- [Deep links](docs/deeplinks.md) — custom URL schemes for pairing, workspaces, and sessions
 - [Config schema](server/docs/config-schema.md) — all config options
 - [Dictation / ASR](server/docs/asr.md) — server dictation setup
 - [Voice replies / TTS](server/docs/tts.md) — voice extension setup
-- [Policy engine](server/docs/policy-engine.md) — permission rules and heuristics
 - [Extensions](docs/extensions.md) — Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
 - [Sandbox workspaces](docs/sandbox.md) — Gondolin VM isolation, network boundaries, tools, and safe defaults
 - [Custom themes](server/docs/themes.md) — creating color themes for the iOS app

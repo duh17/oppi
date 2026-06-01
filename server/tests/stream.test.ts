@@ -90,10 +90,6 @@ function createMockContext(sessions: Session[]): {
       getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: () => [],
     } as unknown as StreamContext["sessions"],
-    gate: {
-      getPendingForUser: () => [],
-      resolveDecision: vi.fn(() => true),
-    } as unknown as StreamContext["gate"],
     ensureSessionContextWindow: (s: Session) => s,
     resolveWorkspaceForSession: () => undefined as Workspace | undefined,
     handleClientMessage: vi.fn(async () => {}),
@@ -108,6 +104,13 @@ function createMockContext(sessions: Session[]): {
 async function drain(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
+}
+
+function mirrorPendingStubs() {
+  return {
+    getPendingAskMessage: () => undefined,
+    getPendingUIRequestMessages: () => [],
+  };
 }
 
 describe("BoundSessionStreamMux", () => {
@@ -129,18 +132,14 @@ describe("BoundSessionStreamMux", () => {
     ws.sent.length = 0;
     expect(
       mux.sendToSession("sess-bound", {
-        type: "permission_request",
-        id: "p-bound",
+        type: "extension_ui_request",
+        id: "ui-bound",
         sessionId: "sess-bound",
-        workspaceId: "w1",
-        tool: "bash",
-        input: {},
-        displaySummary: "approval",
-        reason: "test",
-        timeoutAt: Date.now() + 1000,
+        method: "select",
+        title: "approval",
       }),
     ).toBe(1);
-    expect(ws.sentOfType("permission_request", "sess-bound")).toHaveLength(1);
+    expect(ws.sentOfType("extension_ui_request", "sess-bound")).toHaveLength(1);
 
     ws.receive({ type: "reload", sessionId: "sess-bound", requestId: "reload-1" } as ClientMessage);
     await drain();
@@ -162,6 +161,7 @@ describe("BoundSessionStreamMux", () => {
       getCurrentSeq: () => 7,
       isSessionConnected: () => true,
       subscribe: mirrorSubscribe,
+      ...mirrorPendingStubs(),
     } as unknown as StreamContext["mirrorRuntime"];
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -191,6 +191,7 @@ describe("BoundSessionStreamMux", () => {
       getCurrentSeq: () => 9,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
+      ...mirrorPendingStubs(),
     } as unknown as StreamContext["mirrorRuntime"];
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -219,6 +220,7 @@ describe("BoundSessionStreamMux", () => {
       getCurrentSeq: () => 7,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
+      ...mirrorPendingStubs(),
     } as unknown as StreamContext["mirrorRuntime"];
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -272,6 +274,7 @@ describe("BoundSessionStreamMux", () => {
         mirrorCallback = cb;
         return () => {};
       },
+      ...mirrorPendingStubs(),
     } as unknown as StreamContext["mirrorRuntime"];
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -304,48 +307,6 @@ describe("BoundSessionStreamMux", () => {
     await drain();
 
     expect(ws.sentOfType("stream_connected")[0]).toMatchObject({ serverDictationAvailable: true });
-  });
-
-  it("accepts permission responses while session startup is waiting", async () => {
-    const session = makeSession("sess-bound", "w1");
-    const { ctx } = createMockContext([session]);
-    let resolveStart: ((session: Session) => void) | undefined;
-    vi.mocked(ctx.sessions.startSession).mockImplementation(
-      () =>
-        new Promise<Session>((resolve) => {
-          resolveStart = resolve;
-        }),
-    );
-    const resolveDecision = vi.fn(() => true);
-    ctx.gate = {
-      getPendingForUser: () => [],
-      resolveDecision,
-    } as unknown as StreamContext["gate"];
-
-    const mux = new BoundSessionStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    const connect = mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({
-      type: "permission_response",
-      id: "perm-startup",
-      action: "allow",
-      requestId: "perm-1",
-    });
-    await drain();
-
-    expect(resolveDecision).toHaveBeenCalledWith("perm-startup", "allow", "once", undefined);
-    const result = ws
-      .sentOfType("command_result", "sess-bound")
-      .find((m) => (m as Record<string, unknown>).requestId === "perm-1");
-    expect(result?.success).toBe(true);
-
-    expect(resolveStart).toBeDefined();
-    resolveStart?.(session);
-    await connect;
-
-    expect(ws.sentOfType("connected", "sess-bound")).toHaveLength(1);
   });
 
   it("cleans up when the bound session socket closes during startup", async () => {

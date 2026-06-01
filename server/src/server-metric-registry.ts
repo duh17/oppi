@@ -125,41 +125,6 @@ export const SERVER_METRIC_REGISTRY = {
     description: "Turns that ended with an error. Tagged by error category.",
   },
 
-  // ── P1: Permission Gate ──
-  "server.gate_check_ms": {
-    unit: "ms",
-    description:
-      "Slow gate policy evaluation latency (checkToolCall -> decision). Tagged by action; emitted only for slow checks.",
-  },
-  "server.gate_decision": {
-    unit: "count",
-    description:
-      "Gate decisions. Tagged by action (allow, deny, ask). Aggregated by sum before storage.",
-  },
-  "server.gate_approval_wait_ms": {
-    unit: "ms",
-    description: "Time user took to respond to a permission request (ask -> resolve).",
-  },
-  "server.gate_timeout": {
-    unit: "count",
-    description: "Permission requests that timed out waiting for user response.",
-  },
-  "server.gate_auto_review": {
-    unit: "count",
-    description:
-      "Auto permission reviews. Tagged by model, outcome, status, risk_level, and prompt_hash.",
-  },
-  "server.gate_auto_review_ms": {
-    unit: "ms",
-    description:
-      "Auto permission review duration. Tagged by model, outcome, status, risk_level, and prompt_hash.",
-  },
-  "server.gate_auto_review_tokens": {
-    unit: "count",
-    description:
-      "Auto permission review token usage. Tagged by model, outcome, status, risk_level, and prompt_hash.",
-  },
-
   // ── P2: Capacity / Throughput ──
   "server.http_request_ms": {
     unit: "ms",

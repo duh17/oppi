@@ -20,8 +20,8 @@ function makeWorkspace(extensions?: string[]): Workspace {
 }
 
 describe("isManagedExtensionName", () => {
-  it("marks only policy-backed server-managed extensions as managed", () => {
-    expect(isManagedExtensionName("permission-gate")).toBe(true);
+  it("does not reserve permission-gate away from native Pi loading", () => {
+    expect(isManagedExtensionName("permission-gate")).toBe(false);
     expect(isManagedExtensionName("ask")).toBe(false);
     expect(isManagedExtensionName("subagents")).toBe(false);
     expect(isManagedExtensionName("voice")).toBe(false);

@@ -3,8 +3,8 @@ import type { Workspace } from "../src/types.js";
 /** Extension names implemented directly by Oppi server. */
 export type BuiltInExtensionName = "ask" | "subagents" | "voice" | "oppi-admin";
 
-/** Policy-backed names that must never be loaded from host extension paths. */
-export const MANAGED_EXTENSION_NAMES = ["permission-gate"] as const;
+/** Host extension names suppressed by Oppi before native pi loading. */
+export const MANAGED_EXTENSION_NAMES = [] as const;
 
 /** Built-in tools exposed in the workspace extension picker. */
 export const BUILT_IN_EXTENSION_NAMES: readonly BuiltInExtensionName[] = [

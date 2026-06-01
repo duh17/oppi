@@ -49,12 +49,13 @@ Workspace defaults are stored on each workspace as `defaultModel` in canonical `
 
 Use `sessionIdleTimeoutMs` in config files.
 
-### Permission Gate
+### Permission Gate Extension
 
-| Setting             | Type    | Default  | Description                                                                                                                              |
-| ------------------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `approvalTimeoutMs` | number  | `120000` | How long the server waits for a user to approve/deny a tool call before timing out. Set to `0` to wait indefinitely (no expiry). Min: 0. |
-| `permissionGate`    | boolean | `true`   | When `true`, tool calls are gated through the policy engine + iOS approval flow. When `false`, all tool calls auto-run with no approval. |
+| Setting          | Type    | Default | Description                                                                                                                           |
+| ---------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `permissionGate` | boolean | `true`  | When `true`, SDK sessions load the user's global Pi `permission-gate` extension. When `false`, Oppi does not add that global extension. |
+
+The permission gate is a Pi extension loaded from `~/.pi/agent/extensions/permission-gate.ts`. Oppi relays its standard extension UI dialogs; it does not maintain a server-side policy/rules engine.
 
 ### Runtime Environment
 
@@ -194,79 +195,6 @@ Controls client-side preprocessing for image attachments before upload.
 | ------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `images.autoResize` | boolean | `false` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget. When `false`, clients upload original image bytes where possible. |
 
-### Policy
-
-`policy` config controls the permission gate defaults. The runtime source of truth for allow/ask/deny tool rules is `~/.config/oppi/rules.json`; `policy.guardrails` and `policy.permissions` are seed inputs copied into `rules.json` when missing and then evaluated with learned/manual rules. Full evaluation order and pattern matching are documented in [policy-engine.md](policy-engine.md).
-
-| Setting                | Type   | Default     | Description                                                                                                       |
-| ---------------------- | ------ | ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| `policy.schemaVersion` | number | `1`         | Policy schema version. Must be `1`.                                                                               |
-| `policy.mode`          | string | -           | Optional label for the policy preset (e.g. `"default"`, `"strict"`). Informational only.                          |
-| `policy.description`   | string | -           | Human-readable description of the policy. Informational only.                                                     |
-| `policy.fallback`      | string | `"allow"`   | Decision when no protected-path guard, heuristic, or `rules.json` rule matches: `"allow"`, `"ask"`, or `"block"`. |
-| `policy.guardrails`    | array  | default set | Seed rules intended for hard safety defaults. Existing conflicting manual/user rules win during seeding.          |
-| `policy.permissions`   | array  | default set | Seed rules intended for soft permissions/prompts. Existing conflicting manual/user rules win during seeding.      |
-| `policy.heuristics`    | object | see below   | Runtime structural pattern detection. Catches dangerous patterns that simple matching misses.                     |
-
-#### Guardrail / Permission Entry
-
-Each entry in `guardrails` and `permissions`:
-
-| Field                  | Required | Description                                                                  |
-| ---------------------- | -------- | ---------------------------------------------------------------------------- |
-| `id`                   | Yes      | Slug-like identifier. 3-64 chars, `[a-z0-9._-]`, must start with `[a-z0-9]`. |
-| `decision`             | Yes      | `"allow"`, `"ask"`, or `"block"`.                                            |
-| `label`                | No       | Short human-readable label shown in the iOS approval UI.                     |
-| `reason`               | No       | Why this rule exists (shown in audit log).                                   |
-| `match.tool`           | No       | Tool name: `"bash"`, `"read"`, `"edit"`, `"write"`.                          |
-| `match.executable`     | No       | Binary name for bash commands (e.g. `"git"`, `"rm"`).                        |
-| `match.commandMatches` | No       | Glob pattern against the full bash command string.                           |
-| `match.pathMatches`    | No       | Glob pattern against file paths (read/edit/write).                           |
-| `match.pathWithin`     | No       | Directory containment — matches if path is under this directory.             |
-| `match.domain`         | No       | Domain match for network operations.                                         |
-
-At least one `match.*` field is required per entry.
-
-#### Heuristics
-
-| Setting                              | Default   | What it catches                                                                                 |
-| ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------- |
-| `policy.heuristics.pipeToShell`      | `"ask"`   | Piped execution: `curl ... \| bash`, `wget ... \| sh`, etc.                                     |
-| `policy.heuristics.dataEgress`       | `"ask"`   | Bulk data exfiltration: large `curl`/`wget` POSTs, `scp`/`rsync` to external hosts.             |
-| `policy.heuristics.secretEnvInUrl`   | `"ask"`   | URLs embedding env vars with secret-like names (`$AWS_SECRET_ACCESS_KEY`, `$TOKEN`).            |
-| `policy.heuristics.secretFileAccess` | `"block"` | Reads/writes to credential files: `~/.ssh/id_*`, `~/.aws/credentials`, `.env` with secret keys. |
-
-Each heuristic accepts `"allow"`, `"ask"`, `"block"`, or `false` (disabled).
-
-Manual and user-learned rules live in `~/.config/oppi/rules.json`. After a rule exists there, editing `policy.guardrails` or `policy.permissions` does not rewrite or override it; use the policy UI/API or edit `rules.json` deliberately.
-
----
-
-## Auth State (managed — do not edit)
-
-These fields live in `config.json` but are managed by `oppi pair`, `oppi token rotate`, and the iOS client. Manual edits risk breaking authentication or push notifications.
-
-| Field                   | Type     | Managed by                       | Description                                                                    |
-| ----------------------- | -------- | -------------------------------- | ------------------------------------------------------------------------------ |
-| `token`                 | string   | `oppi pair`, `oppi token rotate` | Owner bearer token. Used by all authenticated HTTP/WS requests.                |
-| `pairingToken`          | string   | `oppi pair`                      | One-time bootstrap token. Short-lived (90s default). Consumed by `POST /pair`. |
-| `pairingTokenExpiresAt` | number   | `oppi pair`                      | Pairing token expiry (epoch ms).                                               |
-| `authDeviceTokens`      | string[] | `POST /pair`                     | Long-lived device tokens issued during pairing. Each iOS device gets one.      |
-| `pushDeviceTokens`      | string[] | iOS client                       | APNs device tokens registered by iOS for push notifications.                   |
-| `liveActivityToken`     | string   | iOS client                       | APNs token for iOS Live Activity updates.                                      |
-
-Token matching: both `token` (owner) and `authDeviceTokens` (device) are accepted as Bearer tokens. Comparison uses constant-time equality to prevent timing attacks.
-
-```bash
-# Generate pairing QR code (issues pairingToken, prints QR)
-oppi pair
-
-# Rotate the owner token (invalidates existing, devices need re-pair)
-oppi token rotate
-```
-
----
-
 ## Full Example
 
 ```json
@@ -279,7 +207,6 @@ oppi token rotate
   "workspaceIdleTimeoutMs": 1800000,
   "maxSessionsPerWorkspace": 20,
   "maxSessionsGlobal": 40,
-  "approvalTimeoutMs": 120000,
   "permissionGate": true,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
@@ -288,18 +215,6 @@ oppi token rotate
   "images": { "autoResize": false },
   "extensions": {
     "subagents": { "maxDepth": 1, "autoStopWhenDone": true }
-  },
-  "policy": {
-    "schemaVersion": 1,
-    "fallback": "allow",
-    "guardrails": [],
-    "permissions": [],
-    "heuristics": {
-      "pipeToShell": "ask",
-      "dataEgress": "ask",
-      "secretEnvInUrl": "ask",
-      "secretFileAccess": "block"
-    }
   }
 }
 ```

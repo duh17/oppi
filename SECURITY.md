@@ -2,18 +2,11 @@
 
 Oppi runs a coding agent on your machine with filesystem and tool access. It is provided as-is with no warranty. Use at your own risk.
 
-## Permission gate
+## Permission prompts
 
-A built-in policy engine gates every tool call. For each call, the gate can allow it, send it to your phone for approval, or block it. By default, most operations auto-run, but built-in heuristics catch dangerous patterns:
+Oppi no longer ships a server-side policy engine. SDK sessions load the user's global Pi `permission-gate` extension by default (`~/.pi/agent/extensions/permission-gate.ts`), and Oppi relays that extension's standard Pi UI dialogs to the client.
 
-- **Pipe to shell** — commands piped from curl/wget into sh/bash
-- **Data egress** — curl/wget with POST data or upload flags
-- **Secret access** — reads of `.env`, credentials, private keys, `~/.ssh/`
-- **Secret in URL** — environment variables expanded inside URLs
-
-When a heuristic triggers, you get a push notification on your phone with the full command. You decide: allow or deny, scoped to once, this session, or globally.
-
-See [policy engine docs](server/docs/policy-engine.md) for rules, heuristics, and audit logging.
+Treat this as user-owned defense in depth, not the hard security boundary. The extension can ask before high-impact actions and block obvious hazards, but real containment should come from workspace isolation, TLS/auth, and least-privilege host configuration.
 
 ## Authentication
 

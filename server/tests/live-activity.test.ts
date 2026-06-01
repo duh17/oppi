@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveActivityBridge } from "../src/live-activity.js";
 import type { PushClient } from "../src/push.js";
 import type { Storage } from "../src/storage.js";
-import type { GateServer } from "../src/gate.js";
 import type { Session } from "../src/types.js";
 import type { SessionBroadcastEvent } from "../src/sessions.js";
 
@@ -32,7 +31,6 @@ function makePush(): PushClient & {
   return {
     updates,
     ends,
-    sendPermissionPush: vi.fn(async () => true),
     sendSessionEventPush: vi.fn(async () => true),
     sendLiveActivityUpdate: vi.fn(
       async (token: string, contentState: Record<string, unknown>, staleDate?: number, priority: 5 | 10 = 5) => {
@@ -71,22 +69,14 @@ function makeStorageStub(
   return stub as unknown as Storage & { clearedToken: boolean };
 }
 
-function makeGate(pendingCount = 0): GateServer {
-  return {
-    getPendingForUser: vi.fn(() => Array.from({ length: pendingCount }, (_, i) => ({ id: `p${i}` }))),
-  } as unknown as GateServer;
-}
-
 function makeBridge(opts: {
   push?: ReturnType<typeof makePush>;
   storage?: ReturnType<typeof makeStorageStub>;
-  gate?: ReturnType<typeof makeGate>;
 } = {}) {
   const push = opts.push ?? makePush();
   const storage = opts.storage ?? makeStorageStub();
-  const gate = opts.gate ?? makeGate();
-  const bridge = new LiveActivityBridge(push, storage, gate);
-  return { bridge, push, storage, gate };
+  const bridge = new LiveActivityBridge(push, storage);
+  return { bridge, push, storage };
 }
 
 function event(
@@ -186,11 +176,13 @@ describe("LiveActivityBridge", () => {
       expect(push.updates[0].priority).toBe(10);
     });
 
-    it("maps permission_request with priority 10", () => {
+    it("maps extension UI requests with priority 10", () => {
       const { bridge, push } = makeBridge();
 
-      bridge.handleSessionEvent(event("permission_request", "s1", {
-        id: "p1", tool: "bash", args: {},
+      bridge.handleSessionEvent(event("extension_ui_request", "s1", {
+        id: "ui-1",
+        method: "select",
+        title: "Permission required",
       }));
       vi.advanceTimersByTime(800);
 
@@ -312,13 +304,13 @@ describe("LiveActivityBridge", () => {
   });
 
   describe("content state", () => {
-    it("includes pending permission count from gate", () => {
-      const { bridge, push } = makeBridge({ gate: makeGate(3) });
+    it("sets pending permission count to zero", () => {
+      const { bridge, push } = makeBridge();
 
       bridge.handleSessionEvent(event("agent_start"));
       vi.advanceTimersByTime(800);
 
-      expect(push.updates[0].contentState.pendingPermissions).toBe(3);
+      expect(push.updates[0].contentState.pendingPermissions).toBe(0);
     });
 
     it("computes elapsed seconds from session createdAt", () => {
@@ -382,8 +374,8 @@ describe("LiveActivityBridge", () => {
     });
   });
 
-  describe("queueUpdate (gate events)", () => {
-    it("queues gate-originated updates", () => {
+  describe("queueUpdate", () => {
+    it("queues direct updates", () => {
       const { bridge, push } = makeBridge();
 
       bridge.queueUpdate({

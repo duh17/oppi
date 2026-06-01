@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "../src/session-start.js";
-import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, Session, Workspace } from "../src/types.js";
 import type { WorkspaceRuntime } from "../src/workspace-runtime.js";
@@ -66,7 +65,6 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     storage,
     runtimeManager,
     config: TEST_CONFIG,
-    gate: { destroySessionGuard: vi.fn() } as unknown as GateServer,
     eventRingCapacity: 20,
     getSkillPathResolver: vi.fn(() => null),
     getAndClearPendingExtensionFactories: vi.fn(() => []),
@@ -127,6 +125,5 @@ describe("SessionStartCoordinator status persistence", () => {
       workspaceId: `session-${session.id}`,
       sessionId: session.id,
     });
-    expect(deps.gate.destroySessionGuard).toHaveBeenCalledWith(session.id);
   });
 });

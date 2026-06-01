@@ -23,7 +23,6 @@ describe("Storage config validation", () => {
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
-    expect(result.config?.approvalTimeoutMs).toBe(120_000);
     expect(result.config?.tls?.mode).toBe("self-signed");
     expect(result.config?.images?.autoResize).toBe(false);
   });
@@ -37,31 +36,6 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("config.unknownKey: unknown key"))).toBe(true);
-  });
-
-  it("accepts approvalTimeoutMs = 0 for non-expiring approvals", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      approvalTimeoutMs: 0,
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-    expect(result.config?.approvalTimeoutMs).toBe(0);
-  });
-
-  it("rejects negative approvalTimeoutMs", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      approvalTimeoutMs: -1,
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("config.approvalTimeoutMs: expected >= 0"))).toBe(
-      true,
-    );
   });
 
   it("accepts tls self-signed config", () => {
@@ -152,40 +126,7 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.unknownField: unknown key"))).toBe(true);
   });
 
-  it("accepts declarative policy config", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      policy: {
-        schemaVersion: 1,
-        mode: "balanced",
-        fallback: "ask",
-        guardrails: [
-          {
-            id: "block-secret-files",
-            decision: "block",
-            risk: "critical",
-            match: { tool: "read", pathMatches: "*identity_ed25519*" },
-          },
-        ],
-        permissions: [
-          {
-            id: "ask-git-push",
-            decision: "ask",
-            risk: "high",
-            label: "Push code to remote",
-            match: { tool: "bash", executable: "git", commandMatches: "git push*" },
-          },
-        ],
-      },
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
-    expect(result.valid).toBe(true);
-    expect(result.config?.policy?.fallback).toBe("ask");
-    expect(result.config?.policy?.guardrails[0]?.decision).toBe("block");
-  });
-
-  it("rejects unknown keys in policy config in strict mode", () => {
+  it("accepts legacy policy config without preserving it", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
       policy: {
@@ -193,15 +134,12 @@ describe("Storage config validation", () => {
         fallback: "ask",
         guardrails: [],
         permissions: [],
-        unknownKey: true,
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("config.policy.unknownKey: unknown key"))).toBe(
-      true,
-    );
+    expect(result.valid).toBe(true);
+    expect(result.config?.policy).toBeUndefined();
   });
 
   it("accepts extensions.subagents config with all fields", () => {

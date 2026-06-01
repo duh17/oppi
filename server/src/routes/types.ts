@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { Storage } from "../storage.js";
 import type { SessionManager } from "../sessions.js";
-import type { GateServer } from "../gate.js";
 import type { SkillRegistry, UserSkillStore } from "../skills.js";
 import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
@@ -17,7 +16,6 @@ export interface RouteContext {
   storage: Storage;
   sessions: SessionManager;
   mirrorRuntime?: PiTuiMirrorRuntime;
-  gate: GateServer;
   skillRegistry: SkillRegistry;
   userSkillStore: UserSkillStore;
   providerAuth: ProviderAuthManager;

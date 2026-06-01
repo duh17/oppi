@@ -25,7 +25,6 @@ const AGGREGATED_SUM_METRICS = new Set<ServerMetricName>([
   "server.ws_message_sent",
   "server.ws_message_received",
   "server.ws_binary_received_bytes",
-  "server.gate_decision",
   "server.turn_input_tokens",
   "server.turn_output_tokens",
   "server.turn_cost",

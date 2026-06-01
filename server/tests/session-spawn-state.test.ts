@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/sessions.js";
-import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, Session, Workspace } from "../src/types.js";
 
@@ -92,11 +91,7 @@ function makeStorageHarness(): Storage & {
 
 function makeManagerHarness() {
   const storage = makeStorageHarness();
-  const gate = {
-    destroySessionGuard: vi.fn(),
-  } as unknown as GateServer;
-
-  const manager = new SessionManager(storage, gate);
+  const manager = new SessionManager(storage);
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 
   return { manager, storage };

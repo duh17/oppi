@@ -19,8 +19,8 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 | Surface | Enabled by | Declared in | Loaded by | Notes |
 |---|---|---|---|---|
 | Host pi extensions | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader | Must work without Oppi server services |
+| Global `permission-gate` | `permissionGate` server config, default `true` | `~/.pi/agent/extensions/permission-gate.ts` | pi resource loader via Oppi SDK session setup | Loaded as a normal Pi host extension even when workspace allowlists omit it |
 | Oppi built-ins | Workspace `extensions` allowlist | `server/extensions/` | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
-| `permission-gate` | Oppi server policy | Server-managed, not package-declared | Oppi server | Never loaded from host extension paths |
 | Mobile UI compatibility | Native Oppi client + server bridge | Protocol and UI bridge code | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
@@ -56,7 +56,7 @@ pi -e <package-or-path>
 Oppi keeps pi's extension system, then adds these rules:
 
 1. **Built-in workspace extensions**: `ask`, `subagents`, `voice`, and `oppi-admin`.
-2. **One server-managed policy name**: `permission-gate`.
+2. **Global permission gate loading**: `permission-gate` is loaded from the user's Pi extension directory when `permissionGate` is enabled.
 3. **Workspace allowlist filtering** through `workspace.extensions`.
 4. **Mobile UI compatibility** for common extension UI calls.
 
@@ -70,7 +70,7 @@ At session startup, Oppi begins with pi's normal extension sources for the sessi
 - settings-declared extension paths (`settings.json` `extensions` arrays)
 - package-provided extensions installed through pi (`pi install`)
 
-Oppi then filters out server-owned names from those host paths and injects enabled built-ins as in-process factories.
+Oppi then filters host paths according to the workspace allowlist, keeps the configured global `permission-gate` extension loaded, drops project-local duplicate `permission-gate` paths when the global gate is active, and injects enabled built-ins as in-process factories.
 
 ## Reload behavior
 
@@ -80,9 +80,7 @@ Oppi built-ins are server code. `/reload` recreates their inline factory registr
 
 ## Oppi-owned names
 
-`permission-gate` is fully server-managed. It is backed by Oppi's policy server and is never loaded from host extension paths.
-
-Oppi also exposes these built-in extension names in the workspace extension picker:
+Oppi exposes these built-in extension names in the workspace extension picker:
 
 - `ask`
 - `subagents`
@@ -99,7 +97,7 @@ That means:
 
 - include `ask`, `subagents`, `voice`, or `oppi-admin` explicitly if you want them
 - omitting one of those names disables it for that workspace
-- `permission-gate` is not controlled through this list because it is server-managed
+- `permission-gate` is loaded globally when `permissionGate` is enabled, even if this allowlist omits it
 
 If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves Oppi built-ins off by default.
 
@@ -114,7 +112,7 @@ The picker response:
 - includes package-installed extensions
 - includes settings-declared local extension paths
 - includes Oppi built-ins (`ask`, `subagents`, `voice`, `oppi-admin`)
-- excludes managed names such as `permission-gate`
+- includes global host extensions such as `permission-gate`
 - deduplicates by extension name using Oppi built-ins first, then pi host extensions
 
 ## Mobile rendering differences
@@ -224,6 +222,8 @@ Oppi maps fire-and-forget extension UI calls to a compact native card above the 
 - `ctx.ui.setEditorText()` / `pasteToEditor()` → composer text handoff
 
 This is a native mobile surface, not a terminal footer/header. `setFooter`, `setHeader`, arbitrary `custom()` components, and editor replacement remain terminal-first APIs with limited compatibility behavior in Oppi.
+
+Mirror mode uses the same protocol surface from an interactive terminal Pi process. Keep the mirror-specific support table and first-wins dialog race rules in `docs/oppi-mirror.md#extension-ui-compatibility-matrix` rather than duplicating them here.
 
 ## Relevant implementation files
 

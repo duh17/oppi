@@ -30,17 +30,6 @@ export interface APNsConfig {
 
 // ─── Push Payloads ───
 
-export interface PermissionPushPayload {
-  permissionId: string;
-  sessionId: string;
-  sessionName?: string;
-  tool: string;
-  displaySummary: string;
-  reason: string;
-  timeoutAt: number;
-  expires?: boolean;
-}
-
 export interface SessionEventPushPayload {
   sessionId: string;
   sessionName?: string;
@@ -84,37 +73,6 @@ export class APNsClient {
   }
 
   // ─── Public API ───
-
-  /**
-   * Send a permission request push notification.
-   * Time-sensitive, with Allow/Deny actions.
-   */
-  async sendPermissionPush(deviceToken: string, payload: PermissionPushPayload): Promise<boolean> {
-    const apnsPayload = {
-      aps: {
-        alert: {
-          title: "Permission Request",
-          subtitle: payload.sessionName || payload.sessionId,
-          body: `${payload.tool}: ${payload.displaySummary}`,
-        },
-        category: "PERMISSION_REQUEST",
-        "interruption-level": "time-sensitive",
-        "relevance-score": 0.9,
-        sound: "default",
-      },
-      permissionId: payload.permissionId,
-      sessionId: payload.sessionId,
-      tool: payload.tool,
-      summary: payload.displaySummary,
-      timeoutAt: payload.timeoutAt,
-    };
-
-    return this.send(deviceToken, apnsPayload, {
-      pushType: "alert",
-      priority: 10,
-      expiration: payload.expires === false ? undefined : Math.floor(payload.timeoutAt / 1000),
-    });
-  }
 
   /**
    * Send a session event push (ended, error).
@@ -375,12 +333,6 @@ export class APNsClient {
  * All sends are silent no-ops.
  */
 export class NoopAPNsClient {
-  async sendPermissionPush(
-    _deviceToken: string,
-    _payload: PermissionPushPayload,
-  ): Promise<boolean> {
-    return false;
-  }
   async sendSessionEventPush(
     _deviceToken: string,
     _payload: SessionEventPushPayload,

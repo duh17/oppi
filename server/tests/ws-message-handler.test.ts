@@ -19,9 +19,6 @@ interface HandlerHarness {
     respondToUIRequest: ReturnType<typeof vi.fn>;
     forwardClientCommand: ReturnType<typeof vi.fn>;
   };
-  gate: {
-    resolveDecision: ReturnType<typeof vi.fn>;
-  };
   ensureSessionContextWindow: ReturnType<typeof vi.fn>;
 }
 
@@ -56,15 +53,10 @@ function makeHarness(): HandlerHarness {
     forwardClientCommand: vi.fn(async () => {}),
   };
 
-  const gate = {
-    resolveDecision: vi.fn(() => true),
-  };
-
   const ensureSessionContextWindow = vi.fn((value: Session) => value);
 
   const deps: WsMessageHandlerDeps = {
     sessions,
-    gate,
     ensureSessionContextWindow,
   };
 
@@ -75,7 +67,6 @@ function makeHarness(): HandlerHarness {
     session,
     sent,
     sessions,
-    gate,
     ensureSessionContextWindow,
   };
 }
@@ -237,25 +228,6 @@ describe("WsMessageHandler", () => {
         requestId: "req-queue-2",
         success: true,
         data: queue,
-      },
-    ]);
-  });
-
-  it("reports missing permission request IDs", async () => {
-    const harness = makeHarness();
-    harness.gate.resolveDecision.mockReturnValueOnce(false);
-
-    await dispatch(harness, {
-      type: "permission_response",
-      id: "perm-1",
-      action: "allow",
-    });
-
-    expect(harness.gate.resolveDecision).toHaveBeenCalledWith("perm-1", "allow", "once", undefined);
-    expect(harness.sent).toEqual([
-      {
-        type: "error",
-        error: "Permission request not found: perm-1",
       },
     ]);
   });

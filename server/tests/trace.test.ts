@@ -7,12 +7,10 @@ import {
   getSessionAttachment,
   materializeToolMediaContentBlocks,
 } from "../src/session-attachments.js";
-import type { AuditEntry } from "../src/audit.js";
 import {
   parseJsonl,
   readSessionTrace,
   buildSessionContext,
-  mergePermissionAuditEvents,
 } from "../src/trace.js";
 
 // ─── parseJsonl unit tests ───
@@ -845,7 +843,7 @@ describe("buildSessionContext edge cases", () => {
   });
 });
 
-// ─── media replay and permission audit merge ───
+// ─── media replay ───
 
 describe("trace media replay", () => {
   const tempDirs: string[] = [];
@@ -1022,78 +1020,6 @@ describe("trace media replay", () => {
     expect(attachment ? await readFile(attachment.path) : null).toEqual(pngBytes);
   });
 });
-
-describe("permission audit trace merge", () => {
-  it("merges latest permission decisions by request id without a client audit fetch", () => {
-    const trace = [
-      { id: "user-1", type: "user" as const, timestamp: "2026-05-21T10:00:10.000Z", text: "hi" },
-      {
-        id: "assistant-1",
-        type: "assistant" as const,
-        timestamp: "2026-05-21T10:00:30.000Z",
-        text: "done",
-      },
-    ];
-    const auditEntries: AuditEntry[] = [
-      auditEntry({
-        id: "audit-user-allow",
-        requestId: "perm-1",
-        timestamp: Date.parse("2026-05-21T10:00:20.000Z"),
-        decision: "allow",
-        resolvedBy: "user",
-      }),
-      auditEntry({
-        id: "audit-auto-ask",
-        requestId: "perm-1",
-        timestamp: Date.parse("2026-05-21T10:00:12.000Z"),
-        decision: "ask",
-        resolvedBy: "auto_review",
-        autoReview: { outcome: "ask", status: "ask", reason: "needs human" },
-      }),
-      auditEntry({
-        id: "audit-auto-allow",
-        requestId: "perm-2",
-        timestamp: Date.parse("2026-05-21T10:00:05.000Z"),
-        decision: "allow",
-        resolvedBy: "auto_review",
-        autoReview: { outcome: "allow", status: "allow", reason: "read-only" },
-      }),
-      auditEntry({
-        id: "audit-policy",
-        timestamp: Date.parse("2026-05-21T10:00:25.000Z"),
-        decision: "allow",
-        resolvedBy: "policy",
-      }),
-    ];
-
-    const merged = mergePermissionAuditEvents(trace, auditEntries);
-
-    expect(merged.map((event) => event.id)).toEqual(["perm-2", "user-1", "perm-1", "assistant-1"]);
-    expect(merged[0]).toMatchObject({
-      type: "permission",
-      permission: { outcome: "autoAllowed", reason: "read-only" },
-    });
-    expect(merged[2]).toMatchObject({
-      type: "permission",
-      permission: { outcome: "allowed", auditId: "audit-user-allow" },
-    });
-  });
-});
-
-function auditEntry(overrides: Partial<AuditEntry>): AuditEntry {
-  return {
-    id: "audit-1",
-    timestamp: Date.now(),
-    sessionId: "session-1",
-    workspaceId: "workspace-1",
-    tool: "bash",
-    displaySummary: "git status",
-    decision: "allow",
-    resolvedBy: "user",
-    layer: "test",
-    ...overrides,
-  };
-}
 
 function makeICO(width: number, height: number): Buffer {
   const bytes = Buffer.alloc(22);

@@ -11,7 +11,6 @@ import {
   readSessionTraceFromFile,
   readSessionTraceFromFiles,
   findToolOutput,
-  mergePermissionAuditEvents,
   type TraceViewMode,
 } from "../trace.js";
 import {
@@ -30,7 +29,6 @@ import {
   validateCwdAlignment,
   type LocalSessionCatalogSnapshot,
 } from "../local-sessions.js";
-import { buildPermissionMessage } from "../gate.js";
 import {
   promoteStoppedMirrorToOppi,
   canResumeStoppedMirrorAsOppi,
@@ -38,6 +36,7 @@ import {
 import {
   type ChatAttachmentRef,
   type LocalSession,
+  type ServerMessage,
   type Session,
   type SessionSummary,
   type Workspace,
@@ -171,49 +170,64 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return Array.from(byId.values()).sort(compareWorkspaceListSessions);
   }
 
-  function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {
-    const asks: Array<Record<string, unknown>> = [];
-    for (const sessionId of ctx.sessions.getActiveSessionIds()) {
-      const session = ctx.sessions.getActiveSession(sessionId);
-      if (!session || session.workspaceId !== workspaceId) {
-        continue;
-      }
-
-      const message = ctx.sessions.getPendingAskMessage(sessionId);
-      if (
-        !message ||
-        message.type !== "extension_ui_request" ||
-        message.method !== "ask" ||
-        !message.questions
-      ) {
-        continue;
-      }
-
-      asks.push({
-        id: message.id,
-        sessionId: message.sessionId,
-        workspaceId,
-        questions: message.questions,
-        allowCustom: message.allowCustom ?? true,
-        ...(message.timeout !== undefined ? { timeout: message.timeout } : {}),
-        ...(message.timeoutAt !== undefined ? { timeoutAt: message.timeoutAt } : {}),
-      });
+  function pendingUIRequestProviders(): PendingUIRequestProvider[] {
+    const providers: PendingUIRequestProvider[] = [ctx.sessions];
+    if (ctx.mirrorRuntime) {
+      providers.push(ctx.mirrorRuntime);
     }
-    return asks;
+    return providers;
   }
 
-  function pendingPermissionSnapshots(
-    workspaceId: string,
-    nowMs: number,
-  ): Array<Record<string, unknown>> {
-    return ctx.gate
-      .getPendingForUser()
-      .filter((pending) => pending.workspaceId === workspaceId)
-      .filter((pending) => pending.expires !== true || pending.timeoutAt > nowMs)
-      .map((pending) => ({
-        ...buildPermissionMessage(pending),
-        workspaceId: pending.workspaceId,
-      }));
+  function isPendingAskMessage(
+    message: ServerMessage | undefined,
+  ): message is Extract<ServerMessage, { type: "extension_ui_request" }> {
+    return (
+      message?.type === "extension_ui_request" &&
+      message.method === "ask" &&
+      Array.isArray(message.questions) &&
+      message.questions.length > 0
+    );
+  }
+
+  function pendingBlockingUIRequestCount(
+    provider: PendingUIRequestProvider,
+    sessionId: string,
+  ): number {
+    const askCount = isPendingAskMessage(provider.getPendingAskMessage(sessionId)) ? 1 : 0;
+    const dialogCount = (provider.getPendingUIRequestMessages?.(sessionId) ?? []).filter(
+      (message) => message.type === "extension_ui_request",
+    ).length;
+    return askCount + dialogCount;
+  }
+
+  function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {
+    const asks: Array<Record<string, unknown>> = [];
+    const seenRequestIds = new Set<string>();
+    for (const provider of pendingUIRequestProviders()) {
+      for (const sessionId of provider.getActiveSessionIds()) {
+        const session = provider.getActiveSession(sessionId);
+        if (!session || session.workspaceId !== workspaceId) {
+          continue;
+        }
+
+        const message = provider.getPendingAskMessage(sessionId);
+        if (!isPendingAskMessage(message) || seenRequestIds.has(message.id)) {
+          continue;
+        }
+        seenRequestIds.add(message.id);
+
+        asks.push({
+          id: message.id,
+          sessionId: message.sessionId,
+          workspaceId,
+          questions: message.questions,
+          allowCustom: message.allowCustom ?? true,
+          ...(message.timeout !== undefined ? { timeout: message.timeout } : {}),
+          ...(message.timeoutAt !== undefined ? { timeoutAt: message.timeoutAt } : {}),
+        });
+      }
+    }
+    return asks;
   }
 
   function canonicalSessionFilePath(path: string): string {
@@ -270,15 +284,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       .find((session) => sessionMatchesPiIdentity(session, identity));
   }
 
-  function workspaceAttentionSnapshot(
-    workspaceId: string,
-    serverNow: number,
-  ): {
+  function workspaceAttentionSnapshot(workspaceId: string): {
     permissions: Array<Record<string, unknown>>;
     asks: Array<Record<string, unknown>>;
   } {
     return {
-      permissions: pendingPermissionSnapshots(workspaceId, serverNow),
+      permissions: [],
       asks: pendingAskSnapshots(workspaceId),
     };
   }
@@ -334,8 +345,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   type SessionStatusFilter = "active" | "stopped";
 
   type PendingAttentionCounts = {
-    permissions: Map<string, number>;
     asks: Map<string, number>;
+  };
+
+  type PendingUIRequestProvider = {
+    getActiveSessionIds(): Set<string>;
+    getActiveSession(sessionId: string): Session | undefined;
+    getPendingAskMessage(sessionId: string): ServerMessage | undefined;
+    getPendingUIRequestMessages?(sessionId: string): ServerMessage[];
   };
 
   type ManagedSessionListRow = SessionSummary & {
@@ -544,7 +561,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.json(res, {
       workspaceId,
       serverNow,
-      attention: workspaceAttentionSnapshot(workspaceId, serverNow),
+      attention: workspaceAttentionSnapshot(workspaceId),
     });
   }
 
@@ -552,32 +569,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return session.status !== "stopped";
   }
 
-  function incrementCount(map: Map<string, number>, key: string): void {
-    map.set(key, (map.get(key) ?? 0) + 1);
+  function addCount(map: Map<string, number>, key: string, count: number): void {
+    if (count <= 0) return;
+    map.set(key, (map.get(key) ?? 0) + count);
   }
 
-  function collectPendingAttentionCounts(serverNow: number): PendingAttentionCounts {
-    const permissions = new Map<string, number>();
-    for (const pending of ctx.gate.getPendingForUser()) {
-      if (pending.expires === true && pending.timeoutAt <= serverNow) {
-        continue;
-      }
-      incrementCount(permissions, pending.sessionId);
-    }
-
+  function collectPendingAttentionCounts(): PendingAttentionCounts {
     const asks = new Map<string, number>();
-    for (const sessionId of ctx.sessions.getActiveSessionIds()) {
-      const message = ctx.sessions.getPendingAskMessage(sessionId);
-      if (
-        message?.type === "extension_ui_request" &&
-        message.method === "ask" &&
-        message.questions
-      ) {
-        incrementCount(asks, sessionId);
+    for (const provider of pendingUIRequestProviders()) {
+      for (const sessionId of provider.getActiveSessionIds()) {
+        addCount(asks, sessionId, pendingBlockingUIRequestCount(provider, sessionId));
       }
     }
 
-    return { permissions, asks };
+    return { asks };
   }
 
   function buildManagedSessionListRows(
@@ -588,7 +593,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       const summary = buildSessionSummary(ctx.ensureSessionContextWindow(session));
       return {
         ...summary,
-        pendingPermissionCount: attention.permissions.get(summary.id) ?? 0,
+        pendingPermissionCount: 0,
         pendingAskCount: attention.asks.get(summary.id) ?? 0,
       };
     });
@@ -622,7 +627,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   function sessionListUrgencyScore(session: SessionListRow): number {
-    if (session.pendingPermissionCount > 0) return 30;
     if (session.pendingAskCount > 0) return 20;
     switch (session.status) {
       case "error":
@@ -717,7 +721,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspace.id, recentDays, serverNow)
           : ctx.storage.listAllWorkspaceSessionSnapshots(workspace.id),
       );
-    const attention = collectPendingAttentionCounts(serverNow);
+    const attention = collectPendingAttentionCounts();
     const sessions = buildManagedSessionListRows(
       mergeActiveSessionsAcrossWorkspaces(
         projectedSessions,
@@ -803,7 +807,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const serverNow = Date.now();
-    const attention = collectPendingAttentionCounts(serverNow);
+    const attention = collectPendingAttentionCounts();
     const response: {
       workspaceId: string;
       sinceMs?: number;
@@ -1658,13 +1662,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const latestSession = ctx.storage.getSession(sessionId) || hydratedSession;
     const hydratedLatest = ctx.ensureSessionContextWindow(latestSession);
-    const auditEntries = ctx.gate.auditLog.query({
-      sessionId,
-      workspaceId,
-      limit: 500,
-    });
-    const timelineTrace = mergePermissionAuditEvents(trace || [], auditEntries);
-    helpers.compressedJson(req, res, { session: hydratedLatest, trace: timelineTrace });
+    helpers.compressedJson(req, res, { session: hydratedLatest, trace: trace || [] });
   }
 
   async function handleDeleteSession(

@@ -58,28 +58,6 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
-  it("flags gate imports of session runtime modules", () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-gate-"));
-
-    try {
-      write(join(repoRoot, "server/src/gate.ts"), 'import "./session-lifecycle.js";\n');
-      write(join(repoRoot, "server/src/session-lifecycle.ts"), "export const x = 1;\n");
-
-      const violations = findServerLayerViolations(repoRoot);
-      expect(violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            rule: "gate-runtime-boundary",
-            importer: "server/src/gate.ts",
-            target: "server/src/session-lifecycle.ts",
-          }),
-        ]),
-      );
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
   it("flags iOS runtime UIKit imports and view direct APIClient use", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-ios-"));
 

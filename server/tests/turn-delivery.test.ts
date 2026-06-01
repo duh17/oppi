@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
-import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
@@ -48,11 +47,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     saveWorkspace: vi.fn(),
   } as unknown as Storage;
 
-  const gate = {
-    destroySessionGuard: vi.fn(),
-  } as unknown as GateServer;
-
-  const manager = new SessionManager(storage, gate);
+  const manager = new SessionManager(storage);
 
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 

@@ -303,10 +303,6 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Session switch latency: tap session row to chat content visible. Tags: cached.",
   },
-  "chat.permission_overlay_ms": {
-    unit: "ms",
-    description: "Permission overlay display to user tap (allow/deny). Tags: action.",
-  },
   "chat.share_export_ms": {
     unit: "ms",
     description:

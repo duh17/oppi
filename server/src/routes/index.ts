@@ -7,12 +7,11 @@ import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createUploadRoutes } from "./uploads.js";
-import { createStreamingRoutes } from "./streaming.js";
-import { createPolicyRoutes } from "./policy.js";
 import { createThemeRoutes } from "./themes.js";
 import { createTelemetryRoutes } from "./telemetry.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
 import { createProviderAuthRoutes } from "./provider-auth.js";
+import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -22,8 +21,6 @@ export class RouteHandler {
 
   constructor(private readonly ctx: RouteContext) {
     this.dispatchers = [
-      createStreamingRoutes(this.ctx, this.helpers),
-      createPolicyRoutes(this.ctx, this.helpers),
       createIdentityRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
@@ -33,6 +30,7 @@ export class RouteHandler {
       createThemeRoutes(this.ctx, this.helpers),
       createWorkspaceFileRoutes(this.ctx, this.helpers),
       createProviderAuthRoutes(this.ctx, this.helpers),
+      createE2EUIHarnessRoutes(this.ctx, this.helpers),
     ];
   }
 

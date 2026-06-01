@@ -20,7 +20,6 @@ export interface SessionLifecycleCoordinatorDeps {
   clearPendingStop: (active: StopSessionState) => PendingStop | null;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
-  destroySessionGuard: (sessionId: string) => void;
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
   stopSession: (sessionId: string) => Promise<void>;
   getSessionIdleTimeoutMs: () => number;
@@ -79,7 +78,6 @@ export class SessionLifecycleCoordinator {
       });
     }
 
-    this.deps.destroySessionGuard(active.session.id);
     active.pendingUIRequests.clear();
 
     if (!active.sdkBackend.isDisposed) {

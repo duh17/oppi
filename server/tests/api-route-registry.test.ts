@@ -31,7 +31,6 @@ const initialSchemaOperationIds = [
   "listWorkspaceQuickActions",
   "prepareWorkspaceQuickActionSelection",
   "createWorkspaceQuickActionSession",
-  "respondToPermission",
 ];
 
 const supervisionOperationIds = [
@@ -83,7 +82,6 @@ const supervisionOperationIds = [
   "listWorkspaceQuickActions",
   "prepareWorkspaceQuickActionSelection",
   "createWorkspaceQuickActionSession",
-  "respondToPermission",
 ];
 
 const settingsOperationIds = [
@@ -93,18 +91,9 @@ const settingsOperationIds = [
   "updateServerRuntime",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
-  "getAutoPermissionConfig",
-  "setAutoPermissionConfig",
   "createWorkspace",
   "updateWorkspace",
   "deleteWorkspace",
-  "getPolicyFallback",
-  "updatePolicyFallback",
-  "listPolicyRules",
-  "createPolicyRule",
-  "updatePolicyRule",
-  "deletePolicyRule",
-  "listPolicyAudit",
   "listProviderAuthStatus",
   "startProviderAuthFlow",
   "getProviderAuthFlow",
@@ -202,7 +191,7 @@ describe("api route registry", () => {
 
     expect(byOperationId.get("getWorkspaceAttention")?.surface).toBe("internal");
     expect(byOperationId.get("getWorkspaceAttention")?.nativeClientUses).toBeUndefined();
-    expect(byOperationId.get("respondToPermission")?.nativeClientUses).toContain("supervision");
+    expect(byOperationId.has("respondToPermission")).toBe(false);
   });
 
   it("tracks the initial schema-covered route set", () => {

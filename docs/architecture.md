@@ -8,7 +8,7 @@ This document explains the current production architecture at a conceptual level
 
 ## Runtime topology
 
-The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, policy decisions, and the mobile-facing session projection. Execution can be owned either by the server's pi SDK runtime or by a terminal pi TUI process connected through the mirror extension.
+The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing session projection. Execution can be owned either by the server's pi SDK runtime or by a terminal pi TUI process connected through the mirror extension.
 
 ```mermaid
 graph TD
@@ -26,7 +26,7 @@ graph TD
     Sessions[Managed SessionManager]
     Mirror[Pi TUI mirror runtime]
     Bridge[Mirror bridge WebSocket]
-    Policy[Policy and permission gate]
+    ExtensionUI[Pi extension UI relay]
     Storage[SQLite session store and local-session catalog]
     Project[Shared Pi session projection]
     Pi[pi SDK AgentSession]
@@ -46,7 +46,7 @@ graph TD
   Router --> Sessions
   Router --> Mirror
   Bridge --> Mirror
-  Sessions --> Policy
+  Sessions --> ExtensionUI
   Sessions --> Pi
   Sessions --> Project
   Mirror --> Project
@@ -79,7 +79,7 @@ graph TD
   Store --> Client
 ```
 
-The adapters differ only where ownership semantics differ: start/stop, abort, remote commands, permission gates, queue control, and extension UI response plumbing. Shared projection code owns pi event translation, session state mutation, tool-media materialization, first-message/title policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so a terminal session should not appear as two unrelated rows. See [Oppi Mirror mode](oppi-mirror.md) for the detailed mirror contract and test map.
+The adapters differ only where ownership semantics differ: start/stop, abort, remote commands, queue control, and extension UI response plumbing. Shared projection code owns pi event translation, session state mutation, tool-media materialization, first-message/title policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so a terminal session should not appear as two unrelated rows. See [Oppi Mirror mode](oppi-mirror.md) for the detailed mirror contract and test map.
 
 ## Live transport and navigation lanes
 
@@ -281,7 +281,7 @@ graph TD
   end
 
   subgraph Infrastructure[Shared infrastructure]
-    Gate[Permission gate<br/>gate.ts + policy.ts]
+    ExtensionRelay[Extension UI relay<br/>sdk-ui-bridge.ts]
     Ops[Search, metrics,<br/>push, live activity]
   end
 
@@ -298,7 +298,7 @@ graph TD
   Flow --> Project
   Mirror --> Project
   Flow --> Pi
-  Sessions --> Gate
+  Sessions --> ExtensionRelay
   Sessions --> Ops
 ```
 

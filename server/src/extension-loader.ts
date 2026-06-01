@@ -99,8 +99,8 @@ export function extensionNameFromPath(path: string): string {
  * List host extensions available for workspace selection.
  *
  * Scans the global host directory (`~/.pi/agent/extensions`) and, when `cwd`
- * is provided, the project-local directory (`<cwd>/.pi/extensions`). Managed
- * built-in extensions are excluded.
+ * is provided, the project-local directory (`<cwd>/.pi/extensions`). Oppi
+ * server built-in extension names are excluded.
  *
  * The result is deduplicated by extension name. Project-local entries win over
  * global ones because pi loads local extensions first.

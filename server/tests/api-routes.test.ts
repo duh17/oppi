@@ -34,10 +34,6 @@ const ROUTES = {
   wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
   wsQuickActionSession: /^\/workspaces\/([^/]+)\/quick-actions\/session$/,
-  policyRules: /^\/policy\/rules$/,
-  policyRuleDetail: /^\/policy\/rules\/([^/]+)$/,
-  policyAudit: /^\/policy\/audit$/,
-  policyFallback: /^\/policy\/fallback$/,
   telemetryMetricKit: /^\/telemetry\/metrickit$/,
   telemetryChatMetrics: /^\/telemetry\/chat-metrics$/,
 };
@@ -196,24 +192,6 @@ describe("Workspace-scoped API routes", () => {
     const m = "/workspaces/ws-1/quick-actions/session".match(ROUTES.wsQuickActionSession);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
-  });
-
-  it("matches policy rules route", () => {
-    expect("/policy/rules".match(ROUTES.policyRules)).toBeTruthy();
-  });
-
-  it("matches policy rule detail route", () => {
-    const m = "/policy/rules/rule-123".match(ROUTES.policyRuleDetail);
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("rule-123");
-  });
-
-  it("matches policy audit route", () => {
-    expect("/policy/audit".match(ROUTES.policyAudit)).toBeTruthy();
-  });
-
-  it("matches policy fallback route", () => {
-    expect("/policy/fallback".match(ROUTES.policyFallback)).toBeTruthy();
   });
 
   it("matches telemetry metrickit route", () => {

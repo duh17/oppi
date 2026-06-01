@@ -7,7 +7,7 @@
  * - Orphan/detached behavior
  * - Session lifecycle with children (idle guard gap)
  *
- * Note: spawnChildSession/spawnDetachedSession require a full GateServer + SDK
+ * Note: spawnChildSession/spawnDetachedSession require a full SDK
  * process and are tested via extensions/spawn-agent.test.ts (64 tests through
  * the mock context). These tests focus on the storage + query layer.
  */
@@ -18,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
-import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
 
@@ -119,11 +118,7 @@ function makeInMemoryStorage(): Storage & {
 }
 
 function makeManager(storage: Storage): SessionManager {
-  const gate = {
-    destroySessionGuard: vi.fn(),
-  } as unknown as GateServer;
-
-  const manager = new SessionManager(storage, gate);
+  const manager = new SessionManager(storage);
 
   // Stub idle timer — we're not testing timers here
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
@@ -132,7 +127,7 @@ function makeManager(storage: Storage): SessionManager {
 }
 
 /**
- * Seed sessions directly into storage (bypasses startSession which needs GateServer).
+ * Seed sessions directly into storage (bypasses startSession).
  * Use this when you need specific parent-child relationships without SDK processes.
  */
 function seedSessions(

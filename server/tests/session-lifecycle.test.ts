@@ -16,7 +16,6 @@ import {
   type SessionLifecycleSessionState,
 } from "../src/session-lifecycle.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
-import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
@@ -61,12 +60,7 @@ function makeManagerHarness(
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
   } as unknown as Storage;
 
-  const gate = {
-    destroySessionGuard: vi.fn(),
-    getGuardState: vi.fn(() => "guarded"),
-  } as unknown as GateServer;
-
-  const manager = new SessionManager(storage, gate);
+  const manager = new SessionManager(storage);
 
   // Disable idle timers for deterministic tests.
   (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
@@ -113,9 +107,7 @@ function makeManagerHarness(
     sdkPrompt,
     abort,
     dispose,
-    storage,
-    gate,
-  };
+    storage,  };
 }
 
 // Helper to call handlePiEvent which is private
@@ -159,13 +151,9 @@ describe("SessionManager startSession", () => {
       listSessions: vi.fn(() => [session]),
       saveSession: vi.fn(),
     } as unknown as Storage;
-    const gate = {
-      destroySessionGuard: vi.fn(),
-      getGuardState: vi.fn(() => "guarded"),
-    } as unknown as GateServer;
     const { sdkBackend } = makeSdkBackendStub();
     const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
-    const manager = new SessionManager(storage, gate);
+    const manager = new SessionManager(storage);
     (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 
     try {
@@ -432,7 +420,7 @@ describe("SessionManager extension UI", () => {
 
 describe("SessionManager session end", () => {
   it("cleans up resources on session end", async () => {
-    const { manager, events, gate } = makeManagerHarness();
+    const { manager, events } = makeManagerHarness();
 
     // Trigger handleSessionEnd (async since dispose() became awaitable)
     await (
@@ -441,7 +429,6 @@ describe("SessionManager session end", () => {
 
     expect(events.some((e) => e.type === "session_ended")).toBe(true);
     expect(manager.isActive("s1")).toBe(false);
-    expect(gate.destroySessionGuard).toHaveBeenCalledWith("s1");
   });
 
   // pendingResponses removed — SDK uses direct method calls.
@@ -1615,7 +1602,6 @@ function makeLifecycleDeps(
     clearPendingStop: vi.fn(() => null),
     broadcast: vi.fn(),
     persistSessionNow: vi.fn(),
-    destroySessionGuard: vi.fn(),
     releaseSession: vi.fn(),
     stopSession: vi.fn(async () => {}),
     getSessionIdleTimeoutMs: () => 300_000,
@@ -1650,7 +1636,6 @@ describe("SessionLifecycleCoordinator.handleSessionEnd", () => {
     expect(active.sdkBackend.dispose).toHaveBeenCalledTimes(1);
     expect(active.session.status).toBe("stopped");
     expect(deps.persistSessionNow).toHaveBeenCalledWith("key", active.session);
-    expect(deps.destroySessionGuard).toHaveBeenCalledWith("child-1");
     expect(deps.removeActiveSession).toHaveBeenCalledWith("key");
     expect(deps.releaseSession).toHaveBeenCalledWith({
       workspaceId: "ws-1",

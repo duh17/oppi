@@ -37,18 +37,8 @@ interface SetQueueMessage {
 
 export type WsSessionCommands = AgentRuntimeCommandTransport;
 
-interface WsGateDecisions {
-  resolveDecision: (
-    requestId: string,
-    action: "allow" | "deny",
-    scope?: "once" | "session" | "global",
-    expiresInMs?: number,
-  ) => boolean;
-}
-
 export interface WsMessageHandlerDeps {
   sessions: WsSessionCommands;
-  gate: WsGateDecisions;
   ensureSessionContextWindow: (session: Session) => Session;
 }
 
@@ -128,15 +118,6 @@ export class WsMessageHandler {
 
       case "set_queue": {
         await this.handleSetQueueCommand(session, msg, send, meta);
-        return;
-      }
-
-      case "permission_response": {
-        const scope = msg.scope || "once";
-        const resolved = this.deps.gate.resolveDecision(msg.id, msg.action, scope, msg.expiresInMs);
-        if (!resolved) {
-          send({ type: "error", error: `Permission request not found: ${msg.id}` });
-        }
         return;
       }
 

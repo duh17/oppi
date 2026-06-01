@@ -8,7 +8,6 @@
 
 import type { PushClient } from "./push.js";
 import type { Storage } from "./storage.js";
-import type { GateServer } from "./gate.js";
 import type { Session } from "./types.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 
@@ -43,7 +42,6 @@ export class LiveActivityBridge {
   constructor(
     private push: PushClient,
     private storage: Storage,
-    private gate: GateServer,
   ) {}
 
   /** Handle a session broadcast event and queue a Live Activity update. */
@@ -106,14 +104,15 @@ export class LiveActivityBridge {
       case "stop_failed":
         this.queue({ sessionId, status: "error", lastEvent: "Stop failed", priority: 10 });
         return;
-      case "permission_request":
-        this.queue({ sessionId, lastEvent: "Permission required", priority: 10 });
+      case "extension_ui_request":
+        this.queue({
+          sessionId,
+          lastEvent: event.title ?? (event.method === "ask" ? "Answer required" : "Input required"),
+          priority: 10,
+        });
         return;
-      case "permission_expired":
-        this.queue({ sessionId, lastEvent: "Permission expired", priority: 5 });
-        return;
-      case "permission_cancelled":
-        this.queue({ sessionId, lastEvent: "Permission resolved", priority: 5 });
+      case "extension_ui_settled":
+        this.queue({ sessionId, lastEvent: "Input resolved", priority: 5 });
         return;
       case "error":
         if (!event.error.startsWith("Retrying (")) {
@@ -217,7 +216,7 @@ export class LiveActivityBridge {
     return {
       status: pending.status ?? this.mapStatus(session?.status),
       activeTool: pending.activeTool ?? null,
-      pendingPermissions: this.gate.getPendingForUser().length,
+      pendingPermissions: 0,
       lastEvent: pending.lastEvent ?? null,
       elapsedSeconds,
     };

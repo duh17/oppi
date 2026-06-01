@@ -1,7 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { GateServer } from "./gate.js";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -76,7 +75,6 @@ export interface SessionCoordinatorBundle {
 export interface SessionCoordinatorBundleDeps {
   storage: Storage;
   config: ServerConfig;
-  gate: GateServer;
   runtimeManager: WorkspaceRuntime;
   active: Map<string, SessionStartActiveSession>;
   mobileRenderers: MobileRendererRegistry;
@@ -168,7 +166,6 @@ export function createSessionCoordinatorBundle(
     storage: deps.storage,
     runtimeManager: deps.runtimeManager,
     config: deps.config,
-    gate: deps.gate,
     eventRingCapacity: deps.eventRingCapacity,
     getSkillPathResolver: () => deps.getSkillPathResolver(),
     getAndClearPendingExtensionFactories: (sessionId) =>
@@ -205,7 +202,6 @@ export function createSessionCoordinatorBundle(
     clearPendingStop: (active) => stopCoordinator.clearPendingStop(active),
     broadcast: (key, message) => deps.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
-    destroySessionGuard: (sessionId) => deps.gate.destroySessionGuard(sessionId),
     releaseSession: (identity) => deps.runtimeManager.releaseSession(identity),
     stopSession: (sessionId) => deps.stopSession(sessionId),
     getSessionIdleTimeoutMs: () => deps.runtimeManager.getLimits().sessionIdleTimeoutMs,

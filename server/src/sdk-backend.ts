@@ -7,7 +7,7 @@
 
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -34,7 +34,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
-import type { GateServer } from "./gate.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import {
   BUILT_IN_EXTENSION_NAMES,
@@ -89,8 +88,87 @@ function resolveRegistryModel(
   return modelRegistry.find(parsed.provider, parsed.model);
 }
 
-function getLoadedExtensionName(ext: { path: string; resolvedPath: string }): string {
+const PERMISSION_GATE_EXTENSION_NAME = "permission-gate";
+
+type LoadedExtensionForFilter = {
+  path: string;
+  resolvedPath: string;
+};
+
+export interface SdkExtensionFilterOptions {
+  workspaceExtensions?: string[];
+  permissionGateEnabled: boolean;
+  permissionGatePath?: string;
+}
+
+function getLoadedExtensionName(ext: { path: string; resolvedPath?: string }): string {
   return extensionNameFromPath(ext.resolvedPath || ext.path);
+}
+
+function resolveGlobalPermissionGateExtensionPath(agentDir: string): string | undefined {
+  const base = join(agentDir, "extensions", PERMISSION_GATE_EXTENSION_NAME);
+  const candidates = [`${base}.ts`, `${base}.js`, base];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function canonicalPathForCompare(path: string): string {
+  const resolved = resolvePath(path);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function extensionPathMatches(ext: LoadedExtensionForFilter, targetPath: string): boolean {
+  const target = canonicalPathForCompare(targetPath);
+  return [ext.path, ext.resolvedPath].some(
+    (candidate) => canonicalPathForCompare(candidate) === target,
+  );
+}
+
+export function filterSdkLoadedExtensions<T extends LoadedExtensionForFilter>(
+  extensions: T[],
+  options: SdkExtensionFilterOptions,
+): T[] {
+  let filtered = extensions.filter((ext) => {
+    if (ext.path.startsWith("<inline:")) return true;
+
+    const name = getLoadedExtensionName(ext);
+    if (isManagedExtensionName(name) || isBuiltInExtensionName(name)) {
+      return false;
+    }
+
+    if (name !== PERMISSION_GATE_EXTENSION_NAME) {
+      return true;
+    }
+
+    if (!options.permissionGateEnabled) {
+      return false;
+    }
+
+    if (options.permissionGatePath) {
+      return extensionPathMatches(ext, options.permissionGatePath);
+    }
+
+    return options.workspaceExtensions?.includes(PERMISSION_GATE_EXTENSION_NAME) ?? false;
+  });
+
+  if (options.workspaceExtensions !== undefined) {
+    const allowed = new Set(options.workspaceExtensions);
+    filtered = filtered.filter((ext) => {
+      if (ext.path.startsWith("<inline:")) return true;
+
+      const name = getLoadedExtensionName(ext);
+      if (name === PERMISSION_GATE_EXTENSION_NAME && options.permissionGateEnabled) {
+        return true;
+      }
+
+      return allowed.has(name);
+    });
+  }
+
+  return filtered;
 }
 
 /**
@@ -216,11 +294,7 @@ export interface SdkBackendConfig {
   onEvent: (event: SessionBackendEvent) => void;
   /** Called when the session ends. */
   onEnd: (reason: string) => void;
-  /** Gate server for permission checks. */
-  gate?: GateServer;
-  /** Workspace ID for gate guard registration. */
-  workspaceId?: string;
-  /** Whether to enable the permission gate. Default: true if gate is provided. */
+  /** Whether to load the global Pi permission-gate extension. Default: true. */
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
@@ -401,18 +475,18 @@ export class SdkBackend {
         });
       }
 
-      // Build extension factories for in-process tools
+      // Build extension factories for Oppi-owned in-process tools.
+      // Permission gating is intentionally not injected here; SDK sessions load
+      // the user's global Pi permission-gate extension through the resource loader.
       const extensionFactories: ExtensionFactory[] = [];
-      const useGate = config.gate && config.permissionGate !== false;
-      if (useGate && config.gate) {
-        extensionFactories.push(
-          createPermissionGateFactory(
-            config.gate,
-            session.id,
-            config.workspaceId || "",
-            sessionCwd,
-          ),
-        );
+      const usePermissionGate = config.permissionGate !== false;
+      const permissionGateExtensionPath = usePermissionGate
+        ? resolveGlobalPermissionGateExtensionPath(runtimeAgentDir)
+        : undefined;
+      if (usePermissionGate && !permissionGateExtensionPath) {
+        log.warn("sdk.permission_gate_extension.missing", {
+          agentDir: runtimeAgentDir,
+        });
       }
       extensionFactories.push(
         ...createBuiltInExtensionFactories(workspace, config.builtInExtensionContext),
@@ -424,15 +498,15 @@ export class SdkBackend {
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
       // Built-in Oppi extensions are injected as in-process factories when the
-      // workspace explicitly enables them.
-      // Pi's auto-discovered permission-gate extension is filtered out since
-      // oppi has its own policy engine (GateServer). Without this, both gates
-      // run and the pi extension blocks commands it considers "dangerous" with
-      // no UI to approve them (ctx.hasUI is false in oppi sessions).
+      // workspace explicitly enables them. The global permission-gate remains a
+      // normal Pi host extension so approvals use native extension UI requests.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
+        additionalExtensionPaths: permissionGateExtensionPath
+          ? [permissionGateExtensionPath]
+          : undefined,
         additionalSkillPaths: config.skillPaths ?? [],
         noSkills: true,
         noThemes: true,
@@ -476,25 +550,16 @@ export class SdkBackend {
             }
           : {}),
         extensionsOverride: (base) => {
-          // 1. Filter out names owned directly by oppi-server from host paths.
-          //    Built-ins are injected above as inline factories when enabled.
-          let filtered = base.extensions.filter((ext) => {
-            if (ext.path.startsWith("<inline:")) return true;
-            const name = getLoadedExtensionName(ext);
-            return !isManagedExtensionName(name) && !isBuiltInExtensionName(name);
-          });
-
-          // 2. If the workspace specifies an extensions allowlist, that allowlist is
-          //    authoritative. Always keep inline factory extensions (path "<inline:N>")
-          //    because they're injected programmatically by the server.
+          // Filter out names owned directly by oppi-server from host paths.
+          // Built-ins are injected above as inline factories when enabled.
+          // The global permission-gate is kept even when workspace.extensions is
+          // an explicit allowlist, so users do not need to add it to every workspace.
           const allowedNames = workspace?.extensions;
-          if (allowedNames !== undefined) {
-            const allowed = new Set(allowedNames);
-            filtered = filtered.filter((ext) => {
-              if (ext.path.startsWith("<inline:")) return true;
-              return allowed.has(getLoadedExtensionName(ext));
-            });
-          }
+          const filtered = filterSdkLoadedExtensions(base.extensions, {
+            workspaceExtensions: allowedNames,
+            permissionGateEnabled: usePermissionGate,
+            permissionGatePath: permissionGateExtensionPath,
+          });
 
           // Debug: log extension filtering
           const extNames = base.extensions.map(
@@ -927,65 +992,4 @@ export class SdkBackend {
 
     await this.startShutdownCleanup();
   }
-}
-
-// ─── In-Process Permission Gate Extension Factory ───
-
-/**
- * Create an ExtensionFactory that gates tool calls through GateServer.
- * Runs in-process — every tool call is evaluated by the policy engine.
- */
-function createPermissionGateFactory(
-  gate: GateServer,
-  sessionId: string,
-  workspaceId: string,
-  sessionCwd: string,
-): ExtensionFactory {
-  return (extensionApi: unknown) => {
-    const pi = extensionApi as {
-      on(
-        event: "tool_call",
-        handler: (event: {
-          toolName: string;
-          toolCallId: string;
-          input: Record<string, unknown>;
-        }) => Promise<{ block: true; reason: string } | void>,
-      ): void;
-      on(event: "session_shutdown", handler: () => void): void;
-    };
-
-    // Register guard for this session.
-    gate.createGuard(sessionId, workspaceId);
-    log.info("sdk.gate_guard.registered", {
-      sessionId,
-      workspaceId,
-    });
-
-    // Gate every tool call through the policy engine
-    pi.on(
-      "tool_call",
-      async (event: { toolName: string; toolCallId: string; input: Record<string, unknown> }) => {
-        const result = await gate.checkToolCall(sessionId, {
-          tool: event.toolName,
-          input: event.input,
-          toolCallId: event.toolCallId,
-          sessionCwd,
-        });
-
-        if (result.action === "deny") {
-          return { block: true, reason: result.reason || "Denied by permission gate" };
-        }
-
-        // Allow — return void, tool executes normally
-      },
-    );
-
-    // Clean up on shutdown
-    pi.on("session_shutdown", () => {
-      gate.destroySessionGuard(sessionId);
-      log.info("sdk.gate_guard.destroyed", {
-        sessionId,
-      });
-    });
-  };
 }

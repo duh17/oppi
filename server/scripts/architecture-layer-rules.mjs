@@ -11,8 +11,6 @@ const SERVER_ENTRY_FILE = "server/src/cli.ts";
 const SERVER_TYPES_CONTRACT_FILE = "server/src/types.ts";
 const SERVER_TYPES_CONTRACT_BARREL_PREFIX = "./types/";
 const SERVER_SESSION_FACADE_FILE = "server/src/sessions.ts";
-const SERVER_GATE_FILE = "server/src/gate.ts";
-const SERVER_POLICY_FILE = "server/src/policy.ts";
 
 const IOS_RUNTIME_UI_FREE_FILES = [
   "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift",
@@ -330,21 +328,6 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
         );
       }
 
-      if (importer === SERVER_POLICY_FILE && target === SERVER_GATE_FILE) {
-        violations.push(
-          makeServerViolation({
-            rule: "policy-flow-one-way",
-            importer,
-            target,
-            line: entry.line,
-            column: entry.column,
-            reason: "policy.ts must not import gate.ts (policy flow is one-way).",
-            remediation:
-              "Keep policy evaluation independent; gate.ts may depend on policy.ts, not the reverse.",
-          }),
-        );
-      }
-
       if (importer.startsWith("server/src/storage/")) {
         const importsRouteModule = target.startsWith("server/src/routes/");
         const importsStreamModule = target === "server/src/stream.ts";
@@ -366,20 +349,6 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
         }
       }
 
-      if (importer === SERVER_GATE_FILE && isServerSessionRuntimeFile(target)) {
-        violations.push(
-          makeServerViolation({
-            rule: "gate-runtime-boundary",
-            importer,
-            target,
-            line: entry.line,
-            column: entry.column,
-            reason: "gate.ts must not depend on session runtime modules.",
-            remediation:
-              "Keep gate.ts in the policy/permission layer; coordinate session lifecycle from sessions.ts or server.ts.",
-          }),
-        );
-      }
     }
   }
 
