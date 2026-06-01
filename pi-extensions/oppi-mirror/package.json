@@ -1,0 +1,43 @@
+{
+  "name": "oppi-mirror",
+  "version": "0.4.0",
+  "description": "Pi extension for mirroring live terminal sessions into Oppi.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Chaos Donkey",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi",
+    "coding-agent",
+    "terminal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "pi-extensions/oppi-mirror"
+  },
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/oppi-mirror#readme",
+  "files": [
+    "extensions/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "ws": "8.20.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/oppi-mirror.ts"
+    ]
+  }
+}

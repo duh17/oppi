@@ -1,24 +1,32 @@
-> Mirror a live terminal Pi TUI session into Oppi.
+# Oppi Mirror mode
 
-# Oppi Mirror Extension
+Oppi Mirror makes an interactive terminal `pi` session visible in Oppi as a live session. The terminal keeps execution ownership; Oppi can watch output, send prompts, steer the active turn, queue follow-ups, answer extension UI, and stop or abort through the bridge.
 
-The Oppi Mirror extension lets an interactive terminal `pi` TUI session appear as a live Oppi session.
+Use mirror mode when you want the same Pi session open in both places: terminal for hands-on work, Oppi for mobile supervision.
 
-The terminal still owns execution. Oppi clients can observe the session and send prompts, steer messages, follow-ups, and abort requests through the extension bridge.
+Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mode, or other non-interactive Pi processes.
 
-Use mirror mode when you want to keep working in the terminal while monitoring or steering the same session from Oppi.
+## Prerequisites
 
-Do not use mirror mode for server-owned SDK sessions, print mode, JSON mode, or other non-interactive Pi processes.
+- Oppi server `0.4.0` or newer is running.
+- The server has a valid token in `~/.config/oppi/config.json`.
+- You are starting Pi in interactive terminal mode.
 
-## Quick Start
+## Install from npm
 
-Install the extension with Pi’s package installer:
+Pi installs public extension packages from npm with the `npm:` source prefix:
 
 ```bash
-pi install ./pi-extensions/oppi-mirror.ts
+pi install npm:oppi-mirror
 ```
 
-That records the local extension in Pi settings so Pi loads it automatically on startup.
+That records the package in Pi settings, installs it under `~/.pi/agent/npm/`, and loads the extension on future interactive `pi` launches. Use `npm:oppi-mirror@0.4.0` only when you want to pin a specific release; pinned package specs are skipped by `pi update`.
+
+For a one-off run without editing settings, use:
+
+```bash
+pi -e npm:oppi-mirror
+```
 
 If Pi is already running, reload extensions:
 
@@ -26,23 +34,13 @@ If Pi is already running, reload extensions:
 /reload
 ```
 
-`pi install npm:...` is not available for this extension yet because `oppi-mirror` is not currently published as a Pi package on npm. Right now this repo ships the extension as a local TypeScript file, so the supported install path is local-file installation.
-
-Start the Oppi server once so the extension can discover the local server URL and token from:
-
-```text
-~/.config/oppi/config.json
-```
-
-Then start Pi in an interactive terminal:
+Start Pi in an interactive terminal:
 
 ```bash
 pi
 ```
 
-The extension starts automatically and connects the terminal session to Oppi.
-
-Check the bridge status from Pi:
+The extension connects the terminal session to Oppi automatically. Check the bridge from Pi:
 
 ```text
 /oppi-mirror status
@@ -55,11 +53,73 @@ Stop or restart the bridge:
 /oppi-mirror start
 ```
 
+## Install from an Oppi checkout
+
+For local development before publishing, install the package directory from the repo root:
+
+```bash
+pi install ./pi-extensions/oppi-mirror
+```
+
+If local package loading reports a missing runtime dependency, install package dependencies once:
+
+```bash
+cd pi-extensions/oppi-mirror && npm install
+```
+
+For a one-off local run:
+
+```bash
+pi -e ./pi-extensions/oppi-mirror
+```
+
+`./pi-extensions/oppi-mirror.ts` remains as a compatibility shim for older local installs.
+
+## npm package shape
+
+Mirror is a separate public npm package named `oppi-mirror`. It is not bundled into `oppi-server` as a Pi package.
+
+The package manifest declares only the terminal extension as a Pi resource:
+
+```json
+{
+  "name": "oppi-mirror",
+  "keywords": ["pi-package", "pi-extension", "oppi"],
+  "dependencies": {
+    "ws": "8.20.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": ["./extensions/oppi-mirror.ts"]
+  }
+}
+```
+
+Keep it separate from `oppi-server`: the server package contains Oppi server-only extensions under `server/extensions/`, and standalone Pi should not load those.
+
+Maintainer publish check:
+
+```bash
+npm view oppi-mirror version
+cd pi-extensions/oppi-mirror
+npm publish --dry-run
+npm publish --access public
+```
+
+First publish should return `404 Not Found` from `npm view`; later publishes should confirm the current published version before bumping.
+
 ## Configuration
 
 By default, the extension reads the local Oppi server URL and token from `~/.config/oppi/config.json`.
 
-Override the connection with environment variables:
+Override the connection for one process:
 
 ```bash
 OPPI_MIRROR_URL=http://127.0.0.1:8787 \
@@ -85,7 +145,7 @@ OPPI_MIRROR_AUTO_START=false pi
 
 ## Commands
 
-The extension adds one Pi command:
+The extension adds one Pi command with three actions:
 
 ```text
 /oppi-mirror start
@@ -93,7 +153,7 @@ The extension adds one Pi command:
 /oppi-mirror status
 ```
 
-`start` connects the current interactive Pi TUI session to Oppi.
+`start` connects the current interactive Pi session to Oppi.
 
 `stop` closes the bridge for the current session.
 
@@ -163,7 +223,7 @@ Unsupported mirror commands fall into a few concrete buckets:
 
 When changing this matrix, update the matching implementation path:
 
-1. Forwarded bridge commands: `server/src/pi-tui-mirror-runtime.ts` command allowlist / unsupported reasons and `pi-extensions/oppi-mirror.ts` command handlers.
+1. Forwarded bridge commands: `server/src/pi-tui-mirror-runtime.ts` command allowlist / unsupported reasons and `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts` command handlers.
 2. Transport-special commands such as prompt, steer, follow-up, abort, stop-session, queue, and extension UI responses: the `AgentRuntimeCommandTransport` implementation, WebSocket handler, and bridge message handling as applicable.
 3. This documentation and the mirror tests.
 

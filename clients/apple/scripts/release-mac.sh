@@ -407,6 +407,7 @@ Oppi $VERSION aligns mobile supervision with the current Pi runtime: live termin
 
 ### What's new
 - Mirror live Pi terminal sessions into Oppi while the terminal remains the execution owner.
+- Install the separate \`oppi-mirror\` Pi extension package with \`pi install npm:oppi-mirror\` after it is published.
 - Bridge most standard Pi extension UI to Apple clients, including input and confirm flows from extensions.
 - Use Pi extension API compatibility instead of custom Oppi server policy UI.
 - Improve the iPad workspace shell so workspaces, sessions, and chat are easier to move between.

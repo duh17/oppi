@@ -42,7 +42,7 @@ Example:
 
 ### Notes
 
-- Release candidate for macOS app `0.2.0` and npm `oppi-server@0.4.0`. The release focuses on Pi terminal mirroring, a mobile bridge for Pi extension UI, broader extension API compatibility, and the adaptive iPad workspace shell.
+- Release candidate for macOS app `0.2.0`, npm `oppi-server@0.4.0`, and the separate public Pi extension package `oppi-mirror`. The release focuses on Pi terminal mirroring, a mobile bridge for Pi extension UI, broader extension API compatibility, and the adaptive iPad workspace shell.
 
 ### Added
 
@@ -52,7 +52,8 @@ Example:
 - **Client:** Added nearby Apple pairing discovery and an adaptive iPad workspace shell.
 - **Client:** Added review-comment selection flows for file and tool output, plus refreshed extension UI snapshot coverage.
 - **Server:** Added diagnostics review tooling for client logs, MetricKit reports, server logs, and combined telemetry snapshots.
-- **Docs:** Added public deep-link documentation, the changelog/versioning policy, and refreshed setup, security, telemetry, sandbox, and extension docs.
+- **Packaging:** Added the separate public Pi extension package `oppi-mirror`, installable with `pi install npm:oppi-mirror` after publish.
+- **Docs:** Added public deep-link documentation, the changelog/versioning policy, and refreshed setup, security, telemetry, sandbox, mirror, and extension docs.
 
 ### Changed
 
