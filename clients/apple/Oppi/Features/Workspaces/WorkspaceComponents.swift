@@ -105,17 +105,13 @@ struct WorkspaceSelectionButton: View {
 struct RuntimeBadge: View {
     var compact: Bool = false
     var icon: ServerBadgeIcon = .defaultValue
-    var badgeColor: ServerBadgeColor = .defaultValue
+    var tint: Color = .themeComment
 
     private var resolvedSymbolName: String {
         if UIImage(systemName: icon.symbolName) != nil {
             return icon.symbolName
         }
         return "desktopcomputer"
-    }
-
-    private var tint: Color {
-        badgeColor.themeColor
     }
 
     private var badgeSize: CGFloat {
@@ -129,10 +125,10 @@ struct RuntimeBadge: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(tint.opacity(0.22))
+                .fill(tint.opacity(0.16))
 
             Circle()
-                .stroke(tint.opacity(0.78), lineWidth: 1)
+                .stroke(tint.opacity(0.5), lineWidth: 1)
 
             Image(systemName: resolvedSymbolName)
                 .font(.system(size: symbolSize, weight: .bold))
@@ -140,21 +136,50 @@ struct RuntimeBadge: View {
                 .foregroundStyle(tint)
         }
         .frame(width: badgeSize, height: badgeSize)
-        .accessibilityLabel("Local session environment")
+        .accessibilityLabel("Server badge")
     }
 }
 
-extension ServerBadgeColor {
-    var themeColor: Color {
+enum ServerBadgeConnectionState: Sendable, Equatable {
+    case connected
+    case connecting
+    case disconnected
+
+    init(_ transportStatus: WebSocketClient.Status?) {
+        switch transportStatus {
+        case .connected:
+            self = .connected
+        case .connecting, .reconnecting:
+            self = .connecting
+        case .disconnected, nil:
+            self = .disconnected
+        }
+    }
+
+    init(_ presentation: WorkspaceServerStatusPresentation) {
+        switch presentation.state {
+        case .live, .stale:
+            self = .connected
+        case .syncing:
+            self = .connecting
+        case .offline:
+            self = .disconnected
+        }
+    }
+
+    var title: String {
         switch self {
-        case .orange: return .themeOrange
-        case .blue: return .themeBlue
-        case .cyan: return .themeCyan
-        case .green: return .themeGreen
-        case .purple: return .themePurple
-        case .red: return .themeRed
-        case .yellow: return .themeYellow
-        case .neutral: return .themeComment
+        case .connected: return "Connected"
+        case .connecting: return "Connecting"
+        case .disconnected: return "Disconnected"
+        }
+    }
+
+    var tintColor: Color {
+        switch self {
+        case .connected: return .themeGreen
+        case .connecting: return .themeBlue
+        case .disconnected: return .themeRed
         }
     }
 }
@@ -191,8 +216,7 @@ struct WorkspaceServerStatusPresentation: Equatable, Sendable {
 // MARK: - RuntimeStatusBadge
 
 // periphery:ignore - future navigation bar badge; not yet integrated into ChatView
-/// Environment icon with a small status dot overlay in the bottom-trailing corner.
-/// Used in the ChatView navigation bar to show session + sync state.
+/// Environment icon whose tint reflects session + sync state.
 struct RuntimeStatusBadge: View {
     enum SyncState {
         case live
@@ -213,15 +237,10 @@ struct RuntimeStatusBadge: View {
     let statusColor: Color
     var syncState: SyncState = .live
     var icon: ServerBadgeIcon = .defaultValue
-    var badgeColor: ServerBadgeColor = .defaultValue
 
-    private var dotFillColor: Color {
-        syncState == .offline ? .themeComment : statusColor
-    }
-
-    private var dotRingColor: Color {
+    private var badgeTint: Color {
         switch syncState {
-        case .live: return .themeBg
+        case .live: return statusColor
         case .syncing: return .themeBlue
         case .offline: return .themeRed
         case .stale: return .themeOrange
@@ -229,18 +248,7 @@ struct RuntimeStatusBadge: View {
     }
 
     var body: some View {
-        RuntimeBadge(compact: true, icon: icon, badgeColor: badgeColor)
-            .frame(width: 24, height: 24, alignment: .center)
-            .overlay(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(dotFillColor)
-                    .frame(width: 7, height: 7)
-                    .overlay(
-                        Circle()
-                            .stroke(dotRingColor, lineWidth: 1.5)
-                    )
-                    .offset(x: 2, y: 2)
-            }
+        RuntimeBadge(compact: true, icon: icon, tint: badgeTint)
             .frame(width: 24, height: 24)
             .accessibilityLabel("\(syncState.accessibilityText) session status")
     }

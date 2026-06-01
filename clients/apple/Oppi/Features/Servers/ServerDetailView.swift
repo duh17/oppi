@@ -155,15 +155,15 @@ struct ServerDetailView: View {
                     RuntimeBadge(
                         compact: false,
                         icon: pairedServer.resolvedBadgeIcon,
-                        badgeColor: pairedServer.resolvedBadgeColor
+                        tint: badgePreviewConnectionState.tintColor
                     )
                 }
 
-                BadgeIconGrid(selection: badgeIconSelection, tint: pairedServer.resolvedBadgeColor.themeColor)
-
-                BadgeColorGrid(selection: badgeColorSelection)
+                BadgeIconGrid(selection: badgeIconSelection, tint: .themeBlue)
             } header: {
                 Text("Badge")
+            } footer: {
+                Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
             }
 
             Section("Connection") {
@@ -236,11 +236,14 @@ struct ServerDetailView: View {
         )
     }
 
-    private var badgeColorSelection: Binding<ServerBadgeColor> {
-        Binding(
-            get: { pairedServer.resolvedBadgeColor },
-            set: { serverStore.setBadgeColor(id: pairedServer.id, to: $0) }
-        )
+    private var badgePreviewConnectionState: ServerBadgeConnectionState {
+        if info != nil || !providerStatuses.isEmpty || codexUsage != nil {
+            return .connected
+        }
+        if isLoading || isLoadingProviders {
+            return .connecting
+        }
+        return .disconnected
     }
 
     private var removingLastServer: Bool {

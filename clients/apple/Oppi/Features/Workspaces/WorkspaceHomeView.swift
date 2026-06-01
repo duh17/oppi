@@ -385,6 +385,10 @@ struct WorkspaceHomeView: View {
         )
     }
 
+    private func serverBadgeConnectionState(for server: PairedServer) -> ServerBadgeConnectionState {
+        ServerBadgeConnectionState(serverStatusPresentation(for: server))
+    }
+
     private func serverSwitcher(_ current: PairedServer) -> some View {
         Menu {
             ForEach(servers) { server in
@@ -421,10 +425,11 @@ struct WorkspaceHomeView: View {
         } label: {
             ServerSwitcherPill(
                 server: current,
-                status: serverStatusPresentation(for: current)
+                connectionState: serverBadgeConnectionState(for: current)
             )
         }
         .accessibilityLabel("Current server: \(current.name)")
+        .accessibilityValue(serverBadgeConnectionState(for: current).title)
     }
 
     private var quickSessionButton: some View {
@@ -1050,23 +1055,19 @@ struct WorkspaceHomeView: View {
 
 private struct ServerSwitcherPill: View {
     let server: PairedServer
-    let status: WorkspaceServerStatusPresentation
+    let connectionState: ServerBadgeConnectionState
 
     var body: some View {
         HStack(spacing: 6) {
             RuntimeBadge(
                 compact: true,
                 icon: server.resolvedBadgeIcon,
-                badgeColor: server.resolvedBadgeColor
+                tint: connectionState.tintColor
             )
 
             Text(server.name)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
-
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
 
             Image(systemName: "chevron.down")
                 .font(.caption2.weight(.semibold))
@@ -1076,15 +1077,6 @@ private struct ServerSwitcherPill: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(.themeComment.opacity(0.14), in: Capsule())
-    }
-
-    private var statusColor: Color {
-        switch status.state {
-        case .live: return .themeGreen
-        case .syncing: return .themeBlue
-        case .stale: return .themeOrange
-        case .offline: return .themeRed
-        }
     }
 }
 

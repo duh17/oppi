@@ -42,35 +42,6 @@ enum ServerBadgeIcon: String, Codable, CaseIterable, Identifiable, Sendable, Has
     var symbolName: String { rawValue }
 }
 
-/// Configurable color options for server badges in the UI.
-enum ServerBadgeColor: String, Codable, CaseIterable, Identifiable, Sendable, Hashable {
-    case orange
-    case blue
-    case cyan
-    case green
-    case purple
-    case red
-    case yellow
-    case neutral
-
-    static let defaultValue: Self = .orange
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .orange: return "Orange"
-        case .blue: return "Blue"
-        case .cyan: return "Cyan"
-        case .green: return "Green"
-        case .purple: return "Purple"
-        case .red: return "Red"
-        case .yellow: return "Yellow"
-        case .neutral: return "Neutral"
-        }
-    }
-}
-
 /// A paired oppi server that the app can connect to.
 ///
 /// Each server has a unique Ed25519 identity fingerprint used as the stable ID.
@@ -103,17 +74,11 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
 
     /// Optional user-selected badge icon.
     var badgeIcon: ServerBadgeIcon?
-    /// Optional user-selected badge color.
-    var badgeColor: ServerBadgeColor?
 
     // MARK: - Derived
 
     var resolvedBadgeIcon: ServerBadgeIcon {
         badgeIcon ?? .defaultValue
-    }
-
-    var resolvedBadgeColor: ServerBadgeColor {
-        badgeColor ?? .defaultValue
     }
 
     var resolvedScheme: ServerScheme {
@@ -160,7 +125,6 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.addedAt = Date()
         self.sortOrder = sortOrder
         self.badgeIcon = nil
-        self.badgeColor = nil
     }
 
     /// Update connection details from fresh credentials (re-pair).

@@ -72,13 +72,6 @@ final class ServerStore {
         save(servers[idx])
     }
 
-    /// Update the badge color for a server.
-    func setBadgeColor(id: String, to color: ServerBadgeColor) {
-        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
-        servers[idx].badgeColor = color
-        save(servers[idx])
-    }
-
     /// Look up a server by fingerprint ID.
     func server(for id: String) -> PairedServer? {
         servers.first { $0.id == id }

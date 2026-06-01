@@ -203,4 +203,41 @@ struct WorkspaceServerStatusPresentationTests {
     }
 }
 
+@Suite("Server Badge Connection State")
+@MainActor
+struct ServerBadgeConnectionStateTests {
+    @Test func connectedPresentationMapsToConnectedBadge() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: true,
+            hasCachedCatalog: true
+        )
+
+        #expect(ServerBadgeConnectionState(presentation) == .connected)
+    }
+
+    @Test func syncingPresentationMapsToConnectingBadge() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: true,
+            hasCachedCatalog: false
+        )
+
+        #expect(ServerBadgeConnectionState(presentation) == .connecting)
+    }
+
+    @Test func offlinePresentationMapsToDisconnectedBadge() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: false,
+            hasCachedCatalog: false
+        )
+
+        #expect(ServerBadgeConnectionState(presentation) == .disconnected)
+    }
+}
+
 typealias WorkspaceStoreMockURLProtocol = TestURLProtocol

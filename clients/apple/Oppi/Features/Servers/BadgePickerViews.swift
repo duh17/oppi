@@ -38,39 +38,3 @@ struct BadgeIconGrid: View {
         .padding(.vertical, 4)
     }
 }
-
-// MARK: - Color Grid
-
-/// A row of color circles for picking a server badge color.
-struct BadgeColorGrid: View {
-    @Binding var selection: ServerBadgeColor
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(ServerBadgeColor.allCases) { color in
-                let isSelected = color == selection
-                Button {
-                    selection = color
-                } label: {
-                    Circle()
-                        .fill(color.themeColor)
-                        .frame(width: 28, height: 28)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(isSelected ? 0.9 : 0), lineWidth: 2)
-                                .padding(2)
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(color.themeColor.opacity(isSelected ? 0.8 : 0), lineWidth: 2)
-                        )
-                        .scaleEffect(isSelected ? 1.15 : 1.0)
-                        .animation(.easeInOut(duration: 0.15), value: isSelected)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(color.title)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}

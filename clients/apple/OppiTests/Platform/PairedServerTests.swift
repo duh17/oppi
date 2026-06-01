@@ -150,8 +150,8 @@ struct PairedServerTests {
         #expect(abs(decoded.addedAt.timeIntervalSince(original.addedAt)) < 1)
     }
 
-    @Test("Decodes payload without badge customization")
-    func decodesPayloadWithoutBadgeFields() throws {
+    @Test("Decodes payload with legacy badge color field")
+    func decodesPayloadWithLegacyBadgeColorField() throws {
         let json = """
         {
           "id": "sha256:minimal",
@@ -161,7 +161,8 @@ struct PairedServerTests {
           "token": "sk_minimal",
           "fingerprint": "sha256:minimal",
           "addedAt": "2026-02-01T00:00:00Z",
-          "sortOrder": 0
+          "sortOrder": 0,
+          "badgeColor": "green"
         }
         """
 
@@ -170,9 +171,7 @@ struct PairedServerTests {
         let decoded = try decoder.decode(PairedServer.self, from: Data(json.utf8))
 
         #expect(decoded.badgeIcon == nil)
-        #expect(decoded.badgeColor == nil)
         #expect(decoded.resolvedBadgeIcon == .defaultValue)
-        #expect(decoded.resolvedBadgeColor == .defaultValue)
     }
 
     @Test("Equatable compares all fields, not just ID")
