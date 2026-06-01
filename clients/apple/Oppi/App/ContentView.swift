@@ -81,12 +81,7 @@ struct ContentView: View {
                 if navigation.showOnboarding {
                     OnboardingView()
                 } else {
-                    NavigationStack(path: $nav.workspacePath) {
-                        WorkspaceHomeView()
-                    }
-                    .task {
-                        navigation.routeLegacySelectedTabIfNeeded()
-                    }
+                    WorkspaceAdaptiveRootView()
                 }
             }
         }
@@ -218,17 +213,14 @@ struct ContentView: View {
         navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
 
         // Quick Session is just "new session from here". Preserve the current
-        // stack and push the new chat route instead of popping to Workspaces
-        // first, which made the transition visibly jump through multiple places.
-        navigation.selectedTab = .workspaces
-        var path = navigation.workspacePath
-        path.append(
+        // compact stack, or select the session detail column on iPad.
+        navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: pending.target.serverId,
                 sessionId: pending.sessionId
-            )
+            ),
+            workspace: pending.target
         )
-        navigation.workspacePath = path
     }
 
     private func sessionLabel(for sessionId: String) -> String {

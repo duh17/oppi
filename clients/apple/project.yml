@@ -34,7 +34,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
-    TARGETED_DEVICE_FAMILY: 1
+    TARGETED_DEVICE_FAMILY: "1,2"
     INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UILaunchScreen_Generation: true
     ENABLE_USER_SCRIPT_SANDBOXING: true

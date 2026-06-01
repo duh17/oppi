@@ -46,7 +46,7 @@ private struct WorkspaceHomePendingDeleteSession: Identifiable {
     var id: String { "\(serverId):\(workspaceId):\(session.id)" }
 }
 
-private struct WorkspaceScopedDestinationView: View {
+struct WorkspaceScopedDestinationView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     let target: WorkspaceNavTarget
 
@@ -78,7 +78,7 @@ private struct WorkspaceScopedDestinationView: View {
     }
 }
 
-private struct WorkspaceSessionScopedDestinationView: View {
+struct WorkspaceSessionScopedDestinationView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     let target: WorkspaceSessionNavTarget
 
@@ -369,13 +369,13 @@ struct WorkspaceHomeView: View {
             .accessibilityIdentifier("workspace.create.open")
 
             Button {
-                navigation.workspacePath.append(WorkspaceUtilityNavTarget.manageServers)
+                navigation.openWorkspaceUtility(.manageServers)
             } label: {
                 Label("Manage Servers", systemImage: "server.rack")
             }
 
             Button {
-                navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+                navigation.openWorkspaceUtility(.appSettings)
             } label: {
                 Label("App Settings", systemImage: "gear")
             }
@@ -401,6 +401,7 @@ struct WorkspaceHomeView: View {
 
     private func switchVisibleServer(to server: PairedServer) {
         guard coordinator.switchToServer(server) else { return }
+        navigation.clearWorkspaceSelections()
         Task { @MainActor in
             await refresh(force: true)
         }
@@ -458,7 +459,7 @@ struct WorkspaceHomeView: View {
         )
         let rowBodyAction = {
             if opensWorkspaceFromRowBody {
-                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+                navigation.openWorkspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
             } else {
                 toggleWorkspaceExpansion(key: key, summary: summary)
             }
@@ -491,7 +492,7 @@ struct WorkspaceHomeView: View {
 
             let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
             Button {
-                navigation.workspacePath.append(target)
+                navigation.openWorkspace(target)
             } label: {
                 HStack(alignment: .center, spacing: 4) {
                     if statusPresentation.isVisible {
@@ -517,7 +518,7 @@ struct WorkspaceHomeView: View {
         .padding(.trailing, 4)
         .onTapGesture {
             if opensWorkspaceFromRowBody {
-                navigation.workspacePath.append(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+                navigation.openWorkspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
             }
         }
         .background {
@@ -536,8 +537,9 @@ struct WorkspaceHomeView: View {
             } else {
                 ForEach(sessionPreviews) { preview in
                     Button {
-                        navigation.workspacePath.append(
-                            WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.presentation.session.id)
+                        navigation.openWorkspaceSession(
+                            WorkspaceSessionNavTarget(serverId: serverId, sessionId: preview.presentation.session.id),
+                            workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace)
                         )
                     } label: {
                         WorkspaceHomeSessionPreviewRow(preview: preview)
@@ -820,7 +822,7 @@ struct WorkspaceHomeView: View {
         else { return }
 
         hasAutoOpenedE2EWorkspace = true
-        navigation.workspacePath.append(WorkspaceNavTarget(serverId: server.id, workspace: workspace))
+        navigation.openWorkspace(WorkspaceNavTarget(serverId: server.id, workspace: workspace))
     }
 
     // MARK: - Session Actions
@@ -892,9 +894,7 @@ struct WorkspaceHomeView: View {
     private func handleCreateSheetDismissed() {
         guard let target = pendingCreatedWorkspaceTarget else { return }
         pendingCreatedWorkspaceTarget = nil
-        navigation.selectedTab = .workspaces
-        navigation.workspacePath = NavigationPath()
-        navigation.workspacePath.append(target)
+        navigation.openWorkspace(target)
     }
 
     /// After a fresh pairing, auto-present WorkspaceCreateView if the server has no workspaces.

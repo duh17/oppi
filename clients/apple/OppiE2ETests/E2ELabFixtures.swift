@@ -34,14 +34,19 @@ extension E2ETestCase {
 
     /// Creates a workspace through the paired E2E server API.
     @discardableResult
-    func createLabWorkspace(named name: String, skills: [String] = []) throws -> String {
+    func createLabWorkspace(named name: String, skills: [String] = [], defaultModel: String? = nil) throws -> String {
+        var body: [String: Any] = [
+            "name": name,
+            "skills": skills,
+        ]
+        if let defaultModel {
+            body["defaultModel"] = defaultModel
+        }
+
         let response = try e2eLabAPIJSON(
             method: "POST",
             path: "/workspaces",
-            body: [
-                "name": name,
-                "skills": skills,
-            ]
+            body: body
         )
         let workspace = try XCTUnwrap(response["workspace"] as? [String: Any], "Workspace create response missing workspace")
         return try XCTUnwrap(workspace["id"] as? String, "Workspace create response missing id")

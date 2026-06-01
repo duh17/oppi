@@ -82,6 +82,39 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 1)
     }
 
+    @Test func splitPresentationClearsStackPath() {
+        let navigation = AppNavigation()
+        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        #expect(navigation.workspaceNavigationPresentation == .split)
+        #expect(navigation.workspacePath.count == 0)
+    }
+
+    @Test func openWorkspaceUsesSplitSelectionInSplitPresentation() {
+        let navigation = AppNavigation()
+        let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspace(target)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitSelectedWorkspace == target)
+        #expect(navigation.splitSelectedSession == nil)
+    }
+
+    @Test func openSessionUsesSplitDetailSelectionInSplitPresentation() {
+        let navigation = AppNavigation()
+        let target = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceSession(target)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitSelectedSession == target)
+    }
+
     private func readyNavigation() -> AppNavigation {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready

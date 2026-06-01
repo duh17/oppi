@@ -11,12 +11,25 @@ enum AppLaunchPhase: Sendable {
     case ready
 }
 
+enum WorkspaceNavigationPresentation: Sendable, Equatable {
+    case stack
+    case split
+}
+
 /// Navigation state for the app.
 @MainActor @Observable
 final class AppNavigation {
     var selectedTab: AppTab = .workspaces
     var showOnboarding: Bool = true
     var showWhatsNew: Bool = false
+
+    /// Current workspace navigation shell. Compact width keeps the existing
+    /// push stack; regular width selects workspace/session columns directly.
+    var workspaceNavigationPresentation: WorkspaceNavigationPresentation = .stack
+
+    /// Selection backing the regular-width split shell.
+    var splitSelectedWorkspace: WorkspaceNavTarget?
+    var splitSelectedSession: WorkspaceSessionNavTarget?
 
     /// Launch phase gate. While `.resolving`, ContentView shows a blank
     /// canvas instead of onboarding or the workspace list.
@@ -33,13 +46,66 @@ final class AppNavigation {
     /// Set externally (e.g. by QuickSessionSheet) to deep-link to a session.
     var workspacePath = NavigationPath()
 
+    func setWorkspaceNavigationPresentation(_ presentation: WorkspaceNavigationPresentation) {
+        guard workspaceNavigationPresentation != presentation else { return }
+        workspaceNavigationPresentation = presentation
+        switch presentation {
+        case .stack:
+            splitSelectedWorkspace = nil
+            splitSelectedSession = nil
+        case .split:
+            workspacePath = NavigationPath()
+        }
+    }
+
+    func openWorkspace(_ target: WorkspaceNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            workspacePath.append(target)
+        case .split:
+            splitSelectedWorkspace = target
+            splitSelectedSession = nil
+        }
+    }
+
+    func openWorkspaceSession(_ target: WorkspaceSessionNavTarget, workspace: WorkspaceNavTarget? = nil) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            workspacePath.append(target)
+        case .split:
+            if let workspace {
+                splitSelectedWorkspace = workspace
+            }
+            splitSelectedSession = target
+        }
+    }
+
+    func openWorkspaceUtility(_ target: WorkspaceUtilityNavTarget) {
+        selectedTab = .workspaces
+        workspacePath.append(target)
+    }
+
+    func clearWorkspaceSelections() {
+        workspacePath = NavigationPath()
+        splitSelectedWorkspace = nil
+        splitSelectedSession = nil
+    }
+
     /// Replace the workspace stack with a session destination in one state write.
     ///
     /// Avoid clearing the path and appending in separate writes: SwiftUI may
     /// briefly re-appear the previous chat view during the intermediate empty
     /// stack, and that old view can steal the focused session stream back.
     func setWorkspaceSessionPath(serverId: String, sessionId: String) {
-        workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId)
+        let target = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId)
+        switch workspaceNavigationPresentation {
+        case .stack:
+            workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId)
+        case .split:
+            splitSelectedSession = target
+        }
     }
 
     static func workspaceSessionPath(serverId: String, sessionId: String) -> NavigationPath {

@@ -167,6 +167,10 @@ struct WorkspaceDetailView: View {
         "\(workspace.id):\(isNavigatingDeeperInWorkspaceStack ? "covered" : "visible")"
     }
 
+    private var currentServerId: String? {
+        connection.currentServerId ?? workspaceStore.activeServerId
+    }
+
     private var normalizedSessionSearchQuery: String {
         sessionSearchText
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -789,7 +793,7 @@ struct WorkspaceDetailView: View {
             )
             sessionStore.upsert(response.session)
             isCreating = false
-            navigateToSessionId = response.session.id
+            routeToSession(response.session.id)
         } catch {
             self.error = error.localizedDescription
             isCreating = false
@@ -842,7 +846,19 @@ struct WorkspaceDetailView: View {
             normalized.workspaceName = currentWorkspace.name
         }
         sessionStore.cacheSessionForNavigation(normalized)
-        navigateToSessionId = normalized.id
+        routeToSession(normalized.id)
+    }
+
+    private func routeToSession(_ sessionId: String) {
+        guard navigation.workspaceNavigationPresentation == .split,
+              let currentServerId else {
+            navigateToSessionId = sessionId
+            return
+        }
+
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: currentServerId, sessionId: sessionId)
+        )
     }
 
     private func importAndResumeLocal(_ local: LocalSession) async {
@@ -862,7 +878,7 @@ struct WorkspaceDetailView: View {
             removeArchiveLocalSession(local.path)
 
             isImportingLocal = false
-            navigateToSessionId = session.id
+            routeToSession(session.id)
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"
             isImportingLocal = false

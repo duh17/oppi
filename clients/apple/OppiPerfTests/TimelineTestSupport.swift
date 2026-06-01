@@ -561,9 +561,7 @@ func makeTimelineToolConfiguration(
     collapsedImageMimeType: String? = nil,
     isExpanded: Bool,
     isDone: Bool = true,
-    isError: Bool = false,
-    selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-    selectedTextSessionId: String? = nil
+    isError: Bool = false
 ) -> ToolTimelineRowConfiguration {
     ToolTimelineRowConfiguration(
         itemID: itemID,
@@ -587,9 +585,7 @@ func makeTimelineToolConfiguration(
         startedAt: nil,
         elapsedSeconds: nil,
         segmentAttributedTitle: nil,
-        segmentAttributedTrailing: nil,
-        selectedTextPiRouter: selectedTextPiRouter,
-        selectedTextSessionId: selectedTextSessionId
+        segmentAttributedTrailing: nil
     )
 }
 
