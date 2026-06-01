@@ -714,7 +714,8 @@ struct WorkspaceHomeView: View {
     private func pendingAskCount(for sessionId: String, connection: ServerConnection) -> Int {
         max(
             connection.sessionStore.listPendingAskCount(for: sessionId),
-            connection.askRequestStore.hasPending(for: sessionId) ? 1 : 0
+            connection.askRequestStore.hasPending(for: sessionId) ? 1 : 0,
+            connection.hasPendingExtensionDialog(for: sessionId) ? 1 : 0
         )
     }
 

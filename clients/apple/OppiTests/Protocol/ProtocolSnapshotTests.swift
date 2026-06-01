@@ -124,22 +124,6 @@ struct ProtocolSnapshotTests {
         #expect(stats?.removedLines == 12)
     }
 
-    @Test func permissionRequest() throws {
-        let msg = try decodeMessage("permission_request")
-
-        guard case .permissionRequest(let perm) = msg else {
-            Issue.record("Expected .permissionRequest, got \(msg.typeLabel)")
-            return
-        }
-
-        #expect(perm.id == "perm-001")
-        #expect(perm.sessionId == "test-session-1")
-        #expect(perm.workspaceId == "ws-1")
-        #expect(perm.tool == "bash")
-        #expect(perm.displaySummary == "Run: rm -rf node_modules")
-        #expect(perm.reason == "Destructive file operation")
-    }
-
     @Test func extensionUIRequest() throws {
         let msg = try decodeMessage("extension_ui_request")
 
@@ -153,6 +137,18 @@ struct ProtocolSnapshotTests {
         #expect(req.method == "select")
         #expect(req.title == "Choose a model")
         #expect(req.options == ["claude-sonnet", "claude-opus"])
+    }
+
+    @Test func extensionUISettled() throws {
+        let msg = try decodeMessage("extension_ui_settled")
+
+        guard case .extensionUISettled(let id, let sessionId) = msg else {
+            Issue.record("Expected .extensionUISettled, got \(msg.typeLabel)")
+            return
+        }
+
+        #expect(id == "ui-001")
+        #expect(sessionId == "test-session-1")
     }
 
     @Test func turnAck() throws {
@@ -346,8 +342,7 @@ struct ProtocolSnapshotTests {
             "turn_ack", "command_result",
             "compaction_start", "compaction_end",
             "retry_start", "retry_end",
-            "permission_request", "permission_expired", "permission_cancelled", "permission_resolved", "permission_auto_reviewed",
-            "extension_ui_request", "extension_ui_notification", "git_status",
+            "extension_ui_request", "extension_ui_notification", "extension_ui_settled", "git_status",
             "dictation_ready", "dictation_result", "dictation_final", "dictation_error",
         ]
 

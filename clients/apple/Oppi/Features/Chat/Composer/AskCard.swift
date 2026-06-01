@@ -176,7 +176,16 @@ struct AskCard: View {
                 .accessibilityLabel("Question: \(question.question)")
 
             // Option cards — horizontal scroll
-            optionStrip(for: question)
+            if !question.options.isEmpty {
+                optionStrip(for: question)
+            }
+
+            if let timeoutSummary {
+                Label(timeoutSummary, systemImage: "timer")
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .padding(.horizontal, 12)
+            }
 
             // Multi-select done button
             if question.multiSelect,
@@ -303,6 +312,12 @@ struct AskCard: View {
     }
 
     // MARK: - Page Indicator
+
+    private var timeoutSummary: String? {
+        guard let timeout = request.timeout, timeout > 0 else { return nil }
+        let seconds = max(1, (timeout + 999) / 1000)
+        return "Expires in about \(seconds) seconds"
+    }
 
     private var pageIndicator: some View {
         Group {

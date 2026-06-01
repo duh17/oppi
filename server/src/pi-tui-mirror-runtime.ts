@@ -10,6 +10,10 @@ import {
   applyForwardedCommandResultToSession,
   type AgentRuntimeTransport,
 } from "./agent-runtime-transport.js";
+import {
+  buildExtensionUIRequestMessage,
+  buildExtensionUISettledMessage,
+} from "./extension-ui-contract.js";
 import { EventRing } from "./event-ring.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -28,7 +32,12 @@ import { normalizeCommandError } from "./session-protocol.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
-import { SessionEventProcessor, type EventProcessorSessionState } from "./session-events.js";
+import {
+  SessionEventProcessor,
+  type EventProcessorSessionState,
+  type ExtensionUIRequest,
+} from "./session-events.js";
+import type { ExtensionUIResponse } from "./session-ui.js";
 import { SessionInputCoordinator, type SessionInputSessionState } from "./session-input.js";
 import {
   assertQueueBaseVersion,
@@ -78,6 +87,7 @@ const SUPPORTED_REMOTE_COMMANDS = new Set([
   "get_state",
   "get_messages",
   "get_fork_messages",
+  "get_session_tree",
   "navigate_tree",
   "get_session_stats",
   "get_commands",
@@ -101,7 +111,6 @@ const SUPPORTED_REMOTE_COMMANDS = new Set([
 ]);
 
 const UNSUPPORTED_REMOTE_COMMAND_REASONS = new Map([
-  ["get_session_tree", "terminal bridge does not expose Pi's tree serializer yet"],
   ["share_session", "sharing needs a server-owned AgentSession export path"],
   ["new_session", "session replacement is terminal-owned; start it from the terminal"],
   ["fork", "session-file replacement is terminal-owned; fork from the terminal"],
@@ -176,6 +185,13 @@ interface PiBridgeGoodbyeMessage {
   state?: PiBridgeStateSnapshot;
 }
 
+type PiBridgeExtensionUIRequestMessage = ExtensionUIRequest;
+
+interface PiBridgeExtensionUIRequestSettledMessage {
+  type: "extension_ui_request_settled";
+  id: string;
+}
+
 type PiBridgeInboundMessage =
   | PiBridgeHelloMessage
   | PiBridgeStateMessage
@@ -184,7 +200,9 @@ type PiBridgeInboundMessage =
   | PiBridgeHeartbeatMessage
   | PiBridgeQueueStateMessage
   | PiBridgeQueueItemStartedMessage
-  | PiBridgeGoodbyeMessage;
+  | PiBridgeGoodbyeMessage
+  | PiBridgeExtensionUIRequestMessage
+  | PiBridgeExtensionUIRequestSettledMessage;
 
 interface MirrorActiveSession extends EventProcessorSessionState, SessionInputSessionState {
   session: Session;
@@ -562,14 +580,41 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
   }
 
+  getActiveSessionIds(): Set<string> {
+    return new Set(this.active.keys());
+  }
+
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(sessionId)?.session ?? this.storage.getSession(sessionId);
   }
 
   isSessionConnected(sessionId: string): boolean {
+    return this.connectedBridgeForSession(sessionId) !== undefined;
+  }
+
+  private connectedBridgeForSession(sessionId: string): BridgeConnection | undefined {
     const bridgeId = this.bridgeBySession.get(sessionId);
     const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
-    return connection?.ws.readyState === WebSocket.OPEN;
+    return connection?.ws.readyState === WebSocket.OPEN ? connection : undefined;
+  }
+
+  private settleExtensionUIRequest(
+    active: MirrorActiveSession,
+    requestId: string,
+    cancelled: boolean,
+  ): boolean {
+    const req = active.pendingUIRequests.get(requestId);
+    if (!req) return false;
+
+    active.pendingUIRequests.delete(requestId);
+    if (req.method === "ask") {
+      this.eventProcessor.completeAskRequest(active, cancelled);
+    } else if (active.pendingAsk?.requestId === requestId) {
+      active.pendingAsk = undefined;
+    }
+
+    this.broadcast(active.session.id, buildExtensionUISettledMessage(active.session.id, requestId));
+    return true;
   }
 
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
@@ -585,12 +630,24 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return this.broadcaster.getCatchUp(sessionId, sinceSeq);
   }
 
-  getPendingAskMessage(_sessionId: string): ServerMessage | undefined {
-    return undefined;
+  getPendingAskMessage(sessionId: string): ServerMessage | undefined {
+    return this.ensureActiveFromStorage(sessionId)?.pendingAsk?.broadcastMessage;
   }
 
-  getPendingUIRequestMessages(_sessionId: string): ServerMessage[] {
-    return [];
+  getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
+    const active = this.ensureActiveFromStorage(sessionId);
+    if (!active) {
+      return [];
+    }
+
+    const messages: ServerMessage[] = [];
+    for (const req of active.pendingUIRequests.values()) {
+      if (req.method === "ask") {
+        continue;
+      }
+      messages.push(buildExtensionUIRequestMessage(sessionId, req));
+    }
+    return messages;
   }
 
   private resolveWorkspaceRoot(session: Session): string | null {
@@ -789,8 +846,39 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
   }
 
-  respondToUIRequest(_sessionId: string, _response: { id: string }): boolean {
-    return false;
+  respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
+    const active = this.ensureActiveFromStorage(sessionId);
+    if (!active) return false;
+
+    const req = active.pendingUIRequests.get(response.id);
+    if (!req) return false;
+
+    const connection = this.connectedBridgeForSession(sessionId);
+    if (!connection) return false;
+
+    try {
+      connection.ws.send(
+        JSON.stringify({
+          type: "extension_ui_response",
+          id: response.id,
+          value: response.value,
+          confirmed: response.confirmed,
+          cancelled: response.cancelled,
+        }),
+      );
+    } catch (error) {
+      log.warn("mirror_bridge.extension_ui_response_send_failed", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        sessionId,
+        bridgeId: connection.bridgeId,
+        requestId: response.id,
+        error: safeErrorMessage(error),
+      });
+      return false;
+    }
+
+    this.settleExtensionUIRequest(active, response.id, !!response.cancelled);
+    return true;
   }
 
   async forwardClientCommand(
@@ -917,6 +1005,14 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
       case "event":
         this.ingestAgentEvent(active, message.event);
+        return;
+
+      case "extension_ui_request":
+        this.eventProcessor.handleExtensionUIRequest(connection.sessionId, active, message);
+        return;
+
+      case "extension_ui_request_settled":
+        this.settleExtensionUIRequest(active, message.id, false);
         return;
 
       case "command_result":

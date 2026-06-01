@@ -66,12 +66,6 @@ extension ServerConnection {
 
         case .permissionRequest(let perm):
             let inserted = permissionStore.add(perm)
-            if inserted, ReleaseFeatures.localAttentionNotificationsEnabled {
-                PermissionNotificationService.shared.notifyIfNeeded(
-                    perm,
-                    activeSessionId: focusedSessionId
-                )
-            }
             if let workspaceId = attentionWorkspaceId(
                 explicitWorkspaceId: perm.workspaceId,
                 sessionId: perm.sessionId
@@ -83,9 +77,6 @@ extension ServerConnection {
 
         case .permissionExpired(let id, _), .permissionCancelled(let id), .permissionResolved(let id, _):
             let request = permissionStore.take(id: id)
-            if ReleaseFeatures.localAttentionNotificationsEnabled {
-                PermissionNotificationService.shared.cancelNotification(permissionId: id)
-            }
             if let workspaceId = attentionWorkspaceId(
                 explicitWorkspaceId: request?.workspaceId,
                 sessionId: request?.sessionId
@@ -329,6 +320,18 @@ extension ServerConnection {
                 workspaceIds.insert(workspaceId)
             }
         }
+        for request in pendingExtensionDialogs.values {
+            if let workspaceId = attentionWorkspaceId(explicitWorkspaceId: nil, sessionId: request.sessionId) {
+                workspaceIds.insert(workspaceId)
+            }
+        }
+        if let activeExtensionDialog,
+           let workspaceId = attentionWorkspaceId(
+               explicitWorkspaceId: nil,
+               sessionId: activeExtensionDialog.sessionId
+           ) {
+            workspaceIds.insert(workspaceId)
+        }
 
         for workspaceId in workspaceIds where !workspaceId.isEmpty {
             syncWorkspaceSummary(workspaceId: workspaceId)
@@ -346,10 +349,13 @@ extension ServerConnection {
             ask.workspaceId == workspaceId
                 || (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
         }
+        let hasPendingExtensionDialog = pendingExtensionDialogs.values.contains { request in
+            workspaceSessionIds.contains(request.sessionId)
+        } || activeExtensionDialog.map { workspaceSessionIds.contains($0.sessionId) } == true
         let rootSessions = workspaceRootSessions(workspaceSessions)
         let hasLiveErrorRoot = rootSessions.contains { $0.status == .error }
 
-        guard !rootSessions.isEmpty || hasPendingPermission || hasPendingAsk else {
+        guard !rootSessions.isEmpty || hasPendingPermission || hasPendingAsk || hasPendingExtensionDialog else {
             return nil
         }
 
@@ -358,7 +364,7 @@ extension ServerConnection {
             workspaceId: workspaceId,
             activeCount: rootSessions.filter { $0.status != .stopped }.count,
             stoppedCount: rootSessions.filter { $0.status == .stopped }.count,
-            hasAttention: hasLiveErrorRoot || hasPendingPermission || hasPendingAsk,
+            hasAttention: hasLiveErrorRoot || hasPendingPermission || hasPendingAsk || hasPendingExtensionDialog,
             hasErrorRoot: hasLiveErrorRoot,
             latestActivity: latestActivity
         )
@@ -390,12 +396,6 @@ extension ServerConnection {
             requests: response.attention.permissions,
             workspaceSessionIds: workspaceSessionIds
         )
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            for permission in removedPermissions {
-                PermissionNotificationService.shared.cancelNotification(permissionId: permission.id)
-            }
-        }
-
         let removedAskSessionIds = askRequestStore.applyWorkspaceSnapshot(
             workspaceId: workspaceId,
             asks: response.attention.asks,
@@ -404,7 +404,7 @@ extension ServerConnection {
         for sessionId in removedAskSessionIds {
             pendingAskRequests.removeValue(forKey: sessionId)
             if ReleaseFeatures.localAttentionNotificationsEnabled {
-                PermissionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+                AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
             }
             if activeAskRequest?.sessionId == sessionId {
                 activeAskRequest = nil

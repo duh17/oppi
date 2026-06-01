@@ -361,78 +361,25 @@ struct ServerMessageTests {
         #expect(!duplicate)
     }
 
-    // MARK: - Permissions
+    // MARK: - Legacy Permissions
 
-    @Test func decodesPermissionRequest() throws {
-        let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"rm -rf /"},"displaySummary":"bash: rm -rf /","reason":"Destructive command","timeoutAt":1700000120000}
-        """
-        let msg = try ServerMessage.decode(from: json)
-        guard case .permissionRequest(let perm) = msg else {
-            Issue.record("Expected .permissionRequest")
-            return
-        }
-        #expect(perm.id == "perm1")
-        #expect(perm.tool == "bash")
-        #expect(perm.displaySummary == "bash: rm -rf /")
-        #expect(perm.expires)
-    }
+    @Test func legacyPermissionMessagesDecodeAsUnknown() throws {
+        let legacyTypes = [
+            "permission_request",
+            "permission_expired",
+            "permission_cancelled",
+            "permission_resolved",
+            "permission_auto_reviewed",
+        ]
 
-    @Test func decodesPermissionRequestWithoutExpiry() throws {
-        let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","reason":"Git push","timeoutAt":1700000120000,"expires":false}
-        """
-        let msg = try ServerMessage.decode(from: json)
-        guard case .permissionRequest(let perm) = msg else {
-            Issue.record("Expected .permissionRequest")
-            return
+        for type in legacyTypes {
+            let msg = try ServerMessage.decode(from: #"{"type":"\#(type)"}"#)
+            guard case .unknown(let decodedType) = msg else {
+                Issue.record("Expected .unknown for legacy type \(type)")
+                return
+            }
+            #expect(decodedType == type)
         }
-        #expect(!perm.expires)
-        #expect(!perm.hasExpiry)
-    }
-
-    @Test func decodesPermissionExpired() throws {
-        let json = """
-        {"type":"permission_expired","id":"perm1","reason":"timeout"}
-        """
-        let msg = try ServerMessage.decode(from: json)
-        guard case .permissionExpired(let id, let reason) = msg else {
-            Issue.record("Expected .permissionExpired")
-            return
-        }
-        #expect(id == "perm1")
-        #expect(reason == "timeout")
-    }
-
-    @Test func decodesPermissionResolved() throws {
-        let msg = try ServerMessage.decode(from: #"{"type":"permission_resolved","id":"perm1","action":"allow"}"#)
-        guard case .permissionResolved(let id, let action) = msg else {
-            Issue.record("Expected .permissionResolved")
-            return
-        }
-        #expect(id == "perm1")
-        #expect(action == .allow)
-    }
-
-    @Test func decodesPermissionAutoReviewed() throws {
-        let json = #"{"type":"permission_auto_reviewed","id":"audit1","timestamp":1739750521000,"sessionId":"s1","workspaceId":"w1","tool":"bash","displaySummary":"git status","outcome":"ask","status":"ask","reason":"network risk","model":"qwen/local","riskLevel":"high","confidence":0.91,"durationMs":1200,"tokens":128,"promptHash":"0123456789abcdef"}"#
-        let msg = try ServerMessage.decode(from: json)
-        guard case .permissionAutoReviewed(let item, let workspaceId) = msg else {
-            Issue.record("Expected .permissionAutoReviewed")
-            return
-        }
-        #expect(item.id == "audit1")
-        #expect(workspaceId == "w1")
-        #expect(item.tool == "bash")
-        #expect(item.displaySummary == "git status")
-        #expect(item.outcome == .ask)
-        #expect(item.reason == "network risk")
-        #expect(item.model == "qwen/local")
-        #expect(item.riskLevel == "high")
-        #expect(item.confidence == 0.91)
-        #expect(item.durationMs == 1200)
-        #expect(item.tokens == 128)
-        #expect(item.promptHash == "0123456789abcdef")
     }
 
     // MARK: - Error
@@ -486,6 +433,17 @@ struct ServerMessageTests {
         #expect(req.options == ["A", "B", "C"])
         #expect(req.timeout == 5000)
         #expect(req.timeoutAt == Date(timeIntervalSince1970: 1_893_456_000))
+    }
+
+    @Test func decodesExtensionUISettled() throws {
+        let json = #"{"type":"extension_ui_settled","id":"ext1","sessionId":"s1"}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUISettled(let id, let sessionId) = msg else {
+            Issue.record("Expected .extensionUISettled")
+            return
+        }
+        #expect(id == "ext1")
+        #expect(sessionId == "s1")
     }
 
     // MARK: - Malformed / Edge Cases
@@ -608,23 +566,7 @@ struct ServerMessageTests {
         }
     }
 
-    @Test func permissionRequestMissingFieldsThrows() {
-        // Missing required fields like tool, etc.
-        let json = #"{"type":"permission_request","id":"p1","sessionId":"s1"}"#
-        #expect(throws: DecodingError.self) {
-            try ServerMessage.decode(from: json)
-        }
-    }
 
-    @Test func decodesPermissionCancelled() throws {
-        let json = #"{"type":"permission_cancelled","id":"perm42"}"#
-        let msg = try ServerMessage.decode(from: json)
-        guard case .permissionCancelled(let id) = msg else {
-            Issue.record("Expected .permissionCancelled")
-            return
-        }
-        #expect(id == "perm42")
-    }
 
     @Test func extensionUINotification() throws {
         let json = """

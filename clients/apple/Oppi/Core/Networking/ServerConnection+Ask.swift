@@ -31,7 +31,7 @@ extension ServerConnection {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
         if ReleaseFeatures.localAttentionNotificationsEnabled {
-            PermissionNotificationService.shared.notifyAskIfNeeded(
+            AttentionNotificationService.shared.notifyAskIfNeeded(
                 ask,
                 activeSessionId: focusedSessionId
             )
@@ -58,7 +58,7 @@ extension ServerConnection {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
         if ReleaseFeatures.localAttentionNotificationsEnabled {
-            PermissionNotificationService.shared.notifyAskIfNeeded(
+            AttentionNotificationService.shared.notifyAskIfNeeded(
                 ask,
                 activeSessionId: focusedSessionId
             )
@@ -105,7 +105,7 @@ extension ServerConnection {
         pendingAskRequests.removeValue(forKey: sessionId)
         askRequestStore.remove(for: sessionId)
         if ReleaseFeatures.localAttentionNotificationsEnabled {
-            PermissionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+            AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
         }
 
         if activeAskRequest?.sessionId == sessionId {
@@ -116,6 +116,54 @@ extension ServerConnection {
         }
     }
 
+    func clearAskRequest(id requestId: String) {
+        var removedWorkspaceIds = Set<String>()
+        var removedSessionIds = Set<String>()
+
+        if let activeAskRequest, activeAskRequest.id == requestId {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: activeAskRequest.workspaceId,
+                sessionId: activeAskRequest.sessionId
+            ) {
+                removedWorkspaceIds.insert(workspaceId)
+            }
+            removedSessionIds.insert(activeAskRequest.sessionId)
+            self.activeAskRequest = nil
+        }
+
+        for (sessionId, ask) in Array(pendingAskRequests) where ask.id == requestId {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: ask.workspaceId,
+                sessionId: sessionId
+            ) {
+                removedWorkspaceIds.insert(workspaceId)
+            }
+            removedSessionIds.insert(sessionId)
+            pendingAskRequests.removeValue(forKey: sessionId)
+        }
+
+        for (sessionId, ask) in askRequestStore.pending where ask.id == requestId {
+            if let workspaceId = attentionWorkspaceId(
+                explicitWorkspaceId: ask.workspaceId,
+                sessionId: sessionId
+            ) {
+                removedWorkspaceIds.insert(workspaceId)
+            }
+            removedSessionIds.insert(sessionId)
+            askRequestStore.remove(for: sessionId)
+        }
+
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            for sessionId in removedSessionIds {
+                AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+            }
+        }
+
+        for workspaceId in removedWorkspaceIds {
+            syncWorkspaceSummary(workspaceId: workspaceId)
+        }
+    }
+
     // MARK: - Generic extension dialog lifecycle helpers
 
     func presentExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
@@ -123,10 +171,12 @@ extension ServerConnection {
         extensionTimeoutTask?.cancel()
         activeExtensionDialog = request
         scheduleExtensionTimeout(request)
+        syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
     }
 
     func stashPendingExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
         pendingExtensionDialogs[sessionId] = request
+        syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
     }
 
     func restorePendingExtensionDialogIfNeeded(for sessionId: String) {
@@ -149,15 +199,58 @@ extension ServerConnection {
 
     func clearExtensionDialog(for sessionId: String?) {
         guard let sessionId else {
+            let previousSessionId = activeExtensionDialog?.sessionId
             activeExtensionDialog = nil
             cancelExtensionTimeout()
+            if let previousSessionId {
+                syncExtensionDialogWorkspaceSummary(sessionId: previousSessionId)
+            }
             return
         }
 
-        pendingExtensionDialogs.removeValue(forKey: sessionId)
-        guard activeExtensionDialog?.sessionId == sessionId else { return }
-        activeExtensionDialog = nil
-        cancelExtensionTimeout()
+        let hadPending = pendingExtensionDialogs.removeValue(forKey: sessionId) != nil
+        let hadActive = activeExtensionDialog?.sessionId == sessionId
+        if hadActive {
+            activeExtensionDialog = nil
+            cancelExtensionTimeout()
+        }
+        if hadPending || hadActive {
+            syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
+        }
+    }
+
+    func clearExtensionDialog(id requestId: String) {
+        var clearedActive = false
+        var changedSessionIds = Set<String>()
+        if activeExtensionDialog?.id == requestId {
+            if let sessionId = activeExtensionDialog?.sessionId {
+                changedSessionIds.insert(sessionId)
+            }
+            activeExtensionDialog = nil
+            clearedActive = true
+        }
+
+        for (sessionId, request) in Array(pendingExtensionDialogs) where request.id == requestId {
+            pendingExtensionDialogs.removeValue(forKey: sessionId)
+            changedSessionIds.insert(sessionId)
+        }
+
+        if clearedActive {
+            cancelExtensionTimeout()
+        }
+        for sessionId in changedSessionIds {
+            syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
+        }
+    }
+
+    func hasPendingExtensionDialog(for sessionId: String) -> Bool {
+        activeExtensionDialog?.sessionId == sessionId || pendingExtensionDialogs[sessionId] != nil
+    }
+
+    private func syncExtensionDialogWorkspaceSummary(sessionId: String) {
+        if let workspaceId = attentionWorkspaceId(explicitWorkspaceId: nil, sessionId: sessionId) {
+            syncWorkspaceSummary(workspaceId: workspaceId)
+        }
     }
 
     private func cancelExtensionTimeout() {

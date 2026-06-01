@@ -85,7 +85,8 @@ enum ServerMessage: Sendable, Equatable {
     case retryStart(attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
     case retryEnd(success: Bool, attempt: Int, finalError: String?)
 
-    // Permissions
+    // Legacy permission events are no longer decoded from the wire. The cases
+    // remain for historical timeline/store fixtures until those are migrated.
     case permissionRequest(PermissionRequest)
     case permissionExpired(id: String, reason: String)
     case permissionCancelled(id: String)
@@ -95,6 +96,7 @@ enum ServerMessage: Sendable, Equatable {
     // Extension UI
     case extensionUIRequest(ExtensionUIRequest)
     case extensionUINotification(ExtensionUINotification)
+    case extensionUISettled(id: String, sessionId: String)
 
     // Git status (workspace-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, status: GitStatus)
@@ -220,10 +222,7 @@ extension ServerMessage: Decodable {
         case stage, clientTurnId, duplicate
         // error
         case error, code, fatal
-        // permission_request / permission_resolved / permission_auto_reviewed
-        case id, sessionId, input, displaySummary, timeoutAt, expires, action, timestamp
-        // permission_auto_reviewed
-        case outcome, status, model, riskLevel, confidence, durationMs, tokens, promptHash
+        case id, sessionId, timeoutAt
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // ask extension (extension_ui_request with method: "ask")
@@ -239,7 +238,7 @@ extension ServerMessage: Decodable {
         // retry
         case attempt, maxAttempts, delayMs, errorMessage, finalError
         // git_status
-        case workspaceId
+        case workspaceId, status
         // dictation
         case sttProvider, sttModel
         case text, snap, committedText, activeText
@@ -419,58 +418,6 @@ extension ServerMessage: Decodable {
             let fatal = try c.decodeIfPresent(Bool.self, forKey: .fatal) ?? false
             self = .error(message: msg, code: code, fatal: fatal)
 
-        case "permission_request":
-            let perm = PermissionRequest(
-                id: try c.decode(String.self, forKey: .id),
-                sessionId: try c.decode(String.self, forKey: .sessionId),
-                tool: try c.decode(String.self, forKey: .tool),
-                input: try c.decode([String: JSONValue].self, forKey: .input),
-                displaySummary: try c.decode(String.self, forKey: .displaySummary),
-                reason: try c.decode(String.self, forKey: .reason),
-                timeoutAt: Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .timeoutAt) / 1000),
-                expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true,
-                workspaceId: try c.decodeIfPresent(String.self, forKey: .workspaceId)
-            )
-            self = .permissionRequest(perm)
-
-        case "permission_expired":
-            let id = try c.decode(String.self, forKey: .id)
-            let reason = try c.decode(String.self, forKey: .reason)
-            self = .permissionExpired(id: id, reason: reason)
-
-        case "permission_cancelled":
-            let id = try c.decode(String.self, forKey: .id)
-            self = .permissionCancelled(id: id)
-
-        case "permission_resolved":
-            let id = try c.decode(String.self, forKey: .id)
-            let action = try c.decode(PermissionAction.self, forKey: .action)
-            self = .permissionResolved(id: id, action: action)
-
-        case "permission_auto_reviewed", "permission_auto_approved":
-            let id = try c.decode(String.self, forKey: .id)
-            let workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
-            let timestampMs = try c.decodeIfPresent(Double.self, forKey: .timestamp) ?? Date().timeIntervalSince1970 * 1000
-            let outcome = try c.decodeIfPresent(AutoReviewOutcome.self, forKey: .outcome) ?? .allow
-            let status = try c.decodeIfPresent(String.self, forKey: .status) ?? outcome.rawValue
-            let reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? "Auto review chose \(outcome.rawValue)"
-            let item = AutoReviewTimelineItem(
-                id: id,
-                timestamp: Date(timeIntervalSince1970: timestampMs / 1000),
-                tool: try c.decode(String.self, forKey: .tool),
-                displaySummary: try c.decode(String.self, forKey: .displaySummary),
-                outcome: outcome,
-                status: status,
-                reason: reason,
-                model: try c.decodeIfPresent(String.self, forKey: .model),
-                riskLevel: try c.decodeIfPresent(String.self, forKey: .riskLevel),
-                confidence: try c.decodeIfPresent(Double.self, forKey: .confidence),
-                durationMs: try c.decodeIfPresent(Int.self, forKey: .durationMs),
-                tokens: try c.decodeIfPresent(Int.self, forKey: .tokens),
-                promptHash: try c.decodeIfPresent(String.self, forKey: .promptHash)
-            )
-            self = .permissionAutoReviewed(item, workspaceId: workspaceId)
-
         case "extension_ui_request":
             let askQuestions = try c.decodeIfPresent([AskQuestion].self, forKey: .questions)
             let allowCustom = try c.decodeIfPresent(Bool.self, forKey: .allowCustom)
@@ -489,6 +436,11 @@ extension ServerMessage: Decodable {
                 allowCustom: allowCustom
             )
             self = .extensionUIRequest(req)
+
+        case "extension_ui_settled":
+            let id = try c.decode(String.self, forKey: .id)
+            let sessionId = try c.decode(String.self, forKey: .sessionId)
+            self = .extensionUISettled(id: id, sessionId: sessionId)
 
         case "extension_ui_notification":
             let method = try c.decode(String.self, forKey: .method)
@@ -688,6 +640,7 @@ extension ServerMessage {
         case .permissionAutoReviewed: "permissionAutoReviewed"
         case .extensionUIRequest: "extensionUIRequest"
         case .extensionUINotification: "extensionUINotification"
+        case .extensionUISettled: "extensionUISettled"
         case .gitStatus: "gitStatus"
         case .dictationReady: "dictationReady"
         case .dictationResult: "dictationResult"

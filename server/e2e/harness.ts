@@ -697,45 +697,16 @@ export async function sendPromptAndWait(
 }
 
 /**
- * Auto-approve permissions as they arrive.
+ * Compatibility no-op. Permission gating now happens inside Pi extensions via
+ * generic extension UI messages; there is no custom approval-response path.
  */
 export function autoApprovePermissions(
-  conn: StreamConnection,
-  sessionId: string,
+  _conn: StreamConnection,
+  _sessionId: string,
 ): { stop: () => void; count: () => number } {
-  let cursor = 0;
-  const approved = new Set<string>();
-
-  const tick = () => {
-    while (cursor < conn.events.length) {
-      const e = conn.events[cursor++];
-      if (
-        e.direction === "in" &&
-        e.type === "permission_request" &&
-        e.sessionId === sessionId &&
-        e.id &&
-        !approved.has(e.id)
-      ) {
-        approved.add(e.id);
-        conn.send({
-          type: "permission_response",
-          sessionId,
-          id: e.id,
-          action: "allow",
-          scope: "once",
-          requestId: `auto-perm-${e.id}`,
-        });
-      }
-    }
-  };
-
-  const timer = setInterval(tick, 25);
   return {
-    stop() {
-      clearInterval(timer);
-      tick();
-    },
-    count: () => approved.size,
+    stop() {},
+    count: () => 0,
   };
 }
 

@@ -254,6 +254,45 @@ describe("SessionAgentEventCoordinator", () => {
     );
   });
 
+  it("broadcasts extension UI settlement so secondary clients dismiss stale dialogs", () => {
+    const active = makeActiveSession({ id: "sess-ui", status: "busy" });
+    active.pendingUIRequests.set("ui-1", {
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Choose",
+      options: ["A", "B"],
+    });
+    active.pendingAsk = {
+      requestId: "ui-1",
+      questionCount: 0,
+      broadcastMessage: {
+        type: "extension_ui_request",
+        id: "ui-1",
+        sessionId: "sess-ui",
+        method: "select",
+      },
+      initiatedAt: Date.now(),
+    };
+    const { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent } =
+      makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "extension_ui_request_settled",
+      id: "ui-1",
+    });
+
+    expect(active.pendingUIRequests.has("ui-1")).toBe(false);
+    expect(active.pendingAsk).toBeUndefined();
+    expect(broadcast).toHaveBeenCalledWith("sess-ui", {
+      type: "extension_ui_settled",
+      id: "ui-1",
+      sessionId: "sess-ui",
+    });
+    expect(updateSessionFromEvent).not.toHaveBeenCalled();
+    expect(resetIdleTimer).toHaveBeenCalledWith("sess-ui");
+  });
+
   it("forwards extension audio stream events without sending them through SDK event translation", () => {
     const active = makeActiveSession();
     const { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent } =

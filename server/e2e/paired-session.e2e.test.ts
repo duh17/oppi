@@ -287,14 +287,9 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
       const toolStarts = sessionEvents.filter((e) => e.type === "tool_start");
       const toolEnds = sessionEvents.filter((e) => e.type === "tool_end");
 
-      // Permission requests are auto-approved when the server asks for them.
       // Some tool calls emit multiple tool_start previews before a single tool_end.
       if (toolStarts.length > 0) {
-        const permissionRequests = sessionEvents.filter((e) => e.type === "permission_request");
-        if (permissionRequests.length > 0) {
-          expect(approver.count()).toBeGreaterThan(0);
-        }
-
+        expect(approver.count()).toBe(0);
         expect(toolEnds.length).toBeGreaterThan(0);
 
         const firstToolStartIdx = sessionEvents.findIndex((e) => e.type === "tool_start");

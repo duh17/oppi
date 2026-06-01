@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { MirrorQueueProjection, type MessageQueueState } from "../../pi-extensions/oppi-mirror.ts";
+import {
+  MirrorQueueProjection,
+  serializeSessionTree,
+  type MessageQueueState,
+} from "../../pi-extensions/oppi-mirror.ts";
 
 function queue(
   version: number,
@@ -21,6 +25,87 @@ function queue(
     })),
   };
 }
+
+describe("mirror session tree serialization", () => {
+  it("serializes terminal session trees into mobile outline snapshots", () => {
+    const entries = new Map([
+      [
+        "user-1",
+        {
+          id: "user-1",
+          parentId: null,
+          type: "message",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: "Start here" },
+        },
+      ],
+      [
+        "assistant-1",
+        {
+          id: "assistant-1",
+          parentId: "user-1",
+          type: "message",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "/tmp/a.ts" } },
+            ],
+          },
+        },
+      ],
+      [
+        "tool-result-1",
+        {
+          id: "tool-result-1",
+          parentId: "assistant-1",
+          type: "message",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          message: { role: "toolResult", toolCallId: "tool-1", content: "file contents" },
+        },
+      ],
+    ]);
+    const tree = [
+      {
+        entry: entries.get("user-1")!,
+        children: [
+          {
+            entry: entries.get("assistant-1")!,
+            children: [{ entry: entries.get("tool-result-1")!, children: [] }],
+          },
+        ],
+      },
+    ];
+
+    const snapshot = serializeSessionTree(
+      {
+        getTree: () => tree,
+        getLeafId: () => "tool-result-1",
+        getEntry: (id: string) => entries.get(id),
+      },
+      "default",
+    );
+
+    expect(snapshot.leafId).toBe("tool-result-1");
+    expect(snapshot.nodes).toEqual([
+      expect.objectContaining({
+        id: "user-1",
+        depth: 0,
+        isLeafPath: true,
+        role: "user",
+        textPreview: "Start here",
+      }),
+      expect.objectContaining({ id: "assistant-1", depth: 1, isLeafPath: true }),
+      expect.objectContaining({
+        id: "tool-result-1",
+        depth: 2,
+        isLeafPath: true,
+        role: "toolResult",
+        textPreview: "[read: /tmp/a.ts]",
+      }),
+    ]);
+  });
+});
 
 describe("MirrorQueueProjection", () => {
   it("treats the runtime text queue as authoritative while preserving metadata", () => {

@@ -64,6 +64,20 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearMessageQueueSessionIds == ["deleted"])
     }
 
+    @Test func extensionUISettledClearsMatchingPendingInteraction() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .extensionUISettled(id: "ui-1", sessionId: "s1"),
+            routedSessionId: "s1",
+            isFocusedSession: true
+        )
+
+        #expect(!effects.stopSilenceWatchdog)
+        #expect(effects.clearAskRequestIds == ["ui-1"])
+        #expect(effects.clearExtensionDialogRequestIds == ["ui-1"])
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
+    }
+
     @Test func simpleMessagesMapToTimelineEvents() {
         #expect(ServerMessageEffects.timelineEvents(for: .agentStart, sessionId: "s1").first?.typeLabel == "agentStart")
         #expect(ServerMessageEffects.timelineEvents(for: .textDelta(delta: "hi"), sessionId: "s1").first?.typeLabel == "textDelta")

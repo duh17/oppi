@@ -11,6 +11,7 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
     let allowCustom: Bool
     let timeout: Int? // ms
     let workspaceId: String?
+    let customPlaceholder: String?
 
     init(
         id: String,
@@ -18,7 +19,8 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
         questions: [AskQuestion],
         allowCustom: Bool,
         timeout: Int?,
-        workspaceId: String? = nil
+        workspaceId: String? = nil,
+        customPlaceholder: String? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -26,6 +28,7 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
         self.allowCustom = allowCustom
         self.timeout = timeout
         self.workspaceId = workspaceId
+        self.customPlaceholder = customPlaceholder
     }
 }
 

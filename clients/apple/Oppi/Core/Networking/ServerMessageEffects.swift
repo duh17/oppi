@@ -3,14 +3,18 @@ import Foundation
 struct ServerMessageCleanupEffects: Equatable {
     var stopSilenceWatchdog = false
     var clearAskSessionIds: Set<String> = []
+    var clearAskRequestIds: Set<String> = []
     var clearExtensionDialogSessionIds: Set<String> = []
+    var clearExtensionDialogRequestIds: Set<String> = []
     var clearExtensionSurfaceSessionIds: Set<String> = []
     var clearMessageQueueSessionIds: Set<String> = []
 
     var isEmpty: Bool {
         !stopSilenceWatchdog
             && clearAskSessionIds.isEmpty
+            && clearAskRequestIds.isEmpty
             && clearExtensionDialogSessionIds.isEmpty
+            && clearExtensionDialogRequestIds.isEmpty
             && clearExtensionSurfaceSessionIds.isEmpty
             && clearMessageQueueSessionIds.isEmpty
     }
@@ -175,6 +179,10 @@ enum ServerMessageEffects {
             }
             effects.clearAskSessionIds.insert(sessionId)
             effects.clearExtensionSurfaceSessionIds.insert(sessionId)
+
+        case .extensionUISettled(let id, _):
+            effects.clearAskRequestIds.insert(id)
+            effects.clearExtensionDialogRequestIds.insert(id)
 
         case .sessionDeleted(let deletedId):
             if isFocusedSession {

@@ -129,12 +129,10 @@ struct WorkspaceDetailView: View {
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var showEditWorkspace = false
-    @State private var showWorkspacePolicy = false
     @State private var localSessions: [LocalSession] = []
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
     @State private var pendingDeleteSession: Session?
-    @State private var policyFallback: PolicyFallbackDecision = .allow
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
@@ -185,28 +183,6 @@ struct WorkspaceDetailView: View {
 
     private func hotStoppedRange(now: Date = Date()) -> (since: Date, until: Date) {
         (since: now.addingTimeInterval(-Double(Self.hotStoppedRangeDays) * 86_400), until: now)
-    }
-
-    private var policyFallbackIconName: String {
-        switch policyFallback {
-        case .allow:
-            return "lock.open.fill"
-        case .auto:
-            return "shield.fill"
-        case .ask:
-            return "hand.raised.fill"
-        }
-    }
-
-    private var policyFallbackColor: Color {
-        switch policyFallback {
-        case .allow:
-            return .themeGreen
-        case .auto:
-            return .themeBlue
-        case .ask:
-            return .themeOrange
-        }
     }
 
     /// Current workspace snapshot from the active server store.
@@ -312,7 +288,7 @@ struct WorkspaceDetailView: View {
             sessionId: session.id,
             descendants: descendants,
             pendingPermissionCountForSession: { permissionStore.pending(for: $0).count },
-            pendingAskCountForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
+            pendingAskCountForSession: { pendingAskOrExtensionDialogCount(for: $0) }
         )
 
         // Parent is idle but has working children → tree is still working.
@@ -610,15 +586,10 @@ struct WorkspaceDetailView: View {
                 .accessibilityLabel(currentWorkspace.runtime == .sandbox ? "Edit Sandbox Workspace" : "Edit Workspace")
                 .accessibilityIdentifier("workspace.edit.open")
                 Spacer()
-                Button { showWorkspacePolicy = true } label: {
-                    Image(systemName: policyFallbackIconName)
-                        .foregroundStyle(policyFallbackColor)
-                }
             }
         }
         .refreshable {
             await refreshWorkspaceData()
-            await refreshPolicyFallback()
         }
         .task(id: workspace.id) {
             // Start git status immediately so the context bar does not wait for
@@ -631,9 +602,7 @@ struct WorkspaceDetailView: View {
                 )
             }
 
-            async let workspaceDataRefreshTask: Void = refreshWorkspaceData()
-            async let policyFallbackTask: Void = refreshPolicyFallback()
-            _ = await (workspaceDataRefreshTask, policyFallbackTask)
+            await refreshWorkspaceData()
             await autoCreateE2ESessionIfRequested()
         }
         .task(id: workspaceRefreshPollingTaskId) {
@@ -663,11 +632,6 @@ struct WorkspaceDetailView: View {
         .navigationDestination(isPresented: $showEditWorkspace) {
             WorkspaceEditView(workspace: currentWorkspace)
         }
-        .navigationDestination(isPresented: $showWorkspacePolicy) {
-            WorkspacePolicyView(workspace: currentWorkspace) { fallback in
-                policyFallback = fallback
-            }
-        }
     }
 
     /// Build a SessionRow with shared presentation inputs for the given session.
@@ -694,7 +658,7 @@ struct WorkspaceDetailView: View {
             sessionId: session.id,
             descendants: descendants,
             pendingPermissionCountForSession: { permissionStore.pending(for: $0).count },
-            pendingAskCountForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
+            pendingAskCountForSession: { pendingAskOrExtensionDialogCount(for: $0) }
         )
         return SessionRowPresentationBuilder.make(
             session: session,
@@ -706,6 +670,13 @@ struct WorkspaceDetailView: View {
             activity: activityStore.lastActivity(for: session.id),
             lineageHint: lineageHint,
             searchSnippet: searchStore.snippetsBySessionId[session.id]
+        )
+    }
+
+    private func pendingAskOrExtensionDialogCount(for sessionId: String) -> Int {
+        max(
+            askRequestStore.hasPending(for: sessionId) ? 1 : 0,
+            connection.hasPendingExtensionDialog(for: sessionId) ? 1 : 0
         )
     }
 
@@ -1153,12 +1124,4 @@ struct WorkspaceDetailView: View {
         self.workspaceLoad = nil
     }
 
-    private func refreshPolicyFallback() async {
-        guard let api = apiClient else { return }
-        do {
-            policyFallback = try await api.getPolicyFallback()
-        } catch {
-            // Non-fatal — use cached/default icon state
-        }
-    }
 }

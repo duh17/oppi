@@ -3,6 +3,8 @@ import {
   type AgentSessionEvent,
   type ExtensionAPI,
   type ExtensionContext,
+  type ExtensionUIDialogOptions,
+  type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
@@ -95,6 +97,55 @@ type InternalAgentSessionEvent = Extract<
 type InternalAgentSessionEventListener = (
   event: InternalAgentSessionEvent,
 ) => void;
+
+type SessionTreeFilterMode =
+  | "default"
+  | "no-tools"
+  | "user-only"
+  | "labeled-only"
+  | "all";
+
+interface MirrorSessionTreeEntry {
+  id: string;
+  parentId?: string | null;
+  type: string;
+  timestamp?: string;
+  message?: unknown;
+  tokensBefore?: unknown;
+  summary?: unknown;
+  content?: unknown;
+  name?: unknown;
+  modelId?: unknown;
+  thinkingLevel?: unknown;
+  label?: unknown;
+  customType?: unknown;
+}
+
+interface MirrorSessionTreeNode {
+  entry: MirrorSessionTreeEntry;
+  children: MirrorSessionTreeNode[];
+  label?: string;
+}
+
+interface MirrorSessionTreeManager {
+  getTree: () => MirrorSessionTreeNode[];
+  getLeafId: () => string | null;
+  getEntry: (id: string) => MirrorSessionTreeEntry | undefined;
+}
+
+interface SessionTreeNodeSnapshot {
+  id: string;
+  parentId: string | null;
+  type: string;
+  timestamp: string;
+  depth: number;
+  isLeafPath: boolean;
+  defaultVisible: boolean;
+  matchesFilter: boolean;
+  role?: string;
+  textPreview?: string;
+  label?: string;
+}
 
 interface QueueUpdateBridge {
   listeners: Set<QueueUpdateListener>;
@@ -775,6 +826,417 @@ function textFromUserMessage(message: unknown): string | undefined {
     .trim();
 }
 
+const MAX_TREE_TEXT_PREVIEW_CHARS = 160;
+const TREE_DEFAULT_HIDDEN_ENTRY_TYPES = new Set([
+  "label",
+  "custom",
+  "model_change",
+  "thinking_level_change",
+  "session_info",
+]);
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readSessionTreeFilterMode(value: unknown): SessionTreeFilterMode {
+  return value === "no-tools" ||
+    value === "user-only" ||
+    value === "labeled-only" ||
+    value === "all"
+    ? value
+    : "default";
+}
+
+function compareTreeNodesByTimestamp(
+  left: MirrorSessionTreeNode,
+  right: MirrorSessionTreeNode,
+): number {
+  const leftTime = Date.parse(left.entry.timestamp ?? "");
+  const rightTime = Date.parse(right.entry.timestamp ?? "");
+
+  if (
+    !Number.isNaN(leftTime) &&
+    !Number.isNaN(rightTime) &&
+    leftTime !== rightTime
+  ) {
+    return leftTime - rightTime;
+  }
+
+  const leftTimestamp = left.entry.timestamp ?? "";
+  const rightTimestamp = right.entry.timestamp ?? "";
+  if (leftTimestamp !== rightTimestamp) {
+    return leftTimestamp.localeCompare(rightTimestamp);
+  }
+
+  return left.entry.id.localeCompare(right.entry.id);
+}
+
+function sortTreeNodes(
+  nodes: MirrorSessionTreeNode[],
+  leafPathIds: Set<string>,
+): MirrorSessionTreeNode[] {
+  return [...nodes].sort((left, right) => {
+    const leftOnActivePath = leafPathIds.has(left.entry.id) ? 1 : 0;
+    const rightOnActivePath = leafPathIds.has(right.entry.id) ? 1 : 0;
+
+    if (leftOnActivePath !== rightOnActivePath) {
+      return rightOnActivePath - leftOnActivePath;
+    }
+
+    return compareTreeNodesByTimestamp(left, right);
+  });
+}
+
+function collectLeafPathIds(
+  manager: MirrorSessionTreeManager,
+  leafId: string | null,
+): Set<string> {
+  const pathIds = new Set<string>();
+  let currentId = leafId;
+
+  while (currentId) {
+    if (pathIds.has(currentId)) break;
+    pathIds.add(currentId);
+    const entry = manager.getEntry(currentId);
+    currentId = entry?.parentId ?? null;
+  }
+
+  return pathIds;
+}
+
+function previewText(rawText: string): string | undefined {
+  const normalized = rawText.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) return undefined;
+  if (normalized.length <= MAX_TREE_TEXT_PREVIEW_CHARS) return normalized;
+  return `${normalized.slice(0, MAX_TREE_TEXT_PREVIEW_CHARS - 1)}…`;
+}
+
+function extractDisplayTextFromMessageContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+
+  const parts: string[] = [];
+  for (const block of content) {
+    const record = toRecord(block);
+    if (
+      (record.type === "text" || record.type === "output_text") &&
+      typeof record.text === "string"
+    ) {
+      parts.push(record.text);
+    }
+  }
+  return parts.join(" ");
+}
+
+function hasDisplayTextContent(content: unknown): boolean {
+  return (
+    previewText(extractDisplayTextFromMessageContent(content)) !== undefined
+  );
+}
+
+function shortenTreePath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+}
+
+function formatTreeToolCall(
+  name: string,
+  args: Record<string, unknown>,
+): string {
+  switch (name) {
+    case "read": {
+      const path = shortenTreePath(String(args.path || ""));
+      const offset = args.offset;
+      const limit = args.limit;
+      let display = path;
+      if (offset !== undefined || limit !== undefined) {
+        const start = typeof offset === "number" ? offset : 1;
+        const limitNumber = typeof limit === "number" ? limit : undefined;
+        const end = limitNumber !== undefined ? start + limitNumber - 1 : "";
+        display += `:${start}${end ? `-${end}` : ""}`;
+      }
+      return `[read: ${display}]`;
+    }
+    case "write":
+      return `[write: ${shortenTreePath(String(args.path || ""))}]`;
+    case "edit":
+      return `[edit: ${shortenTreePath(String(args.path || ""))}]`;
+    case "bash": {
+      const rawCommand = String(args.command || "");
+      const command = rawCommand
+        .replace(/[\n\t]/g, " ")
+        .trim()
+        .slice(0, 50);
+      return `[bash: ${command}${rawCommand.length > 50 ? "..." : ""}]`;
+    }
+    case "grep":
+      return `[grep: /${String(args.pattern || "")}/ in ${shortenTreePath(String(args.path || "."))}]`;
+    case "find":
+      return `[find: ${String(args.pattern || "")} in ${shortenTreePath(String(args.path || "."))}]`;
+    case "ls":
+      return `[ls: ${shortenTreePath(String(args.path || "."))}]`;
+    default: {
+      const argsJson = JSON.stringify(args);
+      const preview = argsJson.slice(0, 40);
+      return `[${name}: ${preview}${argsJson.length > 40 ? "..." : ""}]`;
+    }
+  }
+}
+
+function collectTreeToolCalls(
+  tree: MirrorSessionTreeNode[],
+): Map<string, { name: string; arguments: Record<string, unknown> }> {
+  const toolCalls = new Map<
+    string,
+    { name: string; arguments: Record<string, unknown> }
+  >();
+  const stack = [...tree];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    if (current.entry.type === "message") {
+      const message = toRecord(current.entry.message);
+      if (message.role === "assistant" && Array.isArray(message.content)) {
+        for (const block of message.content) {
+          const record = toRecord(block);
+          if (
+            record.type === "toolCall" &&
+            typeof record.id === "string" &&
+            typeof record.name === "string"
+          ) {
+            toolCalls.set(record.id, {
+              name: record.name,
+              arguments: toRecord(record.arguments),
+            });
+          }
+        }
+      }
+    }
+
+    for (const child of current.children) stack.push(child);
+  }
+
+  return toolCalls;
+}
+
+function isTreeEntryEligibleForFilters(
+  entry: MirrorSessionTreeEntry,
+  leafId: string | null,
+): boolean {
+  if (entry.type !== "message" || entry.id === leafId) return true;
+
+  const message = toRecord(entry.message);
+  if (message.role !== "assistant") return true;
+
+  const hasText = hasDisplayTextContent(message.content);
+  const stopReason =
+    typeof message.stopReason === "string" ? message.stopReason : undefined;
+  const isErrorOrAborted =
+    stopReason !== undefined &&
+    stopReason !== "stop" &&
+    stopReason !== "toolUse";
+
+  return hasText || isErrorOrAborted;
+}
+
+function isTreeEntryVisibleByDefault(
+  entry: MirrorSessionTreeEntry,
+  leafId: string | null,
+): boolean {
+  return (
+    isTreeEntryEligibleForFilters(entry, leafId) &&
+    !TREE_DEFAULT_HIDDEN_ENTRY_TYPES.has(entry.type)
+  );
+}
+
+function matchesSessionTreeFilter(
+  node: MirrorSessionTreeNode,
+  filterMode: SessionTreeFilterMode,
+  leafId: string | null,
+): boolean {
+  if (!isTreeEntryEligibleForFilters(node.entry, leafId)) return false;
+
+  const entry = node.entry;
+  const isSettingsEntry = TREE_DEFAULT_HIDDEN_ENTRY_TYPES.has(entry.type);
+
+  switch (filterMode) {
+    case "user-only":
+      return (
+        entry.type === "message" && toRecord(entry.message).role === "user"
+      );
+    case "no-tools":
+      return (
+        !isSettingsEntry &&
+        !(
+          entry.type === "message" &&
+          toRecord(entry.message).role === "toolResult"
+        )
+      );
+    case "labeled-only":
+      return node.label !== undefined;
+    case "all":
+      return true;
+    case "default":
+    default:
+      return !isSettingsEntry;
+  }
+}
+
+function extractTreeNodeSnapshot(
+  entry: MirrorSessionTreeEntry,
+  toolCalls: Map<string, { name: string; arguments: Record<string, unknown> }>,
+  leafId: string | null,
+): { defaultVisible: boolean; role?: string; textPreview?: string } {
+  const defaultVisible = isTreeEntryVisibleByDefault(entry, leafId);
+
+  switch (entry.type) {
+    case "message": {
+      const message = toRecord(entry.message);
+      const role = typeof message.role === "string" ? message.role : undefined;
+      let textPreview: string | undefined;
+
+      switch (role) {
+        case "toolResult": {
+          const toolCallId =
+            typeof message.toolCallId === "string"
+              ? message.toolCallId
+              : undefined;
+          const toolCall = toolCallId ? toolCalls.get(toolCallId) : undefined;
+          textPreview = toolCall
+            ? formatTreeToolCall(toolCall.name, toolCall.arguments)
+            : typeof message.toolName === "string"
+              ? `[${message.toolName}]`
+              : undefined;
+          break;
+        }
+        case "bashExecution":
+          textPreview = previewText(String(message.command || ""));
+          break;
+        default:
+          textPreview = previewText(
+            extractDisplayTextFromMessageContent(message.content),
+          );
+          break;
+      }
+
+      return {
+        defaultVisible,
+        ...(role ? { role } : {}),
+        ...(textPreview ? { textPreview } : {}),
+      };
+    }
+    case "compaction":
+      return {
+        defaultVisible,
+        textPreview:
+          typeof entry.tokensBefore === "number"
+            ? `${Math.round(entry.tokensBefore / 1000)}k tokens`
+            : undefined,
+      };
+    case "branch_summary":
+      return {
+        defaultVisible,
+        ...(previewText(String(entry.summary || ""))
+          ? { textPreview: previewText(String(entry.summary || "")) }
+          : {}),
+      };
+    case "custom_message": {
+      const rawContent =
+        typeof entry.content === "string"
+          ? entry.content
+          : extractDisplayTextFromMessageContent(entry.content);
+      const textPreview = previewText(rawContent);
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+    case "session_info":
+      return {
+        defaultVisible,
+        ...(previewText(String(entry.name || ""))
+          ? { textPreview: previewText(String(entry.name || "")) }
+          : {}),
+      };
+    case "model_change":
+      return {
+        defaultVisible,
+        ...(previewText(String(entry.modelId || ""))
+          ? { textPreview: previewText(String(entry.modelId || "")) }
+          : {}),
+      };
+    case "thinking_level_change":
+      return {
+        defaultVisible,
+        ...(previewText(String(entry.thinkingLevel || ""))
+          ? { textPreview: previewText(String(entry.thinkingLevel || "")) }
+          : {}),
+      };
+    case "label":
+      return {
+        defaultVisible,
+        ...(previewText(String(entry.label || ""))
+          ? { textPreview: previewText(String(entry.label || "")) }
+          : {}),
+      };
+    case "custom":
+      return {
+        defaultVisible,
+        ...(previewText(String(entry.customType || ""))
+          ? { textPreview: previewText(String(entry.customType || "")) }
+          : {}),
+      };
+    default:
+      return { defaultVisible };
+  }
+}
+
+export function serializeSessionTree(
+  manager: MirrorSessionTreeManager,
+  filterMode: SessionTreeFilterMode,
+): { leafId: string | null; nodes: SessionTreeNodeSnapshot[] } {
+  const tree = manager.getTree();
+  const leafId = manager.getLeafId();
+  const leafPathIds = collectLeafPathIds(manager, leafId);
+  const toolCalls = collectTreeToolCalls(tree);
+  const nodes: SessionTreeNodeSnapshot[] = [];
+  const stack = sortTreeNodes(tree, leafPathIds)
+    .reverse()
+    .map((node) => ({ node, depth: 0 }));
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    const extracted = extractTreeNodeSnapshot(
+      current.node.entry,
+      toolCalls,
+      leafId,
+    );
+    nodes.push({
+      id: current.node.entry.id,
+      parentId: current.node.entry.parentId ?? null,
+      type: current.node.entry.type,
+      timestamp: current.node.entry.timestamp ?? "",
+      depth: current.depth,
+      isLeafPath: leafPathIds.has(current.node.entry.id),
+      matchesFilter: matchesSessionTreeFilter(current.node, filterMode, leafId),
+      ...extracted,
+      ...(current.node.label ? { label: current.node.label } : {}),
+    });
+
+    const children = sortTreeNodes(current.node.children, leafPathIds);
+    for (let i = children.length - 1; i >= 0; i -= 1) {
+      const child = children[i];
+      if (child) stack.push({ node: child, depth: current.depth + 1 });
+    }
+  }
+
+  return { leafId, nodes };
+}
+
 function stateSnapshot(pi: ExtensionAPI, ctx: ExtensionContext) {
   return {
     cwd: ctx.cwd,
@@ -858,6 +1320,20 @@ type MirrorIndicatorMode =
   | "error";
 type MirrorIndicatorColor = "success" | "error" | "warning" | "muted";
 
+type MirrorExtensionUIMethod = "select" | "confirm" | "input" | "editor";
+
+interface MirrorExtensionUIResponse {
+  type: "extension_ui_response";
+  id: string;
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+}
+
+interface PendingMirrorUIResponse<T> {
+  resolve: (value: T) => void;
+}
+
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 const OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
 
@@ -875,6 +1351,12 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   let connectedSessionId: string | null = null;
   let connectedWorkspaceId: string | null = null;
   const queueProjection = new MirrorQueueProjection();
+  const pendingUIResponses = new Map<
+    string,
+    PendingMirrorUIResponse<unknown>
+  >();
+  const proxiedUIContexts = new WeakSet<object>();
+  let suppressUIForwarding = false;
   let runtimeActive = true;
   let connectionSerial = 0;
   let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
@@ -967,17 +1449,19 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   function safeSetIndicator(ctx: ExtensionContext, label: string | undefined) {
     indicatorLabel = label;
     try {
-      if (!label) {
-        ctx.ui.setWidget("oppi-mirror", undefined);
-        indicatorWidgetMounted = false;
-        requestIndicatorRender = null;
-        return;
-      }
-      if (!indicatorWidgetMounted) {
-        mountIndicatorWidget(ctx);
-        return;
-      }
-      requestIndicatorRender?.();
+      withSuppressedUIForwarding(() => {
+        if (!label) {
+          ctx.ui.setWidget("oppi-mirror", undefined);
+          indicatorWidgetMounted = false;
+          requestIndicatorRender = null;
+          return;
+        }
+        if (!indicatorWidgetMounted) {
+          mountIndicatorWidget(ctx);
+          return;
+        }
+        requestIndicatorRender?.();
+      });
     } catch (error) {
       logCallbackError("failed to update status", error);
     }
@@ -993,7 +1477,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
       return;
     }
     try {
-      ctx.ui.notify(message, type);
+      withSuppressedUIForwarding(() => ctx.ui.notify(message, type));
     } catch (error) {
       logCallbackError("failed to notify", error);
     }
@@ -1006,6 +1490,254 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     } catch (error) {
       writeMirrorLog("warn", "websocket_send_failed", { error });
     }
+  }
+
+  function withSuppressedUIForwarding<T>(run: () => T): T {
+    const previous = suppressUIForwarding;
+    suppressUIForwarding = true;
+    try {
+      return run();
+    } finally {
+      suppressUIForwarding = previous;
+    }
+  }
+
+  function nextUIRequestId(method: string): string {
+    return `mirror_ui_${method}_${Date.now().toString(36)}_${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+  }
+
+  function composeAbortSignals(
+    first: AbortSignal | undefined,
+    second: AbortSignal,
+  ): AbortSignal {
+    if (!first) return second;
+    if (first.aborted) return first;
+
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    first.addEventListener("abort", abort, { once: true });
+    second.addEventListener("abort", abort, { once: true });
+    return controller.signal;
+  }
+
+  function sendUIRequest(payload: Record<string, unknown>): void {
+    send({ type: "extension_ui_request", ...payload });
+  }
+
+  function sendUISettled(id: string): void {
+    send({ type: "extension_ui_request_settled", id });
+  }
+
+  async function raceMirrorDialog<T>(
+    method: MirrorExtensionUIMethod,
+    request: Record<string, unknown>,
+    opts: ExtensionUIDialogOptions | undefined,
+    defaultValue: T,
+    terminalCall: (opts: ExtensionUIDialogOptions | undefined) => Promise<T>,
+    parsePhoneResponse: (response: MirrorExtensionUIResponse) => T,
+  ): Promise<T> {
+    if (suppressUIForwarding || ws?.readyState !== WebSocket.OPEN) {
+      return terminalCall(opts);
+    }
+
+    const id = nextUIRequestId(method);
+    const localAbort = new AbortController();
+    const terminalOpts = {
+      ...opts,
+      signal: composeAbortSignals(opts?.signal, localAbort.signal),
+    };
+
+    let settledByPhone = false;
+    const phonePromise = new Promise<{ source: "phone"; value: T }>(
+      (resolve) => {
+        pendingUIResponses.set(id, {
+          resolve: (response) => {
+            settledByPhone = true;
+            resolve({
+              source: "phone",
+              value: parsePhoneResponse(response as MirrorExtensionUIResponse),
+            });
+          },
+        });
+      },
+    );
+
+    sendUIRequest({
+      id,
+      method,
+      ...request,
+      timeout: opts?.timeout,
+      timeoutAt: opts?.timeout ? Date.now() + opts.timeout : undefined,
+    });
+
+    const terminalPromise = Promise.resolve()
+      .then(() => terminalCall(terminalOpts))
+      .then((value) => ({ source: "terminal" as const, value }))
+      .catch((error: unknown) => {
+        if (settledByPhone)
+          return { source: "phone" as const, value: defaultValue };
+        throw error;
+      });
+
+    let winner: { source: "phone" | "terminal"; value: T };
+    try {
+      winner = await Promise.race([phonePromise, terminalPromise]);
+    } finally {
+      pendingUIResponses.delete(id);
+      sendUISettled(id);
+    }
+
+    if (winner.source === "phone") {
+      localAbort.abort();
+    }
+    return winner.value;
+  }
+
+  function handleExtensionUIResponse(
+    response: MirrorExtensionUIResponse,
+  ): void {
+    const pending = pendingUIResponses.get(response.id);
+    if (!pending) return;
+    pending.resolve(response);
+  }
+
+  function installExtensionUIProxy(ctx: ExtensionContext): void {
+    const ui = ctx.ui as ExtensionUIContext;
+    if (proxiedUIContexts.has(ui as object)) return;
+    proxiedUIContexts.add(ui as object);
+
+    const original = {
+      select: ui.select.bind(ui),
+      confirm: ui.confirm.bind(ui),
+      input: ui.input.bind(ui),
+      editor: ui.editor.bind(ui),
+      notify: ui.notify.bind(ui),
+      setStatus: ui.setStatus.bind(ui),
+      setWidget: ui.setWidget.bind(ui) as ExtensionUIContext["setWidget"],
+      setTitle: ui.setTitle.bind(ui),
+      setEditorText: ui.setEditorText.bind(ui),
+      pasteToEditor: ui.pasteToEditor.bind(ui),
+    };
+
+    ui.select = (title, options, opts) =>
+      raceMirrorDialog(
+        "select",
+        { title, options },
+        opts,
+        undefined,
+        (nextOpts) => original.select(title, options, nextOpts),
+        (response) => (response.cancelled ? undefined : response.value),
+      );
+
+    ui.confirm = (title, message, opts) =>
+      raceMirrorDialog(
+        "confirm",
+        { title, message },
+        opts,
+        false,
+        (nextOpts) => original.confirm(title, message, nextOpts),
+        (response) =>
+          response.cancelled ? false : (response.confirmed ?? false),
+      );
+
+    ui.input = (title, placeholder, opts) =>
+      raceMirrorDialog(
+        "input",
+        { title, placeholder },
+        opts,
+        undefined,
+        (nextOpts) => original.input(title, placeholder, nextOpts),
+        (response) => (response.cancelled ? undefined : response.value),
+      );
+
+    ui.editor = (title, prefill) =>
+      raceMirrorDialog(
+        "editor",
+        { title, prefill },
+        undefined,
+        undefined,
+        () => original.editor(title, prefill),
+        (response) => (response.cancelled ? undefined : response.value),
+      );
+
+    ui.notify = (message, type) => {
+      original.notify(message, type);
+      if (!suppressUIForwarding) {
+        sendUIRequest({
+          id: nextUIRequestId("notify"),
+          method: "notify",
+          message,
+          notifyType: type,
+        });
+      }
+    };
+
+    ui.setStatus = (key, text) => {
+      original.setStatus(key, text);
+      if (!suppressUIForwarding) {
+        sendUIRequest({
+          id: nextUIRequestId("setStatus"),
+          method: "setStatus",
+          statusKey: key,
+          statusText: text,
+        });
+      }
+    };
+
+    ui.setWidget = ((
+      key: string,
+      content: unknown,
+      options?: { placement?: string },
+    ) => {
+      original.setWidget(key, content as never, options as never);
+      if (
+        !suppressUIForwarding &&
+        (content === undefined || Array.isArray(content))
+      ) {
+        sendUIRequest({
+          id: nextUIRequestId("setWidget"),
+          method: "setWidget",
+          widgetKey: key,
+          widgetLines: content,
+          widgetPlacement: options?.placement,
+        });
+      }
+    }) as ExtensionUIContext["setWidget"];
+
+    ui.setTitle = (title) => {
+      original.setTitle(title);
+      if (!suppressUIForwarding) {
+        sendUIRequest({
+          id: nextUIRequestId("setTitle"),
+          method: "setTitle",
+          title,
+        });
+      }
+    };
+
+    ui.setEditorText = (text) => {
+      original.setEditorText(text);
+      if (!suppressUIForwarding) {
+        sendUIRequest({
+          id: nextUIRequestId("set_editor_text"),
+          method: "set_editor_text",
+          text,
+        });
+      }
+    };
+
+    ui.pasteToEditor = (text) => {
+      original.pasteToEditor(text);
+      if (!suppressUIForwarding) {
+        sendUIRequest({
+          id: nextUIRequestId("set_editor_text"),
+          method: "set_editor_text",
+          text,
+        });
+      }
+    };
   }
 
   function renderIndicator(ctx: ExtensionContext | null = latestCtx) {
@@ -1301,6 +2033,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
   function connect(ctx: ExtensionContext) {
     if (!runtimeActive) return;
     latestCtx = ctx;
+    installExtensionUIProxy(ctx);
     if (!isInteractiveTerminalProcess()) {
       notify(
         ctx,
@@ -1377,6 +2110,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
             "retry",
             "bash_abort",
             "state",
+            "extension_ui_proxy",
           ],
           state: stateSnapshot(pi, ctx),
         });
@@ -1411,6 +2145,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         manualStop,
       });
       clearTimers();
+      pendingUIResponses.clear();
       ws = null;
       if (!manualStop) {
         const delayMs = Math.max(
@@ -1450,6 +2185,7 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
     manualStop = true;
     connectionSerial += 1;
     clearTimers();
+    pendingUIResponses.clear();
     const socket = ws;
     const stateCtx = ctx ?? latestCtx;
     if (socket?.readyState === WebSocket.OPEN) {
@@ -1512,6 +2248,10 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
         if (message.id && message.command) {
           await handleCommand(ctx, message.id, message.command);
         }
+        return;
+
+      case "extension_ui_response":
+        handleExtensionUIResponse(message as MirrorExtensionUIResponse);
         return;
 
       case "error": {
@@ -1767,6 +2507,12 @@ export default function oppiPiMirror(pi: ExtensionAPI) {
           );
         return { messages };
       }
+
+      case "get_session_tree":
+        return serializeSessionTree(
+          ctx.sessionManager as unknown as MirrorSessionTreeManager,
+          readSessionTreeFilterMode(command.filterMode),
+        );
 
       case "navigate_tree": {
         const targetId = String(command.targetId ?? "").trim();

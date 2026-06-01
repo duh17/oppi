@@ -699,6 +699,10 @@ struct ChatInputBar<ActionRow: View>: View {
             return "Send review comments…"
         }
         if let askRequest, askRequest.allowCustom {
+            if let placeholder = askRequest.customPlaceholder?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !placeholder.isEmpty {
+                return placeholder
+            }
             return "Type answer…"
         }
         guard isBusy else { return "Message…" }

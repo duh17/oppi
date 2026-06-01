@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { buildExtensionUISettledMessage } from "./extension-ui-contract.js";
 import type { ExtensionAudioStreamEvent, PiMessage, SessionBackendEvent } from "./pi-events.js";
 import { createLogger } from "./logger.js";
 import {
@@ -86,6 +87,7 @@ export class SessionAgentEventCoordinator {
       if (active.pendingAsk?.requestId === data.id) {
         active.pendingAsk = undefined;
       }
+      this.deps.broadcast(key, buildExtensionUISettledMessage(active.session.id, data.id));
       this.deps.resetIdleTimer(key);
       return;
     }

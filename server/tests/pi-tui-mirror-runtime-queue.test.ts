@@ -721,6 +721,37 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
   });
 
+  it("forwards session tree reads through the bridge", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const commandPromise = runtime.forwardClientCommand(
+      sessionId,
+      { type: "get_session_tree", filterMode: "no-tools" },
+      "req-tree",
+    );
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "get_session_tree", filterMode: "no-tools" });
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { leafId: "entry-1", nodes: [] },
+    });
+
+    await expect(commandPromise).resolves.toBeUndefined();
+    expect(received).toContainEqual({
+      type: "command_result",
+      command: "get_session_tree",
+      requestId: "req-tree",
+      success: true,
+      data: { leafId: "entry-1", nodes: [] },
+    });
+  });
+
   it("reports unsupported mirror commands through the runtime command_result contract", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
@@ -921,5 +952,139 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       data: { queue: { version: 0, steering: [], followUp: [] } },
     });
     await expect(steerPromise).resolves.toBeUndefined();
+  });
+});
+
+describe("PiTuiMirrorRuntime extension UI bridge", () => {
+  it("ingests bridge UI requests and replays pending dialogs", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Choose",
+      options: ["A", "B"],
+      timeout: 5_000,
+      timeoutAt: 123_000,
+    });
+
+    expect(received.at(-1)).toEqual({
+      type: "extension_ui_request",
+      id: "ui-1",
+      sessionId,
+      method: "select",
+      title: "Choose",
+      options: ["A", "B"],
+      message: undefined,
+      placeholder: undefined,
+      prefill: undefined,
+      timeout: 5_000,
+      timeoutAt: 123_000,
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([received.at(-1)]);
+  });
+
+  it("routes phone UI responses back to the bridge with first-wins settlement", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "input",
+      title: "Name",
+    });
+
+    const handled = runtime.respondToUIRequest(sessionId, {
+      type: "extension_ui_response",
+      id: "ui-1",
+      value: "Ada",
+    });
+
+    expect(handled).toBe(true);
+    expect(ws.sent.at(-1)).toEqual({
+      type: "extension_ui_response",
+      id: "ui-1",
+      value: "Ada",
+      confirmed: undefined,
+      cancelled: undefined,
+    });
+    expect(received.at(-1)).toEqual({
+      type: "extension_ui_settled",
+      id: "ui-1",
+      sessionId,
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+    expect(
+      runtime.respondToUIRequest(sessionId, {
+        type: "extension_ui_response",
+        id: "ui-1",
+        value: "Grace",
+      }),
+    ).toBe(false);
+  });
+
+  it("settles terminal-won bridge UI requests idempotently", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "confirm",
+      title: "Proceed?",
+      message: "Terminal will answer this.",
+    });
+    ws.receive({ type: "extension_ui_request_settled", id: "ui-1" });
+    ws.receive({ type: "extension_ui_request_settled", id: "ui-1" });
+
+    expect(received.filter((message) => message.type === "extension_ui_settled")).toEqual([
+      { type: "extension_ui_settled", id: "ui-1", sessionId },
+    ]);
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+    expect(
+      runtime.respondToUIRequest(sessionId, {
+        type: "extension_ui_response",
+        id: "ui-1",
+        confirmed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps ask replay separate from generic extension dialogs", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "ask",
+      allowCustom: false,
+      questions: [
+        {
+          id: "q1",
+          question: "Pick one",
+          options: [{ value: "a", label: "A" }],
+        },
+      ],
+    });
+
+    expect(runtime.getPendingAskMessage(sessionId)).toMatchObject({
+      type: "extension_ui_request",
+      id: "ask-1",
+      sessionId,
+      method: "ask",
+      allowCustom: false,
+      questions: [{ id: "q1", question: "Pick one" }],
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
   });
 });

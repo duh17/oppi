@@ -175,58 +175,6 @@ struct ServerConnectionTests {
         #expect(conn.permissionStore.pending[0].id == "p1")
     }
 
-    @Test func routePermissionRequestUsesActiveSessionForNotificationDecision() {
-        let (conn, _) = makeTestConnection(sessionId: "active-s1")
-        conn._setActiveSessionIdForTesting("active-s1")
-
-        let notificationService = PermissionNotificationService.shared
-        let previousAppState = notificationService._applicationStateForTesting
-        let previousDecisionHook = notificationService._onNotifyDecisionForTesting
-        let previousSkipScheduling = notificationService._skipSchedulingForTesting
-
-        notificationService._applicationStateForTesting = .active
-        notificationService._skipSchedulingForTesting = true
-
-        defer {
-            notificationService._applicationStateForTesting = previousAppState
-            notificationService._onNotifyDecisionForTesting = previousDecisionHook
-            notificationService._skipSchedulingForTesting = previousSkipScheduling
-        }
-
-        var capturedRequestSessionId: String?
-        var capturedActiveSessionId: String?
-        var capturedShouldNotify: Bool?
-        notificationService._onNotifyDecisionForTesting = { request, activeSessionId, shouldNotify in
-            capturedRequestSessionId = request.sessionId
-            capturedActiveSessionId = activeSessionId
-            capturedShouldNotify = shouldNotify
-        }
-
-        let perm = PermissionRequest(
-            id: "p2", sessionId: "other-s2", tool: "bash",
-            input: ["command": .string("git push")],
-            displaySummary: "bash: git push",
-            reason: "Git push",
-            timeoutAt: Date().addingTimeInterval(120)
-        )
-
-        conn.routeStreamMessage(StreamMessage(
-            sessionId: "other-s2",
-            seq: 1,
-            currentSeq: nil,
-            message: .permissionRequest(perm)
-        ))
-
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            #expect(capturedRequestSessionId == "other-s2")
-            #expect(capturedActiveSessionId == "active-s1")
-            #expect(capturedShouldNotify == true)
-        } else {
-            #expect(capturedRequestSessionId == nil)
-            #expect(capturedActiveSessionId == nil)
-            #expect(capturedShouldNotify == nil)
-        }
-    }
 
     @Test func routePermissionExpired() {
         let (conn, pipe) = makeTestConnection()
@@ -1484,6 +1432,32 @@ struct ForegroundRecoveryTests {
         #expect(pendingSummary?.hasErrorRoot == false)
     }
 
+    @Test func syncWorkspaceSummaryUsesPendingExtensionDialogAttention() {
+        let conn = makeLegacyForegroundRecoveryConnection()
+        let session = makeTestSession(id: "ready-root", workspaceId: "w1", status: .ready)
+        conn.sessionStore.applyServerSnapshot([session])
+
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
+
+        conn.stashPendingExtensionDialog(
+            ExtensionUIRequest(
+                id: "ui-1",
+                sessionId: "ready-root",
+                method: "select",
+                title: "Dangerous command",
+                options: ["Allow once", "Deny"]
+            ),
+            for: "ready-root"
+        )
+        #expect(conn.hasPendingExtensionDialog(for: "ready-root") == true)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
+
+        conn.clearExtensionDialog(id: "ui-1")
+        #expect(conn.hasPendingExtensionDialog(for: "ready-root") == false)
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
+    }
+
     @Test func syncWorkspaceSummaryClearsLocalErrorOverlayOnceLiveStateRecovers() {
         let conn = makeLegacyForegroundRecoveryConnection()
 
@@ -1743,7 +1717,7 @@ struct StreamLifecycleTests {
             }
         }
 
-        // Route a permission_request for the active session
+        // Route a historical permission event for the active session
         let permRequest = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "test", reason: "",
@@ -1790,66 +1764,6 @@ struct StreamLifecycleTests {
         #expect(conn.permissionStore.pending.count == 1,
                 "Cross-session permission should be added to store")
         #expect(conn.permissionStore.pending.first?.id == "p2")
-    }
-
-    @Test func respondToCrossSessionPermissionDoesNotPolluteActiveTimeline() async throws {
-        let (conn, pipe) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-        conn._sendMessageForTesting = { _ in }  // stub WS send
-
-        // Add a permission belonging to a DIFFERENT session
-        let crossPerm = PermissionRequest(
-            id: "xp1", sessionId: "s2", tool: "bash",
-            input: [:], displaySummary: "cross-session cmd", reason: "",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
-        conn.permissionStore.add(crossPerm)
-
-        // Approve it while viewing session s1
-        try await conn.respondToPermission(id: "xp1", action: .allow)
-
-        // The "Allowed" marker must NOT appear in the active session's timeline
-        let hasMarker = pipe.reducer.items.contains {
-            if case .permissionResolved(let id, _, _, _) = $0 { return id == "xp1" }
-            return false
-        }
-        #expect(!hasMarker,
-                "Cross-session permission approval should not inject marker into active session timeline")
-
-        // Permission should still be removed from the store
-        #expect(conn.permissionStore.pending.isEmpty,
-                "Permission should be consumed from store after response")
-    }
-
-    @Test func respondToSameSessionPermissionInjectsMarker() async throws {
-        let (conn, pipe) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-        conn._sendMessageForTesting = { _ in }
-
-        // Wire permission callback to test-compat reducer
-        conn.onPermissionResolved = { id, outcome, tool, summary in
-            pipe.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
-        }
-
-        // Add a permission for the ACTIVE session
-        let perm = PermissionRequest(
-            id: "sp1", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "same-session cmd", reason: "",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
-        conn.permissionStore.add(perm)
-
-        try await conn.respondToPermission(id: "sp1", action: .allow)
-
-        // The marker SHOULD appear for the active session
-        let hasMarker = pipe.reducer.items.contains {
-            if case .permissionResolved(let id, _, _, _) = $0 { return id == "sp1" }
-            return false
-        }
-        #expect(hasMarker,
-                "Same-session permission approval should inject marker into active timeline")
     }
 
     // MARK: - reconnectIfNeeded restarts dead stream

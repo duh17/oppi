@@ -61,7 +61,7 @@ extension ServerConnection {
         case .error(_, _, _):
             break
 
-        case .sessionEnded, .sessionDeleted, .stopConfirmed:
+        case .sessionEnded, .sessionDeleted, .stopConfirmed, .extensionUISettled:
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
         default:
@@ -81,7 +81,7 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: false), sessionId: sessionId)
 
-        case .state, .sessionSummary, .sessionEnded, .stopConfirmed, .sessionDeleted:
+        case .state, .sessionSummary, .sessionEnded, .stopConfirmed, .sessionDeleted, .extensionUISettled:
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: false)
 
         default:
@@ -152,8 +152,14 @@ extension ServerConnection {
         for sessionId in effects.clearAskSessionIds {
             clearAskState(for: sessionId)
         }
+        for requestId in effects.clearAskRequestIds {
+            clearAskRequest(id: requestId)
+        }
         for sessionId in effects.clearExtensionDialogSessionIds {
             clearExtensionDialog(for: sessionId)
+        }
+        for requestId in effects.clearExtensionDialogRequestIds {
+            clearExtensionDialog(id: requestId)
         }
         for sessionId in effects.clearExtensionSurfaceSessionIds {
             clearExtensionSurface(for: sessionId)

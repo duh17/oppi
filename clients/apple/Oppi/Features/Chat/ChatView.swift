@@ -178,6 +178,19 @@ struct ChatView: View {
         connection.extensionSurfaceBySession[sessionId]
     }
 
+    private var activeInlineExtensionRequest: ExtensionUIRequest? {
+        guard let request = connection.activeExtensionDialog,
+              request.sessionId == sessionId,
+              request.shouldPresentAsInlineAskCard else {
+            return nil
+        }
+        return request
+    }
+
+    private var activeComposerAskRequest: AskRequest? {
+        connection.activeAskRequest ?? activeInlineExtensionRequest?.inlineAskRequest
+    }
+
     /// Show toolbar when composing (keyboard up) or at bottom of chat.
     /// Hide when scrolled up to read history.
 
@@ -591,28 +604,9 @@ struct ChatView: View {
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
-                    askRequest: connection.activeAskRequest,
-                    onAskSubmit: { answers in
-                        guard let ask = connection.activeAskRequest else { return }
-                        let value = AskResponseEncoder.encode(answers)
-                        Task {
-                            do {
-                                try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, value: value)
-                            } catch {
-                                // Keep the ask card visible so the user can retry.
-                            }
-                        }
-                    },
-                    onAskIgnoreAll: {
-                        guard let ask = connection.activeAskRequest else { return }
-                        Task {
-                            do {
-                                try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, cancelled: true)
-                            } catch {
-                                // Keep the ask card visible so the user can retry.
-                            }
-                        }
-                    },
+                    askRequest: activeComposerAskRequest,
+                    onAskSubmit: handleComposerAskSubmit,
+                    onAskIgnoreAll: handleComposerAskIgnoreAll,
 
                     slashCommands: chatState.slashCommands,
                     fileSuggestions: chatState.fileSuggestions,
@@ -1278,6 +1272,78 @@ struct ChatView: View {
             return message
         }
         return error.localizedDescription
+    }
+
+    private func handleComposerAskSubmit(_ answers: [String: AskAnswer]) {
+        if let ask = connection.activeAskRequest {
+            let value = AskResponseEncoder.encode(answers)
+            Task {
+                do {
+                    try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, value: value)
+                } catch {
+                    connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
+                }
+            }
+            return
+        }
+
+        guard let request = activeInlineExtensionRequest else { return }
+        let answer = answers[ExtensionUIRequest.inlineQuestionId]
+        Task {
+            do {
+                switch request.method {
+                case "select":
+                    guard case .single(let value) = answer else {
+                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
+                        return
+                    }
+                    try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: value)
+
+                case "confirm":
+                    let confirmed = (answer == .single(ExtensionUIRequest.confirmValue))
+                    if confirmed {
+                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, confirmed: true)
+                    } else {
+                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
+                    }
+
+                case "input":
+                    switch answer {
+                    case .custom(let value), .single(let value):
+                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: value)
+                    case .multi, nil:
+                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
+                    }
+
+                default:
+                    break
+                }
+            } catch {
+                connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func handleComposerAskIgnoreAll() {
+        if let ask = connection.activeAskRequest {
+            Task {
+                do {
+                    try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, cancelled: true)
+                } catch {
+                    connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
+                }
+            }
+            return
+        }
+
+        guard let request = activeInlineExtensionRequest else { return }
+        Task {
+            do {
+                try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
+            } catch {
+                connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func sendPrompt() {
