@@ -775,17 +775,17 @@ struct WorkspaceHomeView: View {
     }
 
     private func pendingPermissionCount(for sessionId: String, connection: ServerConnection) -> Int {
-        max(
-            connection.sessionStore.listPendingPermissionCount(for: sessionId),
-            connection.permissionStore.pending(for: sessionId).count
+        SessionListAttentionMerger.permissionCount(
+            listCount: connection.sessionStore.listPendingPermissionCount(for: sessionId),
+            liveCount: connection.permissionStore.pending(for: sessionId).count
         )
     }
 
     private func pendingAskCount(for sessionId: String, connection: ServerConnection) -> Int {
-        max(
-            connection.sessionStore.listPendingAskCount(for: sessionId),
-            connection.askRequestStore.hasPending(for: sessionId) ? 1 : 0,
-            connection.hasPendingExtensionDialog(for: sessionId) ? 1 : 0
+        SessionListAttentionMerger.askCount(
+            listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
+            hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
+            hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
         )
     }
 

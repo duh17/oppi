@@ -352,10 +352,18 @@ extension ServerConnection {
         let hasPendingExtensionDialog = pendingExtensionDialogs.values.contains { request in
             workspaceSessionIds.contains(request.sessionId)
         } || activeExtensionDialog.map { workspaceSessionIds.contains($0.sessionId) } == true
+        let hasListAttention = workspaceSessions.contains { session in
+            sessionStore.listPendingPermissionCount(for: session.id) > 0
+                || sessionStore.listPendingAskCount(for: session.id) > 0
+        }
         let rootSessions = workspaceRootSessions(workspaceSessions)
         let hasLiveErrorRoot = rootSessions.contains { $0.status == .error }
 
-        guard !rootSessions.isEmpty || hasPendingPermission || hasPendingAsk || hasPendingExtensionDialog else {
+        guard !rootSessions.isEmpty
+            || hasPendingPermission
+            || hasPendingAsk
+            || hasPendingExtensionDialog
+            || hasListAttention else {
             return nil
         }
 
@@ -364,7 +372,11 @@ extension ServerConnection {
             workspaceId: workspaceId,
             activeCount: rootSessions.filter { $0.status != .stopped }.count,
             stoppedCount: rootSessions.filter { $0.status == .stopped }.count,
-            hasAttention: hasLiveErrorRoot || hasPendingPermission || hasPendingAsk || hasPendingExtensionDialog,
+            hasAttention: hasLiveErrorRoot
+                || hasPendingPermission
+                || hasPendingAsk
+                || hasPendingExtensionDialog
+                || hasListAttention,
             hasErrorRoot: hasLiveErrorRoot,
             latestActivity: latestActivity
         )

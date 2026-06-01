@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import Oppi
@@ -123,6 +124,24 @@ struct AskCardTests {
         let answers: [String: AskAnswer] = [:]
         let json = AskResponseEncoder.encode(answers)
         #expect(json == "{}")
+    }
+
+    // MARK: - Inline Preview
+
+    @Test("Short inline questions do not use compact preview")
+    func shortInlineQuestionDoesNotUsePreview() {
+        #expect(AskCard.usesInlineQuestionPreview("Pick an option", dynamicTypeSize: .large) == false)
+    }
+
+    @Test("Long inline questions use compact preview")
+    func longInlineQuestionUsesPreview() {
+        let question = (1...9).map { "Detail line \($0)" }.joined(separator: "\n")
+        #expect(AskCard.usesInlineQuestionPreview(question, dynamicTypeSize: .large) == true)
+    }
+
+    @Test("Accessibility sizes keep a larger inline question preview")
+    func accessibilityInlineQuestionPreviewLimit() {
+        #expect(AskCard.inlineQuestionLineLimit(for: .accessibility1) > AskCard.inlineQuestionLineLimit(for: .large))
     }
 
     // MARK: - Page Count

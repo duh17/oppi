@@ -53,6 +53,79 @@ describe("workspaces module", () => {
     ]);
   });
 
+  it("marks workspace summaries with pending mirror extension UI requests", async () => {
+    const workspace = { id: "ws-1", name: "Default", skills: [] };
+    const session = {
+      id: "mirror-1",
+      workspaceId: "ws-1",
+      status: "busy",
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const ctx = {
+      storage: {
+        listWorkspaces: vi.fn(() => [workspace]),
+        listWorkspaceSessionSummarySnapshots: vi.fn(() => [
+          {
+            workspaceId: "ws-1",
+            activeCount: 1,
+            stoppedCount: 0,
+            hasErrorRoot: false,
+            latestActivity: 2,
+          },
+        ]),
+      },
+      sessions: {
+        getActiveSessionIds: vi.fn(() => new Set<string>()),
+      },
+      mirrorRuntime: {
+        getActiveSessionIds: vi.fn(() => new Set(["mirror-1"])),
+        getActiveSession: vi.fn((sessionId: string) =>
+          sessionId === "mirror-1" ? session : undefined,
+        ),
+        getPendingAskMessage: vi.fn(() => undefined),
+        getPendingUIRequestMessages: vi.fn((sessionId: string) =>
+          sessionId === "mirror-1"
+            ? [
+                {
+                  type: "extension_ui_request",
+                  id: "ui-1",
+                  sessionId,
+                  method: "select",
+                  title: "Remote access",
+                  options: ["Allow once", "Deny"],
+                },
+              ]
+            : [],
+        ),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/workspaces",
+      url: new URL("http://localhost/workspaces"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+
+    const body = JSON.parse(res.body) as {
+      summaries: Array<{ workspaceId: string; hasAttention: boolean }>;
+    };
+    expect(body.summaries).toEqual([
+      expect.objectContaining({ workspaceId: "ws-1", hasAttention: true }),
+    ]);
+  });
+
   it("returns 404 for nonexistent workspace", async () => {
     const ctx = {
       storage: {

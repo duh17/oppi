@@ -1458,6 +1458,21 @@ struct ForegroundRecoveryTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
     }
 
+    @Test func syncWorkspaceSummaryUsesListProjectionAttentionCounts() {
+        let conn = makeLegacyForegroundRecoveryConnection()
+        var summary = SessionSummary(from: makeTestSession(id: "ready-root", workspaceId: "w1", status: .ready))
+        summary.pendingAskCount = 1
+
+        conn.sessionStore.upsertManySummaries([summary])
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
+
+        summary.pendingAskCount = 0
+        conn.sessionStore.upsertManySummaries([summary])
+        conn.syncWorkspaceSummary(workspaceId: "w1")
+        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
+    }
+
     @Test func syncWorkspaceSummaryClearsLocalErrorOverlayOnceLiveStateRecovers() {
         let conn = makeLegacyForegroundRecoveryConnection()
 

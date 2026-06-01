@@ -17,6 +17,24 @@ struct SessionListAttentionCounts: Equatable, Sendable {
     }
 }
 
+enum SessionListAttentionMerger {
+    static func permissionCount(listCount: Int, liveCount: Int) -> Int {
+        max(listCount, liveCount)
+    }
+
+    static func askCount(
+        listCount: Int,
+        hasPendingAsk: Bool,
+        hasPendingExtensionDialog: Bool
+    ) -> Int {
+        max(
+            listCount,
+            hasPendingAsk ? 1 : 0,
+            hasPendingExtensionDialog ? 1 : 0
+        )
+    }
+}
+
 struct SessionListRefreshPollingPolicy: Equatable {
     private(set) var gracePollsRemaining: Int = 0
     private var hadActiveWork = false

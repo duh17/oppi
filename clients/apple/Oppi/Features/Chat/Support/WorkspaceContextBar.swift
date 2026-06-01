@@ -1316,11 +1316,18 @@ struct WorkspaceContextBar: View {
     }
 
     private func pendingPermissionCount(for sessionId: String) -> Int {
-        permissionStore.pending(for: sessionId).count
+        SessionListAttentionMerger.permissionCount(
+            listCount: sessionStore.listPendingPermissionCount(for: sessionId),
+            liveCount: permissionStore.pending(for: sessionId).count
+        )
     }
 
     private func pendingAskCount(for sessionId: String) -> Int {
-        askRequestStore.hasPending(for: sessionId) ? 1 : 0
+        SessionListAttentionMerger.askCount(
+            listCount: sessionStore.listPendingAskCount(for: sessionId),
+            hasPendingAsk: askRequestStore.hasPending(for: sessionId),
+            hasPendingExtensionDialog: false
+        )
     }
 
     private func agentStatus(for child: Session) -> ContextBarSubagentStatus {

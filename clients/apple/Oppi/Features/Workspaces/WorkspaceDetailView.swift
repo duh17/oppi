@@ -287,8 +287,8 @@ struct WorkspaceDetailView: View {
         let attention = SessionRowPresentationBuilder.attentionCounts(
             sessionId: session.id,
             descendants: descendants,
-            pendingPermissionCountForSession: { permissionStore.pending(for: $0).count },
-            pendingAskCountForSession: { pendingAskOrExtensionDialogCount(for: $0) }
+            pendingPermissionCountForSession: { pendingPermissionCount(for: $0) },
+            pendingAskCountForSession: { pendingAskCount(for: $0) }
         )
 
         // Parent is idle but has working children → tree is still working.
@@ -346,14 +346,16 @@ struct WorkspaceDetailView: View {
                 filtered,
                 hasPermissionInQueue: { sessionId in
                     SessionTreeHelper.aggregatePendingCount(
-                        of: sessionId, in: activeSessions,
-                        pendingForSession: { permissionStore.pending(for: $0).count }
+                        of: sessionId,
+                        in: activeSessions,
+                        pendingForSession: { pendingPermissionCount(for: $0) }
                     ) > 0
                 },
                 hasAskInQueue: { sessionId in
                     SessionTreeHelper.aggregatePendingCount(
-                        of: sessionId, in: activeSessions,
-                        pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
+                        of: sessionId,
+                        in: activeSessions,
+                        pendingForSession: { pendingAskCount(for: $0) }
                     ) > 0
                 }
             )
@@ -657,8 +659,8 @@ struct WorkspaceDetailView: View {
         let attention = SessionRowPresentationBuilder.attentionCounts(
             sessionId: session.id,
             descendants: descendants,
-            pendingPermissionCountForSession: { permissionStore.pending(for: $0).count },
-            pendingAskCountForSession: { pendingAskOrExtensionDialogCount(for: $0) }
+            pendingPermissionCountForSession: { pendingPermissionCount(for: $0) },
+            pendingAskCountForSession: { pendingAskCount(for: $0) }
         )
         return SessionRowPresentationBuilder.make(
             session: session,
@@ -673,10 +675,18 @@ struct WorkspaceDetailView: View {
         )
     }
 
-    private func pendingAskOrExtensionDialogCount(for sessionId: String) -> Int {
-        max(
-            askRequestStore.hasPending(for: sessionId) ? 1 : 0,
-            connection.hasPendingExtensionDialog(for: sessionId) ? 1 : 0
+    private func pendingPermissionCount(for sessionId: String) -> Int {
+        SessionListAttentionMerger.permissionCount(
+            listCount: sessionStore.listPendingPermissionCount(for: sessionId),
+            liveCount: permissionStore.pending(for: sessionId).count
+        )
+    }
+
+    private func pendingAskCount(for sessionId: String) -> Int {
+        SessionListAttentionMerger.askCount(
+            listCount: sessionStore.listPendingAskCount(for: sessionId),
+            hasPendingAsk: askRequestStore.hasPending(for: sessionId),
+            hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
         )
     }
 
@@ -983,14 +993,16 @@ struct WorkspaceDetailView: View {
                 return false
             }
         }
-        let hasPermissionAttention = permissionStore.pending.contains { permission in
-            permission.workspaceId == workspace.id ||
-                (permission.workspaceId == nil && sessionIds.contains(permission.sessionId))
-        }
-        let hasAskAttention = askRequestStore.pending.values.contains { ask in
-            ask.workspaceId == workspace.id ||
-                (ask.workspaceId == nil && sessionIds.contains(ask.sessionId))
-        }
+        let hasPermissionAttention = sessions.contains { pendingPermissionCount(for: $0.id) > 0 }
+            || permissionStore.pending.contains { permission in
+                permission.workspaceId == workspace.id ||
+                    (permission.workspaceId == nil && sessionIds.contains(permission.sessionId))
+            }
+        let hasAskAttention = sessions.contains { pendingAskCount(for: $0.id) > 0 }
+            || askRequestStore.pending.values.contains { ask in
+                ask.workspaceId == workspace.id ||
+                    (ask.workspaceId == nil && sessionIds.contains(ask.sessionId))
+            }
 
         return (
             hasActiveWork: hasActiveWork,

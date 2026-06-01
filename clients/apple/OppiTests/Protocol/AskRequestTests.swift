@@ -201,6 +201,65 @@ struct AskRequestTests {
         #expect(q.id == "unique-id")
     }
 
+    @Test func extensionSelectInlineAskExtractsOptionDescriptions() {
+        let request = ExtensionUIRequest(
+            id: "ext-permission",
+            sessionId: "s1",
+            method: "select",
+            title: """
+            Touch permission gate extension
+
+            This changes the native permission approval path.
+
+            Tool: bash
+            Input: {"command":"npm test"}
+
+            Allow this tool call?
+
+              Allow once: Run this tool call now
+              Deny: Block the tool call
+            """,
+            options: ["Allow once", "Deny"]
+        )
+
+        let ask = request.inlineAskRequest
+
+        #expect(ask?.questions.first?.question.contains("Touch permission gate extension") == true)
+        #expect(ask?.questions.first?.question.contains("Allow once: Run this tool call now") == false)
+        #expect(ask?.questions.first?.options[0].description == "Run this tool call now")
+        #expect(ask?.questions.first?.options[1].description == "Block the tool call")
+    }
+
+    @Test func extensionSelectInlineAskPreservesIndentedOptionLikePromptContent() {
+        let request = ExtensionUIRequest(
+            id: "ext-permission",
+            sessionId: "s1",
+            method: "select",
+            title: """
+            Review this command before allowing it.
+
+            Input:
+              cat <<'EOF'
+              Deny: this is command input, not an answer description
+              EOF
+
+            Allow this tool call?
+
+              Allow once: Run this tool call now
+              Deny: Block the tool call
+            """,
+            options: ["Allow once", "Deny"]
+        )
+
+        let ask = request.inlineAskRequest
+        let question = ask?.questions.first?.question ?? ""
+
+        #expect(question.contains("Deny: this is command input, not an answer description"))
+        #expect(question.contains("Allow once: Run this tool call now") == false)
+        #expect(ask?.questions.first?.options[0].description == "Run this tool call now")
+        #expect(ask?.questions.first?.options[1].description == "Block the tool call")
+    }
+
     // MARK: - Router Integration
 
     @Test @MainActor func routerRoutesAskToActiveAskRequest() {

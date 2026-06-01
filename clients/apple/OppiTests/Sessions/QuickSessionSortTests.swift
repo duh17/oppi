@@ -328,6 +328,29 @@ struct SharedSessionListActiveSectionTests {
         let section = SessionListPresentation.activeSectionKind(for: session)
         #expect(section == nil)
     }
+
+    @Test func attentionMergerKeepsSummaryCountsWhenLivePayloadsAreMissing() {
+        #expect(
+            SessionListAttentionMerger.permissionCount(listCount: 2, liveCount: 0) == 2
+        )
+        #expect(
+            SessionListAttentionMerger.askCount(
+                listCount: 1,
+                hasPendingAsk: false,
+                hasPendingExtensionDialog: false
+            ) == 1
+        )
+    }
+
+    @Test func attentionMergerTreatsExtensionDialogAsAskAttention() {
+        #expect(
+            SessionListAttentionMerger.askCount(
+                listCount: 0,
+                hasPendingAsk: false,
+                hasPendingExtensionDialog: true
+            ) == 1
+        )
+    }
 }
 
 // MARK: - QuickSessionNav

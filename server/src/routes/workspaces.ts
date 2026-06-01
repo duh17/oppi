@@ -28,6 +28,7 @@ import type {
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
   GitStatus,
+  ServerMessage,
   Session,
   UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
@@ -180,6 +181,44 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, { sessions: localSessions });
   }
 
+  type PendingUIRequestProvider = {
+    getActiveSessionIds(): Set<string>;
+    getActiveSession(sessionId: string): Session | undefined;
+    getPendingAskMessage(sessionId: string): ServerMessage | undefined;
+    getPendingUIRequestMessages?(sessionId: string): ServerMessage[];
+  };
+
+  function pendingUIRequestProviders(): PendingUIRequestProvider[] {
+    const providers: PendingUIRequestProvider[] = [ctx.sessions];
+    if (ctx.mirrorRuntime) {
+      providers.push(ctx.mirrorRuntime);
+    }
+    return providers;
+  }
+
+  function isPendingAskMessage(
+    message: ServerMessage | undefined,
+  ): message is Extract<ServerMessage, { type: "extension_ui_request" }> {
+    return (
+      message?.type === "extension_ui_request" &&
+      message.method === "ask" &&
+      Array.isArray(message.questions) &&
+      message.questions.length > 0
+    );
+  }
+
+  function hasPendingBlockingUIRequest(
+    provider: PendingUIRequestProvider,
+    sessionId: string,
+  ): boolean {
+    if (isPendingAskMessage(provider.getPendingAskMessage(sessionId))) {
+      return true;
+    }
+    return (provider.getPendingUIRequestMessages?.(sessionId) ?? []).some(
+      (message) => message.type === "extension_ui_request",
+    );
+  }
+
   function handleListWorkspaces(res: ServerResponse): void {
     const storedWorkspaces = ctx.storage.listWorkspaces();
     const workspaces = storedWorkspaces.map(removeUnknownSkills);
@@ -198,27 +237,24 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     );
 
     const nowMs = Date.now();
-    const askWorkspaceIds = new Set<string>();
-    for (const sessionId of ctx.sessions.getActiveSessionIds()) {
-      const session = ctx.sessions.getActiveSession(sessionId);
-      if (!session?.workspaceId) {
-        continue;
-      }
+    const attentionWorkspaceIds = new Set<string>();
+    for (const provider of pendingUIRequestProviders()) {
+      for (const sessionId of provider.getActiveSessionIds()) {
+        const session = provider.getActiveSession(sessionId);
+        if (!session?.workspaceId) {
+          continue;
+        }
 
-      const askMessage = ctx.sessions.getPendingAskMessage(sessionId);
-      const hasPendingAsk =
-        askMessage?.type === "extension_ui_request" &&
-        askMessage.method === "ask" &&
-        Boolean(askMessage.questions);
-      const hasPendingGenericUI = ctx.sessions.getPendingUIRequestMessages(sessionId).length > 0;
-      if (hasPendingAsk || hasPendingGenericUI) {
-        askWorkspaceIds.add(session.workspaceId);
+        if (hasPendingBlockingUIRequest(provider, sessionId)) {
+          attentionWorkspaceIds.add(session.workspaceId);
+        }
       }
     }
 
     const summaries: WorkspaceListSummary[] = workspaces.map((workspace) => {
       const snapshot = snapshotByWorkspaceId.get(workspace.id);
-      const hasAttention = askWorkspaceIds.has(workspace.id) || snapshot?.hasErrorRoot === true;
+      const hasAttention =
+        attentionWorkspaceIds.has(workspace.id) || snapshot?.hasErrorRoot === true;
 
       return {
         workspaceId: workspace.id,

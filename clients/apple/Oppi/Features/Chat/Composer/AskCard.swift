@@ -61,9 +61,8 @@ enum AskResponseEncoder {
 /// Supports single-question direct mode (tap option → send immediately)
 /// and multi-question pager without an extra submit/review page.
 ///
-/// No text is truncated — question text, option labels, and descriptions
-/// all size to content. If inline height exceeds ~40% of screen, an expand
-/// button appears which opens `AskCardExpanded` via `.fullScreenCover`.
+/// Inline question text is capped to keep urgent approvals from covering the
+/// whole chat. The full request remains available through `AskCardExpanded`.
 struct AskCard: View {
     let request: AskRequest
     @Binding var currentPage: Int
@@ -167,13 +166,7 @@ struct AskCard: View {
     @ViewBuilder
     private func questionPageContent(_ question: AskQuestion) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Question text — never truncated
-            Text(question.question)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.themeFg)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-                .accessibilityLabel("Question: \(question.question)")
+            questionText(question)
 
             // Option cards — horizontal scroll
             if !question.options.isEmpty {
@@ -209,6 +202,36 @@ struct AskCard: View {
             // Footer: type answer + ignore
             questionFooter(question)
         }
+    }
+
+    private func questionText(_ question: AskQuestion) -> some View {
+        let usesPreview = Self.usesInlineQuestionPreview(
+            question.question,
+            dynamicTypeSize: dynamicTypeSize
+        )
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(question.question)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.themeFg)
+                .lineLimit(usesPreview ? Self.inlineQuestionLineLimit(for: dynamicTypeSize) : nil)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Question: \(question.question)")
+
+            if usesPreview {
+                Button {
+                    isExpanded = true
+                } label: {
+                    Label("View full request", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeBlue)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the complete question and details")
+            }
+        }
+        .padding(.horizontal, 12)
     }
 
     private func optionStrip(for question: AskQuestion) -> some View {
@@ -397,6 +420,36 @@ extension AskCard {
         default:
             return 120
         }
+    }
+
+    static func inlineQuestionLineLimit(for size: DynamicTypeSize) -> Int {
+        switch size {
+        case .accessibility1, .accessibility2, .accessibility3,
+             .accessibility4, .accessibility5:
+            return 8
+        default:
+            return 6
+        }
+    }
+
+    static func usesInlineQuestionPreview(
+        _ question: String,
+        dynamicTypeSize: DynamicTypeSize
+    ) -> Bool {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let nonEmptyLineCount = trimmed
+            .split(whereSeparator: \.isNewline)
+            .filter { !String($0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .count
+
+        if nonEmptyLineCount > inlineQuestionLineLimit(for: dynamicTypeSize) {
+            return true
+        }
+
+        let characterLimit = dynamicTypeSize.isAccessibilitySize ? 420 : 280
+        return trimmed.count > characterLimit
     }
 
     /// VoiceOver announcement text when the page changes.
