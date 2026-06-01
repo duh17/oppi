@@ -36,11 +36,23 @@ struct QuickSessionSheet: View {
     @State private var voiceInputManager: VoiceInputManager?
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
+    @State private var showWorkspacePicker = false
 
     /// All workspaces across all connected servers.
     private var allServerWorkspaces: [(serverId: String, workspace: Workspace)] {
         coordinator.connections.flatMap { serverId, conn in
             conn.workspaceStore.workspaces.map { (serverId: serverId, workspace: $0) }
+        }
+    }
+
+    private var workspacePickerSections: [QuickSessionWorkspacePickerSection] {
+        let grouped = Dictionary(grouping: allServerWorkspaces, by: \.serverId)
+        return grouped.keys.sorted().map { serverId in
+            QuickSessionWorkspacePickerSection(
+                id: serverId,
+                name: coordinator.serverStore.server(for: serverId)?.name ?? serverId,
+                workspaces: (grouped[serverId] ?? []).map(\.workspace)
+            )
         }
     }
 
@@ -165,39 +177,19 @@ struct QuickSessionSheet: View {
 
     // MARK: - Workspace Picker
 
-    /// Compact workspace picker for the action row — icon + name with menu.
+    /// Compact workspace picker for the action row — icon + name with a custom popover.
     private var workspaceNavBarItem: some View {
-        Menu {
-            let grouped = Dictionary(grouping: allServerWorkspaces, by: \.serverId)
-            let serverIds = grouped.keys.sorted()
-            if serverIds.isEmpty {
-                Button("No workspaces available") {}
-                    .disabled(true)
-            }
-            ForEach(serverIds, id: \.self) { serverId in
-                let items = grouped[serverId] ?? []
-                let serverName = coordinator.serverStore.server(for: serverId)?.name ?? serverId
-                if serverIds.count > 1 {
-                    Section(serverName) {
-                        ForEach(items, id: \.workspace.id) { item in
-                            workspaceMenuButton(item.workspace, serverId: item.serverId)
-                        }
-                    }
-                } else {
-                    ForEach(items, id: \.workspace.id) { item in
-                        workspaceMenuButton(item.workspace, serverId: item.serverId)
-                    }
-                }
-            }
+        Button {
+            showWorkspacePicker.toggle()
         } label: {
             HStack(spacing: 6) {
-                if let icon = selectedWorkspace?.icon {
-                    Text(icon)
-                        .font(.caption.weight(.semibold))
+                if let selectedWorkspace {
+                    WorkspaceRuntimeIcon(workspace: selectedWorkspace, size: 14, frameSize: 20)
                 } else {
                     Image(systemName: "folder")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.themeBlue)
+                        .frame(width: 20, height: 20)
                 }
                 Text(selectedWorkspace?.name ?? "Workspace")
                     .font(.caption.weight(.semibold))
@@ -213,28 +205,28 @@ struct QuickSessionSheet: View {
             .glassEffect(.regular, in: Capsule())
         }
         .buttonStyle(.plain)
+        .popover(isPresented: $showWorkspacePicker, arrowEdge: .bottom) {
+            QuickSessionWorkspacePicker(
+                sections: workspacePickerSections,
+                showsSectionHeaders: workspacePickerSections.count > 1,
+                selectedWorkspaceId: selectedWorkspace?.id,
+                selectedServerId: selectedServerId,
+                onSelect: selectWorkspace
+            )
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(.regularMaterial)
+        }
         .accessibilityLabel(selectedWorkspace.map { "Workspace picker, current workspace \($0.name)" } ?? "Workspace picker")
     }
 
-    private func workspaceMenuButton(_ workspace: Workspace, serverId: String) -> some View {
-        Button {
-            selectedWorkspace = workspace
-            selectedWorkspaceSelectionSource = "manual"
-            selectedServerId = serverId
-            error = nil
-            configureVoiceInputForSelectedServer()
-            AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
-        } label: {
-            Label {
-                Text(workspace.name)
-            } icon: {
-                if workspace.id == selectedWorkspace?.id {
-                    Image(systemName: "checkmark")
-                } else if let icon = workspace.icon {
-                    Text(icon)
-                }
-            }
-        }
+    private func selectWorkspace(_ workspace: Workspace, serverId: String) {
+        selectedWorkspace = workspace
+        selectedWorkspaceSelectionSource = "manual"
+        selectedServerId = serverId
+        showWorkspacePicker = false
+        error = nil
+        configureVoiceInputForSelectedServer()
+        AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
     }
 
     // MARK: - Actions
@@ -429,6 +421,140 @@ struct QuickSessionSheet: View {
                 logger.error("Quick session creation failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+}
+
+private struct QuickSessionWorkspacePickerSection: Identifiable {
+    let id: String
+    let name: String
+    let workspaces: [Workspace]
+}
+
+private struct QuickSessionWorkspacePicker: View {
+    let sections: [QuickSessionWorkspacePickerSection]
+    let showsSectionHeaders: Bool
+    let selectedWorkspaceId: String?
+    let selectedServerId: String?
+    let onSelect: (Workspace, String) -> Void
+
+    private var hasWorkspaces: Bool {
+        sections.contains { !$0.workspaces.isEmpty }
+    }
+
+    var body: some View {
+        Group {
+            if hasWorkspaces {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(sections.indices, id: \.self) { index in
+                            let section = sections[index]
+                            if !section.workspaces.isEmpty {
+                                if showsSectionHeaders {
+                                    if index > 0 {
+                                        Divider()
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 6)
+                                    }
+
+                                    Text(section.name)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.themeComment)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 16)
+                                        .padding(.top, index == 0 ? 8 : 0)
+                                        .padding(.bottom, 4)
+                                }
+
+                                ForEach(section.workspaces) { workspace in
+                                    Button {
+                                        onSelect(workspace, section.id)
+                                    } label: {
+                                        QuickSessionWorkspacePickerRow(
+                                            workspace: workspace,
+                                            isSelected: isSelected(workspace, serverId: section.id)
+                                        )
+                                    }
+                                    .buttonStyle(QuickSessionWorkspacePickerRowButtonStyle())
+                                    .accessibilityLabel(workspace.name)
+                                    .accessibilityValue(isSelected(workspace, serverId: section.id) ? "Selected" : "")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, showsSectionHeaders ? 0 : 8)
+                    .padding(.bottom, 8)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("No workspaces available", systemImage: "folder.badge.questionmark")
+                        .font(.body.weight(.semibold))
+                    Text("Pair or refresh a server, then try again.")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+            }
+        }
+        .frame(width: 320)
+        .frame(maxHeight: 430)
+    }
+
+    private func isSelected(_ workspace: Workspace, serverId: String) -> Bool {
+        guard workspace.id == selectedWorkspaceId else { return false }
+        guard let selectedServerId else { return true }
+        return selectedServerId == serverId
+    }
+}
+
+private struct QuickSessionWorkspacePickerRow: View {
+    let workspace: Workspace
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            WorkspaceRuntimeIcon(workspace: workspace, size: 18, frameSize: 30)
+                .frame(width: 30, height: 30)
+
+            Text(workspace.name)
+                .font(.body)
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.themeBlue)
+                    .frame(width: 18, height: 18)
+            } else {
+                Color.clear
+                    .frame(width: 18, height: 18)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+        .padding(.horizontal, 12)
+        .background(
+            isSelected ? Color.themeBlue.opacity(0.10) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .padding(.horizontal, 8)
+        .padding(.vertical, 1)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct QuickSessionWorkspacePickerRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay {
+                if configuration.isPressed {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.themeFg.opacity(0.06))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 1)
+                }
+            }
     }
 }
 
