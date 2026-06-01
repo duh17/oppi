@@ -31,6 +31,11 @@ final class AppNavigation {
     var splitSelectedWorkspace: WorkspaceNavTarget?
     var splitSelectedSession: WorkspaceSessionNavTarget?
 
+    /// Column visibility backing the regular-width split shell. The system
+    /// sidebar affordance and edge gestures update this binding, so iPad users
+    /// can reveal or hide workspace/session columns without custom chrome.
+    var splitColumnVisibility: NavigationSplitViewVisibility = .automatic
+
     /// Launch phase gate. While `.resolving`, ContentView shows a blank
     /// canvas instead of onboarding or the workspace list.
     var launchPhase: AppLaunchPhase = .resolving
@@ -53,6 +58,7 @@ final class AppNavigation {
         case .stack:
             splitSelectedWorkspace = nil
             splitSelectedSession = nil
+            splitColumnVisibility = .automatic
         case .split:
             workspacePath = NavigationPath()
         }
@@ -66,6 +72,7 @@ final class AppNavigation {
         case .split:
             splitSelectedWorkspace = target
             splitSelectedSession = nil
+            splitColumnVisibility = .all
         }
     }
 
@@ -79,6 +86,7 @@ final class AppNavigation {
                 splitSelectedWorkspace = workspace
             }
             splitSelectedSession = target
+            splitColumnVisibility = .doubleColumn
         }
     }
 
@@ -91,6 +99,7 @@ final class AppNavigation {
         workspacePath = NavigationPath()
         splitSelectedWorkspace = nil
         splitSelectedSession = nil
+        splitColumnVisibility = .automatic
     }
 
     /// Replace the workspace stack with a session destination in one state write.
@@ -105,6 +114,7 @@ final class AppNavigation {
             workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId)
         case .split:
             splitSelectedSession = target
+            splitColumnVisibility = .doubleColumn
         }
     }
 

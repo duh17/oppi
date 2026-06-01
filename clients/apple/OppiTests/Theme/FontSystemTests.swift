@@ -331,3 +331,30 @@ struct AppFontRebuildTests {
         #expect(AppFont.systemFeedbackMedium.pointSize == 14)
     }
 }
+
+@Suite("ToolFont platform sizing")
+@MainActor
+struct ToolFontPlatformSizingTests {
+    @Test func phoneKeepsCompactToolFontSizes() {
+        #expect(ToolFont.pointSize(baseSize: 10, idiom: .phone) == 10)
+        #expect(ToolFont.pointSize(baseSize: 11, idiom: .phone) == 11)
+        #expect(ToolFont.pointSize(baseSize: 12, idiom: .phone) == 12)
+    }
+
+    @Test func padIncreasesToolFontSizesByOnePoint() {
+        #expect(ToolFont.pointSize(baseSize: 10, idiom: .pad) == 11)
+        #expect(ToolFont.pointSize(baseSize: 11, idiom: .pad) == 12)
+        #expect(ToolFont.pointSize(baseSize: 12, idiom: .pad) == 13)
+    }
+
+    @Test func padRegularToolOutputFontUsesTwelvePoints() {
+        let originalFamily = FontPreferences.codeFont
+        defer { FontPreferences.setCodeFont(originalFamily) }
+
+        FontPreferences.setCodeFont(.system)
+
+        let font = ToolFont.font(baseSize: 11, weight: .regular, idiom: .pad)
+
+        #expect(font.pointSize == 12)
+    }
+}

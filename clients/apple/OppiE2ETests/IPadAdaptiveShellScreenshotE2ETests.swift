@@ -43,7 +43,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
 
         XCTAssertTrue(
             app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15),
-            "Workspace detail column did not appear after selecting workspace"
+            "Workspace session-list column did not appear after selecting workspace"
         )
 
         createSession()
@@ -56,4 +56,5 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
 
         try saveLabScreenshot(name: "ipad-chat-timeline")
     }
+
 }

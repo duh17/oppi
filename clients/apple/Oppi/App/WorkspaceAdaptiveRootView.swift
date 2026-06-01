@@ -49,35 +49,39 @@ private struct WorkspaceSplitRootView: View {
     var body: some View {
         @Bindable var nav = navigation
 
-        NavigationSplitView {
-            NavigationStack(path: $nav.workspacePath) {
-                WorkspaceHomeView()
-            }
-        } content: {
-            if let target = navigation.splitSelectedWorkspace {
-                NavigationStack {
-                    WorkspaceScopedDestinationView(target: target)
+        if navigation.splitSelectedWorkspace == nil, navigation.splitSelectedSession == nil {
+            WorkspaceStackRootView()
+        } else {
+            NavigationSplitView(columnVisibility: $nav.splitColumnVisibility) {
+                NavigationStack(path: $nav.workspacePath) {
+                    WorkspaceHomeView()
                 }
-                .id(target)
-            } else {
-                WorkspaceSplitPlaceholder(
-                    title: "Select a Workspace",
-                    systemImage: "square.grid.2x2",
-                    description: "Choose a workspace from the sidebar to review sessions."
-                )
-            }
-        } detail: {
-            if let target = navigation.splitSelectedSession {
-                NavigationStack {
-                    WorkspaceSessionScopedDestinationView(target: target)
+            } content: {
+                if let target = navigation.splitSelectedWorkspace {
+                    NavigationStack {
+                        WorkspaceScopedDestinationView(target: target)
+                    }
+                    .id(target)
+                } else {
+                    WorkspaceSplitPlaceholder(
+                        title: "Select a Workspace",
+                        systemImage: "square.grid.2x2",
+                        description: "Choose a workspace from the sidebar to review sessions."
+                    )
                 }
-                .id(target)
-            } else {
-                WorkspaceSplitPlaceholder(
-                    title: "Select a Session",
-                    systemImage: "text.bubble",
-                    description: "Choose a session to supervise the agent."
-                )
+            } detail: {
+                if let target = navigation.splitSelectedSession {
+                    NavigationStack {
+                        WorkspaceSessionScopedDestinationView(target: target)
+                    }
+                    .id(target)
+                } else {
+                    WorkspaceSplitPlaceholder(
+                        title: "Select a Session",
+                        systemImage: "text.bubble",
+                        description: "Choose a session to supervise the agent."
+                    )
+                }
             }
         }
     }

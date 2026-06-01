@@ -134,6 +134,38 @@ private struct WorkspaceHomeSessionPreview: Identifiable {
     var id: String { presentation.session.id }
 }
 
+enum WorkspaceHomeRowBodyAction: Equatable {
+    case openWorkspace
+    case toggleSessionPreviews
+}
+
+enum WorkspaceHomeListPresentationMode: Equatable {
+    case compact
+    case splitSidebar
+
+    init(navigationPresentation: WorkspaceNavigationPresentation) {
+        switch navigationPresentation {
+        case .stack:
+            self = .compact
+        case .split:
+            self = .splitSidebar
+        }
+    }
+
+    var showsInlineSessionPreviews: Bool {
+        self == .compact
+    }
+
+    func rowBodyAction(isE2EInviteMode: Bool) -> WorkspaceHomeRowBodyAction {
+        switch self {
+        case .compact:
+            isE2EInviteMode ? .openWorkspace : .toggleSessionPreviews
+        case .splitSidebar:
+            .openWorkspace
+        }
+    }
+}
+
 enum WorkspaceHomePreviewPlanner {
     static let maxRows = 5
     static let preferredYourTurnRows = 3
@@ -451,16 +483,23 @@ struct WorkspaceHomeView: View {
     ) -> some View {
         let serverId = server.id
         let key = workspaceKey(serverId: serverId, workspaceId: workspace.id)
-        let isExpanded = isWorkspaceExpanded(key: key, summary: summary)
+        let mode = WorkspaceHomeListPresentationMode(
+            navigationPresentation: navigation.workspaceNavigationPresentation
+        )
+        let showsSessionPreviews = mode.showsInlineSessionPreviews
+        let isExpanded = showsSessionPreviews && isWorkspaceExpanded(key: key, summary: summary)
         let sessionPreviews = workspaceSessionPreviews(workspaceId: workspace.id, connection: connection)
-        let workspaceAccessibilityName = workspace.runtime == .sandbox ? "sandbox workspace \(workspace.name)" : workspace.name
-        let opensWorkspaceFromRowBody = Self.shouldOpenWorkspaceFromRowBody(
+        let workspaceAccessibilityName = workspace.runtime == .sandbox
+            ? "sandbox workspace \(workspace.name)"
+            : workspace.name
+        let rowBodyActionKind = mode.rowBodyAction(
             isE2EInviteMode: ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
         )
         let rowBodyAction = {
-            if opensWorkspaceFromRowBody {
+            switch rowBodyActionKind {
+            case .openWorkspace:
                 navigation.openWorkspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
-            } else {
+            case .toggleSessionPreviews:
                 toggleWorkspaceExpansion(key: key, summary: summary)
             }
         }
@@ -486,9 +525,17 @@ struct WorkspaceHomeView: View {
             .buttonStyle(.borderless)
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(0)
-            .accessibilityLabel(isExpanded ? "Collapse sessions for \(workspaceAccessibilityName)" : "Expand sessions for \(workspaceAccessibilityName)")
-            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-            .accessibilityHint("Shows or hides the workspace session preview")
+            .accessibilityLabel(
+                rowBodyAccessibilityLabel(
+                    action: rowBodyActionKind,
+                    isExpanded: isExpanded,
+                    name: workspaceAccessibilityName
+                )
+            )
+            .accessibilityValue(
+                rowBodyActionKind == .toggleSessionPreviews ? (isExpanded ? "Expanded" : "Collapsed") : ""
+            )
+            .accessibilityHint(rowBodyAccessibilityHint(action: rowBodyActionKind))
 
             let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
             Button {
@@ -517,7 +564,7 @@ struct WorkspaceHomeView: View {
         .padding(.leading, 6)
         .padding(.trailing, 4)
         .onTapGesture {
-            if opensWorkspaceFromRowBody {
+            if rowBodyActionKind == .openWorkspace {
                 navigation.openWorkspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
             }
         }
@@ -530,7 +577,7 @@ struct WorkspaceHomeView: View {
         .padding(.horizontal, -6)
         .listRowBackground(Color.themeBg)
 
-        if isExpanded {
+        if showsSessionPreviews && isExpanded {
             if sessionPreviews.isEmpty {
                 WorkspaceHomePreviewEmptyRow()
                     .listRowBackground(Color.themeBg)
@@ -545,6 +592,7 @@ struct WorkspaceHomeView: View {
                         WorkspaceHomeSessionPreviewRow(preview: preview)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspaceHome.sessionPreview.\(preview.presentation.session.id)")
                     .listRowBackground(Color.themeBg)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         previewRowSwipeAction(
@@ -556,6 +604,28 @@ struct WorkspaceHomeView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func rowBodyAccessibilityLabel(
+        action: WorkspaceHomeRowBodyAction,
+        isExpanded: Bool,
+        name: String
+    ) -> String {
+        switch action {
+        case .openWorkspace:
+            "Open \(name)"
+        case .toggleSessionPreviews:
+            isExpanded ? "Collapse sessions for \(name)" : "Expand sessions for \(name)"
+        }
+    }
+
+    private func rowBodyAccessibilityHint(action: WorkspaceHomeRowBodyAction) -> String {
+        switch action {
+        case .openWorkspace:
+            "Opens the workspace session list"
+        case .toggleSessionPreviews:
+            "Shows or hides the workspace session preview"
         }
     }
 
