@@ -249,14 +249,14 @@ struct WorkspaceHomeView: View {
         .accessibilityIdentifier("workspace.list")
         .listStyle(.insetGrouped)
         .themedListSurface()
+        .contentMargins(.bottom, 88, for: .scrollContent)
         .navigationTitle("Workspaces")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(.hidden, for: .tabBar)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 if let selectedServer {
                     serverSwitcher(selectedServer)
-                    quickSessionButton
                 }
             }
         }
@@ -335,6 +335,13 @@ struct WorkspaceHomeView: View {
                 )
             } else if allWorkspacesEmpty {
                 emptyWorkspacesView
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if !servers.isEmpty {
+                quickSessionButton
+                    .padding(.trailing, 22)
+                    .padding(.bottom, 24)
             }
         }
         .task {
@@ -424,8 +431,9 @@ struct WorkspaceHomeView: View {
         Button {
             navigation.showQuickSession = true
         } label: {
-            Image(systemName: "square.and.pencil")
+            WorkspaceFloatingComposerLabel(systemImage: "square.and.pencil")
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Start Quick Session")
         .accessibilityHint("Opens the quick session composer")
         .accessibilityIdentifier("workspace.quickSession.start")

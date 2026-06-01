@@ -569,25 +569,16 @@ struct WorkspaceDetailView: View {
             ChatView(sessionId: sessionId)
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                newSessionToolbarItem
+            ToolbarItem(placement: .topBarTrailing) {
+                workspaceConfigurationButton
             }
             ToolbarItemGroup(placement: .bottomBar) {
                 NavigationLink(value: FileBrowserNavTarget(workspaceId: workspace.id, path: "")) {
                     Image(systemName: "folder")
                         .foregroundStyle(.themeComment)
                 }
-                Button { showEditWorkspace = true } label: {
-                    HStack(spacing: 6) {
-                        WorkspaceRuntimeIcon(workspace: currentWorkspace, size: 16, frameSize: 24)
-                        Text("\(currentWorkspace.skills.count) skills")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(.themeComment)
-                }
-                .accessibilityLabel(currentWorkspace.runtime == .sandbox ? "Edit Sandbox Workspace" : "Edit Workspace")
-                .accessibilityIdentifier("workspace.edit.open")
                 Spacer()
+                newSessionToolbarItem
             }
         }
         .refreshable {
@@ -725,6 +716,7 @@ struct WorkspaceDetailView: View {
         } label: {
             Image(systemName: "square.and.pencil")
         }
+        .foregroundStyle(.themeBlue)
         .contextMenu {
             Button {
                 Task { await createSession() }
@@ -740,6 +732,27 @@ struct WorkspaceDetailView: View {
         }
         .accessibilityIdentifier("workspace.newSession")
         .disabled(isCreating)
+    }
+
+    private var workspaceConfigurationButton: some View {
+        Button { showEditWorkspace = true } label: {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 22, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.themeBlue)
+                .frame(width: 44, height: 44)
+                .glassEffect(.regular, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(workspaceConfigurationAccessibilityLabel)
+        .accessibilityIdentifier("workspace.edit.open")
+    }
+
+    private var workspaceConfigurationAccessibilityLabel: String {
+        let workspaceKind = currentWorkspace.runtime == .sandbox ? "sandbox workspace" : "workspace"
+        let extensionCount = (currentWorkspace.extensions ?? []).count
+        return "Edit \(workspaceKind), \(currentWorkspace.skills.count) skills, \(extensionCount) extensions"
     }
 
     // MARK: - Actions
