@@ -38,25 +38,49 @@ Example:
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-01
+
+### Notes
+
+- Pre-publish candidate for npm `oppi-server@0.4.0`. This release moves Oppi's server runtime to the standard Pi extension UI path, adds the Oppi mirror runtime for Pi TUI sessions, and removes the retired server-owned permission policy stack.
+
 ### Added
 
-- **Client:** Added a Browser setting for choosing whether web links open in Oppi's in-app browser or the external browser.
-- **Protocol:** Added pending permission and ask counts to workspace session-list summaries so cold workspace lists can show attention badges.
-- **Docs:** Added public deep-link documentation for pairing, workspace, session, and permission links.
-- **Docs:** Adopted this changelog and versioning policy for future releases.
-- **Client/Server:** Added MetricKit crash diagnostic upload with persisted session context, gated by the Send Diagnostics to Server setting.
+- **Server:** Added the Oppi mirror runtime for Pi TUI sessions, including runtime routing, queue bridging, route catch-up, clean stop handling, live context usage estimates, and managed resume for stopped mirror sessions.
+- **Protocol/Client/Server:** Added a generic extension UI relay so standard Pi extension dialogs, including permission-gate prompts, can be presented and answered from Apple clients.
+- **Client/Server:** Added launched-session attention notifications, workspace attention badges, and persisted MetricKit crash diagnostic upload gated by the Send Diagnostics to Server setting.
+- **Client:** Added nearby Apple pairing discovery and an adaptive iPad workspace shell.
+- **Client:** Added review-comment selection flows for file and tool output, plus refreshed extension UI snapshot coverage.
+- **Server:** Added diagnostics review tooling for client logs, MetricKit reports, server logs, and combined telemetry snapshots.
+- **Docs:** Added public deep-link documentation, the changelog/versioning policy, and refreshed setup, security, telemetry, sandbox, and extension docs.
 
 ### Changed
 
+- **Server:** Replaced the server-side policy engine with the user's host Pi `permission-gate` extension, loaded by default when permission gating is enabled.
+- **Server:** Updated `@earendil-works/pi-*` dependencies to `0.78.0`.
+- **Server:** Renamed mirror runtime terminology and logs from the old Pi mirror naming to Oppi runtime naming.
 - **Client:** App-owned deep links now use only the `oppi://` scheme; legacy `pi://` handling was removed.
 - **Client:** Model switches now apply immediately without the prompt-cache warning dialog.
-- **Client:** Workspace home rows use compact status indicators for active, stopped, and attention states.
+- **Client:** Workspace home rows, workspace status controls, context counts, mirror status indicators, and link handling preferences were tightened for the new runtime model.
 - **Client:** Renamed the public diagnostics toggle to “Send Diagnostics to Server” and clarified that it covers performance metrics, client breadcrumbs, and crash diagnostics.
 
 ### Fixed
 
-- **Client:** Session rows are fully tappable.
-- **Client:** Workspace home preview rows preserve attention badges from HTTP snapshots before live request payloads arrive.
+- **Server:** Hardened sandbox workspace isolation, sandbox network defaults, mirror runtime handoff, shutdown, queue bridging, and stopped-session reconnection.
+- **Server:** Reduced telemetry noise, corrected telemetry review accounting, limited hot telemetry importer integrity checks, and kept mirror errors out of terminal UI.
+- **Protocol/Client/Server:** Preserved approval notification session streams and restored mirror event catch-up for route changes.
+- **Client:** Improved session row hit targets, quick-session composer sizing, workspace preview attention preservation, live git/context refresh, streaming markdown height invalidation, and chat scroll stability.
+- **Client:** Restored file viewer review comments, preserved absolute tool diff line numbers, clamped expanded read-code viewports, and stabilized media preview sizing.
+
+### Removed
+
+- **Server:** Removed the retired server policy/rules/audit stack, policy routes, and persistent user-events WebSocket path.
+- **Client:** Removed legacy Apple permission surfaces and replaced selected-text Pi actions with review-comment selection flows.
+- **Tooling:** Removed stale TestFlight notes and the retired TestFlight script.
+
+### Migration notes
+
+- **Server:** Users who rely on approval prompts should keep or install the Pi `permission-gate` host extension at `~/.pi/agent/extensions/permission-gate.ts`; legacy Oppi `policy` configuration is no longer the enforcement path.
 
 ## [0.1.2] - 2026-03-31
 
@@ -64,5 +88,6 @@ Example:
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/5c3ba2f4cf23...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/duh17/oppi/compare/5c3ba2f4cf23...v0.4.0
 [0.1.2]: https://github.com/duh17/oppi/releases/tag/v0.1.2
