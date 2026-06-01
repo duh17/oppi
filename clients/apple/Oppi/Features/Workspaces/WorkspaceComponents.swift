@@ -1,20 +1,5 @@
 import SwiftUI
 
-// MARK: - Workspace Floating Composer
-
-struct WorkspaceFloatingComposerLabel: View {
-    let systemImage: String
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 21, weight: .semibold))
-            .foregroundStyle(.themeBlue)
-            .frame(width: 56, height: 56)
-            .glassEffect(.regular, in: Circle())
-            .contentShape(Circle())
-    }
-}
-
 // MARK: - WorkspaceIcon
 
 struct WorkspaceIcon: View {

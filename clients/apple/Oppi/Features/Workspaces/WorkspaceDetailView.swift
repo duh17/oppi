@@ -570,13 +570,10 @@ struct WorkspaceDetailView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                workspaceConfigurationButton
+                workspaceFilesToolbarItem
             }
             ToolbarItemGroup(placement: .bottomBar) {
-                NavigationLink(value: FileBrowserNavTarget(workspaceId: workspace.id, path: "")) {
-                    Image(systemName: "folder")
-                        .foregroundStyle(.themeComment)
-                }
+                workspaceConfigurationButton
                 Spacer()
                 newSessionToolbarItem
             }
@@ -710,13 +707,43 @@ struct WorkspaceDetailView: View {
         session.displayTitle
     }
 
+    @ViewBuilder
+    private var workspaceFilesToolbarItem: some View {
+        let target = FileBrowserNavTarget(workspaceId: workspace.id, path: "")
+
+        switch navigation.workspaceNavigationPresentation {
+        case .stack:
+            NavigationLink(value: target) {
+                workspaceFilesToolbarLabel
+            }
+            .accessibilityIdentifier("workspace.files.open")
+            .accessibilityLabel("Open workspace files")
+        case .split:
+            Button {
+                navigation.openWorkspaceFileBrowser(
+                    target,
+                    workspace: currentServerId.map { WorkspaceNavTarget(serverId: $0, workspace: currentWorkspace) }
+                )
+            } label: {
+                workspaceFilesToolbarLabel
+            }
+            .accessibilityIdentifier("workspace.files.open")
+            .accessibilityLabel("Open workspace files")
+        }
+    }
+
+    private var workspaceFilesToolbarLabel: some View {
+        Image(systemName: "folder")
+            .foregroundStyle(.themeFg)
+    }
+
     private var newSessionToolbarItem: some View {
         Button {
             Task { await createSession() }
         } label: {
             Image(systemName: "square.and.pencil")
         }
-        .foregroundStyle(.themeBlue)
+        .foregroundStyle(.themeFg)
         .contextMenu {
             Button {
                 Task { await createSession() }
@@ -736,15 +763,10 @@ struct WorkspaceDetailView: View {
 
     private var workspaceConfigurationButton: some View {
         Button { showEditWorkspace = true } label: {
-            Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: 22, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.themeBlue)
-                .frame(width: 44, height: 44)
-                .glassEffect(.regular, in: Circle())
-                .contentShape(Circle())
+            Image(systemName: "slider.horizontal.3")
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.themeFg)
         }
-        .buttonStyle(.plain)
         .accessibilityLabel(workspaceConfigurationAccessibilityLabel)
         .accessibilityIdentifier("workspace.edit.open")
     }

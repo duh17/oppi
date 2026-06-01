@@ -54,7 +54,69 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             "IPAD_CHAT_TIMELINE_OK did not appear in the timeline"
         )
 
+        dismissKeyboardIfNeeded()
         try saveLabScreenshot(name: "ipad-chat-timeline")
+
+        let filesButton = app.buttons["workspace.files.open"]
+        XCTAssertTrue(filesButton.waitForExistence(timeout: 10), "Workspace files button missing")
+        tap(filesButton, named: "workspace files button")
+        XCTAssertTrue(
+            app.navigationBars["Files"].waitForExistence(timeout: 10),
+            "File browser did not open in the iPad detail column"
+        )
+        try saveLabScreenshot(name: "ipad-file-browser")
+
+        openServerMenuItem("App Settings")
+        XCTAssertTrue(
+            app.navigationBars["Settings"].waitForExistence(timeout: 10)
+                || app.staticTexts["Appearance"].waitForExistence(timeout: 2),
+            "Settings did not open in the iPad detail column"
+        )
+        try saveLabScreenshot(name: "ipad-settings-detail")
+
+        openServerMenuItem("Manage Servers")
+        XCTAssertTrue(
+            app.buttons["7d"].waitForExistence(timeout: 10)
+                || app.staticTexts["No Servers"].waitForExistence(timeout: 2),
+            "Server view did not open in the iPad detail column"
+        )
+        try saveLabScreenshot(name: "ipad-server-detail")
+    }
+
+    private func dismissKeyboardIfNeeded() {
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.exists else { return }
+
+        let hideKeyboardButton = app.buttons["Hide keyboard"]
+        if hideKeyboardButton.waitForExistence(timeout: 2) {
+            tap(hideKeyboardButton, named: "hide keyboard", timeout: 1)
+            return
+        }
+
+        let workspaceNavigationBar = app.navigationBars[anchorWorkspaceName]
+        if workspaceNavigationBar.waitForExistence(timeout: 2) {
+            workspaceNavigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+    }
+
+    private func openServerMenuItem(_ label: String) {
+        revealSplitSidebarIfNeeded(in: app)
+
+        let currentServerButton = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
+        ).firstMatch
+        XCTAssertTrue(currentServerButton.waitForExistence(timeout: 10), "Current server menu missing")
+        tap(currentServerButton, named: "current server menu")
+
+        let button = app.buttons[label]
+        if button.waitForExistence(timeout: 5) {
+            tap(button, named: label, timeout: 1)
+            return
+        }
+
+        let menuItem = app.menuItems[label]
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "Menu item \(label) missing")
+        tap(menuItem, named: label, timeout: 1)
     }
 
 }

@@ -145,9 +145,7 @@ struct FileBrowserView: View {
                             segments: breadcrumbSegments,
                             currentDepth: currentDepth,
                             onNavigate: { targetDepth in
-                                let popCount = currentDepth - targetDepth
-                                guard popCount > 0, navigation.workspacePath.count >= popCount else { return }
-                                navigation.workspacePath.removeLast(popCount)
+                                popToBreadcrumbDepth(targetDepth)
                             }
                         )
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -288,6 +286,20 @@ struct FileBrowserView: View {
     }
 
     // MARK: - Helpers
+
+    private func popToBreadcrumbDepth(_ targetDepth: Int) {
+        let popCount = currentDepth - targetDepth
+        guard popCount > 0 else { return }
+
+        switch navigation.workspaceNavigationPresentation {
+        case .stack:
+            guard navigation.workspacePath.count >= popCount else { return }
+            navigation.workspacePath.removeLast(popCount)
+        case .split:
+            guard navigation.splitDetailPath.count >= popCount else { return }
+            navigation.splitDetailPath.removeLast(popCount)
+        }
+    }
 
     private var lastPathComponent: String {
         let trimmed = initialPath.hasSuffix("/") ? String(initialPath.dropLast()) : initialPath

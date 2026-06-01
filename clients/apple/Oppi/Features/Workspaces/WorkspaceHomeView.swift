@@ -110,7 +110,7 @@ struct WorkspaceSessionScopedDestinationView: View {
     }
 }
 
-private extension View {
+extension View {
     func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
         self
             .environment(connection)
@@ -249,7 +249,6 @@ struct WorkspaceHomeView: View {
         .accessibilityIdentifier("workspace.list")
         .listStyle(.insetGrouped)
         .themedListSurface()
-        .contentMargins(.bottom, 88, for: .scrollContent)
         .navigationTitle("Workspaces")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(.hidden, for: .tabBar)
@@ -257,6 +256,12 @@ struct WorkspaceHomeView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if let selectedServer {
                     serverSwitcher(selectedServer)
+                }
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                if !servers.isEmpty {
+                    Spacer()
+                    quickSessionButton
                 }
             }
         }
@@ -335,13 +340,6 @@ struct WorkspaceHomeView: View {
                 )
             } else if allWorkspacesEmpty {
                 emptyWorkspacesView
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if !servers.isEmpty {
-                quickSessionButton
-                    .padding(.trailing, 22)
-                    .padding(.bottom, 24)
             }
         }
         .task {
@@ -436,9 +434,9 @@ struct WorkspaceHomeView: View {
         Button {
             navigation.showQuickSession = true
         } label: {
-            WorkspaceFloatingComposerLabel(systemImage: "square.and.pencil")
+            Image(systemName: "square.and.pencil")
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(.themeFg)
         .accessibilityLabel("Start Quick Session")
         .accessibilityHint("Opens the quick session composer")
         .accessibilityIdentifier("workspace.quickSession.start")

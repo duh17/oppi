@@ -36,6 +36,9 @@ Environment:
 Artifacts from test-shell:
   /tmp/oppi-screenshots/ipad-main-workspace-home.png
   /tmp/oppi-screenshots/ipad-chat-timeline.png
+  /tmp/oppi-screenshots/ipad-file-browser.png
+  /tmp/oppi-screenshots/ipad-settings-detail.png
+  /tmp/oppi-screenshots/ipad-server-detail.png
 EOF
 }
 
@@ -190,6 +193,9 @@ run_shell_test() {
   echo "[ipad-shell] Expected screenshots:" >&2
   echo "  /tmp/oppi-screenshots/ipad-main-workspace-home.png" >&2
   echo "  /tmp/oppi-screenshots/ipad-chat-timeline.png" >&2
+  echo "  /tmp/oppi-screenshots/ipad-file-browser.png" >&2
+  echo "  /tmp/oppi-screenshots/ipad-settings-detail.png" >&2
+  echo "  /tmp/oppi-screenshots/ipad-server-detail.png" >&2
 }
 
 main() {

@@ -72,6 +72,9 @@ class E2ETestCase: XCTestCase {
             tap(springboard.alerts.firstMatch.buttons.element(boundBy: 1), named: "SpringBoard alert default button")
         }
 
+        dismissInitialExtensionSheet(in: application)
+        revealSplitSidebarIfNeeded(in: application)
+
         // Wait for pairing to complete — workspace list appears. Use the
         // collection identifier instead of the navigation title; chrome changes
         // can hide or rename the bar without changing readiness.
@@ -116,6 +119,30 @@ class E2ETestCase: XCTestCase {
             newSessionButton.waitForExistence(timeout: 15),
             "Workspace detail did not load after tapping e2e-workspace"
         )
+    }
+
+    private func dismissInitialExtensionSheet(in application: XCUIApplication) {
+        let doneButton = application.buttons["Done"]
+        guard doneButton.waitForExistence(timeout: 3) else { return }
+
+        if doneButton.isHittable {
+            doneButton.tap()
+        } else {
+            doneButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+    }
+
+    func revealSplitSidebarIfNeeded(in application: XCUIApplication) {
+        guard !application.collectionViews["workspace.list"].waitForExistence(timeout: 1) else { return }
+
+        let showSidebarButton = application.buttons["Show Sidebar"]
+        guard showSidebarButton.waitForExistence(timeout: 2) else { return }
+
+        if showSidebarButton.isHittable {
+            showSidebarButton.tap()
+        } else {
+            showSidebarButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
     }
 
     private func readDeviceToken() throws -> String {
