@@ -9,13 +9,13 @@ import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update
 import type { SearchIndex } from "../search-index.js";
 import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager.js";
 import type { CodexUsageStatus } from "../codex-usage.js";
-import type { PiTuiMirrorRuntime } from "../pi-tui-mirror-runtime.js";
+import type { SessionRuntimes } from "../runtime-router.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
   storage: Storage;
   sessions: SessionManager;
-  mirrorRuntime?: PiTuiMirrorRuntime;
+  sessionRuntimes: SessionRuntimes;
   skillRegistry: SkillRegistry;
   userSkillStore: UserSkillStore;
   providerAuth: ProviderAuthManager;

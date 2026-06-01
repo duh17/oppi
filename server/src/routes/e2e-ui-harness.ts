@@ -42,7 +42,7 @@ async function handleHarnessMessage(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  const session = ctx.storage.getSession(sessionId) ?? ctx.sessions.getActiveSession(sessionId);
+  const session = ctx.sessionRuntimes.getSessionSnapshot(sessionId);
   if (!session) {
     helpers.error(res, 404, "Session not found");
     return;

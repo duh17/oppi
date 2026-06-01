@@ -97,7 +97,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const config = ctx.storage.getConfig();
     const workspaces = ctx.storage.listWorkspaces();
     const sessions = ctx.storage.listSessions();
-    const activeIds = ctx.sessions.getActiveSessionIds();
+    const activeIds = ctx.sessionRuntimes.getActiveSessionIds();
     const activeSessions = sessions.filter(
       (s) => s.status !== "stopped" && s.status !== "error" && activeIds.has(s.id),
     );
@@ -243,7 +243,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const workspaces = ctx.storage.listWorkspaces();
 
     const memory = getMemoryStats();
-    const activeSessions = getActiveSessions(sessions, ctx.sessions.getActiveSessionIds());
+    const activeSessions = getActiveSessions(sessions, ctx.sessionRuntimes.getActiveSessionIds());
     const { daily, modelBreakdown, workspaceBreakdown, totals } = aggregateStats({
       sessions,
       workspaces,

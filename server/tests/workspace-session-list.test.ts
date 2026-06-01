@@ -83,6 +83,12 @@ interface MockRouteContext {
     getPendingAskMessage: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
   };
+  sessionRuntimes: {
+    getActiveSessionIds: ReturnType<typeof vi.fn>;
+    getActiveSession: ReturnType<typeof vi.fn>;
+    getPendingAskMessage: ReturnType<typeof vi.fn>;
+    getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
+  };
   gate: {
     getPendingForUser: ReturnType<typeof vi.fn>;
   };
@@ -128,6 +134,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
   const ctx = {
     storage,
     sessions,
+    sessionRuntimes: sessions,
     gate,
     skillRegistry: {},
     userSkillStore: {},
@@ -161,7 +168,7 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     },
   };
 
-  return { ctx, helpers, responses, errors, storage, sessions, gate };
+  return { ctx, helpers, responses, errors, storage, sessions, sessionRuntimes: sessions, gate };
 }
 
 async function dispatch(mock: MockRouteContext, path: string, url: string): Promise<boolean> {
@@ -421,7 +428,9 @@ describe("workspace session list routes", () => {
             id: "ask-1",
             sessionId,
             method: "ask",
-            questions: [{ id: "q1", question: "Pick one", options: [{ value: "yes", label: "Yes" }] }],
+            questions: [
+              { id: "q1", question: "Pick one", options: [{ value: "yes", label: "Yes" }] },
+            ],
           }
         : undefined,
     );
@@ -481,9 +490,10 @@ describe("workspace session list routes", () => {
       lastActivity: now,
     });
     mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([mirrorSession]);
-    mock.ctx.mirrorRuntime = {
+    mock.ctx.sessionRuntimes = {
       getActiveSessionIds: () => new Set(["mirror-row"]),
-      getActiveSession: (sessionId: string) => (sessionId === "mirror-row" ? mirrorSession : undefined),
+      getActiveSession: (sessionId: string) =>
+        sessionId === "mirror-row" ? mirrorSession : undefined,
       getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: (sessionId: string) =>
         sessionId === "mirror-row"
@@ -498,7 +508,7 @@ describe("workspace session list routes", () => {
               },
             ]
           : [],
-    } as unknown as RouteContext["mirrorRuntime"];
+    } as unknown as RouteContext["sessionRuntimes"];
 
     const handled = await dispatch(
       mock,

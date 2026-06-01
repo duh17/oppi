@@ -28,7 +28,6 @@ import type {
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
   GitStatus,
-  ServerMessage,
   Session,
   UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
@@ -46,6 +45,10 @@ import {
   WorkspaceQuickActionSessionError,
 } from "../workspace-quick-action-session.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import {
+  hasPendingBlockingUIRequest,
+  type PendingUIRequestProvider,
+} from "../session-attention.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function removeUnknownSkills(workspace: Workspace): Workspace {
@@ -181,42 +184,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, { sessions: localSessions });
   }
 
-  type PendingUIRequestProvider = {
-    getActiveSessionIds(): Set<string>;
-    getActiveSession(sessionId: string): Session | undefined;
-    getPendingAskMessage(sessionId: string): ServerMessage | undefined;
-    getPendingUIRequestMessages?(sessionId: string): ServerMessage[];
-  };
-
-  function pendingUIRequestProviders(): PendingUIRequestProvider[] {
-    const providers: PendingUIRequestProvider[] = [ctx.sessions];
-    if (ctx.mirrorRuntime) {
-      providers.push(ctx.mirrorRuntime);
-    }
-    return providers;
-  }
-
-  function isPendingAskMessage(
-    message: ServerMessage | undefined,
-  ): message is Extract<ServerMessage, { type: "extension_ui_request" }> {
-    return (
-      message?.type === "extension_ui_request" &&
-      message.method === "ask" &&
-      Array.isArray(message.questions) &&
-      message.questions.length > 0
-    );
-  }
-
-  function hasPendingBlockingUIRequest(
-    provider: PendingUIRequestProvider,
-    sessionId: string,
-  ): boolean {
-    if (isPendingAskMessage(provider.getPendingAskMessage(sessionId))) {
-      return true;
-    }
-    return (provider.getPendingUIRequestMessages?.(sessionId) ?? []).some(
-      (message) => message.type === "extension_ui_request",
-    );
+  function pendingUIRequestProvider(): PendingUIRequestProvider {
+    return ctx.sessionRuntimes;
   }
 
   function handleListWorkspaces(res: ServerResponse): void {
@@ -238,16 +207,15 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const nowMs = Date.now();
     const attentionWorkspaceIds = new Set<string>();
-    for (const provider of pendingUIRequestProviders()) {
-      for (const sessionId of provider.getActiveSessionIds()) {
-        const session = provider.getActiveSession(sessionId);
-        if (!session?.workspaceId) {
-          continue;
-        }
+    const provider = pendingUIRequestProvider();
+    for (const sessionId of provider.getActiveSessionIds()) {
+      const session = provider.getActiveSession(sessionId);
+      if (!session?.workspaceId) {
+        continue;
+      }
 
-        if (hasPendingBlockingUIRequest(provider, sessionId)) {
-          attentionWorkspaceIds.add(session.workspaceId);
-        }
+      if (hasPendingBlockingUIRequest(provider, sessionId)) {
+        attentionWorkspaceIds.add(session.workspaceId);
       }
     }
 
@@ -844,8 +812,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       throw error;
     }
 
-    const launchedSession =
-      ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
+    const launchedSession = ctx.sessionRuntimes.getSessionSnapshot(session.id) || session;
     const response: WorkspaceQuickActionSessionResponse = {
       promptTemplateName: launch.promptTemplateName,
       selectedPathCount: launch.files.length,

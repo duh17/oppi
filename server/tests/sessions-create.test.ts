@@ -49,6 +49,7 @@ interface MockRouteContext {
     startSession: ReturnType<typeof vi.fn>;
     sendPrompt: ReturnType<typeof vi.fn>;
     isActive: ReturnType<typeof vi.fn>;
+    getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
     forwardClientCommand: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
@@ -65,6 +66,27 @@ interface MockRouteContext {
     getSession: ReturnType<typeof vi.fn>;
     deleteSession: ReturnType<typeof vi.fn>;
     listSessions: ReturnType<typeof vi.fn>;
+  };
+  sessionRuntimes: {
+    getActiveSessionIds: ReturnType<typeof vi.fn>;
+    getActiveSession: ReturnType<typeof vi.fn>;
+    getPendingAskMessage: ReturnType<typeof vi.fn>;
+    getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
+    isSessionConnected: ReturnType<typeof vi.fn>;
+    isSessionLive: ReturnType<typeof vi.fn>;
+    getSessionSnapshot: ReturnType<typeof vi.fn>;
+    stopSession: ReturnType<typeof vi.fn>;
+    stopSessionIfActive: ReturnType<typeof vi.fn>;
+    refreshSessionState: ReturnType<typeof vi.fn>;
+    getToolFullOutputPath: ReturnType<typeof vi.fn>;
+    getCatchUp: ReturnType<typeof vi.fn>;
+  };
+  piTuiRuntime: {
+    isSessionConnected: ReturnType<typeof vi.fn>;
+    getActiveSession: ReturnType<typeof vi.fn>;
+    stopSession: ReturnType<typeof vi.fn>;
+    getToolFullOutputPath: ReturnType<typeof vi.fn>;
+    getCatchUp: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -97,6 +119,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
       ),
     sendPrompt: vi.fn().mockResolvedValue(undefined),
     isActive: vi.fn().mockReturnValue(false),
+    getActiveSessionIds: vi.fn().mockReturnValue(new Set<string>()),
     getActiveSession: vi.fn().mockReturnValue(undefined),
     stopSession: vi.fn().mockResolvedValue(undefined),
     getToolFullOutputPath: vi.fn().mockReturnValue(undefined),
@@ -106,9 +129,91 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     forwardClientCommand: vi.fn().mockResolvedValue(undefined),
   };
 
+  const piTuiRuntime = {
+    isSessionConnected: vi.fn(() => false),
+    getActiveSession: vi.fn(() => undefined as Session | undefined),
+    stopSession: vi.fn().mockResolvedValue(undefined),
+    getToolFullOutputPath: vi.fn().mockReturnValue(undefined),
+    getCatchUp: vi.fn().mockReturnValue({ events: [], currentSeq: 0, catchUpComplete: true }),
+  };
+
+  const sessionRuntimes = {
+    getActiveSessionIds: vi.fn(() => sessions.getActiveSessionIds?.() ?? new Set<string>()),
+    getActiveSession: vi.fn((sessionId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      if (session?.runtime === "pi-tui") {
+        return piTuiRuntime.isSessionConnected(sessionId)
+          ? piTuiRuntime.getActiveSession(sessionId)
+          : undefined;
+      }
+      return sessions.getActiveSession(sessionId);
+    }),
+    getPendingAskMessage: vi.fn(() => undefined),
+    getPendingUIRequestMessages: vi.fn(() => []),
+    isSessionConnected: vi.fn((sessionId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      if (session?.runtime === "pi-tui") {
+        return piTuiRuntime.isSessionConnected(sessionId) === true;
+      }
+      return sessions.isActive(sessionId) === true;
+    }),
+    isSessionLive: vi.fn((sessionId: string) => sessionRuntimes.isSessionConnected(sessionId)),
+    getSessionSnapshot: vi.fn((sessionId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      if (session?.runtime === "pi-tui") {
+        return piTuiRuntime.getActiveSession(sessionId) ?? session;
+      }
+      return sessions.getActiveSession(sessionId) ?? session;
+    }),
+    stopSession: vi.fn(async (sessionId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      if (session?.runtime === "pi-tui") {
+        await piTuiRuntime.stopSession(sessionId);
+        return;
+      }
+      await sessions.stopSession(sessionId);
+    }),
+    stopSessionIfActive: vi.fn(async (sessionId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      if (session?.runtime === "pi-tui") {
+        if (piTuiRuntime.isSessionConnected(sessionId) === true) {
+          await piTuiRuntime.stopSession(sessionId);
+        }
+        return;
+      }
+      if (sessions.isActive(sessionId)) {
+        await sessions.stopSession(sessionId);
+      }
+    }),
+    refreshSessionState: vi.fn((sessionId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      if (session?.runtime === "pi-tui") {
+        return {
+          sessionFile: session.piSessionFile,
+          sessionId: session.piSessionId,
+          leafId: null,
+        };
+      }
+      return sessions.refreshSessionState(sessionId);
+    }),
+    getToolFullOutputPath: vi.fn((sessionId: string, toolCallId: string) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      return session?.runtime === "pi-tui"
+        ? piTuiRuntime.getToolFullOutputPath(sessionId, toolCallId)
+        : sessions.getToolFullOutputPath(sessionId, toolCallId);
+    }),
+    getCatchUp: vi.fn((sessionId: string, sinceSeq: number) => {
+      const session = storage.getSession(sessionId) as Session | undefined;
+      return session?.runtime === "pi-tui"
+        ? piTuiRuntime.getCatchUp(sessionId, sinceSeq)
+        : sessions.getCatchUp(sessionId, sinceSeq);
+    }),
+  };
+
   const ctx = {
     storage,
     sessions,
+    sessionRuntimes,
     gate: {} as RouteContext["gate"],
     skillRegistry: {} as RouteContext["skillRegistry"],
     userSkillStore: {} as RouteContext["userSkillStore"],
@@ -143,7 +248,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     },
   };
 
-  return { ctx, helpers, responses, errors, sessions, storage };
+  return { ctx, helpers, responses, errors, sessions, storage, sessionRuntimes, piTuiRuntime };
 }
 
 // ─── Tests ───
@@ -599,10 +704,11 @@ describe("POST /workspaces/:id/sessions/:sessionId/fork", () => {
     const fork = makeSession({ id: "fork-1", name: "Fork: Original" });
 
     mock.storage.createSession.mockReturnValue(fork);
-    mock.storage.getSession
-      .mockReturnValueOnce(source)
-      .mockReturnValueOnce(source)
-      .mockReturnValueOnce(fork);
+    mock.storage.getSession.mockImplementation((sessionId: string) => {
+      if (sessionId === "source-1") return source;
+      if (sessionId === "fork-1") return fork;
+      return undefined;
+    });
 
     await dispatchFork(mock, { entryId: "entry-user-1" });
 
@@ -668,11 +774,8 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
       makeSession({ id: "sess-1", workspaceId: "ws-1", status: "ready" }),
     );
     const mirrorActive = { ...mirrorSession, mirror: { status: "connected" as const } };
-    (
-      mock.ctx as RouteContext & { mirrorRuntime?: { getActiveSession: (id: string) => Session } }
-    ).mirrorRuntime = {
-      getActiveSession: vi.fn(() => mirrorActive),
-    };
+    mock.piTuiRuntime.isSessionConnected.mockReturnValue(true);
+    mock.piTuiRuntime.getActiveSession.mockReturnValue(mirrorActive);
 
     await dispatchResume(mock);
 
@@ -697,11 +800,7 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
       piSessionFile: "/tmp/stopped-mirror.jsonl",
     });
     mock.storage.getSession.mockReturnValue(mirrorSession);
-    (
-      mock.ctx as RouteContext & { mirrorRuntime?: { isSessionConnected: (id: string) => boolean } }
-    ).mirrorRuntime = {
-      isSessionConnected: vi.fn(() => false),
-    };
+    mock.piTuiRuntime.isSessionConnected.mockReturnValue(false);
     mock.sessions.startSession.mockResolvedValue(
       makeSession({ id: "sess-1", workspaceId: "ws-1", runtime: "oppi", status: "ready" }),
     );
@@ -748,22 +847,12 @@ describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
       status: "busy",
     });
     mock.storage.getSession.mockReturnValue(session);
-    (
-      mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } }
-    ).mirrorRuntime = {
-      stopSession: vi.fn().mockResolvedValue(undefined),
-    };
+    mock.piTuiRuntime.isSessionConnected.mockReturnValue(true);
 
     await dispatchStop(mock);
 
     expect(mock.sessions.stopSession).not.toHaveBeenCalled();
-    expect(
-      (
-        mock.ctx as RouteContext & {
-          mirrorRuntime?: { stopSession: ReturnType<typeof vi.fn> };
-        }
-      ).mirrorRuntime?.stopSession,
-    ).toHaveBeenCalledWith("sess-1");
+    expect(mock.piTuiRuntime.stopSession).toHaveBeenCalledWith("sess-1");
     expect(mock.responses).toHaveLength(1);
     expect((mock.responses[0]!.data as { ok: boolean }).ok).toBe(true);
   });
@@ -777,13 +866,9 @@ describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
       status: "busy",
     });
     mock.storage.getSession.mockReturnValue(session);
-    (
-      mock.ctx as RouteContext & { mirrorRuntime?: { stopSession: (id: string) => Promise<void> } }
-    ).mirrorRuntime = {
-      stopSession: vi
-        .fn()
-        .mockRejectedValue(new Error("pi-tui is not connected; stop it from the terminal")),
-    };
+    mock.piTuiRuntime.stopSession.mockRejectedValue(
+      new Error("pi-tui is not connected; stop it from the terminal"),
+    );
 
     await dispatchStop(mock);
 
@@ -926,7 +1011,7 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       };
       await dispatchDelete(mock);
 
-      expect(mock.sessions.stopSession).toHaveBeenCalledWith("sess-1");
+      expect(mock.ctx.sessionRuntimes.stopSessionIfActive).toHaveBeenCalledWith("sess-1");
       expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
       expect(existsSync(jsonlA)).toBe(false);
       expect(existsSync(jsonlB)).toBe(false);

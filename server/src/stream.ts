@@ -15,7 +15,7 @@ import {
   canResumeStoppedMirrorAsOppi,
   promoteStoppedMirrorToOppi,
 } from "./mirror-session-resume.js";
-import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
+import type { SessionRuntimes } from "./runtime-router.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -24,7 +24,7 @@ import { safeErrorMessage } from "./log-utils.js";
 export interface StreamContext {
   storage: Storage;
   sessions: SessionManager;
-  mirrorRuntime?: PiTuiMirrorRuntime;
+  sessionRuntimes: SessionRuntimes;
   metrics?: ServerMetricCollector;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
@@ -322,27 +322,22 @@ export class BoundSessionStreamMux {
 
     try {
       const isStoredMirrorSession = session.runtime === "pi-tui";
-      const mirrorRuntime = isStoredMirrorSession ? this.ctx.mirrorRuntime : undefined;
       const mirrorConnected = isStoredMirrorSession
-        ? mirrorRuntime?.isSessionConnected(sessionId) === true
+        ? this.ctx.sessionRuntimes.isSessionConnected(sessionId)
         : false;
       const shouldResumeMirrorAsOppi = canResumeStoppedMirrorAsOppi(session, mirrorConnected);
       if (shouldResumeMirrorAsOppi) {
         promoteStoppedMirrorToOppi(session);
         this.ctx.storage.saveSession(session);
-      } else if (isStoredMirrorSession && !mirrorRuntime) {
-        throw new Error("pi-tui runtime is not available");
       }
       const isMirrorSession = isStoredMirrorSession && !shouldResumeMirrorAsOppi;
 
       let hydratedSession = this.ctx.ensureSessionContextWindow(session);
-      const hadActiveSession = isMirrorSession
-        ? mirrorRuntime?.isSessionConnected(sessionId) === true
-        : this.ctx.sessions.getActiveSession(sessionId) !== undefined;
+      const hadActiveSession = this.ctx.sessionRuntimes.isSessionLive(sessionId);
 
       if (isMirrorSession) {
         hydratedSession = this.ctx.ensureSessionContextWindow(
-          mirrorRuntime?.getActiveSession(sessionId) ?? session,
+          this.ctx.sessionRuntimes.getSessionSnapshot(sessionId) ?? session,
         );
       } else {
         const workspace = this.ctx.resolveWorkspaceForSession(session);
@@ -354,9 +349,7 @@ export class BoundSessionStreamMux {
       sendForSession({
         type: "connected",
         session: hydratedSession,
-        currentSeq: isMirrorSession
-          ? (mirrorRuntime?.getCurrentSeq(sessionId) ?? 0)
-          : this.ctx.sessions.getCurrentSeq(sessionId),
+        currentSeq: this.ctx.sessionRuntimes.getCurrentSeq(sessionId),
       });
 
       const callback = (msg: ServerMessage): void => {
@@ -369,27 +362,19 @@ export class BoundSessionStreamMux {
             : msg;
         sendForSession(outbound);
       };
-      unsubscribeBoundSession = isMirrorSession
-        ? mirrorRuntime?.subscribe(sessionId, callback)
-        : this.ctx.sessions.subscribe(sessionId, callback);
+      unsubscribeBoundSession = this.ctx.sessionRuntimes.subscribe(sessionId, callback);
       unsubscribed = false;
 
-      const activeSession = isMirrorSession
-        ? (mirrorRuntime?.getActiveSession(sessionId) ?? hydratedSession)
-        : (this.ctx.sessions.getActiveSession(sessionId) ?? hydratedSession);
+      const activeSession = this.ctx.sessionRuntimes.getActiveSession(sessionId) ?? hydratedSession;
       sendForSession({
         type: "state",
         session: this.ctx.ensureSessionContextWindow(activeSession),
       });
 
-      const pendingAskMsg = isMirrorSession
-        ? mirrorRuntime?.getPendingAskMessage(sessionId)
-        : this.ctx.sessions.getPendingAskMessage(sessionId);
+      const pendingAskMsg = this.ctx.sessionRuntimes.getPendingAskMessage(sessionId);
       if (pendingAskMsg) send(pendingAskMsg);
 
-      const pendingUIMsgs = isMirrorSession
-        ? (mirrorRuntime?.getPendingUIRequestMessages(sessionId) ?? [])
-        : this.ctx.sessions.getPendingUIRequestMessages(sessionId);
+      const pendingUIMsgs = this.ctx.sessionRuntimes.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
         send(pendingUIMsg);
       }

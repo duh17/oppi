@@ -46,6 +46,12 @@ describe("sessions module", () => {
         getActiveSession: vi.fn(() => undefined),
         getPendingAskMessage: vi.fn(() => undefined),
       },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set()),
+        getActiveSession: vi.fn(() => undefined),
+        getPendingAskMessage: vi.fn(() => undefined),
+        getPendingUIRequestMessages: vi.fn(() => []),
+      },
       gate: { getPendingForUser: vi.fn(() => []) },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
     } as unknown as RouteContext;
@@ -98,6 +104,12 @@ describe("sessions module", () => {
         getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
         getActiveSession: vi.fn(() => activeSession),
         getPendingAskMessage: vi.fn(() => undefined),
+      },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
+        getActiveSession: vi.fn(() => activeSession),
+        getPendingAskMessage: vi.fn(() => undefined),
+        getPendingUIRequestMessages: vi.fn(() => []),
       },
       gate: { getPendingForUser: vi.fn(() => []) },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
@@ -179,6 +191,9 @@ describe("sessions module", () => {
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
+          getToolFullOutputPath: vi.fn(() => fullOutputPath),
+        },
+        sessionRuntimes: {
           getToolFullOutputPath: vi.fn(() => fullOutputPath),
         },
       } as unknown as RouteContext;
@@ -271,7 +286,7 @@ describe("sessions module", () => {
       sessions: {
         getCatchUp: managedGetCatchUp,
       },
-      mirrorRuntime: {
+      sessionRuntimes: {
         getCatchUp: mirrorGetCatchUp,
       },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),

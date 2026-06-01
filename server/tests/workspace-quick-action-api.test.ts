@@ -99,6 +99,21 @@ function makeQuickActionContext(
       createSession: vi.fn(),
     },
     sessions: { startSession: vi.fn() },
+    sessionRuntimes: {
+      getActiveSessionIds: () => new Set<string>(),
+      getActiveSession: () => undefined,
+      getPendingAskMessage: () => undefined,
+      getPendingUIRequestMessages: () => [],
+      getSessionSnapshot: (sessionId: string) =>
+        (
+          overrides.sessions as
+            | { getActiveSession?: (id: string) => Session | undefined }
+            | undefined
+        )?.getActiveSession?.(sessionId) ??
+        (
+          overrides.storage as { getSession?: (id: string) => Session | undefined } | undefined
+        )?.getSession?.(sessionId),
+    },
     ensureSessionContextWindow: (session: Session) => session,
     ...overrides,
   } as unknown as RouteContext;

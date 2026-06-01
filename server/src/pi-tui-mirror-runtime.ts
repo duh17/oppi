@@ -51,6 +51,10 @@ import {
   requireQueueState,
 } from "./session-queue-utils.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
+import {
+  updateSearchIndexForSessionEvent,
+  type SessionSearchIndex,
+} from "./session-search-indexing.js";
 import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
@@ -418,6 +422,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
   private readonly bridgeCommandDriver: MirrorBridgeCommandDriver;
   private readonly pendingStopWaiters = new Map<string, Set<PendingBridgeStopWaiter>>();
+  searchIndex: SessionSearchIndex | null = null;
 
   constructor(
     private readonly storage: Storage,
@@ -648,6 +653,23 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       messages.push(buildExtensionUIRequestMessage(sessionId, req));
     }
     return messages;
+  }
+
+  getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
+    const normalizedToolCallId = toolCallId.trim();
+    if (normalizedToolCallId.length === 0) {
+      return null;
+    }
+
+    return (
+      this.ensureActiveFromStorage(sessionId)?.toolFullOutputPaths.get(normalizedToolCallId) ?? null
+    );
+  }
+
+  getEventRing(sessionId: string): { length: number; capacity: number } | null {
+    const active = this.ensureActiveFromStorage(sessionId);
+    if (!active) return null;
+    return { length: active.eventRing.length, capacity: active.eventRing.capacity };
   }
 
   private resolveWorkspaceRoot(session: Session): string | null {
@@ -1446,7 +1468,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   private ingestAgentEvent(active: MirrorActiveSession, rawEvent: AgentSessionEvent): void {
-    this.agentEventCoordinator.handlePiEvent(active.session.id, rawEvent as SessionBackendEvent);
+    const event = rawEvent as SessionBackendEvent;
+    this.agentEventCoordinator.handlePiEvent(active.session.id, event);
+    updateSearchIndexForSessionEvent(this.searchIndex, this.storage, active.session.id, event);
   }
 
   private broadcast(sessionId: string, message: ServerMessage): number {

@@ -27,6 +27,12 @@ describe("workspaces module", () => {
       },
       gate: { getPendingForUser: vi.fn(() => []) },
       sessions: { getActiveSessionIds: vi.fn(() => []) },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set<string>()),
+        getActiveSession: vi.fn(() => undefined),
+        getPendingAskMessage: vi.fn(() => undefined),
+        getPendingUIRequestMessages: vi.fn(() => []),
+      },
     } as unknown as RouteContext;
 
     const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
@@ -81,7 +87,7 @@ describe("workspaces module", () => {
       sessions: {
         getActiveSessionIds: vi.fn(() => new Set<string>()),
       },
-      mirrorRuntime: {
+      sessionRuntimes: {
         getActiveSessionIds: vi.fn(() => new Set(["mirror-1"])),
         getActiveSession: vi.fn((sessionId: string) =>
           sessionId === "mirror-1" ? session : undefined,

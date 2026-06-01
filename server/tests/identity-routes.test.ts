@@ -71,6 +71,9 @@ describe("identity module", () => {
       sessions: {
         getActiveSessionIds: vi.fn(() => new Set()),
       },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set()),
+      },
       skillRegistry: {
         list: vi.fn(() => []),
       },

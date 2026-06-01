@@ -32,7 +32,7 @@ import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
-import { SessionRuntimeRouter } from "./runtime-router.js";
+import { SessionRuntimes } from "./runtime-router.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SkillRegistry, UserSkillStore } from "./skills.js";
 
@@ -386,7 +386,7 @@ export class Server {
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private sessionAudioStreamMux!: SessionAudioStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
-  private sessionRuntimeRouter!: SessionRuntimeRouter;
+  private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
   private routes!: RouteHandler;
   // WebSocket message command dispatcher for full-session commands
@@ -470,14 +470,10 @@ export class Server {
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
       isOppiSessionActive: (sessionId) => this.sessions.getActiveSession(sessionId) !== undefined,
     });
-    this.sessionRuntimeRouter = new SessionRuntimeRouter(
-      this.storage,
-      this.sessions,
-      this.mirrorRuntime,
-    );
+    this.sessionRuntimes = new SessionRuntimes(this.storage, this.sessions, this.mirrorRuntime);
 
     this.wsMessageHandler = new WsMessageHandler({
-      sessions: this.sessionRuntimeRouter,
+      sessions: this.sessionRuntimes,
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
     });
@@ -492,7 +488,7 @@ export class Server {
     const streamContext = {
       storage: this.storage,
       sessions: this.sessions,
-      mirrorRuntime: this.mirrorRuntime,
+      sessionRuntimes: this.sessionRuntimes,
       metrics: this.opsMetrics,
       ensureSessionContextWindow: (session: Session) =>
         this.models.ensureSessionContextWindow(session),
@@ -517,12 +513,12 @@ export class Server {
     this.resourceSampler = new ServerResourceSampler({
       telemetryDir: join(dataDir, "diagnostics", "telemetry"),
       getSessionCounts: () => {
-        const ids = this.sessions.getActiveSessionIds();
+        const ids = this.sessionRuntimes.getActiveSessionIds();
         let busy = 0;
         let ready = 0;
         let starting = 0;
         for (const id of ids) {
-          const s = this.sessions.getActiveSession(id);
+          const s = this.sessionRuntimes.getActiveSession(id);
           if (!s) continue;
           if (s.status === "busy") busy++;
           else if (s.status === "ready") ready++;
@@ -536,8 +532,8 @@ export class Server {
       getEventRingSnapshots: () => {
         const snapshots: Array<{ ring: string; length: number; capacity: number }> = [];
         // Per-session event rings
-        for (const id of this.sessions.getActiveSessionIds()) {
-          const ring = this.sessions.getEventRing(id);
+        for (const id of this.sessionRuntimes.getActiveSessionIds()) {
+          const ring = this.sessionRuntimes.getEventRing(id);
           if (ring) {
             snapshots.push({ ring: "session", length: ring.length, capacity: ring.capacity });
           }
@@ -555,7 +551,7 @@ export class Server {
         // Update the active session object (authoritative in-memory reference)
         // so subsequent lifecycle persists carry the name. Falling back to the
         // storage copy handles stopped/inactive sessions.
-        const active = this.sessions.getActiveSession(sessionId);
+        const active = this.sessionRuntimes.getActiveSession(sessionId);
         if (active) {
           active.name = name;
           this.storage.saveSession(active);
@@ -590,6 +586,7 @@ export class Server {
     try {
       this.searchIndex = new SearchIndex(config.dataDir, (id) => this.storage.getSession(id));
       this.sessions.searchIndex = this.searchIndex;
+      this.mirrorRuntime.searchIndex = this.searchIndex;
     } catch (err) {
       log.error("server.search_index_init.failed", {
         error: safeErrorMessage(err),
@@ -600,7 +597,7 @@ export class Server {
     this.routes = new RouteHandler({
       storage: this.storage,
       sessions: this.sessions,
-      mirrorRuntime: this.mirrorRuntime,
+      sessionRuntimes: this.sessionRuntimes,
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
       providerAuth: this.providerAuth,

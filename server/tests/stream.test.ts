@@ -53,10 +53,22 @@ class FakeWebSocket extends EventEmitter {
   }
 }
 
+type RuntimeOverride = {
+  isSessionConnected?: (id: string) => boolean;
+  isSessionLive?: (id: string) => boolean;
+  getSessionSnapshot?: (id: string) => Session | undefined;
+  getActiveSession?: (id: string) => Session | undefined;
+  getCurrentSeq?: (id: string) => number;
+  subscribe?: (id: string, cb: (msg: ServerMessage) => void) => () => void;
+  getPendingAskMessage?: (id: string) => ServerMessage | undefined;
+  getPendingUIRequestMessages?: (id: string) => ServerMessage[];
+};
+
 function createMockContext(sessions: Session[]): {
   ctx: StreamContext;
   sessionMap: Map<string, Session>;
   subscribers: Map<string, Set<(msg: ServerMessage) => void>>;
+  runtimeOverrides: Map<string, RuntimeOverride>;
   broadcastTo: (sessionId: string, msg: ServerMessage) => void;
 } {
   const sessionMap = new Map(sessions.map((s) => [s.id, s]));
@@ -69,7 +81,55 @@ function createMockContext(sessions: Session[]): {
     }
   };
 
-  const ctx: StreamContext = {
+  let ctx: StreamContext;
+  const runtimeOverrides = new Map<string, RuntimeOverride>();
+  const runtimeOverride = (id: string): RuntimeOverride =>
+    sessionMap.get(id)?.runtime === "pi-tui" ? (runtimeOverrides.get(id) ?? {}) : {};
+  const sessionRuntimes = {
+    isSessionConnected: (id: string) => {
+      const override = runtimeOverride(id);
+      if (override.isSessionConnected) return override.isSessionConnected(id);
+      const session = sessionMap.get(id);
+      if (session?.runtime === "pi-tui") return false;
+      return ctx.sessions.getActiveSession(id) !== undefined;
+    },
+    isSessionLive: (id: string) =>
+      runtimeOverride(id).isSessionLive?.(id) ?? sessionRuntimes.isSessionConnected(id),
+    getSessionSnapshot: (id: string) => {
+      const override = runtimeOverride(id);
+      return (
+        override.getSessionSnapshot?.(id) ??
+        override.getActiveSession?.(id) ??
+        ctx.sessions.getActiveSession(id) ??
+        sessionMap.get(id)
+      );
+    },
+    getActiveSession: (id: string) => {
+      const override = runtimeOverride(id);
+      if (override.getActiveSession) return override.getActiveSession(id);
+      const session = sessionMap.get(id);
+      if (session?.runtime === "pi-tui" && !sessionRuntimes.isSessionConnected(id)) {
+        return undefined;
+      }
+      return ctx.sessions.getActiveSession(id) ?? undefined;
+    },
+    getCurrentSeq: (id: string) =>
+      runtimeOverride(id).getCurrentSeq?.(id) ?? ctx.sessions.getCurrentSeq(id),
+    subscribe: (id: string, cb: (msg: ServerMessage) => void) => {
+      const override = runtimeOverride(id);
+      if (override.subscribe) return override.subscribe(id, cb);
+      const session = sessionMap.get(id);
+      if (session?.runtime === "pi-tui") return () => {};
+      return ctx.sessions.subscribe(id, cb);
+    },
+    getPendingAskMessage: (id: string) =>
+      runtimeOverride(id).getPendingAskMessage?.(id) ?? ctx.sessions.getPendingAskMessage(id),
+    getPendingUIRequestMessages: (id: string) =>
+      runtimeOverride(id).getPendingUIRequestMessages?.(id) ??
+      ctx.sessions.getPendingUIRequestMessages(id),
+  } as unknown as StreamContext["sessionRuntimes"];
+
+  ctx = {
     storage: {
       getOwnerName: () => "test-user",
       getSession: (id: string) => sessionMap.get(id) ?? null,
@@ -90,6 +150,7 @@ function createMockContext(sessions: Session[]): {
       getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: () => [],
     } as unknown as StreamContext["sessions"],
+    sessionRuntimes,
     ensureSessionContextWindow: (s: Session) => s,
     resolveWorkspaceForSession: () => undefined as Workspace | undefined,
     handleClientMessage: vi.fn(async () => {}),
@@ -98,7 +159,7 @@ function createMockContext(sessions: Session[]): {
     createDictationManager: undefined,
   };
 
-  return { ctx, sessionMap, subscribers, broadcastTo };
+  return { ctx, sessionMap, subscribers, runtimeOverrides, broadcastTo };
 }
 
 async function drain(): Promise<void> {
@@ -154,15 +215,15 @@ describe("BoundSessionStreamMux", () => {
 
   it("does not auto-start a terminal mirror session when a client attaches", async () => {
     const session = { ...makeSession("sess-mirror", "w1"), runtime: "pi-tui" as const };
-    const { ctx } = createMockContext([session]);
+    const { ctx, runtimeOverrides } = createMockContext([session]);
     const mirrorSubscribe = vi.fn(() => () => {});
-    ctx.mirrorRuntime = {
+    runtimeOverrides.set("sess-mirror", {
       getActiveSession: () => session,
       getCurrentSeq: () => 7,
       isSessionConnected: () => true,
       subscribe: mirrorSubscribe,
       ...mirrorPendingStubs(),
-    } as unknown as StreamContext["mirrorRuntime"];
+    });
 
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
@@ -184,15 +245,15 @@ describe("BoundSessionStreamMux", () => {
       },
       piSessionFile: "/tmp/reloading-session.jsonl",
     };
-    const { ctx } = createMockContext([session]);
+    const { ctx, runtimeOverrides } = createMockContext([session]);
     const mirrorSubscribe = vi.fn(() => () => {});
-    ctx.mirrorRuntime = {
+    runtimeOverrides.set("sess-reloading-mirror", {
       getActiveSession: () => session,
       getCurrentSeq: () => 9,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
       ...mirrorPendingStubs(),
-    } as unknown as StreamContext["mirrorRuntime"];
+    });
 
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
@@ -213,15 +274,15 @@ describe("BoundSessionStreamMux", () => {
       mirror: { status: "connected" as const },
       piSessionFile: "/tmp/stale-session.jsonl",
     };
-    const { ctx, sessionMap } = createMockContext([session]);
+    const { ctx, sessionMap, runtimeOverrides } = createMockContext([session]);
     const mirrorSubscribe = vi.fn(() => () => {});
-    ctx.mirrorRuntime = {
+    runtimeOverrides.set("sess-stale-mirror", {
       getActiveSession: () => session,
       getCurrentSeq: () => 7,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
       ...mirrorPendingStubs(),
-    } as unknown as StreamContext["mirrorRuntime"];
+    });
 
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
@@ -242,14 +303,14 @@ describe("BoundSessionStreamMux", () => {
       mirror: { status: "disconnected" as const },
       piSessionFile: "/tmp/stopped-session.jsonl",
     };
-    const { ctx, sessionMap } = createMockContext([session]);
+    const { ctx, sessionMap, runtimeOverrides } = createMockContext([session]);
     const mirrorSubscribe = vi.fn(() => () => {});
-    ctx.mirrorRuntime = {
+    runtimeOverrides.set("sess-stopped-mirror", {
       getActiveSession: () => session,
       getCurrentSeq: () => 7,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
-    } as unknown as StreamContext["mirrorRuntime"];
+    });
 
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
@@ -264,9 +325,9 @@ describe("BoundSessionStreamMux", () => {
 
   it("keeps a mirror-bound stream open when the live bridge disconnects", async () => {
     const session = { ...makeSession("sess-live-mirror", "w1"), runtime: "pi-tui" as const };
-    const { ctx } = createMockContext([session]);
+    const { ctx, runtimeOverrides } = createMockContext([session]);
     let mirrorCallback: ((msg: ServerMessage) => void) | undefined;
-    ctx.mirrorRuntime = {
+    runtimeOverrides.set("sess-live-mirror", {
       getActiveSession: () => session,
       getCurrentSeq: () => 7,
       isSessionConnected: () => true,
@@ -275,7 +336,7 @@ describe("BoundSessionStreamMux", () => {
         return () => {};
       },
       ...mirrorPendingStubs(),
-    } as unknown as StreamContext["mirrorRuntime"];
+    });
 
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();

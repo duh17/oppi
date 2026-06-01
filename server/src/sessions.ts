@@ -40,6 +40,10 @@ import { createLogger } from "./logger.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import { createSubagentToolPolicyFactory } from "../extensions/subagents/index.js";
 import type { SpawnSessionParams } from "./session-spawn-types.js";
+import {
+  updateSearchIndexForSessionEvent,
+  type SessionSearchIndex,
+} from "./session-search-indexing.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -84,12 +88,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   opsMetrics: ServerMetricCollector | null = null;
 
   /** Injected by the server for full-text search index updates. */
-  searchIndex: {
-    markForReindex(sessionId: string): void;
-    flushForSession(sessionId: string): void;
-    indexSession(sessionId: string): void;
-    deleteSession(sessionId: string): void;
-  } | null = null;
+  searchIndex: SessionSearchIndex | null = null;
 
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
@@ -249,19 +248,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       });
     }
 
-    // Update search index on relevant events
-    if (this.searchIndex) {
-      const sessionId = key; // sessionKey is identity
-      const session = this.storage.getSession(sessionId);
-      if (session?.ephemeral) {
-        this.searchIndex.deleteSession(sessionId);
-        return;
-      }
-      if (data.type === "agent_end") {
-        this.searchIndex.markForReindex(sessionId);
-        this.searchIndex.flushForSession(sessionId);
-      }
-    }
+    updateSearchIndexForSessionEvent(this.searchIndex, this.storage, key, data);
   }
 
   // ─── Extension UI Protocol ───
