@@ -562,10 +562,10 @@ struct WorkspaceDetailView: View {
                 workspaceListToolbarItem
             }
             ToolbarItem(placement: .topBarTrailing) {
-                workspaceFilesToolbarItem
+                workspaceConfigurationButton
             }
             ToolbarItemGroup(placement: .bottomBar) {
-                workspaceConfigurationButton
+                workspaceFilesToolbarItem
                 Spacer()
                 newSessionToolbarItem
             }
