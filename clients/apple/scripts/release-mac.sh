@@ -409,7 +409,7 @@ Oppi $VERSION aligns mobile supervision with the current Pi runtime: live termin
 - Mirror live Pi terminal sessions into Oppi while the terminal remains the execution owner.
 - Install the separate \`oppi-mirror\` Pi extension package with \`pi install npm:oppi-mirror\` after it is published.
 - Bridge most standard Pi extension UI to Apple clients, including input and confirm flows from extensions.
-- Use Pi extension API compatibility instead of custom Oppi server policy UI.
+- Replace Oppi's built-in permission gate with standard Pi extension permission flows, improving compatibility for extension-driven tools.
 - Improve the iPad workspace shell so workspaces, sessions, and chat are easier to move between.
 - Bundle \`oppi-server@$SERVER_VERSION\` with \`@earendil-works/pi-*\` $PI_AGENT_VERSION.
 

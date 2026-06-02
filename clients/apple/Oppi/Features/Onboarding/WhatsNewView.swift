@@ -55,8 +55,8 @@ struct WhatsNewView: View {
         WhatsNewFeature(
             icon: "checkmark.shield",
             iconColor: .themeOrange,
-            title: String(localized: "Extension API Compatibility"),
-            description: String(localized: "Oppi uses the standard Pi extension UI API for input and confirm flows instead of custom server policy UI.")
+            title: String(localized: "Extension Permission Flow"),
+            description: String(localized: "Oppi replaces its built-in permission gate with standard Pi extension permission flows, improving compatibility for extension-driven tools.")
         ),
         WhatsNewFeature(
             icon: "ipad.landscape",
