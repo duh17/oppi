@@ -51,21 +51,10 @@ private struct WorkspaceSplitRootView: View {
 
         NavigationSplitView(columnVisibility: $nav.splitColumnVisibility) {
             NavigationStack(path: $nav.workspacePath) {
-                WorkspaceHomeView()
+                WorkspaceSplitSidebarView()
             }
-        } content: {
-            if let target = navigation.splitSelectedWorkspace {
-                NavigationStack {
-                    WorkspaceScopedDestinationView(target: target)
-                }
-                .id(target)
-            } else {
-                WorkspaceSplitPlaceholder(
-                    title: "Select a Workspace",
-                    systemImage: "square.grid.2x2",
-                    description: "Choose a workspace from the sidebar to review sessions."
-                )
-            }
+            .toolbar(removing: .sidebarToggle)
+            .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 460)
         } detail: {
             NavigationStack(path: $nav.splitDetailPath) {
                 WorkspaceSplitDetailDestinationView(target: navigation.splitDetailTarget)
@@ -74,6 +63,43 @@ private struct WorkspaceSplitRootView: View {
                     }
             }
             .id(navigation.splitDetailTarget)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    WorkspaceSplitSidebarToggleButton()
+                }
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+}
+
+private struct WorkspaceSplitSidebarToggleButton: View {
+    @Environment(AppNavigation.self) private var navigation
+
+    private var isSidebarVisible: Bool {
+        navigation.splitColumnVisibility != .detailOnly
+    }
+
+    var body: some View {
+        Button {
+            navigation.splitColumnVisibility = isSidebarVisible ? .detailOnly : .all
+        } label: {
+            Image(systemName: "sidebar.left")
+        }
+        .accessibilityLabel(isSidebarVisible ? "Hide sidebar" : "Show sidebar")
+        .accessibilityIdentifier("workspace.split.sidebarToggle")
+    }
+}
+
+private struct WorkspaceSplitSidebarView: View {
+    @Environment(AppNavigation.self) private var navigation
+
+    var body: some View {
+        if let target = navigation.splitSelectedWorkspace {
+            WorkspaceScopedDestinationView(target: target)
+                .id(target)
+        } else {
+            WorkspaceHomeView()
         }
     }
 }
@@ -87,6 +113,8 @@ private struct WorkspaceSplitDetailDestinationView: View {
             WorkspaceSessionScopedDestinationView(target: target)
         case .fileBrowser(let target):
             WorkspaceSplitFileBrowserDestinationView(target: target)
+        case .workspaceConfiguration(let target):
+            WorkspaceSplitWorkspaceConfigurationDestinationView(target: target)
         case .utility(let target):
             WorkspaceUtilityDestinationView(target: target)
         case nil:
@@ -136,6 +164,41 @@ private struct WorkspaceSplitFileBrowserDestinationView: View {
         guard let targetServerId else { return }
         guard coordinator.switchToServer(targetServerId) else { return }
         scopedConnection = coordinator.connection(for: targetServerId)
+    }
+}
+
+private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(AppNavigation.self) private var navigation
+    let target: WorkspaceNavTarget
+
+    @State private var scopedConnection: ServerConnection?
+
+    private var resolvedConnection: ServerConnection? {
+        scopedConnection ?? coordinator.connection(for: target.serverId)
+    }
+
+    var body: some View {
+        Group {
+            if let connection = resolvedConnection {
+                WorkspaceEditView(workspace: target.workspace) {
+                    navigation.completeWorkspaceConfiguration(target)
+                }
+                .withServerScopedEnvironment(connection)
+            } else {
+                ProgressView("Connecting…")
+            }
+        }
+        .onAppear(perform: activateTargetServer)
+        .task(id: target.serverId) {
+            activateTargetServer()
+        }
+    }
+
+    @MainActor
+    private func activateTargetServer() {
+        guard coordinator.switchToServer(target.serverId) else { return }
+        scopedConnection = coordinator.connection(for: target.serverId)
     }
 }
 

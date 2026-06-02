@@ -115,7 +115,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.splitSelectedSession == target)
-        #expect(navigation.splitColumnVisibility == .doubleColumn)
+        #expect(navigation.splitColumnVisibility == .all)
     }
 
     @Test func workspaceSelectionRestoresSessionLayerVisibility() {
@@ -131,7 +131,7 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitSelectedSession == nil)
     }
 
-    @Test func sessionSelectionRestoresSessionLayerVisibility() {
+    @Test func sessionSelectionPreservesSplitColumnVisibility() {
         let navigation = AppNavigation()
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -139,7 +139,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceSession(sessionTarget)
 
-        #expect(navigation.splitColumnVisibility == .doubleColumn)
+        #expect(navigation.splitColumnVisibility == .detailOnly)
         #expect(navigation.splitSelectedSession == sessionTarget)
     }
 
@@ -154,7 +154,7 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .fileBrowser(fileTarget))
-        #expect(navigation.splitColumnVisibility == .doubleColumn)
+        #expect(navigation.splitColumnVisibility == .all)
     }
 
     @Test func utilityUsesSplitDetailSelectionInSplitPresentation() {
@@ -165,7 +165,49 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.splitDetailTarget == .utility(.appSettings))
-        #expect(navigation.splitColumnVisibility == .doubleColumn)
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func workspaceConfigurationUsesSplitDetailSelectionInSplitPresentation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceConfiguration(workspaceTarget)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == .workspaceConfiguration(workspaceTarget))
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func showWorkspaceListKeepsCurrentSplitDetail() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspace(workspaceTarget)
+        navigation.openWorkspaceSession(sessionTarget)
+        navigation.splitColumnVisibility = .detailOnly
+
+        navigation.showWorkspaceListInSplitSidebar()
+
+        #expect(navigation.splitSelectedWorkspace == nil)
+        #expect(navigation.splitSelectedSession == sessionTarget)
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func completingWorkspaceConfigurationClearsMatchingSplitDetail() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceConfiguration(workspaceTarget)
+
+        navigation.completeWorkspaceConfiguration(workspaceTarget)
+
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailPath.count == 0)
     }
 
     @Test func legacySettingsSelectionRoutesToSplitDetailUtility() {
@@ -179,7 +221,18 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.selectedTab == .workspaces)
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.splitDetailTarget == .utility(.appSettings))
-        #expect(navigation.splitColumnVisibility == .doubleColumn)
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func utilitySelectionPreservesSplitColumnVisibility() {
+        let navigation = readyNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.splitColumnVisibility = .detailOnly
+
+        navigation.openWorkspaceUtility(.appSettings)
+
+        #expect(navigation.splitDetailTarget == .utility(.appSettings))
+        #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
     private func readyNavigation() -> AppNavigation {

@@ -18,12 +18,13 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
 
 /// Detail-column target for the regular-width workspace split shell.
 ///
-/// The middle column stays focused on workspace/session navigation while the
-/// wide detail pane can host chat, files, or utility views. Compact width keeps
-/// using `workspacePath` pushes.
+/// The sidebar alternates between the workspace list and the selected
+/// workspace's session list. The wide detail pane hosts chat, files, or utility
+/// views. Compact width keeps using `workspacePath` pushes.
 enum WorkspaceSplitDetailTarget: Hashable {
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
+    case workspaceConfiguration(WorkspaceNavTarget)
     case utility(WorkspaceUtilityNavTarget)
 }
 
@@ -125,7 +126,6 @@ final class AppNavigation {
             }
             splitDetailTarget = .session(target)
             splitDetailPath = NavigationPath()
-            splitColumnVisibility = .doubleColumn
         }
     }
 
@@ -140,7 +140,6 @@ final class AppNavigation {
             }
             splitDetailTarget = .fileBrowser(target)
             splitDetailPath = NavigationPath()
-            splitColumnVisibility = .doubleColumn
         }
     }
 
@@ -152,8 +151,34 @@ final class AppNavigation {
         case .split:
             splitDetailTarget = .utility(target)
             splitDetailPath = NavigationPath()
-            splitColumnVisibility = .doubleColumn
         }
+    }
+
+    func openWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            workspacePath.append(target)
+        case .split:
+            splitSelectedWorkspace = target
+            splitDetailTarget = .workspaceConfiguration(target)
+            splitDetailPath = NavigationPath()
+        }
+    }
+
+    func showWorkspaceListInSplitSidebar() {
+        guard workspaceNavigationPresentation == .split else { return }
+        selectedTab = .workspaces
+        splitSelectedWorkspace = nil
+        workspacePath = NavigationPath()
+        splitColumnVisibility = .all
+    }
+
+    func completeWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
+        guard workspaceNavigationPresentation == .split else { return }
+        guard splitDetailTarget == .workspaceConfiguration(target) else { return }
+        splitDetailTarget = nil
+        splitDetailPath = NavigationPath()
     }
 
     func clearWorkspaceSelections() {
@@ -177,7 +202,6 @@ final class AppNavigation {
         case .split:
             splitDetailTarget = .session(target)
             splitDetailPath = NavigationPath()
-            splitColumnVisibility = .doubleColumn
         }
     }
 
@@ -246,7 +270,6 @@ final class AppNavigation {
         case .split:
             splitDetailTarget = .utility(target)
             splitDetailPath = NavigationPath()
-            splitColumnVisibility = .doubleColumn
         }
         selectedTab = .workspaces
         return target

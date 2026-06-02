@@ -5,15 +5,18 @@ struct WorkspaceEditView: View {
     let workspace: Workspace
     private let previewAvailableExtensions: [ExtensionInfo]?
     private let previewAvailableModels: [ModelInfo]?
+    private let onSaved: (() -> Void)?
 
     init(
         workspace: Workspace,
         previewAvailableExtensions: [ExtensionInfo]? = nil,
-        previewAvailableModels: [ModelInfo]? = nil
+        previewAvailableModels: [ModelInfo]? = nil,
+        onSaved: (() -> Void)? = nil
     ) {
         self.workspace = workspace
         self.previewAvailableExtensions = previewAvailableExtensions
         self.previewAvailableModels = previewAvailableModels
+        self.onSaved = onSaved
     }
 
     @Environment(\.apiClient) private var apiClient
@@ -676,6 +679,7 @@ struct WorkspaceEditView: View {
             if let activeServerId {
                 workspaceStore.upsert(updated, serverId: activeServerId)
             }
+            onSaved?()
             dismiss()
         } catch {
             self.error = error.localizedDescription
