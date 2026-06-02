@@ -484,6 +484,68 @@ struct ChatSessionManagerTests {
         await connectTask.value
     }
 
+    @Test func emptyFreshTraceUsesSessionFirstMessageFallback() async {
+        let sessionId = "empty-trace-first-message-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let firstMessage = "help me pull couple of data from the workspace"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (
+                makeTestSession(
+                    id: sessionId,
+                    workspaceId: workspaceId,
+                    status: .busy,
+                    messageCount: 1,
+                    firstMessage: firstMessage
+                ),
+                []
+            )
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(
+            id: sessionId,
+            workspaceId: workspaceId,
+            status: .busy,
+            messageCount: 1,
+            firstMessage: firstMessage
+        ))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(
+            id: sessionId,
+            workspaceId: workspaceId,
+            status: .busy,
+            messageCount: 1,
+            firstMessage: firstMessage
+        )))
+
+        let showedFirstMessage = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                manager.reducer.items.contains { item in
+                    if case .userMessage(_, let text, _, _) = item {
+                        return text == firstMessage
+                    }
+                    return false
+                }
+            }
+        }
+        #expect(showedFirstMessage, "Busy sessions with an empty fresh trace should still show the recorded first user message")
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
     /// Validates that when catch-up fails on first connect (seq regression),
     /// the scheduled full history reload is NOT cancelled.
     @Test func firstConnectSeqRegressionKeepsHistoryReload() async {

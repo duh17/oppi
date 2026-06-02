@@ -135,6 +135,36 @@ final class ChatSessionManager {
 
     private static let snapshotFlushMinInterval: TimeInterval = 10
 
+    private static func firstMessageFallbackTraceEvent(for session: Session) -> TraceEvent? {
+        guard let firstMessage = session.firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !firstMessage.isEmpty else {
+            return nil
+        }
+
+        return TraceEvent(
+            id: "session-\(session.id)-first-message-fallback",
+            type: .user,
+            timestamp: ISO8601DateFormatter().string(from: session.createdAt),
+            text: firstMessage
+        )
+    }
+
+    private static func timelineTrace(from trace: [TraceEvent], session: Session) -> [TraceEvent] {
+        if !trace.isEmpty {
+            return trace
+        }
+
+        guard let fallback = firstMessageFallbackTraceEvent(for: session) else {
+            return trace
+        }
+
+        return [fallback]
+    }
+
+    private static func traceSignature(for trace: [TraceEvent]) -> TraceSignature {
+        TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
+    }
+
     private static func seqDefaultsKey(sessionId: String) -> String {
         "chat.lastSeenSeq.\(sessionId)"
     }
@@ -1064,11 +1094,14 @@ final class ChatSessionManager {
             sessionStore.upsert(session)
             markSyncSucceeded()
 
-            let freshSignature = TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
+            let timelineTrace = Self.timelineTrace(from: trace, session: session)
+            let freshSignature = Self.traceSignature(for: timelineTrace)
+            let usedFirstMessageFallback = trace.isEmpty && !timelineTrace.isEmpty
             var freshnessReason = "history_empty"
 
-            if !trace.isEmpty {
-                // Skip rebuild if trace hasn't changed since cached version
+            if !timelineTrace.isEmpty {
+                // Skip rebuild if the timeline projection hasn't changed since
+                // the cached/fallback version.
                 if let cachedCount = cachedEventCount,
                    cachedCount == freshSignature.eventCount,
                    cachedLastEventId == freshSignature.lastEventId {
@@ -1084,45 +1117,51 @@ final class ChatSessionManager {
                     let usedReplay = replayID.map { reducer.isReplayBuffering(id: $0) } ?? false
                     let reducerStartMs = ChatSessionTelemetry.nowMs()
                     if usedReplay, let replayID {
-                        reducer.applyTraceWithLiveReplay(trace, replayID: replayID)
+                        reducer.applyTraceWithLiveReplay(timelineTrace, replayID: replayID)
                     } else {
                         // Fresh trace is authoritative — don't preserve orphans.
                         // Orphan detection creates "ghost" user messages at the
                         // bottom (no matching assistant response) when the trace
                         // lags behind locally-appended items.
-                        reducer.loadSession(trace, preserveOrphans: false)
+                        reducer.loadSession(timelineTrace, preserveOrphans: false)
                     }
                     let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
 
                     ChatSessionTelemetry.recordReducerLoad(
                         durationMs: reducerDurationMs,
                         sessionId: self.sessionId,
-                        source: usedReplay ? "history+replay" : "history",
-                        eventCount: trace.count,
+                        source: usedFirstMessageFallback ? "history_first_message_fallback" : (usedReplay ? "history+replay" : "history"),
+                        eventCount: timelineTrace.count,
                         itemCount: reducer.items.count
                     )
 
                     needsInitialScroll = true
                     telemetry.recordSessionLoadIfNeeded(
-                        path: usedReplay ? "full_reload" : "cache_miss",
+                        path: usedFirstMessageFallback ? "first_message_fallback" : (usedReplay ? "full_reload" : "cache_miss"),
                         itemCount: reducer.items.count,
                         sessionId: sessionId,
                         workspaceId: workspaceId
                     )
                     let footprint = SentryService.currentFootprintMB()
-                    log.warning("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(self.reducer.items.count), replay=\(usedReplay)]")
+                    log.warning("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(self.reducer.items.count), replay=\(usedReplay), firstMessageFallback=\(usedFirstMessageFallback)]")
                     ClientLog.info("Memory", "Session loaded", metadata: [
                         "footprintMB": footprint.map(String.init) ?? "n/a",
                         "traceEvents": String(trace.count),
+                        "timelineEvents": String(timelineTrace.count),
                         "timelineItems": String(self.reducer.items.count),
                         "sessionId": self.sessionId,
                         "replay": usedReplay ? "1" : "0",
+                        "firstMessageFallback": usedFirstMessageFallback ? "1" : "0",
                     ])
-                    freshnessReason = usedReplay ? "history_replayed" : "history_applied"
+                    freshnessReason = if usedFirstMessageFallback {
+                        "history_first_message_fallback"
+                    } else {
+                        usedReplay ? "history_replayed" : "history_applied"
+                    }
                 }
             }
 
-            if trace.isEmpty, let replayID {
+            if timelineTrace.isEmpty, let replayID {
                 reducer.discardHistoryReplayBuffer(id: replayID)
             }
 
