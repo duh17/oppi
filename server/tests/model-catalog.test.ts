@@ -6,10 +6,15 @@ import type { Session } from "../src/types.js";
 
 // ─── Helpers ───
 
-function makeRegistry(
-  available: Array<{ id: string; name: string; provider: string; contextWindow: number }> = [],
-  all?: Array<{ id: string; name: string; provider: string; contextWindow: number }>,
-): ModelRegistry {
+type TestModel = {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow: number;
+  baseUrl?: string;
+};
+
+function makeRegistry(available: TestModel[] = [], all?: TestModel[]): ModelRegistry {
   return {
     refresh: vi.fn(),
     getAvailable: vi.fn(() => available),
@@ -102,6 +107,24 @@ describe("ModelCatalog", () => {
       const models = catalog.getAll();
       expect(models).toHaveLength(1);
       expect(models[0].id).toBe("omlx/Qwen3.5-27B-8bit");
+    });
+
+    it("includes localhost models even when the registry marks auth as unavailable", () => {
+      const local = {
+        id: "Qwen3.6-27B-8bit",
+        name: "Qwen3.6 27B (Local VLM 8-bit)",
+        provider: "omlx",
+        contextWindow: 262144,
+        baseUrl: "http://localhost:8400/v1",
+      };
+      const registry = makeRegistry([], [SONNET, local]);
+      const catalog = new ModelCatalog(registry, makeStorage());
+
+      catalog.refresh();
+
+      const models = catalog.getAll();
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe("omlx/Qwen3.6-27B-8bit");
     });
 
     it("deduplicates by provider/id", () => {

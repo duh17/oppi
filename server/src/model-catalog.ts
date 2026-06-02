@@ -23,6 +23,14 @@ export interface ModelInfo {
   contextWindow?: number;
 }
 
+type SdkModelInfo = {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow: number;
+  baseUrl?: string;
+};
+
 // ─── Helpers ───
 
 /** Normalize model labels/IDs for tolerant matching (e.g. "GPT-5.3 Codex" ~= "gpt-5.3-codex"). */
@@ -34,9 +42,7 @@ function normalizeModelToken(value: string): string {
  * Map SDK Model objects to the simplified ModelInfo shape for REST responses.
  * Deduplicates by canonical `provider/modelId`.
  */
-function sdkModelsToModelInfo(
-  sdkModels: Array<{ id: string; name: string; provider: string; contextWindow: number }>,
-): ModelInfo[] {
+function sdkModelsToModelInfo(sdkModels: SdkModelInfo[]): ModelInfo[] {
   const seen = new Set<string>();
   const result: ModelInfo[] = [];
   for (const m of sdkModels) {
@@ -51,6 +57,17 @@ function sdkModelsToModelInfo(
     });
   }
   return result;
+}
+
+function isLocalModel(model: SdkModelInfo): boolean {
+  if (!model.baseUrl) return false;
+
+  try {
+    const hostname = new URL(model.baseUrl).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
 }
 
 // ─── ModelCatalog ───
@@ -68,8 +85,12 @@ export class ModelCatalog {
   refresh(): void {
     try {
       this.registry.refresh();
-      const available = this.registry.getAvailable();
-      const allModels = sdkModelsToModelInfo(available);
+      const available = this.registry.getAvailable() as SdkModelInfo[];
+      const availableIds = new Set(available.map((model) => `${model.provider}/${model.id}`));
+      const localModels = (this.registry.getAll() as SdkModelInfo[]).filter(
+        (model) => isLocalModel(model) && !availableIds.has(`${model.provider}/${model.id}`),
+      );
+      const allModels = sdkModelsToModelInfo([...available, ...localModels]);
       const allowed =
         this.allowlist && this.allowlist.length > 0 ? new Set(this.allowlist) : undefined;
       this.catalog = allowed ? allModels.filter((model) => allowed.has(model.id)) : allModels;
