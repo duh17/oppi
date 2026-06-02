@@ -185,7 +185,7 @@ Mirror mode intentionally supports only commands that can run safely against a t
 | `steer`                 | Supported             | Supported        | Requires an active streaming turn.                                                                                                                   |
 | `follow_up`             | Supported             | Supported        | Requires an active streaming turn.                                                                                                                   |
 | `abort` / `stop`        | Supported             | Supported        | Aborts the current turn; mirror keeps queued phone messages instead of dropping them.                                                                |
-| `stop_session`          | Supported             | Supported        | Sends `stop` to the terminal bridge and waits for terminal shutdown. Offline sessions must still be stopped from the terminal.                       |
+| `stop_session`          | Supported             | Supported        | Sends `stop` to the terminal bridge and waits for terminal shutdown. Offline sessions must be stopped from the terminal.                             |
 | `get_state`             | Supported             | Supported        | Mirror state comes from bridge heartbeats and command snapshots.                                                                                     |
 | `get_messages`          | Supported             | Supported        | Mirror returns terminal session entries.                                                                                                             |
 | `get_session_stats`     | Supported             | Supported        | Mirror includes session file, Pi session ID, entry count, and context usage.                                                                         |
@@ -218,7 +218,7 @@ Mirror mode intentionally supports only commands that can run safely against a t
 
 Unsupported mirror commands fall into a few concrete buckets:
 
-- `new_session`, `fork`, and `switch_session` replace the terminal session file. Pi invalidates the old extension context during replacement and continues in a fresh session context, so a remote implementation needs an explicit product choice: mutate the visible terminal session from the phone, or create a separate Oppi-owned session. For v1, keep those actions in the terminal UI; mobile can use the dedicated fork-into-new-Oppi-session flow when it needs a separate session.
+- `new_session`, `fork`, and `switch_session` replace the terminal session file. Pi invalidates the extension context during replacement and starts a fresh session context, so a remote implementation needs an explicit product choice: mutate the visible terminal session from the phone, or create a separate Oppi-owned session. For v1, keep those actions in the terminal UI; mobile can use the dedicated fork-into-new-Oppi-session flow when it needs a separate session.
 - `share_session` uses the server-owned session export, redaction, scanning, and publish pipeline. It should be supported for mirror sessions, but the right implementation is server-side sharing from the mirrored session file, not forwarding share work into the terminal bridge.
 
 When changing this matrix, update the matching implementation path:
@@ -258,7 +258,7 @@ Dialog requests can be answered from either the terminal or Oppi mobile:
 2. The terminal dialog promise and the phone response promise race.
 3. If the phone wins, the bridge returns that value to the extension and aborts the local terminal dialog when the dialog supports an abort signal.
 4. If the terminal wins, the bridge sends `extension_ui_request_settled`; the server broadcasts `extension_ui_settled` so mobile clears stale UI.
-5. Late duplicate responses are ignored because the pending request is removed after the first settlement.
+5. Late duplicate responses are ignored because the pending request clears after the first settlement.
 
 Pending non-ask dialogs are replayed to mobile on stream reconnect. Ask requests use the ask store and are replayed through the first-class ask path instead.
 
@@ -371,10 +371,10 @@ The mirror session and local JSONL import must share the same `piSessionId` and 
 - Extension UI v1 supports ask/select/confirm/input/editor and fire-and-forget notify/title/status/widget/editor-text. Custom TUI components, headers, footers, custom editors, working indicators, tool renderers, raw ANSI layouts, and theme switching remain terminal-only.
 - Queue editing currently relies on Pi terminal queue internals until Pi exposes a stable public queue replacement API.
 - Session-file replacement commands (`new_session`, `fork`, `switch_session`) remain terminal-only until the product semantics are explicit.
-- Session sharing (`share_session`) still needs server-side sharing from a mirrored session file.
+- Session sharing (`share_session`) needs server-side sharing from a mirrored session file.
 - Explicit resume as managed is only available after the mirror session is stopped, disconnected, and has a canonical session file.
 - Mirror-specific health is currently log-first; generic client command metrics do not directly label mirror sessions.
-- Reconnect and stale terminal state need continued real-device soak testing.
+- Reconnect and stale terminal state need ongoing real-device soak testing.
 
 ## Maintainer Notes
 

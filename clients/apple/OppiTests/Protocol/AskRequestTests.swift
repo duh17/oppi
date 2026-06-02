@@ -203,13 +203,13 @@ struct AskRequestTests {
 
     @Test func extensionSelectInlineAskExtractsOptionDescriptions() {
         let request = ExtensionUIRequest(
-            id: "ext-permission",
+            id: "ext-approval",
             sessionId: "s1",
             method: "select",
             title: """
-            Touch permission gate extension
+            Touch approval extension
 
-            This changes the native permission approval path.
+            This changes the native extension approval path.
 
             Tool: bash
             Input: {"command":"npm test"}
@@ -224,7 +224,7 @@ struct AskRequestTests {
 
         let ask = request.inlineAskRequest
 
-        #expect(ask?.questions.first?.question.contains("Touch permission gate extension") == true)
+        #expect(ask?.questions.first?.question.contains("Touch approval extension") == true)
         #expect(ask?.questions.first?.question.contains("Allow once: Run this tool call now") == false)
         #expect(ask?.questions.first?.options[0].description == "Run this tool call now")
         #expect(ask?.questions.first?.options[1].description == "Block the tool call")

@@ -91,14 +91,13 @@ If you need tools from custom paths (e.g. `mise`, `pyenv`, `nvm`), add their bin
 | `tls.allowInsecureNetworkHttp` | boolean | `false`         | Explicit escape hatch required to bind plain HTTP/WS to non-loopback interfaces with `mode=disabled`. |
 
 New configs default to `"self-signed"` so iOS pairing uses HTTPS/WSS out of the box.
-For legacy configs that still have `"disabled"`, first `oppi serve` auto-promotes
-TLS to `"self-signed"`.
+Configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"` on first `oppi serve`.
 
 Modes:
 
 | Mode          | Behavior                                                                                                                        |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds still work.    |
+| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds work.          |
 | `tailscale`   | Requests/renews certs via `tailscale cert`. Requires MagicDNS + HTTPS certs enabled in tailnet DNS + connected `tailscale` CLI. |
 | `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                 |
 | `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                   |

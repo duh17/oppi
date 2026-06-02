@@ -476,8 +476,8 @@ export class SdkBackend {
       }
 
       // Build extension factories for Oppi-owned in-process tools.
-      // Permission gating is intentionally not injected here; SDK sessions load
-      // the configured global host extension through the resource loader.
+      // Approval behavior stays in host extensions; SDK sessions load the
+      // configured global host extension through the resource loader.
       const extensionFactories: ExtensionFactory[] = [];
       const usePermissionGate = config.permissionGate !== false;
       const permissionGateExtensionPath = usePermissionGate
@@ -498,8 +498,8 @@ export class SdkBackend {
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
       // Built-in Oppi extensions are injected as in-process factories when the
-      // workspace explicitly enables them. The global permission-gate remains a
-      // normal Pi host extension so approvals use native extension UI requests.
+      // workspace explicitly enables them. The configured global host extension
+      // remains a normal Pi extension so approvals use native extension UI requests.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -552,8 +552,8 @@ export class SdkBackend {
         extensionsOverride: (base) => {
           // Filter out names owned directly by oppi-server from host paths.
           // Built-ins are injected above as inline factories when enabled.
-          // The global permission-gate is kept even when workspace.extensions is
-          // an explicit allowlist, so users do not need to add it to every workspace.
+          // The configured global host extension is kept even when workspace.extensions
+          // is an explicit allowlist, so users do not need to add it to every workspace.
           const allowedNames = workspace?.extensions;
           const filtered = filterSdkLoadedExtensions(base.extensions, {
             workspaceExtensions: allowedNames,

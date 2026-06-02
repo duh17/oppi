@@ -80,7 +80,7 @@ Allowed diagnostic data:
 | MetricKit | `POST /telemetry/metrickit` | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl` | Apple crash, hang, CPU, disk, and battery diagnostics. |
 | Client logs | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl` | Redacted warning/error breadcrumbs and selected high-value info logs. |
 | Server resource metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl` | Server CPU, memory, event loop, sessions, and WebSocket counts. |
-| Server ops metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, gate, dictation, retry, and compaction metrics. |
+| Server ops metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics. |
 | Server log | local JSONL/text log | `<OPPI_DATA_DIR>/server.log` | Structured server events and warnings. |
 
 Retention defaults:
@@ -184,14 +184,13 @@ Current handling guidance:
 | Server HTTP timings such as `server.http_request_ms` | Promote only route groups that affect visible UX; fast successful health/stats/capability/navigation/telemetry-upload routes are threshold-gated. |
 | Server drill-down gauges such as `server.broadcast_fanout` and `server.event_ring_utilization` | Max-aggregate by bounded tags; use peaks for diagnostics instead of raw sample counts. |
 | Server resource snapshots such as active-session peak | Prefer the structured server resource sample over duplicating the same value into server-ops metrics. |
-| Hot-path policy timings such as `server.gate_check_ms` | Emit slow samples only; keep decision counts as sum-aggregated counters. |
 | Paired metrics such as coalescer events/bytes | Aggregate over a larger window and drop tiny partial drain windows; keep them as drill-down, not front-page rows. |
 | Render drill-down metrics such as `chat.render_strategy_ms` | Keep signposts for every operation, but upload only non-trivial samples. |
 | Routine command metrics such as successful `get_queue` command send/resolve/roundtrip | Keep errors and slow samples; rely on queue UX metrics for the normal success path. |
 | Server token and cost counters such as `server.turn_input_tokens` and `server.turn_cost` | Sum-aggregate before storage; dashboards should use `SUM(value)`. |
 | Client session-size snapshots such as `chat.session_input_tokens` | Emit only stable non-empty snapshots; dashboards should treat them as latest/max capacity diagnostics, not per-update events. |
 | Rare error counters | Prefer a single error metric with a `reason` tag over many near-zero standalone metrics. |
-| Stale or redundant metrics | Stop emitting them and keep import compatibility only when old dashboards need it. |
+| Stale or redundant metrics | Stop emitting them and keep import compatibility only for archived dashboards. |
 
 ## How Oppi uses Pi observability
 
@@ -201,7 +200,7 @@ Pi persists sessions as JSONL and emits structured `AgentSessionEvent` values fo
 - token and cost snapshots
 - tool-call counts and mutating-file stats
 - retries, compactions, and compaction duration
-- ask/permission round-trip timing
+- ask and extension UI round-trip timing
 - session summaries and catch-up events for clients
 
 Use Pi session files for forensic replay. Use Oppi metrics to answer whether the app felt good and where the interaction became slow, unreliable, or unsafe.

@@ -28,13 +28,13 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             ]
         )
         try captureDialog(
-            name: "extension-ui-03-permission-gate-select-e2e",
+            name: "extension-ui-03-approval-select-e2e",
             sessionId: sessionId,
-            requestId: "snap-permission-gate-select",
+            requestId: "snap-approval-select",
             anchorText: "Yes",
             message: [
                 "type": "extension_ui_request",
-                "id": "snap-permission-gate-select",
+                "id": "snap-approval-select",
                 "method": "select",
                 "title": "⚠️ Dangerous command:\n\n  sudo rm -rf /important\n\nAllow?",
                 "options": ["Yes", "No"],

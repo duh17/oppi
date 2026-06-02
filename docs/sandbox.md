@@ -42,14 +42,14 @@ Expected behavior for new sandbox sessions:
 - The visible cwd is `/workspace/<workspace-slug>`.
 - If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host.
 - `read`, `bash`, `edit`, and `write` operate against the VM workspace mount.
-- Model API calls still work from the host process; the VM does not need provider API keys for normal agent operation.
+- Model API calls run from the host process; the VM does not need provider API keys for normal agent operation.
 - Oppi/Pi provider API keys are not forwarded into the VM by default.
 - Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all.
 - Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`.
 - Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model.
 - Global host agent instructions are not exposed to sandbox sessions.
 
-Existing running sessions may keep their old cwd and VM until restarted. Start a new session after changing sandbox settings that affect cwd, mounts, or network policy.
+Running sessions keep their current cwd and VM until restarted. Start a new session after changing sandbox settings that affect cwd, mounts, or network policy.
 
 ## Default safety model
 
@@ -150,7 +150,7 @@ Relevant Gondolin guarantees and constraints:
 - HTTP/2, HTTP/3, QUIC, and WebRTC are not supported today.
 - Gondolin is not a defense against a malicious host, VM escape bugs, same-user local attackers, side channels, or denial of service.
 
-The sandbox keeps provider secrets out of the VM by default and hides common workspace secret paths, but default network egress is still broad unless you configure it. It does not make untrusted code safe to run without judgment.
+The sandbox keeps provider secrets out of the VM by default and hides common workspace secret paths, but default network egress is broad unless you configure it. It does not make untrusted code safe to run without judgment.
 
 ## How this differs from Pi's sandbox story
 
@@ -161,7 +161,7 @@ Pi itself does not ship a first-party sandbox boundary. Pi keeps the core small 
 - offline startup mode: `PI_OFFLINE=1`
 - extension hooks such as `tool_call` and `user_bash`
 - pluggable tool operations for delegating tools to SSH, containers, or other runtimes
-- example extensions for permission gates, protected paths, and sandboxed bash
+- example extensions for approval prompts, protected paths, and sandboxed bash
 
 Pi's example `examples/extensions/sandbox/` uses `@anthropic-ai/sandbox-runtime` to wrap bash commands with OS-level sandboxing. That example is useful as a reference for overriding tools. Oppi's sandbox is broader: it uses Gondolin and routes file tools plus bash into the same VM-backed workspace.
 
@@ -171,7 +171,7 @@ Pi's example `examples/extensions/sandbox/` uses `@anthropic-ai/sandbox-runtime`
 - **A command should not reach the network:** clear **Allowed Hosts** to deny all, or add only the required hosts.
 - **A command cannot reach an expected host:** add that host to **Allowed Hosts**, then start a new session if the VM was already running.
 - **A command cannot read `.env` or `.ssh`:** this is expected. Common secret paths are hidden from the workspace mount.
-- **The session still shows an old cwd:** stop the old session and start a new one so the session picks up the sandbox cwd.
+- **The session shows the wrong cwd:** stop that session and start a new one so the session picks up the sandbox cwd.
 
 ## Upstream references
 

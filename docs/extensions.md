@@ -12,6 +12,8 @@ It is for Oppi workspace admins and Oppi developers. It is not an extension-auth
 
 Oppi server-owned tools live in `server/extensions/` and are enabled per workspace. They are not pi package resources.
 
+Approval behavior is extension-owned. If a session needs approval before an action, use a Pi extension that handles `tool_call` or session events and asks through `ctx.ui`.
+
 Installing or running Oppi server must not write to `~/.pi/agent/settings.json`, run `pi install`, or implicitly enable any extension in standalone pi. Standalone pi only loads what the user explicitly installs or loads with pi.
 
 ## Extension surfaces
@@ -26,7 +28,7 @@ This split keeps user consent clear: installing Oppi is not the same thing as in
 
 ## If we add a pi package later
 
-Pi's standard package model is still the source of truth. A future package can declare resources under the `pi` key:
+Pi's standard package model is the source of truth. A future package can declare resources under the `pi` key:
 
 ```json
 {
@@ -83,7 +85,7 @@ Oppi then filters host paths according to the workspace allowlist and injects en
 
 ## Reload behavior
 
-`/reload` still reloads host pi extensions, skills, prompts, and themes through pi's resource loader.
+`/reload` reloads host pi extensions, skills, prompts, and themes through pi's resource loader.
 
 Oppi built-ins are server code. `/reload` recreates their inline factory registrations for the active session, but it does not hot-reload edited `server/extensions/*.ts` source files. Changing built-in implementation code requires restarting or rebuilding the Oppi server.
 
@@ -133,11 +135,11 @@ On mobile, Oppi renders tool activity with native timeline rows. Rendering uses 
 3. server-provided `StyledSegment[]` summaries for the collapsed row
 4. generic extension output rendering from tool `content` and `details`
 
-That means an extension can look polished in terminal pi but still look generic in Oppi unless it provides mobile-friendly text, structured details, or a sidecar renderer.
+That means an extension can look polished in terminal pi but look generic in Oppi unless it provides mobile-friendly text, structured details, or a sidecar renderer.
 
 ### Generic mobile defaults
 
-For extension tools without a dedicated mobile renderer, Oppi still tries to render useful native output:
+For extension tools without a dedicated mobile renderer, Oppi renders useful native output:
 
 - collapsed row title defaults to the tool name plus a compact argument summary
 - collapsed rows are treated as compact summaries, not rich output containers

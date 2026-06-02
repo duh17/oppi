@@ -85,4 +85,4 @@ Mirror forwards Pi-native extension UI from terminal sessions. For example, a `t
 - Oppi server `0.4.0` or newer
 - Interactive terminal `pi`; print, JSON, RPC, and server-owned SDK sessions are not mirror sessions
 
-See the full mirror contract in the Oppi repo: https://github.com/duh17/oppi/blob/main/docs/oppi-mirror.md
+See the full mirror contract and compatibility matrix in the Oppi repo: https://github.com/duh17/oppi/blob/main/docs/oppi-mirror.md
