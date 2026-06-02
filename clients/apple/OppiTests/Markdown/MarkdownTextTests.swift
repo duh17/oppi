@@ -8,6 +8,10 @@ import UIKit
 
 @Suite("FlatSegment.build")
 struct FlatSegmentBuildTests {
+    private func textSegmentString(_ segments: [FlatSegment]) -> String? {
+        guard segments.count == 1, case .text(let attributed) = segments[0] else { return nil }
+        return String(attributed.characters)
+    }
 
     @Test func emptyBlocksProduceNoSegments() {
         let segments = FlatSegment.build(from: [], themeID: .dark)
@@ -100,6 +104,48 @@ struct FlatSegmentBuildTests {
         } else {
             Issue.record("Expected .latexBlock segment, got \(segments[0])")
         }
+    }
+
+    @Test func inlineDollarLatexArrowRendersAsTextSegment() {
+        let blocks = parseCommonMark("A $\\rightarrow$ B\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "A → B")
+    }
+
+    @Test func inlineDollarLatexTextChainRendersPlainly() {
+        let blocks = parseCommonMark("$\\text{First} \\rightarrow \\text{Second} \\rightarrow \\text{Done}$\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "First → Second → Done")
+    }
+
+    @Test func bareLatexTextChainRendersPlainly() {
+        let blocks = parseCommonMark("\\text{Alpha} \\rightarrow \\text{Beta}\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "Alpha → Beta")
+    }
+
+    @Test func inlineLatexTextPreservesNonLatinText() {
+        let blocks = parseCommonMark("$\\text{第一步} \\rightarrow \\text{第二步}$\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "第一步 → 第二步")
+    }
+
+    @Test func inlineLatexUsesMathParserSymbolsAndOperators() {
+        let blocks = parseCommonMark("$\\alpha \\leq \\beta \\rightarrow \\gamma$\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "α ≤ β → γ")
+    }
+
+    @Test func inlineDollarCurrencyRemainsPlainText() {
+        let blocks = parseCommonMark("Costs $5 today and $6 tomorrow\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "Costs $5 today and $6 tomorrow")
+    }
+
+    @Test func unmatchedDollarLatexRemainsPlainText() {
+        let blocks = parseCommonMark("A $\\text{partial} value\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "A $\\text{partial} value")
     }
 
     @Test func bracketDelimitedPlainTextParagraphStaysText() {

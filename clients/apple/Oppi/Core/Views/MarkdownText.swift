@@ -602,6 +602,317 @@ enum FlatSegment: Sendable {
         return false
     }
 
+    // MARK: - Inline Math Text
+
+    private static func renderInlineLatexParagraph(_ inlines: [MarkdownInline]) -> String? {
+        let source = inlineSourcePreservingBreaks(inlines)
+        if let rendered = renderDollarDelimitedInlineLatex(source) {
+            return rendered
+        }
+
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.contains("$"), trimmed.hasPrefix("\\text{") else { return nil }
+        let rendered = renderInlineLatexPlainText(trimmed)
+        return rendered.isEmpty ? nil : rendered
+    }
+
+    private static func renderDollarDelimitedInlineLatex(_ source: String) -> String? {
+        var cursor = source.startIndex
+        var output = ""
+        var renderedAny = false
+
+        while cursor < source.endIndex,
+              let open = nextInlineMathDelimiter(in: source, from: cursor) {
+            let afterOpen = source.index(after: open)
+            guard let close = nextInlineMathDelimiter(in: source, from: afterOpen) else { break }
+
+            let inner = String(source[afterOpen ..< close])
+            guard isLikelyLatexMath(inner) else {
+                let afterClose = source.index(after: close)
+                output.append(contentsOf: source[cursor ..< afterClose])
+                cursor = afterClose
+                continue
+            }
+
+            output.append(contentsOf: source[cursor ..< open])
+            output.append(renderInlineLatexPlainText(inner))
+            cursor = source.index(after: close)
+            renderedAny = true
+        }
+
+        output.append(contentsOf: source[cursor...])
+        return renderedAny ? output : nil
+    }
+
+    private static func nextInlineMathDelimiter(in source: String, from start: String.Index) -> String.Index? {
+        var index = start
+        while index < source.endIndex {
+            if source[index] == "$",
+               !isEscapedDollar(at: index, in: source),
+               !isDisplayMathDollar(at: index, in: source) {
+                return index
+            }
+            index = source.index(after: index)
+        }
+        return nil
+    }
+
+    private static func isEscapedDollar(at index: String.Index, in source: String) -> Bool {
+        guard index > source.startIndex else { return false }
+        var slashCount = 0
+        var cursor = source.index(before: index)
+        while source[cursor] == "\\" {
+            slashCount += 1
+            guard cursor > source.startIndex else { break }
+            cursor = source.index(before: cursor)
+        }
+        return slashCount % 2 == 1
+    }
+
+    private static func isDisplayMathDollar(at index: String.Index, in source: String) -> Bool {
+        let previousIsDollar = index > source.startIndex && source[source.index(before: index)] == "$"
+        let nextIsDollar = source.index(after: index) < source.endIndex && source[source.index(after: index)] == "$"
+        return previousIsDollar || nextIsDollar
+    }
+
+    private static func renderInlineLatexPlainText(_ source: String) -> String {
+        let parsed = TeXMathParser().parse(source.trimmingCharacters(in: .whitespacesAndNewlines))
+        return mathPlainText(from: parsed)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func mathPlainText(from nodes: [MathNode]) -> String {
+        var output = ""
+        for node in nodes {
+            appendMathPlainText(node, to: &output)
+        }
+        return output
+    }
+
+    private static func appendMathPlainText(_ node: MathNode, to output: inout String) {
+        switch node {
+        case .number(let value), .variable(let value), .text(let value):
+            appendMathToken(value, to: &output)
+        case .operator(let op):
+            appendMathOperator(op, to: &output)
+        case .symbol(let symbol):
+            appendMathToken(mathSymbolText(symbol), to: &output)
+        case .fraction(let numerator, let denominator):
+            appendMathToken(mathPlainText(from: numerator), to: &output)
+            appendMathToken("/", to: &output)
+            appendMathToken(mathPlainText(from: denominator), to: &output)
+        case .superscript(let base, let exponent):
+            appendMathToken(mathPlainText(from: base), to: &output)
+            appendMathToken("^", to: &output)
+            appendMathToken(mathPlainText(from: exponent), to: &output)
+        case .subscript(let base, let index):
+            appendMathToken(mathPlainText(from: base), to: &output)
+            appendMathToken("_", to: &output)
+            appendMathToken(mathPlainText(from: index), to: &output)
+        case .subSuperscript(let base, let sub, let sup):
+            appendMathToken(mathPlainText(from: base), to: &output)
+            appendMathToken("_", to: &output)
+            appendMathToken(mathPlainText(from: sub), to: &output)
+            appendMathToken("^", to: &output)
+            appendMathToken(mathPlainText(from: sup), to: &output)
+        case .sqrt(let index, let radicand):
+            appendMathToken("√", to: &output)
+            if let index {
+                appendMathToken("[", to: &output)
+                appendMathToken(mathPlainText(from: index), to: &output)
+                appendMathToken("]", to: &output)
+            }
+            appendMathToken("(", to: &output)
+            appendMathToken(mathPlainText(from: radicand), to: &output)
+            appendMathToken(")", to: &output)
+        case .group(let body), .font(_, let body), .accent(_, let body):
+            appendMathToken(mathPlainText(from: body), to: &output)
+        case .leftRight(let left, let right, let body):
+            appendMathToken(delimiterText(left), to: &output)
+            appendMathToken(mathPlainText(from: body), to: &output)
+            appendMathToken(delimiterText(right), to: &output)
+        case .matrix(let rows, _), .environment(_, let rows):
+            let rowText = rows.map { row in
+                row.map { mathPlainText(from: $0) }.joined(separator: " | ")
+            }.joined(separator: "; ")
+            appendMathToken(rowText, to: &output)
+        case .space:
+            appendSpace(to: &output)
+        case .bigOperator(let kind, let limits):
+            appendMathToken(bigOperatorText(kind), to: &output)
+            if let lower = limits?.lower {
+                appendMathToken("_", to: &output)
+                appendMathToken(mathPlainText(from: lower), to: &output)
+            }
+            if let upper = limits?.upper {
+                appendMathToken("^", to: &output)
+                appendMathToken(mathPlainText(from: upper), to: &output)
+            }
+        }
+    }
+
+    private static func appendMathOperator(_ op: MathOperator, to output: inout String) {
+        let text: String
+        switch op {
+        case .plus: text = "+"
+        case .minus: text = "−"
+        case .times: text = "×"
+        case .div: text = "÷"
+        case .cdot: text = "·"
+        case .pm: text = "±"
+        case .mp: text = "∓"
+        case .star: text = "*"
+        case .equal: text = "="
+        case .lessThan: text = "<"
+        case .greaterThan: text = ">"
+        case .leq: text = "≤"
+        case .geq: text = "≥"
+        case .neq: text = "≠"
+        case .approx: text = "≈"
+        case .equiv: text = "≡"
+        case .sim: text = "∼"
+        case .in: text = "∈"
+        case .subset: text = "⊂"
+        case .supset: text = "⊃"
+        case .subseteq: text = "⊆"
+        case .supseteq: text = "⊇"
+        case .cup: text = "∪"
+        case .cap: text = "∩"
+        case .to, .rightarrow: text = "→"
+        case .leftarrow: text = "←"
+        case .mapsto: text = "↦"
+        case .colon: text = ":"
+        case .comma: text = ","
+        case .semicolon: text = ";"
+        case .bang: text = "!"
+        }
+        appendSpacedMathToken(text, to: &output)
+    }
+
+    private static func appendMathToken(_ token: String, to output: inout String) {
+        guard !token.isEmpty else { return }
+        if isArrowToken(token) {
+            appendSpacedMathToken(token, to: &output)
+        } else {
+            output.append(token)
+        }
+    }
+
+    private static func appendSpacedMathToken(_ token: String, to output: inout String) {
+        guard !token.isEmpty else { return }
+        appendSpace(to: &output)
+        output.append(token)
+        appendSpace(to: &output)
+    }
+
+    private static func appendSpace(to output: inout String) {
+        if output.last?.isWhitespace != true {
+            output.append(" ")
+        }
+    }
+
+    private static func isArrowToken(_ token: String) -> Bool {
+        ["→", "←", "↔", "⇒", "⇐", "⇔", "⟹", "⟸", "⟺", "↦"].contains(token)
+    }
+
+    private static func delimiterText(_ delimiter: Delimiter) -> String {
+        switch delimiter {
+        case .paren: return "("
+        case .closeParen: return ")"
+        case .bracket: return "["
+        case .closeBracket: return "]"
+        case .brace: return "{"
+        case .closeBrace: return "}"
+        case .pipe: return "|"
+        case .doublePipe: return "‖"
+        case .angle: return "⟨"
+        case .closeAngle: return "⟩"
+        case .none: return ""
+        }
+    }
+
+    private static func bigOperatorText(_ kind: BigOpKind) -> String {
+        switch kind {
+        case .sum: return "∑"
+        case .prod: return "∏"
+        case .coprod: return "∐"
+        case .int: return "∫"
+        case .iint: return "∬"
+        case .iiint: return "∭"
+        case .oint: return "∮"
+        case .bigcup: return "⋃"
+        case .bigcap: return "⋂"
+        case .bigoplus: return "⨁"
+        case .bigotimes: return "⨂"
+        case .lim: return "lim"
+        case .sup: return "sup"
+        case .inf: return "inf"
+        case .min: return "min"
+        case .max: return "max"
+        case .det: return "det"
+        case .log: return "log"
+        case .ln: return "ln"
+        case .sin: return "sin"
+        case .cos: return "cos"
+        case .tan: return "tan"
+        case .exp: return "exp"
+        }
+    }
+
+    private static func mathSymbolText(_ symbol: MathSymbol) -> String {
+        switch symbol {
+        case .alpha: return "α"
+        case .beta: return "β"
+        case .gamma: return "γ"
+        case .delta: return "δ"
+        case .epsilon, .varepsilon: return "ε"
+        case .zeta: return "ζ"
+        case .eta: return "η"
+        case .theta, .vartheta: return "θ"
+        case .iota: return "ι"
+        case .kappa: return "κ"
+        case .lambda: return "λ"
+        case .mu: return "μ"
+        case .nu: return "ν"
+        case .xi: return "ξ"
+        case .pi: return "π"
+        case .rho, .varrho: return "ρ"
+        case .sigma, .varsigma: return "σ"
+        case .tau: return "τ"
+        case .upsilon: return "υ"
+        case .phi, .varphi: return "φ"
+        case .chi: return "χ"
+        case .psi: return "ψ"
+        case .omega: return "ω"
+        case .capitalGamma: return "Γ"
+        case .capitalDelta: return "Δ"
+        case .capitalTheta: return "Θ"
+        case .capitalLambda: return "Λ"
+        case .capitalXi: return "Ξ"
+        case .capitalPi: return "Π"
+        case .capitalSigma: return "Σ"
+        case .capitalUpsilon: return "Υ"
+        case .capitalPhi: return "Φ"
+        case .capitalPsi: return "Ψ"
+        case .capitalOmega: return "Ω"
+        case .infty: return "∞"
+        case .partial: return "∂"
+        case .nabla: return "∇"
+        case .forall: return "∀"
+        case .exists: return "∃"
+        case .neg: return "¬"
+        case .ell: return "ℓ"
+        case .hbar: return "ℏ"
+        case .emptyset: return "∅"
+        case .cdots: return "⋯"
+        case .ldots: return "…"
+        case .vdots: return "⋮"
+        case .ddots: return "⋱"
+        case .prime: return "′"
+        }
+    }
+
     // MARK: - Image URL Resolution
 
     /// Split paragraph inlines around resolvable markdown images.
@@ -878,6 +1189,12 @@ enum FlatSegment: Sendable {
         case .paragraph(let inlines):
             let bodyFont = AppFont.messageBody
             let bodyColor = defaultTextColor ?? UIColor(palette.fg)
+            if let renderedLatex = renderInlineLatexParagraph(inlines) {
+                var container = AttributeContainer()
+                container.uiKit.foregroundColor = bodyColor
+                container.uiKit.font = bodyFont
+                return AttributedString(renderedLatex, attributes: container)
+            }
             // Fast path: single text inline (most common paragraph shape).
             if inlines.count == 1, case .text(let string) = inlines[0] {
                 var container = AttributeContainer()
