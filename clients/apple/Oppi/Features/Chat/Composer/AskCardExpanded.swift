@@ -166,10 +166,12 @@ struct AskCardExpanded: View {
     @ViewBuilder
     private func questionPageContent(_ question: AskQuestion) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(question.question)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .fixedSize(horizontal: false, vertical: true)
+            MarkdownContentViewWrapper(
+                content: question.question,
+                isStreaming: false,
+                textSelectionEnabled: true
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: 10) {
                 ForEach(question.options, id: \.value) { option in
