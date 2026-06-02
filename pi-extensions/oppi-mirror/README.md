@@ -8,22 +8,6 @@
 pi install npm:oppi-mirror
 ```
 
-Use `npm:oppi-mirror@0.4.0` only when you want to pin a specific release; pinned package specs are skipped by `pi update`.
-
-For local development from an Oppi checkout:
-
-```bash
-pi install ./pi-extensions/oppi-mirror
-# or one run only:
-pi -e ./pi-extensions/oppi-mirror
-```
-
-If local package loading reports a missing runtime dependency, install package dependencies once:
-
-```bash
-cd pi-extensions/oppi-mirror && npm install
-```
-
 If Pi is already running, reload extensions:
 
 ```text
@@ -74,11 +58,11 @@ Or disable it for one process:
 OPPI_MIRROR_AUTO_START=false pi
 ```
 
-## Compatibility
+## What it supports
 
-Mirror supports terminal-owned prompt, steer, follow-up, stop, queue, model, thinking, compaction, tree navigation, command-list, and standard Pi extension UI flows. Session-file replacement remains terminal-owned: use terminal Pi for `/new`, `/fork`, and `/resume`/switch.
+Mirror supports prompts, steer and follow-up messages, stop, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows.
 
-Mirror forwards Pi-native extension UI from terminal sessions. For example, a `tool_call` handler can ask through `ctx.ui.confirm()` or an `ask` flow, and Oppi renders the response path natively.
+Session replacement stays terminal-owned. Use terminal Pi for `/new`, `/fork`, and session switching.
 
 ## Requirements
 

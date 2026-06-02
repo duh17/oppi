@@ -20,7 +20,7 @@ Pi installs public extension packages from npm with the `npm:` source prefix:
 pi install npm:oppi-mirror
 ```
 
-That records the package in Pi settings, installs it under `~/.pi/agent/npm/`, and loads the extension on future interactive `pi` launches. Use `npm:oppi-mirror@0.4.0` only when you want to pin a specific release; pinned package specs are skipped by `pi update`.
+That records the package in Pi settings, installs it under `~/.pi/agent/npm/`, and loads the extension on future interactive `pi` launches.
 
 For a one-off run without editing settings, use:
 
@@ -53,67 +53,6 @@ Stop or restart the bridge:
 /oppi-mirror start
 ```
 
-## Install from an Oppi checkout
-
-For local development before publishing, install the package directory from the repo root:
-
-```bash
-pi install ./pi-extensions/oppi-mirror
-```
-
-If local package loading reports a missing runtime dependency, install package dependencies once:
-
-```bash
-cd pi-extensions/oppi-mirror && npm install
-```
-
-For a one-off local run:
-
-```bash
-pi -e ./pi-extensions/oppi-mirror
-```
-
-`./pi-extensions/oppi-mirror.ts` remains as a compatibility shim for older local installs.
-
-## npm package shape
-
-Mirror is a separate public npm package named `oppi-mirror`. It is not bundled into `oppi-server` as a Pi package.
-
-The package manifest declares only the terminal extension as a Pi resource:
-
-```json
-{
-  "name": "oppi-mirror",
-  "keywords": ["pi-package", "pi-extension", "oppi"],
-  "dependencies": {
-    "ws": "8.20.1"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    }
-  },
-  "pi": {
-    "extensions": ["./extensions/oppi-mirror.ts"]
-  }
-}
-```
-
-Keep it separate from `oppi-server`: the server package contains Oppi server-only extensions under `server/extensions/`, and standalone Pi should not load those.
-
-Maintainer publish check:
-
-```bash
-npm view oppi-mirror version
-cd pi-extensions/oppi-mirror
-npm publish --dry-run
-npm publish --access public
-```
-
-First publish should return `404 Not Found` from `npm view`; later publishes should confirm the current published version before bumping.
 
 ## Configuration
 
@@ -161,170 +100,43 @@ The extension adds one Pi command with three actions:
 
 ## Behavior
 
-Mirror mode uses the same Oppi session projection as managed Pi sessions. Mirrored sessions appear in the normal Oppi session list and use the same chat timeline, tool rendering, summaries, and stored session state.
+Mirror sessions appear in the normal Oppi session list and use the same timeline, tool rendering, and stored session state as other Oppi sessions.
 
-The terminal Pi process remains the execution source of truth. Oppi observes and steers that process; it does not replace it.
-
-Mirror mode is modeled as a remote transport for the same AgentSession event/command contract used by managed sessions. Shared server code owns prompt/steer/follow-up delivery, forwarded command handling, timeline messages, session mutation, compaction rows, titles, stats, command results, and queue state. The bridge command driver owns only bridge serialization, command timeouts, and disconnect rejection. In the terminal extension, `MirrorQueueProjection` makes Pi's queue snapshot authoritative while preserving Oppi item IDs and image metadata for iOS.
+The terminal Pi process remains the source of truth. Oppi can watch, send prompts, steer the active turn, queue follow-ups, answer supported extension UI, and stop the session, but it does not silently take over execution.
 
 In Oppi clients:
 
 - connected mirror sessions show as `Mirror live`
 - disconnected or stale mirror sessions show as `Mirror offline`
-- terminal-only extension status messages are not rendered as iOS chat cards
-- connected or stale mirror sessions remain terminal-owned; Oppi does not silently take over execution
-- stopped, disconnected mirror sessions can be explicitly resumed as managed Oppi sessions when the server has a canonical `piSessionFile`
+- stopped, disconnected mirror sessions can be resumed as managed Oppi sessions when the server has the session file
 
-## Remote Command Support Matrix
+## What works from mobile
 
-Mirror mode intentionally supports only commands that can run safely against a terminal-owned Pi session. Commands that replace the session file remain terminal-owned because running them remotely would make the terminal UI context stale.
+Mirror mode is meant for supervising and steering an active terminal session.
 
-| Command                 | Server-owned sessions | Mirror sessions  | Notes                                                                                                                                                |
-| ----------------------- | --------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`                | Supported             | Supported        | Mirrored exact `/reload` is routed to terminal reload instead of starting a turn.                                                                    |
-| `steer`                 | Supported             | Supported        | Requires an active streaming turn.                                                                                                                   |
-| `follow_up`             | Supported             | Supported        | Requires an active streaming turn.                                                                                                                   |
-| `abort` / `stop`        | Supported             | Supported        | Aborts the current turn; mirror keeps queued phone messages instead of dropping them.                                                                |
-| `stop_session`          | Supported             | Supported        | Sends `stop` to the terminal bridge and waits for terminal shutdown. Offline sessions must be stopped from the terminal.                             |
-| `get_state`             | Supported             | Supported        | Mirror state comes from bridge heartbeats and command snapshots.                                                                                     |
-| `get_messages`          | Supported             | Supported        | Mirror returns terminal session entries.                                                                                                             |
-| `get_session_stats`     | Supported             | Supported        | Mirror includes session file, Pi session ID, entry count, and context usage.                                                                         |
-| `get_queue`             | Supported             | Supported        | Bridge result must include a valid queue state.                                                                                                      |
-| `set_queue`             | Supported             | Supported        | Uses queue version checks; terminal applies the replacement.                                                                                         |
-| `set_model`             | Supported             | Supported        | Fails if terminal Pi has no key/model for the requested provider/model.                                                                              |
-| `cycle_model`           | Supported             | Supported        | Cycles in the terminal Pi process.                                                                                                                   |
-| `get_available_models`  | Supported             | Supported        | Uses terminal model registry for mirror sessions.                                                                                                    |
-| `set_thinking_level`    | Supported             | Supported        | Applied in the terminal Pi process.                                                                                                                  |
-| `cycle_thinking_level`  | Supported             | Supported        | Applied in the terminal Pi process.                                                                                                                  |
-| `reload`                | Supported             | Supported        | Terminal reload disconnects are treated as transient.                                                                                                |
-| `new_session`           | Supported             | Unsupported      | Session replacement is terminal-owned. Use the terminal UI.                                                                                          |
-| `set_session_name`      | Supported             | Supported        | Name is projected back into Oppi state.                                                                                                              |
-| `compact`               | Supported             | Supported        | Runs terminal compaction and forwards compaction events.                                                                                             |
-| `set_auto_compaction`   | Supported             | Supported        | Applied to the terminal `AgentSession`.                                                                                                              |
-| `fork`                  | Supported             | Unsupported      | Session-file replacement is terminal-owned. Use the terminal UI.                                                                                     |
-| `get_fork_messages`     | Supported             | Supported        | Uses terminal `AgentSession.getUserMessagesForForking()`.                                                                                            |
-| `get_session_tree`      | Supported             | Supported        | Bridge serializes Pi's session tree into the same mobile outline snapshot shape.                                                                     |
-| `navigate_tree`         | Supported             | Supported        | Safe because it stays in the same session file.                                                                                                      |
-| `switch_session`        | Supported             | Unsupported      | Session-file replacement is terminal-owned. Use the terminal UI.                                                                                     |
-| `set_steering_mode`     | Supported             | Supported        | Applied to the terminal `AgentSession`.                                                                                                              |
-| `set_follow_up_mode`    | Supported             | Supported        | Applied to the terminal `AgentSession`.                                                                                                              |
-| `set_auto_retry`        | Supported             | Supported        | Applied to the terminal `AgentSession`.                                                                                                              |
-| `abort_retry`           | Supported             | Supported        | Calls terminal retry abort.                                                                                                                          |
-| `abort_bash`            | Supported             | Supported        | Calls terminal bash abort.                                                                                                                           |
-| `get_commands`          | Supported             | Supported        | Returns terminal slash commands for mirror sessions.                                                                                                 |
-| `share_session`         | Supported             | Unsupported      | Should be supported, but needs the server share pipeline wired to a mirrored session file instead of a live server-owned `AgentSession`.             |
-| `extension_ui_response` | Supported             | Supported        | Routes mobile answers for `ask`, `select`, `confirm`, `input`, and `editor` back to the terminal bridge; terminal and phone answers race first-wins. |
-| `dictation_*`           | Dedicated stream      | Dedicated stream | Not handled on the session command path.                                                                                                             |
+Supported from Oppi:
 
-Unsupported mirror commands fall into a few concrete buckets:
+- prompts
+- steer and follow-up messages
+- stop or abort
+- queue updates
+- model and thinking-level changes
+- session rename, compaction, and tree navigation
+- standard Pi extension UI such as ask, select, confirm, input, editor, notify, title, status, and simple widget text
 
-- `new_session`, `fork`, and `switch_session` replace the terminal session file. Pi invalidates the extension context during replacement and starts a fresh session context, so a remote implementation needs an explicit product choice: mutate the visible terminal session from the phone, or create a separate Oppi-owned session. For v1, keep those actions in the terminal UI; mobile can use the dedicated fork-into-new-Oppi-session flow when it needs a separate session.
-- `share_session` uses the server-owned session export, redaction, scanning, and publish pipeline. It should be supported for mirror sessions, but the right implementation is server-side sharing from the mirrored session file, not forwarding share work into the terminal bridge.
+Still terminal-only:
 
-When changing this matrix, update the matching implementation path:
+- creating a new session
+- fork and switch-session flows
+- terminal-specific custom UI, headers, footers, custom editors, and raw TUI rendering
+- session sharing from a mirrored session
 
-1. Forwarded bridge commands: `server/src/pi-tui-mirror-runtime.ts` command allowlist / unsupported reasons and `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts` command handlers.
-2. Transport-special commands such as prompt, steer, follow-up, abort, stop-session, queue, and extension UI responses: the `AgentRuntimeCommandTransport` implementation, WebSocket handler, and bridge message handling as applicable.
-3. This documentation and the mirror tests.
+## Known Limitations
 
-## Extension UI Compatibility Matrix
-
-Mirror mode maps Pi's RPC-style extension UI protocol onto native Oppi UI. It does not execute terminal renderers on iOS.
-
-| Pi/TUI surface                                                                                                 | Mobile mirror behavior                                                                                            | Status                                  | Reason / constraint                                                          |
-| -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------- |
-| Tool `content` and `details`                                                                                   | Rendered through native timeline rows, mobile renderers, markdown/diff/code parsing, and generic expanded output. | Supported                               | This is data, not terminal layout.                                           |
-| Tool `renderCall()` / `renderResult()`                                                                         | Not executed by iOS. Oppi uses native rows and optional mobile renderer sidecars.                                 | Unsupported directly                    | TUI components depend on terminal width, ANSI styling, and keyboard focus.   |
-| Oppi ask extension (`method: "ask"`)                                                                           | Presented as the native ask card; answers return through `extension_ui_response.value`.                           | Supported                               | Reuses the first-class ask lifecycle and attention handling.                 |
-| Pi-native approval flows (`tool_call` / session events + `ctx.ui`)                                             | Presented through the same native extension UI cards as any other `ctx.ui` request.                               | Supported                               | Approval behavior belongs to the Pi extension.                               |
-| `ctx.ui.select()`                                                                                              | Presented as a native single-choice card or sheet.                                                                | Supported                               | Mobile returns the selected option string or cancellation.                   |
-| `ctx.ui.confirm()`                                                                                             | Presented as a native confirmation card or sheet.                                                                 | Supported                               | Mobile returns `confirmed: true` or cancellation.                            |
-| `ctx.ui.input()`                                                                                               | Presented as a native text input.                                                                                 | Supported                               | Mobile returns the submitted string or cancellation.                         |
-| `ctx.ui.editor()`                                                                                              | Presented as a native multi-line editor sheet.                                                                    | Supported                               | Mobile returns edited text or cancellation.                                  |
-| `ctx.ui.notify()`                                                                                              | Forwarded as an Oppi notification/toast surface.                                                                  | Supported                               | Fire-and-forget; no response expected.                                       |
-| `ctx.ui.setTitle()`                                                                                            | Forwarded to the native extension surface title.                                                                  | Supported                               | It does not change the iOS navigation title directly.                        |
-| `ctx.ui.setStatus()`                                                                                           | Forwarded to the native extension surface. The `oppi-mirror` status key is suppressed on iOS.                     | Supported with filtering                | Mirror's terminal-only status indicator would be duplicate chrome on mobile. |
-| `ctx.ui.setWidget()` with string lines                                                                         | Forwarded as native monospaced widget lines.                                                                      | Supported with text-only input          | Component factories are terminal-only.                                       |
-| `ctx.ui.setEditorText()` / `pasteToEditor()`                                                                   | Forwarded as composer text handoff.                                                                               | Supported with degraded paste semantics | Mobile does not emulate terminal paste collapse or editor replacement.       |
-| `ctx.ui.custom()` and overlays                                                                                 | Not rendered on mobile.                                                                                           | Unsupported                             | They require terminal component trees and keyboard focus.                    |
-| `setHeader`, `setFooter`, `setEditorComponent`, `setWorkingMessage`, `setWorkingIndicator`, `setToolsExpanded` | Not mirrored to mobile UI.                                                                                        | Unsupported                             | These are terminal chrome controls, not portable app UI.                     |
-| Theme APIs and raw ANSI/TUI styling                                                                            | Ignored by mobile.                                                                                                | Unsupported                             | Mobile uses semantic Oppi theme tokens and native controls.                  |
-
-### Extension UI race resolution
-
-Dialog requests can be answered from either the terminal or Oppi mobile:
-
-1. The extension opens the terminal dialog and sends an `extension_ui_request` with a unique `id` to the bridge.
-2. The terminal dialog promise and the phone response promise race.
-3. If the phone wins, the bridge returns that value to the extension and aborts the local terminal dialog when the dialog supports an abort signal.
-4. If the terminal wins, the bridge sends `extension_ui_request_settled`; the server broadcasts `extension_ui_settled` so mobile clears stale UI.
-5. Late duplicate responses are ignored because the pending request clears after the first settlement.
-
-Pending non-ask dialogs are replayed to mobile on stream reconnect. Ask requests use the ask store and are replayed through the first-class ask path instead.
-
-## Queue Behavior
-
-The terminal Pi process owns the message queue.
-
-Oppi can forward:
-
-- immediate prompts
-- steer messages
-- follow-up messages
-- image attachments
-
-The bridge reports queue state and can apply queue replacements through the terminal `AgentSession`. `MirrorQueueProjection` is only a projection layer: it reconciles from Pi's queue snapshot, preserves Oppi queue item IDs and image metadata, and drops stale items when the terminal queue shrinks or clears. This currently uses Pi queue internals, so keep queue behavior covered by mirror tests and prefer a public Pi queue replacement API when one exists.
-
-Oppi must not create a separate source-of-truth editable queue model for mirrored sessions. The terminal queue remains authoritative.
-
-## Race and Stale-State Resolution
-
-Mirror mode uses terminal ownership plus bounded reconciliation rather than split-brain state:
-
-- **Bridge ownership:** one live bridge owns a mirrored session. A newer bridge for the same session replaces the older connection.
-- **Execution ownership:** connected and stale mirror sessions stay terminal-owned; Oppi does not take over unless the user explicitly resumes a stopped, disconnected mirror session.
-- **Command correlation:** mobile uses `requestId`; the server bridge uses `commandId`; every supported remote command returns a correlated `command_result` success or failure.
-- **Unsupported commands:** mirror rejects unsupported commands before sending anything to the terminal and returns a `command_result` failure with the unsupported reason.
-- **Turn dedupe:** prompt/steer/follow-up sends carry `clientTurnId` so replayed client requests do not duplicate accepted turns.
-- **Queue edits:** `set_queue` uses `baseVersion`; stale mobile replacements fail instead of overwriting the terminal queue.
-- **Queue convergence:** `queue_update`, `queue_state`, and `queue_item_started` reconcile the native mobile queue projection back to Pi's queue.
-- **Extension UI:** dialog races are first-wins and idempotent, as described above.
-- **Reloads and restarts:** `/reload` is routed to terminal reload. Server restarts disconnect bridges; the extension reconnects and re-registers the same Pi session identity.
-
-## Session Identity
-
-Mirror sessions use the same Pi identity fields as local JSONL imports:
-
-- `piSessionId`
-- canonical `piSessionFile`
-- `piSessionFiles[]`
-
-This prevents the same terminal session from appearing twice: once as a live mirror session and once as an importable local JSONL session.
-
-Session rows ignore generic Pi names such as `Session <id>` so they can fall back to the first real user message.
-
-## Health and Telemetry
-
-For v1, mirror health is log-first, with generic client/server metrics for latency and queue UX.
-
-| Health question                | Source                                                                                                                                                                                                                            | Good signal                                                                                                  |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Is the bridge connected?       | `~/.config/oppi/server.log` events `mirror_bridge.connected` / `mirror_bridge.disconnected`; `~/.config/oppi/oppi-mirror.log` events `bridge_connected` / `bridge_disconnected`.                                                  | Connected bridge has matching `sessionId`, `workspaceId`, `bridgeId`, and a recent `lastSeenAt`.             |
-| Are remote commands working?   | Server `mirror_bridge.command_sent` / `mirror_bridge.command_result`; extension `command_received` / `command_completed`.                                                                                                         | Correlated `commandId`, `outcome: "success"`, low `durationMs`, and no pending-command count on disconnect.  |
-| Is queue state converging?     | Extension `queue_projection_reconciled`; server `mirror_bridge.queue_state_applied`; WebSocket `ws.queue_command.completed`.                                                                                                      | Monotonic `queueVersion`; `steeringCount` and `followUpCount` match the mobile UI after refresh.             |
-| Are extension dialogs healthy? | Server ops metrics for `server.ws_message_sent` with `type=extension_ui_request` / `extension_ui_settled` and `server.ws_message_received` with `type=extension_ui_response`; client command metrics for `extension_ui_response`. | Each dialog request has one response or settlement; stale mobile dialogs clear after `extension_ui_settled`. |
-| Does mobile feel responsive?   | Client metrics `chat.command_roundtrip_ms`, `chat.queue_sync_ms`, `chat.message_queue_ack_ms`, and timeline render metrics.                                                                                                       | Errors are rare; slow samples correlate to server logs by `sessionId` and `requestId`.                       |
-
-Useful review commands:
-
-```bash
-cd server
-npm run telemetry:server-log -- --days 1 --limit 30
-rg -n 'mirror_bridge|bridge_connected|bridge_disconnected|extension_ui|oppi-mirror' \
-  ~/.config/oppi/server.log ~/.config/oppi/oppi-mirror.log
-```
-
-Current limitation: client command metrics do not directly label mirror sessions. Use `sessionId`, `bridgeId`, and the mirror log events to isolate mirror sessions. Add a bounded mirror tag if mirror command latency becomes a release-gate metric.
+- Mirror supports standard Pi extension UI, but not custom terminal component trees or raw ANSI/TUI layouts.
+- Session-file replacement commands such as new session, fork, and switch session remain terminal-only.
+- Session sharing from a mirrored session is not supported yet.
+- Reconnect and stale terminal state still need more real-device soak testing.
 
 ## Troubleshooting
 
@@ -366,33 +178,3 @@ OPPI_MIRROR_AUTO_START=false pi
 
 The mirror session and local JSONL import must share the same `piSessionId` and canonical session file. If duplicates appear, check the server’s mirror identity coalescing and local-session import behavior.
 
-## Known Limitations
-
-- Extension UI v1 supports ask/select/confirm/input/editor and fire-and-forget notify/title/status/widget/editor-text. Custom TUI components, headers, footers, custom editors, working indicators, tool renderers, raw ANSI layouts, and theme switching remain terminal-only.
-- Queue editing currently relies on Pi terminal queue internals until Pi exposes a stable public queue replacement API.
-- Session-file replacement commands (`new_session`, `fork`, `switch_session`) remain terminal-only until the product semantics are explicit.
-- Session sharing (`share_session`) needs server-side sharing from a mirrored session file.
-- Explicit resume as managed is only available after the mirror session is stopped, disconnected, and has a canonical session file.
-- Mirror-specific health is currently log-first; generic client command metrics do not directly label mirror sessions.
-- Reconnect and stale terminal state need ongoing real-device soak testing.
-
-## Maintainer Notes
-
-Mirror mode is a transport adapter, not a second session implementation.
-
-Shared projection code owns:
-
-- Pi event translation to `ServerMessage`
-- session state mutation from Pi events
-- tool-media materialization
-- first-message and title derivation
-- session summaries and SQLite projection
-
-The mirror bridge owns only bridge-specific behavior:
-
-- terminal bridge registration
-- reconnect and stale state
-- remote command serialization and timeouts
-- terminal-owned queue observation
-
-Do not copy managed session projection logic into the mirror bridge. If a change affects Pi event translation, session mutation, tool media, titles, or summaries, put it in shared projection code and add mirror/managed parity coverage.
