@@ -376,9 +376,37 @@ struct QuickSessionSheetLayoutTests {
         )
     }
 
-    @Test func tallComposerExpandsDetentPastCompactHeight() {
+    @Test func tallComposerUsesStableExpandedDetent() {
         #expect(QuickSessionSheetLayout.normalizedContentHeight(181) == 184)
-        #expect(QuickSessionSheetLayout.detentHeight(forContentHeight: 181) == 202)
+        #expect(
+            QuickSessionSheetLayout.detentHeight(forContentHeight: 181)
+                == QuickSessionSheetLayout.expandedComposerDetentHeight
+        )
+    }
+
+    @Test func composerLineGrowthDoesNotRetargetSheetDetentEveryRow() {
+        let firstWrappedRowDetent = QuickSessionSheetLayout.detentHeight(forContentHeight: 181)
+        let secondWrappedRowDetent = QuickSessionSheetLayout.detentHeight(forContentHeight: 205)
+
+        #expect(firstWrappedRowDetent == secondWrappedRowDetent)
+    }
+
+    @Test func contentHeightChangesWithinStableComposerDetentAreIgnored() {
+        #expect(!QuickSessionSheetLayout.shouldApplyContentHeightChange(
+            currentContentHeight: 181,
+            incomingContentHeight: 205
+        ))
+    }
+
+    @Test func contentHeightChangesAcrossDetentBucketsAreApplied() {
+        #expect(QuickSessionSheetLayout.shouldApplyContentHeightChange(
+            currentContentHeight: 120,
+            incomingContentHeight: 181
+        ))
+        #expect(QuickSessionSheetLayout.shouldApplyContentHeightChange(
+            currentContentHeight: 400,
+            incomingContentHeight: 181
+        ))
     }
 }
 

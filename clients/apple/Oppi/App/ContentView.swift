@@ -3,6 +3,10 @@ import UIKit
 
 enum QuickSessionSheetLayout {
     static let compactDetentHeight: CGFloat = 150
+    /// Stable expanded target for normal inline composer growth. Holding this
+    /// detent through wrapped text rows keeps the sheet from retargeting while
+    /// dictation or typing adds lines.
+    static let expandedComposerDetentHeight: CGFloat = 284
 
     private static let sheetChromeAllowance: CGFloat = 18
     private static let detentIncrement: CGFloat = 4
@@ -15,7 +19,17 @@ enum QuickSessionSheetLayout {
     static func detentHeight(forContentHeight height: CGFloat) -> CGFloat {
         let contentHeight = normalizedContentHeight(height)
         guard contentHeight > 0 else { return compactDetentHeight }
-        return max(compactDetentHeight, contentHeight + sheetChromeAllowance)
+
+        let requiredHeight = contentHeight + sheetChromeAllowance
+        guard requiredHeight > compactDetentHeight else { return compactDetentHeight }
+        guard requiredHeight > expandedComposerDetentHeight else { return expandedComposerDetentHeight }
+        return requiredHeight
+    }
+
+    static func shouldApplyContentHeightChange(currentContentHeight: CGFloat, incomingContentHeight: CGFloat) -> Bool {
+        let currentDetentHeight = detentHeight(forContentHeight: currentContentHeight)
+        let incomingDetentHeight = detentHeight(forContentHeight: incomingContentHeight)
+        return currentDetentHeight != incomingDetentHeight
     }
 }
 
@@ -106,7 +120,10 @@ struct ContentView: View {
         }, content: {
             QuickSessionSheet { height in
                 let normalized = QuickSessionSheetLayout.normalizedContentHeight(height)
-                guard quickSessionMeasuredContentHeight != normalized else { return }
+                guard QuickSessionSheetLayout.shouldApplyContentHeightChange(
+                    currentContentHeight: quickSessionMeasuredContentHeight,
+                    incomingContentHeight: normalized
+                ) else { return }
                 quickSessionMeasuredContentHeight = normalized
                 quickSessionSelectedDetent = .height(
                     QuickSessionSheetLayout.detentHeight(forContentHeight: normalized)
