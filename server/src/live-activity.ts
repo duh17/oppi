@@ -18,7 +18,6 @@ type LiveActivityStatus = "busy" | "stopping" | "ready" | "stopped" | "error";
 interface LiveActivityContentState {
   status: LiveActivityStatus;
   activeTool: string | null;
-  pendingPermissions: number;
   lastEvent: string | null;
   elapsedSeconds: number;
 }
@@ -134,11 +133,6 @@ export class LiveActivityBridge {
     }
   }
 
-  /** Queue a Live Activity update from gate events (approval timeout/resolved). */
-  queueUpdate(update: PendingLiveActivityUpdate): void {
-    this.queue(update);
-  }
-
   /** Stop the debounce timer and clear pending state. */
   shutdown(): void {
     if (this.timer) clearTimeout(this.timer);
@@ -216,7 +210,6 @@ export class LiveActivityBridge {
     return {
       status: pending.status ?? this.mapStatus(session?.status),
       activeTool: pending.activeTool ?? null,
-      pendingPermissions: 0,
       lastEvent: pending.lastEvent ?? null,
       elapsedSeconds,
     };

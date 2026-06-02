@@ -180,40 +180,6 @@ struct TimelineSnapshotApplierTests {
         #expect(result == ["tool-1"])
     }
 
-    @Test func permissionChangeDetectedWhileStreamingAssistantUnchanged() {
-        let ids = ["permission-1", "assistant-1"]
-        let assistant = ChatItem.assistantMessage(id: "assistant-1", text: "thinking...", timestamp: timestamp)
-        let request = PermissionRequest(
-            id: "permission-1",
-            sessionId: "s1",
-            tool: "bash",
-            input: [:],
-            displaySummary: "rm -rf /tmp/nope",
-            reason: "danger",
-            timeoutAt: timestamp
-        )
-
-        let result = TimelineSnapshotApplier.reconfigureItemIDs(
-            nextIDs: ids,
-            nextIDSet: Set(ids),
-            nextItemByID: [
-                "permission-1": .permissionResolved(id: "permission-1", outcome: .allowed, tool: "bash", summary: request.displaySummary),
-                "assistant-1": assistant,
-            ],
-            previousItemByID: [
-                "permission-1": .permission(request),
-                "assistant-1": assistant,
-            ],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
-            streamingAssistantID: "assistant-1",
-            previousStreamingAssistantID: nil,
-            themeChanged: false
-        )
-
-        #expect(result == ["permission-1"])
-    }
-
     // MARK: - Animated reconfigure filtering
 
     @Test func loadMoreFilteredFromReconfigureWhenAnimating() {

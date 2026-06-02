@@ -276,8 +276,6 @@ struct SessionOutlineView: View {
 
             let passesAllFilter: Bool
             switch item {
-            case .permissionResolved:
-                passesAllFilter = false
             case .systemEvent:
                 passesAllFilter = isCompaction
             default:
@@ -942,29 +940,11 @@ struct SessionOutlineView: View {
         case .toolCall(let id, let tool, let argsSummary, _, _, _, _):
             return formatToolSummary(id: id, tool: tool, argsSummary: argsSummary)
 
-        case .permission(let req):
-            return req.displaySummary
-
-        case .permissionResolved(_, let outcome, let tool, _):
-            let label = permissionOutcomeLabel(outcome)
-            return "\(label): \(tool)"
-
         case .systemEvent(_, let msg):
             return msg
 
         case .error(_, let msg):
             return msg
-        }
-    }
-
-    private func permissionOutcomeLabel(_ outcome: PermissionOutcome) -> String {
-        switch outcome {
-        case .allowed: "Allowed"
-        case .autoAllowed: "Auto-approved"
-        case .autoAsked: "Auto-asked"
-        case .denied: "Denied"
-        case .expired: "Expired"
-        case .cancelled: "Cancelled"
         }
     }
 
@@ -1166,8 +1146,6 @@ private struct OutlineRow: View {
         case .thinking: return "sparkle"
         case .toolCall(_, let tool, _, _, _, _, _):
             return ToolCallFormatting.sfSymbolName(for: tool) ?? "wrench"
-        case .permission: return "exclamationmark.shield"
-        case .permissionResolved: return "checkmark.shield"
         case .systemEvent: return "info.circle"
         case .error: return "exclamationmark.triangle"
         }
@@ -1185,8 +1163,6 @@ private struct OutlineRow: View {
         case .thinking: return .themePurple
         case .toolCall(_, _, _, _, _, let isError, _):
             return isError ? .themeRed : .themeCyan
-        case .permission: return .themeOrange
-        case .permissionResolved: return .themeGreen
         case .systemEvent: return .themeComment
         case .error: return .themeRed
         }

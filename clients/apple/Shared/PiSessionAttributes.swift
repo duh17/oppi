@@ -5,7 +5,6 @@ import Foundation
 enum SessionPhase: String, Codable, Hashable {
     case working
     case awaitingReply
-    case needsApproval
     case error
     case ended
 }
@@ -36,12 +35,6 @@ struct PiSessionAttributes: ActivityAttributes {
         var primaryFilesChanged: Int?
         var primaryAddedLines: Int?
         var primaryRemovedLines: Int?
-
-        // Top of FIFO permission queue
-        var topPermissionId: String?
-        var topPermissionTool: String?
-        var topPermissionSummary: String?
-        var pendingApprovalCount: Int
 
         // Active turn start (rendered with Text(timerInterval:) in widget)
         var sessionStartDate: Date?

@@ -98,22 +98,17 @@ struct SessionStorePartitioningTests {
         let store = SessionStore()
         store.switchServer(to: "srv1")
         var summary = SessionSummary(from: makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
-        summary.pendingPermissionCount = 2
         summary.pendingAskCount = 1
 
         #expect(store.upsertManySummaries([summary]))
-        #expect(store.listPendingPermissionCount(for: "s1") == 2)
         #expect(store.listPendingAskCount(for: "s1") == 1)
 
         store.switchServer(to: "srv2")
-        #expect(store.listPendingPermissionCount(for: "s1") == 0)
         #expect(store.listPendingAskCount(for: "s1") == 0)
 
         store.switchServer(to: "srv1")
-        summary.pendingPermissionCount = 0
         summary.pendingAskCount = 0
         #expect(store.upsertManySummaries([summary]))
-        #expect(store.listPendingPermissionCount(for: "s1") == 0)
         #expect(store.listPendingAskCount(for: "s1") == 0)
     }
 

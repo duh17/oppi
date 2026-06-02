@@ -574,14 +574,12 @@ enum QuickSessionError: LocalizedError {
 
 /// Urgency score for session sorting — higher = more urgent.
 ///
-/// Priority order: permissions (30) > asks (20) > error (15) > busy/starting/stopping (10) > ready (5) > stopped (0).
+/// Priority order: asks (20) > error (15) > busy/starting/stopping (10) > ready (5) > stopped (0).
 /// Used by session list surfaces to rank active sessions before recent ones.
 func quickSessionUrgencyScore(
     status: SessionStatus,
-    hasPermission: Bool,
     hasAsk: Bool
 ) -> Int {
-    if hasPermission { return 30 }
     if hasAsk { return 20 }
     switch status {
     case .error: return 15
@@ -594,22 +592,19 @@ func quickSessionUrgencyScore(
 /// Sort sessions by urgency (descending), then by last activity (descending).
 ///
 /// Each session's urgency is determined by `quickSessionUrgencyScore`.
-/// Callers provide closures to resolve permission/ask state per session
-/// so sorting stays decoupled from store types.
+/// Callers provide closures to resolve ask state per session so sorting stays
+/// decoupled from store types.
 func quickSessionSorted(
     _ sessions: [Session],
-    hasPermission: (String) -> Bool,
     hasAsk: (String) -> Bool
 ) -> [Session] {
     sessions.sorted { lhs, rhs in
         let lhsScore = quickSessionUrgencyScore(
             status: lhs.status,
-            hasPermission: hasPermission(lhs.id),
             hasAsk: hasAsk(lhs.id)
         )
         let rhsScore = quickSessionUrgencyScore(
             status: rhs.status,
-            hasPermission: hasPermission(rhs.id),
             hasAsk: hasAsk(rhs.id)
         )
         if lhsScore != rhsScore { return lhsScore > rhsScore }

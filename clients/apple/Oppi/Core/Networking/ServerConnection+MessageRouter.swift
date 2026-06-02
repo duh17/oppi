@@ -55,7 +55,7 @@ extension ServerConnection {
         case .agentEnd:
             silenceWatchdog.stop()
 
-        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd, .permissionAutoReviewed:
+        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd:
             silenceWatchdog.recordEvent()
 
         case .error(_, _, _):
@@ -266,7 +266,7 @@ extension ServerConnection {
         emitSessionUsageMetricsIfNeeded(session)
         syncThinkingLevel(from: session)
         scheduleSlashCommandsRefresh(for: session, force: true)
-        syncLiveActivityPermissions()
+        syncLiveActivityState()
         prefetchModelsIfNeeded()
     }
 
@@ -521,7 +521,6 @@ extension ServerConnection {
              .agentEnd,
              .toolStart,
              .toolEnd,
-             .permissionRequest,
              .sessionEnded:
             return true
         case .error(_, let message):
@@ -535,14 +534,9 @@ extension ServerConnection {
              .compactionEnd,
              .retryStart,
              .retryEnd,
-             .commandResult,
-             .permissionExpired:
+             .commandResult:
             return false
         }
-    }
-
-    func syncLiveActivityPermissions() {
-        syncLiveActivityState()
     }
 
     func syncLiveActivityState() {
@@ -552,8 +546,7 @@ extension ServerConnection {
 
         LiveActivityManager.shared.sync(
             connectionId: liveActivityConnectionId,
-            sessions: sessionStore.sessions,
-            pendingPermissions: permissionStore.pending
+            sessions: sessionStore.sessions
         )
     }
 

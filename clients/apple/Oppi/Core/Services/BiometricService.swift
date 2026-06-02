@@ -4,22 +4,14 @@ import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Biometric")
 
-/// Biometric authentication gate for permission approvals.
+/// Biometric authentication gate for sensitive local actions.
 ///
-/// Uses Face ID / Touch ID to confirm "Allow" on all permissions when enabled.
-/// Falls back to device passcode if biometrics are unavailable.
-///
-/// Usage flow:
-/// 1. Agent requests permission (e.g., `sudo apt install`)
-/// 2. User taps "Allow"
-/// 3. If enabled: Face ID prompt → success: allow sent → failure: blocked
-/// 4. If disabled: allow sent immediately (no biometric)
+/// Uses Face ID / Touch ID with device passcode fallback when enabled.
 @MainActor
 final class BiometricService {
     static let shared = BiometricService()
 
     /// Whether biometric gating is enabled at all.
-    /// When disabled, all permissions approve with a simple tap.
     var isEnabled: Bool {
         get { AppPreferences.Biometric.isEnabled }
         set { AppPreferences.Biometric.setEnabled(newValue) }
@@ -60,7 +52,7 @@ final class BiometricService {
 
     // MARK: - Authentication
 
-    /// Check if a permission approval requires biometric confirmation.
+    /// Check if a sensitive action requires biometric confirmation.
     var requiresBiometric: Bool { isEnabled }
 
     /// Authenticate via Face ID / Touch ID / device passcode.

@@ -10,7 +10,6 @@ enum TimelineCellFactory {
         let thinking: CellDequeuer
         let tool: CellDequeuer
         let audio: CellDequeuer
-        let permission: CellDequeuer
         let system: CellDequeuer
         let compaction: CellDequeuer
         let error: CellDequeuer
@@ -50,8 +49,6 @@ enum TimelineCellFactory {
             return registrations.tool(collectionView, indexPath, itemID)
         case .audioClip:
             return registrations.audio(collectionView, indexPath, itemID)
-        case .permission, .permissionResolved:
-            return registrations.permission(collectionView, indexPath, itemID)
         case .systemEvent(_, let message):
             let dequeuer = isCompactionMessage(message)
                 ? registrations.compaction

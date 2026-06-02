@@ -75,9 +75,9 @@ final class ChatSessionManager {
 
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
-    /// Permission notification taps can arrive before the session summary is cached.
-    /// Keep the permission's workspace as a navigation hint so history/stream setup
-    /// does not fall back to an empty, missing-workspace timeline.
+    /// Navigation can arrive before the session summary is cached.
+    /// Keep a workspace hint so history/stream setup does not fall back to an
+    /// empty, missing-workspace timeline.
     private var workspaceIdHint: String?
 
     /// Freshness metadata for chat timeline sync.
@@ -249,9 +249,6 @@ final class ChatSessionManager {
         transitionTo(.idle)
         connection.focusSession(sessionId)
         connection.fatalSetupError = false
-        connection.onPermissionResolved = { [weak self] id, outcome, tool, summary in
-            self?.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
-        }
         cancelAutoReconnect()
         cancelStateSync()
         reducer.reset()
@@ -264,10 +261,6 @@ final class ChatSessionManager {
         telemetry.startSessionSwitch()
         telemetry.startSessionLoad()
         markSyncStarted()
-        if let permissionWorkspaceId = connection.permissionStore.pending(for: sessionId).first?.workspaceId,
-           !permissionWorkspaceId.isEmpty {
-            workspaceIdHint = permissionWorkspaceId
-        }
 
         let persistedLastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
         connection.sessionStreamCoordinator.seedLastSeenSeq(
@@ -855,44 +848,6 @@ final class ChatSessionManager {
                     data: data, error: error
                 ))
             }
-
-        case .permissionExpired(let id, _):
-            if let request = storeResult.takenPermission {
-                reducer.resolvePermission(
-                    id: id, outcome: .expired,
-                    tool: request.tool, summary: request.displaySummary
-                )
-            }
-            coalescer.receive(.permissionExpired(id: id))
-
-        case .permissionCancelled(let id):
-            if let request = storeResult.takenPermission {
-                reducer.resolvePermission(
-                    id: id, outcome: .cancelled,
-                    tool: request.tool, summary: request.displaySummary
-                )
-            }
-
-        case .permissionResolved(let id, let action):
-            if let request = storeResult.takenPermission {
-                reducer.resolvePermission(
-                    id: id,
-                    outcome: action == .allow ? .allowed : .denied,
-                    tool: request.tool,
-                    summary: request.displaySummary
-                )
-            }
-
-        case .permissionAutoReviewed(let item, _):
-            reducer.resolvePermission(
-                id: item.id,
-                outcome: item.permissionOutcome,
-                tool: item.tool,
-                summary: item.timelineSummary
-            )
-
-        case .permissionRequest(let perm):
-            coalescer.receive(.permissionRequest(perm))
 
         case .queueItemStarted(_, let item, _):
             let displayText = UserMessageAttachmentPresentation.makeTimelineText(

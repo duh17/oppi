@@ -486,28 +486,6 @@ struct UIHangHarnessView: View {
                     isDone: true
                 ))
 
-                items.append(.permission(
-                    PermissionRequest(
-                        id: "\(sessionPrefix)-visual-permission-pending",
-                        sessionId: sessionID,
-                        tool: "bash",
-                        input: [
-                            "command": .string("rm -rf /tmp/demo"),
-                        ],
-                        displaySummary: "command: rm -rf /tmp/demo",
-                        reason: "Filesystem mutation requires approval",
-                        timeoutAt: visualTS.addingTimeInterval(120),
-                        expires: true
-                    )
-                ))
-
-                items.append(.permissionResolved(
-                    id: "\(sessionPrefix)-visual-permission-resolved",
-                    outcome: .allowed,
-                    tool: "read",
-                    summary: "path: ios/Oppi/Features/Chat/ChatTimelineCollectionView.swift"
-                ))
-
                 items.append(.systemEvent(
                     id: "\(sessionPrefix)-visual-system",
                     message: "Context compacted for visual pass"

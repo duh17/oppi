@@ -237,11 +237,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   function workspaceAttentionSnapshot(workspaceId: string): {
-    permissions: Array<Record<string, unknown>>;
     asks: Array<Record<string, unknown>>;
   } {
     return {
-      permissions: [],
       asks: pendingAskSnapshots(workspaceId),
     };
   }
@@ -301,7 +299,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   };
 
   type ManagedSessionListRow = SessionSummary & {
-    pendingPermissionCount: number;
     pendingAskCount: number;
   };
 
@@ -323,7 +320,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     piSessionId: string;
     path: string;
     cwd: string;
-    pendingPermissionCount: 0;
     pendingAskCount: 0;
   };
 
@@ -537,7 +533,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       const summary = buildSessionSummary(ctx.ensureSessionContextWindow(session));
       return {
         ...summary,
-        pendingPermissionCount: 0,
         pendingAskCount: attention.asks.get(summary.id) ?? 0,
       };
     });
@@ -565,7 +560,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       piSessionId: session.piSessionId,
       path: session.path,
       cwd: session.cwd,
-      pendingPermissionCount: 0,
       pendingAskCount: 0,
     }));
   }

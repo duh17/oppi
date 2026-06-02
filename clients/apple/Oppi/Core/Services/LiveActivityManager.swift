@@ -9,7 +9,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Live
 /// v2 policy:
 /// - Single aggregate activity (not one-per-session)
 /// - Event-driven updates only
-/// - Session phase model (`working`, `awaitingReply`, `needsApproval`, `error`, `ended`)
+/// - Session phase model (`working`, `awaitingReply`, `error`, `ended`)
 @MainActor @Observable
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -32,7 +32,6 @@ final class LiveActivityManager {
 
     private struct ConnectionSnapshot {
         var sessionsById: [String: SessionSnapshot] = [:]
-        var pendingPermissions: [PermissionRequest] = []
     }
 
     private struct SessionView {
@@ -71,10 +70,6 @@ final class LiveActivityManager {
         primaryFilesChanged: nil,
         primaryAddedLines: nil,
         primaryRemovedLines: nil,
-        topPermissionId: nil,
-        topPermissionTool: nil,
-        topPermissionSummary: nil,
-        pendingApprovalCount: 0,
         sessionStartDate: nil
     )
 
@@ -100,7 +95,6 @@ final class LiveActivityManager {
 
     /// Last pushed state used for alert transitions.
     var lastPushedPrimaryPhase: SessionPhase = .ended
-    var lastPushedApprovalCount = 0
     private var lastDeliveredSnapshot: DeliveredSnapshot?
 
     /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
@@ -123,23 +117,18 @@ final class LiveActivityManager {
     /// and testable independently.
     ///
     /// HIG: "Alert people only for essential updates that require their attention."
-    /// Only `.needsApproval` (permission requests) warrant a vibration/sound.
+    /// Current Live Activity state is informational and does not trigger alerts.
     nonisolated static func shouldAlert(
         state: PiSessionAttributes.ContentState,
-        lastPushedPhase: SessionPhase,
-        lastPushedApprovalCount: Int
+        lastPushedPhase: SessionPhase
     ) -> Bool {
-        state.primaryPhase == .needsApproval
-            && (state.pendingApprovalCount > lastPushedApprovalCount
-                || state.primaryPhase != lastPushedPhase)
+        false
     }
 
     // MARK: - Public API
 
-    /// Sync canonical state for a server connection.
-    ///
-    /// This is the source-of-truth for session list + permission queue per connection.
-    func sync(connectionId: String, sessions: [Session], pendingPermissions: [PermissionRequest]) {
+    /// Sync canonical session state for a server connection.
+    func sync(connectionId: String, sessions: [Session]) {
         var snapshot = connectionSnapshots[connectionId] ?? ConnectionSnapshot()
 
         var nextById: [String: SessionSnapshot] = [:]
@@ -212,11 +201,10 @@ final class LiveActivityManager {
         }
 
         snapshot.sessionsById = nextById
-        snapshot.pendingPermissions = pendingPermissions
         connectionSnapshots[connectionId] = snapshot
 
         // Nudge stale snapshots out if no session data remains for a connection.
-        if sessions.isEmpty && pendingPermissions.isEmpty {
+        if sessions.isEmpty {
             connectionSnapshots.removeValue(forKey: connectionId)
         }
 
@@ -290,14 +278,6 @@ final class LiveActivityManager {
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
 
-        case .permissionRequest(let request):
-            var entry = upsertSession(request.sessionId)
-            entry.phaseHint = .needsApproval
-            entry.startDate = nil
-            entry.lastActivity = String(localized: "Approval required")
-            entry.updatedAt = Date()
-            snapshot.sessionsById[request.sessionId] = entry
-
         case .sessionEnded(let sessionId, _):
             var entry = upsertSession(sessionId)
             entry.status = .stopped
@@ -330,8 +310,7 @@ final class LiveActivityManager {
              .compactionEnd,
              .retryStart,
              .retryEnd,
-             .commandResult,
-             .permissionExpired:
+             .commandResult:
             didChange = false
         }
 
@@ -398,7 +377,6 @@ final class LiveActivityManager {
         activityObservationTask = nil
         hasPendingPush = false
         lastPushedPrimaryPhase = .ended
-        lastPushedApprovalCount = 0
         lastDeliveredSnapshot = nil
         lastStateChangeAt = Date()
     }
@@ -429,7 +407,6 @@ final class LiveActivityManager {
         lastStateChangeAt = recoveredStateChangeDate(from: recoveredContent)
         lastDeliveredSnapshot = DeliveredSnapshot(from: recoveredContent)
         lastPushedPrimaryPhase = recoveredContent.state.primaryPhase
-        lastPushedApprovalCount = recoveredContent.state.pendingApprovalCount
         logger.error("Recovered orphaned Live Activity reference (id=\(recovered.id, privacy: .public), state=\(String(describing: recovered.activityState), privacy: .public))")
     }
 
@@ -487,7 +464,7 @@ final class LiveActivityManager {
     }
 
     private func shouldShowLiveActivity(state: PiSessionAttributes.ContentState) -> Bool {
-        state.pendingApprovalCount > 0 || state.totalActiveSessions > 0
+        state.totalActiveSessions > 0
     }
 
     private func applyCurrentState(_ nextState: PiSessionAttributes.ContentState, now: Date = Date()) {
@@ -556,17 +533,10 @@ final class LiveActivityManager {
     private func nextAwaitingReplyExpiryDate(now: Date = Date()) -> Date? {
         var earliest: Date?
 
-        let permissionSessionIds = Set(
-            connectionSnapshots.values.flatMap { snapshot in
-                snapshot.pendingPermissions.map(\.sessionId)
-            }
-        )
-
         for snapshot in connectionSnapshots.values {
             for session in snapshot.sessionsById.values {
                 guard session.status == .ready else { continue }
-                guard !permissionSessionIds.contains(session.id) else { continue }
-                let phase = phase(for: session, hasPendingPermission: false)
+                let phase = phase(for: session)
                 guard phase == .awaitingReply else { continue }
 
                 let referenceDate = session.readySince ?? session.updatedAt
@@ -620,7 +590,6 @@ final class LiveActivityManager {
             observeActivityLifecycle(activity)
             lastDeliveredSnapshot = DeliveredSnapshot(from: content)
             lastPushedPrimaryPhase = currentState.primaryPhase
-            lastPushedApprovalCount = currentState.pendingApprovalCount
             logger.error("Live Activity started")
         } catch {
             logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
@@ -707,28 +676,15 @@ final class LiveActivityManager {
         let state = currentState
         let deliveredSnapshot = DeliveredSnapshot(from: activityContent(for: state))
 
-        let shouldAlertNow = Self.shouldAlert(
-            state: state,
-            lastPushedPhase: lastPushedPrimaryPhase,
-            lastPushedApprovalCount: lastPushedApprovalCount
-        )
-
-        if !shouldAlertNow, deliveredSnapshot == lastDeliveredSnapshot {
+        if deliveredSnapshot == lastDeliveredSnapshot {
             return
         }
 
         lastPushedPrimaryPhase = state.primaryPhase
-        lastPushedApprovalCount = state.pendingApprovalCount
         lastDeliveredSnapshot = deliveredSnapshot
 
         nonisolated(unsafe) let detachedActivity = activity
-        let alertConfiguration: AlertConfiguration? = shouldAlertNow
-            ? AlertConfiguration(
-                title: "Approval required",
-                body: "Open Oppi to review",
-                sound: .default
-            )
-            : nil
+        let alertConfiguration: AlertConfiguration? = nil
 
         Task {
             await detachedActivity.update(
@@ -748,21 +704,17 @@ final class LiveActivityManager {
         let sortedConnectionIds = connectionSnapshots.keys.sorted()
 
         var allSessions: [SessionSnapshot] = []
-        var allPermissions: [PermissionRequest] = []
 
         for connectionId in sortedConnectionIds {
             guard let snapshot = connectionSnapshots[connectionId] else { continue }
             allSessions.append(contentsOf: snapshot.sessionsById.values)
-            allPermissions.append(contentsOf: snapshot.pendingPermissions)
         }
-
-        let permissionSessionIds = Set(allPermissions.map(\.sessionId))
 
         let sessionViews = allSessions.map { session in
             SessionView(
                 id: session.id,
                 name: session.name,
-                phase: phase(for: session, hasPendingPermission: permissionSessionIds.contains(session.id)),
+                phase: phase(for: session),
                 activeTool: session.activeTool,
                 lastActivity: session.lastActivity,
                 startDate: session.startDate,
@@ -774,8 +726,6 @@ final class LiveActivityManager {
         let totalActiveSessions = sessionViews.filter { $0.phase != .ended }.count
         let sessionsAwaitingReply = sessionViews.filter { $0.phase == .awaitingReply }.count
         let sessionsWorking = sessionViews.filter { $0.phase == .working }.count
-
-        let topPermission = allPermissions.first
 
         let primary = sessionViews.max { lhs, rhs in
             let lhsPriority = phasePriority(lhs.phase)
@@ -800,44 +750,14 @@ final class LiveActivityManager {
                 primaryFilesChanged: primary.changeStats?.filesChanged,
                 primaryAddedLines: primary.changeStats?.addedLines,
                 primaryRemovedLines: primary.changeStats?.removedLines,
-                topPermissionId: topPermission?.id,
-                topPermissionTool: topPermission?.tool,
-                topPermissionSummary: topPermission.map(permissionSummaryForLiveActivity),
-                pendingApprovalCount: allPermissions.count,
                 sessionStartDate: primary.phase == .working ? primary.startDate : nil
-            )
-        }
-
-        if let topPermission {
-            return PiSessionAttributes.ContentState(
-                primaryPhase: .needsApproval,
-                primarySessionId: topPermission.sessionId,
-                primarySessionName: sessionLabel(for: topPermission.sessionId, sessions: sessionViews),
-                primaryTool: topPermission.tool,
-                primaryLastActivity: "Approval required",
-                totalActiveSessions: 0,
-                sessionsAwaitingReply: 0,
-                sessionsWorking: 0,
-                primaryMutatingToolCalls: nil,
-                primaryFilesChanged: nil,
-                primaryAddedLines: nil,
-                primaryRemovedLines: nil,
-                topPermissionId: topPermission.id,
-                topPermissionTool: topPermission.tool,
-                topPermissionSummary: permissionSummaryForLiveActivity(topPermission),
-                pendingApprovalCount: allPermissions.count,
-                sessionStartDate: nil
             )
         }
 
         return Self.emptyState
     }
 
-    private func phase(for session: SessionSnapshot, hasPendingPermission: Bool) -> SessionPhase {
-        if hasPendingPermission {
-            return .needsApproval
-        }
-
+    private func phase(for session: SessionSnapshot) -> SessionPhase {
         switch session.status {
         case .starting, .busy, .stopping:
             return .working
@@ -883,7 +803,6 @@ final class LiveActivityManager {
 
     private func phasePriority(_ phase: SessionPhase) -> Int {
         switch phase {
-        case .needsApproval: return 100
         case .error: return 75
         case .working: return 50
         case .awaitingReply: return 25
@@ -896,7 +815,7 @@ final class LiveActivityManager {
     }
 
     private func staleDate(for state: PiSessionAttributes.ContentState) -> Date? {
-        if state.primaryPhase == .awaitingReply && state.pendingApprovalCount == 0 {
+        if state.primaryPhase == .awaitingReply {
             return nil
         }
         if state.primaryPhase == .ended {
@@ -909,24 +828,10 @@ final class LiveActivityManager {
         "Session \(String(sessionId.prefix(8)))"
     }
 
-    private func sessionLabel(for sessionId: String, sessions: [SessionView]) -> String {
-        if let session = sessions.first(where: { $0.id == sessionId }) {
-            return session.name
-        }
-        return fallbackSessionName(sessionId)
-    }
-
-    private func permissionSummaryForLiveActivity(_ request: PermissionRequest) -> String {
-        let trimmed = request.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "Approval requested" }
-        return String(trimmed.prefix(40))
-    }
-
     private func defaultLastActivity(for phase: SessionPhase) -> String {
         switch phase {
         case .working: return String(localized: "Working")
         case .awaitingReply: return String(localized: "Your turn")
-        case .needsApproval: return String(localized: "Approval required")
         case .error: return String(localized: "Attention needed")
         case .ended: return String(localized: "Session ended")
         }

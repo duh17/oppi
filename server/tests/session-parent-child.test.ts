@@ -368,16 +368,16 @@ describe("session parent-child relationships", () => {
     });
   });
 
-  // ── Permission aggregation pattern ──
+  // ── Attention aggregation pattern ──
 
-  describe("permission aggregation across tree", () => {
+  describe("ask attention aggregation across tree", () => {
     it("aggregates pending counts from parent + all direct children", () => {
       const parent = makeSession({ id: "parent" });
       const child1 = makeSession({ id: "c1", parentSessionId: "parent" });
       const child2 = makeSession({ id: "c2", parentSessionId: "parent" });
       seedSessions(storage, parent, child1, child2);
 
-      // Simulated pending counts (in real app, from PermissionStore)
+      // Simulated pending counts (in real app, from AskRequestStore/list snapshots)
       const pendingCounts: Record<string, number> = {
         parent: 1,
         c1: 2,
@@ -406,7 +406,7 @@ describe("session parent-child relationships", () => {
       expect(aggregate).toBe(3);
     });
 
-    it("grandchild permissions not included in parent aggregate", () => {
+    it("grandchild asks not included in parent aggregate", () => {
       const parent = makeSession({ id: "parent" });
       const child = makeSession({ id: "child", parentSessionId: "parent" });
       const grandchild = makeSession({ id: "gc", parentSessionId: "child" });

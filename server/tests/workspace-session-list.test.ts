@@ -466,14 +466,14 @@ describe("workspace session list routes", () => {
     expect(response.sessions.map((session) => session.id)).toEqual(["ws-2-row", "ws-1-row"]);
     expect(response.sessions[0]).toMatchObject({
       id: "ws-2-row",
-      pendingPermissionCount: 0,
       pendingAskCount: 2,
     });
     expect(response.sessions[1]).toMatchObject({
       id: "ws-1-row",
-      pendingPermissionCount: 0,
       pendingAskCount: 0,
     });
+    expect(response.sessions[0]).not.toHaveProperty("pendingPermissionCount");
+    expect(response.sessions[1]).not.toHaveProperty("pendingPermissionCount");
     expect(response.sessions[0]).not.toHaveProperty("piSessionFile");
     expect(response.sessions[0]).not.toHaveProperty("warnings");
     expect(response.sessions[1]).not.toHaveProperty("piSessionFile");
@@ -526,9 +526,9 @@ describe("workspace session list routes", () => {
     expect(response.active).toHaveLength(1);
     expect(response.active[0]).toMatchObject({
       id: "mirror-row",
-      pendingPermissionCount: 0,
       pendingAskCount: 1,
     });
+    expect(response.active[0]).not.toHaveProperty("pendingPermissionCount");
   });
 
   it("returns only the requested stopped bucket contents", async () => {

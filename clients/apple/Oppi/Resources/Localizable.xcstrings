@@ -212,26 +212,6 @@
         }
       }
     },
-    "All permission approvals require %@. Deny is always one tap.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "所有权限审批需要%@验证。拒绝始终只需轻点一下。"
-          }
-        }
-      }
-    },
-    "All permissions can be approved with a simple tap.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "所有权限都可以轻点审批。"
-          }
-        }
-      }
-    },
     "All skills enabled": {
       "localizations": {
         "zh-Hans": {
@@ -312,16 +292,6 @@
         }
       }
     },
-    "Approval required": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要审批"
-          }
-        }
-      }
-    },
     "Approve": {
       "localizations": {
         "zh-Hans": {
@@ -338,16 +308,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "自动批准"
-          }
-        }
-      }
-    },
-    "Approve permission request": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "批准权限请求"
           }
         }
       }
@@ -908,16 +868,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "始终拒绝"
-          }
-        }
-      }
-    },
-    "Deny permission request": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "拒绝权限请求"
           }
         }
       }

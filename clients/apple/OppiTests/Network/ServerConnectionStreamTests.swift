@@ -181,17 +181,11 @@ struct ServerConnectionStreamTests {
             }
         }
 
-        let permRequest = PermissionRequest(
-            id: "p1", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "test", reason: "",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
         let streamMsg = StreamMessage(
             sessionId: "s1",
             seq: 1,
             currentSeq: nil,
-            message: .permissionRequest(permRequest)
+            message: .agentStart
         )
         conn.routeStreamMessage(streamMsg)
 

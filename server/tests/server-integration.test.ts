@@ -359,7 +359,7 @@ describe("workspaces API", () => {
     const body = await res.json();
     expect(body.workspaceId).toBe(workspace.id);
     expect(body.serverNow).toBeTypeOf("number");
-    expect(body.attention).toEqual({ permissions: [], asks: [] });
+    expect(body.attention).toEqual({ asks: [] });
   });
 });
 

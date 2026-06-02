@@ -64,11 +64,10 @@ enum SessionModelSummaryBuilder {
 /// ```
 ///
 /// Activity summary is passed in by the caller (computed from
-/// SessionActivityStore + PermissionStore) to keep this view
-/// testable and avoid environment collisions with parallel work.
+/// SessionActivityStore + ask state) to keep this view testable and avoid
+/// environment collisions with parallel work.
 struct SessionRow: View {
     let session: Session
-    let pendingCount: Int
     let pendingAskCount: Int
     let activitySummary: String?
     let lineageHint: String?
@@ -87,7 +86,6 @@ struct SessionRow: View {
 
     init(
         session: Session,
-        pendingCount: Int,
         pendingAskCount: Int = 0,
         activitySummary: String? = nil,
         lineageHint: String? = nil,
@@ -96,7 +94,6 @@ struct SessionRow: View {
         searchSnippet: AttributedString? = nil
     ) {
         self.session = session
-        self.pendingCount = pendingCount
         self.pendingAskCount = pendingAskCount
         self.activitySummary = activitySummary
         self.lineageHint = lineageHint
@@ -117,7 +114,7 @@ struct SessionRow: View {
     }
 
     private var pillVariant: SessionPillVariant {
-        .from(session: session, pendingCount: pendingCount, pendingAskCount: pendingAskCount)
+        .from(session: session, pendingAskCount: pendingAskCount)
     }
 
     private var visibleModelSummaries: [SessionModelSummary] {
@@ -158,7 +155,7 @@ struct SessionRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.body)
-                    .fontWeight((pendingCount > 0 || pendingAskCount > 0) ? .semibold : .regular)
+                    .fontWeight(pendingAskCount > 0 ? .semibold : .regular)
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
                     .layoutPriority(1)
@@ -236,14 +233,7 @@ struct SessionRow: View {
 
                 Spacer(minLength: 8)
 
-                if pendingCount > 0 {
-                    Text("\(pendingCount)")
-                        .font(.caption2.bold())
-                        .foregroundStyle(.themeBg)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(pillVariant.foregroundColor, in: Capsule())
-                } else if pendingAskCount > 0 {
+                if pendingAskCount > 0 {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(pillVariant.foregroundColor)
@@ -401,17 +391,9 @@ enum SessionRowMetricsFormatting {
 enum SessionActivitySummary {
     static func text(
         session: Session,
-        pendingCount: Int,
-        pendingPermissions: [PermissionRequest],
         pendingAsk: AskRequest? = nil,
         activity: SessionActivityStore.Activity?
     ) -> String? {
-        // Pending permissions take priority
-        if pendingCount > 0, let first = pendingPermissions.first {
-            return permissionDescription(first)
-        }
-
-        // Pending ask questions (after permissions)
         if let ask = pendingAsk, let first = ask.questions.first {
             return askDescription(first)
         }
@@ -452,18 +434,6 @@ enum SessionActivitySummary {
         let text = question.question
         let truncated = text.count > 40 ? String(text.prefix(40)) + "..." : text
         return "question: \(truncated)"
-    }
-
-    private static func permissionDescription(_ perm: PermissionRequest) -> String {
-        let tool = perm.tool.lowercased()
-        if let path = perm.input["path"]?.stringValue {
-            return "permission: \(tool) \(shortenPath(path))"
-        }
-        if let cmd = perm.input["command"]?.stringValue {
-            let truncated = cmd.count > 30 ? String(cmd.prefix(30)) + "..." : cmd
-            return "permission: \(truncated)"
-        }
-        return "permission: \(perm.tool)"
     }
 
     static func formatToolActivity(_ activity: SessionActivityStore.Activity) -> String {

@@ -116,42 +116,6 @@ struct DeltaCoalescerTests {
         }
     }
 
-    @Test func permissionRequestFlushesImmediately() {
-        let coalescer = DeltaCoalescer()
-        var flushed: [[AgentEvent]] = []
-        coalescer.onFlush = { flushed.append($0) }
-
-        let perm = PermissionRequest(
-            id: "p1", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "bash: rm",
-            reason: "Destructive",
-            timeoutAt: Date().addingTimeInterval(120)
-        )
-        coalescer.receive(.permissionRequest(perm))
-
-        #expect(flushed.count == 1)
-        guard case .permissionRequest(let req) = flushed[0][0] else {
-            Issue.record("Expected permissionRequest")
-            return
-        }
-        #expect(req.id == "p1")
-    }
-
-    @Test func permissionExpiredFlushesImmediately() {
-        let coalescer = DeltaCoalescer()
-        var flushed: [[AgentEvent]] = []
-        coalescer.onFlush = { flushed.append($0) }
-
-        coalescer.receive(.permissionExpired(id: "p1"))
-
-        #expect(flushed.count == 1)
-        guard case .permissionExpired(let id) = flushed[0][0] else {
-            Issue.record("Expected permissionExpired")
-            return
-        }
-        #expect(id == "p1")
-    }
-
     @Test func agentStartFlushesImmediately() {
         let coalescer = DeltaCoalescer()
         var flushed: [[AgentEvent]] = []

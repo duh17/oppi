@@ -7,21 +7,16 @@ enum SessionListActiveSectionKind: Equatable {
 }
 
 struct SessionListAttentionCounts: Equatable, Sendable {
-    var permissionCount: Int
     var askCount: Int
 
-    static let none = SessionListAttentionCounts(permissionCount: 0, askCount: 0)
+    static let none = SessionListAttentionCounts(askCount: 0)
 
     var hasAttention: Bool {
-        permissionCount > 0 || askCount > 0
+        askCount > 0
     }
 }
 
 enum SessionListAttentionMerger {
-    static func permissionCount(listCount: Int, liveCount: Int) -> Int {
-        max(listCount, liveCount)
-    }
-
     static func askCount(
         listCount: Int,
         hasPendingAsk: Bool,
@@ -118,10 +113,6 @@ enum SessionListPresentation {
         _ rhs: Session,
         rhsAttention: SessionListAttentionCounts
     ) -> Bool {
-        let lhsPermPending = lhsAttention.permissionCount > 0
-        let rhsPermPending = rhsAttention.permissionCount > 0
-        if lhsPermPending != rhsPermPending { return lhsPermPending }
-
         let lhsAskPending = lhsAttention.askCount > 0
         let rhsAskPending = rhsAttention.askCount > 0
         if lhsAskPending != rhsAskPending { return lhsAskPending }

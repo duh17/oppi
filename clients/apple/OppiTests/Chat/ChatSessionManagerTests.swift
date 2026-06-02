@@ -1096,62 +1096,6 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
-    @Test func permissionNotificationReentryUsesPendingPermissionWorkspaceForHistory() async {
-        let sessionId = "permission-reentry-\(UUID().uuidString)"
-        let workspaceId = "w-permission"
-        let manager = ChatSessionManager(sessionId: sessionId)
-        let streams = ScriptedStreamFactory()
-
-        manager._streamSessionForTesting = { _ in streams.makeStream() }
-
-        var fetchedWorkspaceId: String?
-        manager._fetchSessionTraceForTesting = { workspaceId, _ in
-            fetchedWorkspaceId = workspaceId
-            return (
-                makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
-                [
-                    makeTraceEvent(id: "permission-history", text: "PERMISSION_NOTIFICATION_HISTORY"),
-                ]
-            )
-        }
-
-        let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
-        connection.permissionStore.add(PermissionRequest(
-            id: "permission-1",
-            sessionId: sessionId,
-            tool: "bash",
-            input: ["command": .string("bash -n script.sh")],
-            displaySummary: "bash -n script.sh",
-            reason: "Needs approval",
-            timeoutAt: Date().addingTimeInterval(120),
-            workspaceId: workspaceId
-        ))
-
-        let sessionStore = SessionStore()
-
-        let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, sessionStore: sessionStore)
-        }
-
-        #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
-
-        #expect(await waitForTestCondition(timeoutMs: 500) {
-            await MainActor.run { fetchedWorkspaceId != nil }
-        })
-        #expect(fetchedWorkspaceId == workspaceId)
-        #expect(manager.reducer.items.contains { item in
-            if case .assistantMessage(_, let text, _) = item {
-                return text.contains("PERMISSION_NOTIFICATION_HISTORY")
-            }
-            return false
-        })
-
-        streams.finish(index: 0)
-        await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
-    }
 
     @Test func reconnectCatchUpReplaysStopConfirmedDeterministically() async {
         let sessionId = "catch-stop-ok-\(UUID().uuidString)"

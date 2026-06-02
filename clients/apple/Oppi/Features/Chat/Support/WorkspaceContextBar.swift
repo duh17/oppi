@@ -132,7 +132,6 @@ enum ContextBarCrossSessionEdits {
 }
 
 enum ContextBarSubagentStatus: Equatable {
-    case waiting
     case question
     case working
     case ready
@@ -140,7 +139,6 @@ enum ContextBarSubagentStatus: Equatable {
     case error
 
     struct Counts: Equatable {
-        var waiting = 0
         var question = 0
         var working = 0
         var ready = 0
@@ -150,10 +148,8 @@ enum ContextBarSubagentStatus: Equatable {
 
     static func from(
         status: SessionStatus,
-        pendingPermissionCount: Int,
         pendingAskCount: Int
     ) -> Self {
-        if pendingPermissionCount > 0 { return .waiting }
         if pendingAskCount > 0 { return .question }
 
         switch status {
@@ -170,7 +166,6 @@ enum ContextBarSubagentStatus: Equatable {
 
     static func counts(
         for sessions: [Session],
-        pendingPermissionCount: (String) -> Int,
         pendingAskCount: (String) -> Int
     ) -> Counts {
         var counts = Counts()
@@ -178,11 +173,8 @@ enum ContextBarSubagentStatus: Equatable {
         for session in sessions {
             switch from(
                 status: session.status,
-                pendingPermissionCount: pendingPermissionCount(session.id),
                 pendingAskCount: pendingAskCount(session.id)
             ) {
-            case .waiting:
-                counts.waiting += 1
             case .question:
                 counts.question += 1
             case .working:
@@ -201,7 +193,6 @@ enum ContextBarSubagentStatus: Equatable {
 
     var label: String {
         switch self {
-        case .waiting: "waiting"
         case .question: "question"
         case .working: "working"
         case .ready: "ready"
@@ -212,7 +203,7 @@ enum ContextBarSubagentStatus: Equatable {
 
     var foregroundColor: Color {
         switch self {
-        case .waiting, .working:
+        case .working:
             .themeOrange
         case .question:
             .themeBlue
@@ -227,7 +218,7 @@ enum ContextBarSubagentStatus: Equatable {
 
     var backgroundColor: Color {
         switch self {
-        case .waiting, .working:
+        case .working:
             Color.themeOrange.opacity(0.12)
         case .question:
             Color.themeBlue.opacity(0.12)
@@ -266,7 +257,6 @@ struct WorkspaceContextBar: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
-    @Environment(PermissionStore.self) private var permissionStore
     @Environment(AskRequestStore.self) private var askRequestStore
 
     @State private var isExpanded = false
@@ -402,7 +392,6 @@ struct WorkspaceContextBar: View {
     private var agentStatusCounts: ContextBarSubagentStatus.Counts {
         ContextBarSubagentStatus.counts(
             for: childSessions,
-            pendingPermissionCount: pendingPermissionCount(for:),
             pendingAskCount: pendingAskCount(for:)
         )
     }
@@ -1160,9 +1149,6 @@ struct WorkspaceContextBar: View {
         let counts = agentStatusCounts
 
         return HStack(spacing: 4) {
-            if counts.waiting > 0 {
-                compactAgentStatusPill(count: counts.waiting, status: .waiting)
-            }
             if counts.question > 0 {
                 compactAgentStatusPill(count: counts.question, status: .question)
             }
@@ -1315,13 +1301,6 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func pendingPermissionCount(for sessionId: String) -> Int {
-        SessionListAttentionMerger.permissionCount(
-            listCount: sessionStore.listPendingPermissionCount(for: sessionId),
-            liveCount: permissionStore.pending(for: sessionId).count
-        )
-    }
-
     private func pendingAskCount(for sessionId: String) -> Int {
         SessionListAttentionMerger.askCount(
             listCount: sessionStore.listPendingAskCount(for: sessionId),
@@ -1333,7 +1312,6 @@ struct WorkspaceContextBar: View {
     private func agentStatus(for child: Session) -> ContextBarSubagentStatus {
         ContextBarSubagentStatus.from(
             status: child.status,
-            pendingPermissionCount: pendingPermissionCount(for: child.id),
             pendingAskCount: pendingAskCount(for: child.id)
         )
     }

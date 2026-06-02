@@ -136,16 +136,12 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
 }
 
 struct SessionSummaryAttentionCounts: Sendable, Equatable {
-    var pendingPermissionCount: Int
     var pendingAskCount: Int
 
-    static let none = SessionSummaryAttentionCounts(
-        pendingPermissionCount: 0,
-        pendingAskCount: 0
-    )
+    static let none = SessionSummaryAttentionCounts(pendingAskCount: 0)
 
     var hasAttention: Bool {
-        pendingPermissionCount > 0 || pendingAskCount > 0
+        pendingAskCount > 0
     }
 }
 
@@ -177,14 +173,10 @@ struct SessionSummary: Sendable, Equatable {
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var ephemeral: Bool?
     var parentSessionId: String?
-    var pendingPermissionCount: Int
     var pendingAskCount: Int
 
     var attentionCounts: SessionSummaryAttentionCounts {
-        SessionSummaryAttentionCounts(
-            pendingPermissionCount: pendingPermissionCount,
-            pendingAskCount: pendingAskCount
-        )
+        SessionSummaryAttentionCounts(pendingAskCount: pendingAskCount)
     }
 
     var session: Session {
@@ -241,7 +233,6 @@ extension SessionSummary {
         self.mirror = session.mirror
         self.ephemeral = session.ephemeral
         self.parentSessionId = session.parentSessionId
-        self.pendingPermissionCount = 0
         self.pendingAskCount = 0
     }
 }
@@ -252,7 +243,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
     case thinkingLevel, runtime, mirror, ephemeral, parentSessionId
-    case pendingPermissionCount, pendingAskCount
+    case pendingAskCount
 }
 
 private struct DecodedSessionWireFields {
@@ -336,9 +327,8 @@ private extension DecodedSessionWireFields {
         )
     }
 
-    func makeSummary(pendingPermissionCount: Int, pendingAskCount: Int) -> SessionSummary {
+    func makeSummary(pendingAskCount: Int) -> SessionSummary {
         var summary = SessionSummary(from: makeSession())
-        summary.pendingPermissionCount = pendingPermissionCount
         summary.pendingAskCount = pendingAskCount
         return summary
     }
@@ -361,7 +351,6 @@ extension SessionSummary: Decodable {
         let container = try decoder.container(keyedBy: SessionWireCodingKeys.self)
         let fields = try DecodedSessionWireFields(from: container)
         self = fields.makeSummary(
-            pendingPermissionCount: try container.decodeIfPresent(Int.self, forKey: .pendingPermissionCount) ?? 0,
             pendingAskCount: try container.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
         )
     }

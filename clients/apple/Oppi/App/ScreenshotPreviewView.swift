@@ -39,16 +39,16 @@ struct ScreenshotPreviewView: View {
                 state: .workingPreview,
                 isStale: false
             )
-        case "live-activity-approval":
+        case "live-activity-awaiting":
             LiveActivityPreviewScreen(
-                title: "Live Activity — Approval",
-                state: .approvalPreview,
+                title: "Live Activity — Awaiting Reply",
+                state: .awaitingReplyPreview,
                 isStale: false
             )
-        case "live-activity-stale-approval":
+        case "live-activity-stale-awaiting":
             LiveActivityPreviewScreen(
-                title: "Live Activity — Stale Approval",
-                state: .approvalPreview,
+                title: "Live Activity — Stale Awaiting Reply",
+                state: .awaitingReplyPreview,
                 isStale: true
             )
         case "live-activity-done":
@@ -373,7 +373,6 @@ private struct ContextBarOverlapPreview: View {
             }
         }
         .environment(connection.sessionStore)
-        .environment(connection.permissionStore)
         .environment(connection.askRequestStore)
         .environment(\.apiClient, connection.apiClient)
         .onAppear(perform: configureSessions)
@@ -786,16 +785,9 @@ private struct LiveActivityPreviewScreen: View {
 
     @ViewBuilder
     private var previewCompactTrailing: some View {
-        Group {
-            if state.pendingApprovalCount > 0 {
-                Text("+\(state.pendingApprovalCount)")
-                    .foregroundStyle(.orange)
-            } else {
-                Text(LiveActivityPresentation.phaseShortLabel(state.primaryPhase))
-                    .foregroundStyle(LiveActivityPresentation.phaseColor(state.primaryPhase))
-            }
-        }
-        .font(.caption2.bold())
+        Text(LiveActivityPresentation.phaseShortLabel(state.primaryPhase))
+            .font(.caption2.bold())
+            .foregroundStyle(LiveActivityPresentation.phaseColor(state.primaryPhase))
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Capsule().fill(Color.black.opacity(0.92)))
@@ -824,12 +816,6 @@ private struct PreviewLockScreenCard: View {
 
                     if isStale {
                         PreviewStatusHint(text: "Update delayed", systemImage: "clock.badge.exclamationmark")
-                    } else if let summary = state.topPermissionSummary,
-                              !summary.isEmpty {
-                        Text(summary)
-                            .font(.caption.monospaced())
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
                     } else if let activity = LiveActivityPresentation.centerActivityText(state) {
                         Text(activity)
                             .font(.caption)
@@ -849,12 +835,7 @@ private struct PreviewLockScreenCard: View {
                         .background(LiveActivityPresentation.phaseColor(state.primaryPhase).opacity(0.15))
                         .clipShape(Capsule())
 
-                    if state.pendingApprovalCount > 0 {
-                        let approvalCount = state.pendingApprovalCount
-                        Text(approvalCount == 1 ? "1 approval" : "\(approvalCount) approvals")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.orange)
-                    } else if let summary = LiveActivityPresentation.changeStatsSummary(state) {
+                    if let summary = LiveActivityPresentation.changeStatsSummary(state) {
                         HStack(spacing: 6) {
                             if summary.filesChanged > 0 {
                                 Text(summary.filesChanged == 1 ? "1 file" : "\(summary.filesChanged) files")
@@ -889,16 +870,6 @@ private struct PreviewLockScreenCard: View {
                 }
             }
 
-            if state.topPermissionId != nil {
-                if isStale {
-                    PreviewStatusHint(text: "Open Oppi to review", systemImage: "iphone")
-                } else {
-                    HStack(spacing: 8) {
-                        previewActionButton(title: "Deny", systemImage: "xmark", tint: .red, prominent: false)
-                        previewActionButton(title: "Approve", systemImage: "checkmark", tint: .green, prominent: true)
-                    }
-                }
-            }
         }
         .padding(16)
         .background(
@@ -911,18 +882,6 @@ private struct PreviewLockScreenCard: View {
         )
     }
 
-    private func previewActionButton(title: String, systemImage: String, tint: Color, prominent: Bool) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption2.bold())
-            .foregroundStyle(prominent ? Color.white : tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(prominent ? tint : tint.opacity(0.15))
-            )
-    }
 }
 
 private struct PreviewStatusHint: View {
@@ -951,30 +910,22 @@ private extension PiSessionAttributes.ContentState {
         primaryFilesChanged: 2,
         primaryAddedLines: 48,
         primaryRemovedLines: 12,
-        topPermissionId: nil,
-        topPermissionTool: nil,
-        topPermissionSummary: nil,
-        pendingApprovalCount: 0,
         sessionStartDate: Date().addingTimeInterval(-97)
     )
 
-    static let approvalPreview = Self(
-        primaryPhase: .needsApproval,
-        primarySessionId: "session-approval",
+    static let awaitingReplyPreview = Self(
+        primaryPhase: .awaitingReply,
+        primarySessionId: "session-awaiting",
         primarySessionName: "Deploy Server",
-        primaryTool: "Bash",
-        primaryLastActivity: "Approval required",
+        primaryTool: nil,
+        primaryLastActivity: "Waiting for your next instruction",
         totalActiveSessions: 1,
-        sessionsAwaitingReply: 0,
+        sessionsAwaitingReply: 1,
         sessionsWorking: 0,
         primaryMutatingToolCalls: nil,
         primaryFilesChanged: nil,
         primaryAddedLines: nil,
         primaryRemovedLines: nil,
-        topPermissionId: "perm-123",
-        topPermissionTool: "bash",
-        topPermissionSummary: "bash rm -rf /tmp/oppi-build-cache",
-        pendingApprovalCount: 1,
         sessionStartDate: nil
     )
 
@@ -991,10 +942,6 @@ private extension PiSessionAttributes.ContentState {
         primaryFilesChanged: nil,
         primaryAddedLines: nil,
         primaryRemovedLines: nil,
-        topPermissionId: nil,
-        topPermissionTool: nil,
-        topPermissionSummary: nil,
-        pendingApprovalCount: 0,
         sessionStartDate: nil
     )
 }

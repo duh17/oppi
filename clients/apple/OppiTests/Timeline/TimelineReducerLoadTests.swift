@@ -330,17 +330,6 @@ struct TimelineReducerLoadTests {
             "appendAudioClip should break incremental mode")
     }
 
-    @Test func resolvePermissionBreaksIncrementalMode() {
-        let reducer = TimelineReducer()
-        let events = makeBaseTrace()
-        reducer.loadSession(events)
-
-        reducer.resolvePermission(id: "p1", outcome: .allowed, tool: "bash", summary: "ls")
-
-        reducer.loadSession(events)
-        #expect(!reducer._lastLoadWasIncrementalForTesting,
-            "resolvePermission should break incremental mode")
-    }
 
     // MARK: - Incremental edge cases
 

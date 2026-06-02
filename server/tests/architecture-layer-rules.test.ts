@@ -85,14 +85,6 @@ describe("architecture layer rule helpers", () => {
         "import Foundation\n",
       );
       write(
-        join(repoRoot, "clients/apple/Oppi/Core/Services/PermissionStore.swift"),
-        [
-          "import Foundation",
-          "/// Separate from SessionStore so permission ticks do not churn session UI.",
-          "final class PermissionStore {}",
-        ].join("\n"),
-      );
-      write(
         join(repoRoot, "clients/apple/Oppi/Core/Services/MessageQueueStore.swift"),
         "import Foundation\n",
       );

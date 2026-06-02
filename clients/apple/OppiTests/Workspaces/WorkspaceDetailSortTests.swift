@@ -35,7 +35,6 @@ struct WorkspaceDetailSortTests {
 
         let sorted = workspaceYourTurnSorted(
             [newer, older],
-            hasPermissionInQueue: { _ in false },
             hasAskInQueue: { _ in false }
         )
 
@@ -56,25 +55,22 @@ struct WorkspaceDetailSortTests {
 
         let sorted = workspaceYourTurnSorted(
             [createdEarlierButNewerActivity, createdLaterButOlderActivity],
-            hasPermissionInQueue: { _ in false },
             hasAskInQueue: { _ in false }
         )
 
         #expect(sorted.map(\.id) == ["activity-first", "created-first"])
     }
 
-    @Test func permissionsStayAheadOfAsksAndPlainSessions() {
-        let permission = makeSession(id: "permission", lastActivity: baseTime.addingTimeInterval(120))
+    @Test func asksStayAheadOfPlainSessions() {
         let ask = makeSession(id: "ask", lastActivity: baseTime)
         let plain = makeSession(id: "plain", lastActivity: baseTime.addingTimeInterval(-120))
 
         let sorted = workspaceYourTurnSorted(
-            [plain, ask, permission],
-            hasPermissionInQueue: { $0 == "permission" },
+            [plain, ask],
             hasAskInQueue: { $0 == "ask" }
         )
 
-        #expect(sorted.map(\.id) == ["permission", "ask", "plain"])
+        #expect(sorted.map(\.id) == ["ask", "plain"])
     }
 
     @Test func equalVisibleActivityFallsBackToCreationTime() {
@@ -91,7 +87,6 @@ struct WorkspaceDetailSortTests {
 
         let sorted = workspaceYourTurnSorted(
             [newer, older],
-            hasPermissionInQueue: { _ in false },
             hasAskInQueue: { _ in false }
         )
 

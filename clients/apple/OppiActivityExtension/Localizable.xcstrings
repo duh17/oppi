@@ -32,32 +32,12 @@
         }
       }
     },
-    "Approval required": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要审批"
-          }
-        }
-      }
-    },
     "Approve": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "批准"
-          }
-        }
-      }
-    },
-    "Approve permission request": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "批准权限请求"
           }
         }
       }
@@ -88,16 +68,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "拒绝"
-          }
-        }
-      }
-    },
-    "Deny permission request": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "拒绝权限请求"
           }
         }
       }

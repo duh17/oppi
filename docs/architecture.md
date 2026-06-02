@@ -81,6 +81,8 @@ graph TD
 
 The adapters differ only where ownership semantics differ: start/stop, abort, remote commands, queue control, and extension UI response plumbing. Shared projection code owns pi event translation, session state mutation, tool-media materialization, first-message/title policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so a terminal session should not appear as two unrelated rows. See [Oppi Mirror mode](oppi-mirror.md) for the detailed mirror contract and test map.
 
+Persisted runtime ownership uses `Session.runtime == "oppi"` for server-owned SDK sessions and `Session.runtime == "pi-tui"` for terminal-owned mirror sessions. `SessionRuntimeRouter` is the server facade that dispatches command, catch-up, pending UI, and snapshot calls by that field. Connected and stale `pi-tui` sessions stay terminal-owned; only a stopped, disconnected mirror session with a canonical session file can be promoted to `oppi` during explicit resume.
+
 ## Live transport and navigation lanes
 
 Oppi now keeps **workspace navigation HTTP-first** and uses WebSockets only for the focused session and audio dictation paths.
@@ -113,7 +115,7 @@ graph TD
 | Workspace archive bucket                    | HTTP                        | `routes/sessions.ts`                                                                            | `WorkspaceStoppedSessionsSection`                                                  | Lazy-loaded stopped/importable rows for one older bucket                                                           |
 | Workspace quick actions and review comments | HTTP                        | `routes/workspaces.ts` + `workspace-quick-action-session.ts` + `review-comment-sqlite-store.ts` | `WorkspaceContextBar`, `WorkspaceReviewFileDetailView`, `ChatView` review comments | Prompt templates exposed as selected-file quick actions, quick-action sessions, and session-scoped review comments |
 | Focused session stream                      | Bidirectional JSON          | `BoundSessionStreamMux` + `SessionRuntimeRouter`                                                | `WebSocketClient` + `SessionStreamCoordinator`                                     | Timeline events, prompts, commands, queue sync, low-frequency `session_summary` updates                            |
-| Focused session catch-up                    | HTTP GET                    | `SessionManager.getCatchUp()`                                                                   | `APIClient` + `SessionStreamCoordinator`                                           | Missed durable focused-session events after reconnect                                                              |
+| Focused session catch-up                    | HTTP GET                    | `SessionRuntimeRouter.getCatchUp()`                                                             | `APIClient` + `SessionStreamCoordinator`                                           | Missed durable focused-session events after reconnect                                                              |
 | Session audio stream                        | Bidirectional JSON + binary | `SessionAudioStreamMux`                                                                         | `DictationStreamClient`                                                            | Dictation control messages, transcript events, PCM audio                                                           |
 
 ## Event flow: prompt to pixel
@@ -204,8 +206,7 @@ graph TD
   subgraph State[State]
     SessionStore[SessionStore<br/>full state + list projection]
     WorkspaceStore[WorkspaceStore<br/>catalog + summaries]
-    PermissionStore[PermissionStore]
-    AskStore[AskRequestStore]
+    ExtensionUIState[Extension UI state<br/>AskRequestStore + dialogs/surfaces]
   end
 
   subgraph WorkspaceViews[Workspace navigation]
@@ -228,8 +229,7 @@ graph TD
   Connection --> Focus
   Connection --> SessionStore
   Connection --> WorkspaceStore
-  Connection --> PermissionStore
-  Connection --> AskStore
+  Connection --> ExtensionUIState
   Connection --> ChatManager
   Home --> WorkspaceStore
   Detail --> SessionStore
@@ -246,6 +246,7 @@ Key boundaries:
 - `WorkspaceStore` owns workspace catalog freshness plus SQLite-backed workspace-home summaries.
 - `WorkspaceDetailView` owns view-scoped workspace refresh/polling using `getWorkspaceSessionList(...)` and lazy archive bucket fetches.
 - Workspace prompt templates are exposed to Apple as quick-action options; quick actions and review comments stay on the HTTP lane, and review-comment loading is keyed by workspace plus session so comments do not leak across sessions in the same workspace.
+- Standard Pi extension UI is the current approval and input lane: ask requests use `AskRequestStore`; select, confirm, input, editor, notification, status, widget, and editor-text surfaces live on `ServerConnection` state. Oppi has no separate built-in server/client `PermissionStore` approval transport.
 - `SessionStore` keeps the hot list projection separate from full session state so timeline-frequency updates do not rebuild workspace lists.
 - Timeline row rendering is UIKit-backed for the hot path. SwiftUI owns navigation shells, forms, and high-level composition.
 
@@ -288,6 +289,7 @@ graph TD
   Client --> Root
   Root --> REST
   Root --> Live
+  REST --> Router
   REST --> Sessions
   REST --> Sqlite
   REST --> LocalCatalog
@@ -329,7 +331,7 @@ When a message contract changes, update server types, Apple models, and protocol
 - Workspace session-list endpoints return **session summaries**, not full `Session` payloads.
 - Hot workspace endpoints must not reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite-backed read models.
 - Runtime adapters must not duplicate pi event projection logic. Managed SDK sessions and terminal mirror sessions should share translation, session mutation, media materialization, title/first-message derivation, summaries, and storage projection.
-- Mirror sessions are terminal-owned. The server must not auto-start a pi SDK runtime for a `runtime == "pi-tui-mirror"` session.
+- Mirror sessions are terminal-owned. The server must not auto-start a pi SDK runtime for a connected or stale `runtime == "pi-tui"` session. A stopped, disconnected mirror with a canonical session file can be explicitly promoted to `runtime == "oppi"` on resume.
 - Keep hot timeline traffic separate from cold workspace/session projections.
 - Keep workspace quick-action discovery, selected-file prompt-template preparation, and review comments on HTTP routes; only the created/focused session uses the session stream.
 - Apply shared store updates exactly once per inbound live session event on the client.
@@ -348,5 +350,6 @@ When a message contract changes, update server types, Apple models, and protocol
 | Focused session WebSocket                  | `server/src/stream.ts`, `server/src/ws-message-handler.ts`                                                                                     | `WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `ServerConnection.swift`         |
 | Managed session runtime                    | `server/src/sessions.ts`, `server/src/session-*.ts`                                                                                            | `ChatSessionManager.swift`, `ChatActionHandler.swift`                                       |
 | Terminal mirror runtime                    | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts`                   | `SessionRow.swift`, `ChatActionHandler.swift`                                               |
+| Extension UI and approvals                 | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/session-events.ts`, `server/src/pi-tui-mirror-runtime.ts`    | `ServerConnection+Ask.swift`, `ServerConnection+MessageRouter.swift`, `AskRequestStore.swift`, `ChatView.swift` |
 | Protocol contract                          | `server/src/types.ts`                                                                                                                          | `ClientMessage.swift`, `ServerMessage.swift`                                                |
 | Pi event projection and timeline rendering | `server/src/session-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`, `server/src/session-broadcast.ts` | `TimelineReducer.swift`, `ChatTimelineCollectionView.swift`                                 |

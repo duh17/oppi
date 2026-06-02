@@ -131,45 +131,6 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
-    @Test func permissionRowsRenderWithNativeConfiguration() throws {
-        let harness = makeTimelineHarness(sessionId: "session-a")
-
-        let pending = PermissionRequest(
-            id: "perm-pending-1",
-            sessionId: "session-a",
-            tool: "bash",
-            input: [:],
-            displaySummary: "command: rm -rf /tmp/demo",
-            reason: "filesystem write",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
-
-        let rows: [ChatItem] = [
-            .permission(pending),
-            .permissionResolved(id: "perm-resolved-1", outcome: .allowed, tool: "bash", summary: "command: ls"),
-        ]
-
-        let config = makeTimelineConfiguration(
-            items: rows,
-            sessionId: "session-a",
-            reducer: harness.reducer,
-            toolOutputStore: harness.toolOutputStore,
-            toolArgsStore: harness.toolArgsStore,
-            connection: harness.connection,
-            scrollController: harness.scrollController,
-            audioPlayer: harness.audioPlayer
-        )
-        harness.coordinator.apply(configuration: config, to: harness.collectionView)
-
-        let firstCell = try configuredTimelineCell(in: harness.collectionView, item: 0)
-        let secondCell = try configuredTimelineCell(in: harness.collectionView, item: 1)
-
-        #expect(firstCell.contentConfiguration is PermissionTimelineRowConfiguration)
-        #expect(secondCell.contentConfiguration is PermissionTimelineRowConfiguration)
-    }
-
-    @MainActor
     @Test func systemAndErrorRowsRenderWithNativeConfiguration() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
 
@@ -502,26 +463,6 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(!harness.reducer.expandedItemIDs.contains(itemID))
-    }
-
-    @MainActor
-    @Test func permissionRowContentViewReportsFiniteFittingSize() {
-        let config = PermissionTimelineRowConfiguration(
-            outcome: .allowed,
-            tool: "bash",
-            summary: "command: rm -rf /tmp/demo"
-        )
-
-        let view = PermissionTimelineRowContentView(configuration: config)
-        let fitting = view.systemLayoutSizeFitting(
-            CGSize(width: 338, height: UIView.layoutFittingExpandedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
-
-        #expect(fitting.width.isFinite)
-        #expect(fitting.height.isFinite)
-        #expect(fitting.height < 10_000)
     }
 
     @MainActor

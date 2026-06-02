@@ -535,20 +535,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 message: message
             ), appendOnly: appendOnly)
             return nil
-
-        case .permission:
-            guard let payload = event.permission else { return nil }
-            let summary = [event.text, payload.reason]
-                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " — ")
-            insertItem(.permissionResolved(
-                id: event.id,
-                outcome: payload.outcome,
-                tool: event.tool ?? "tool",
-                summary: summary.isEmpty ? "Permission decision" : summary
-            ), appendOnly: appendOnly)
-            return nil
         }
     }
 
@@ -873,11 +859,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):
             return handleToolEnd(toolEventId: toolEventId, details: details, isError: isError, resultSegments: resultSegments)
 
-        case .permissionRequest:
-            return false
-        case .permissionExpired:
-            return false
-
         case .sessionEnded(_, let reason):
             let before = renderMutationCheckpoint()
             // Session termination is terminal for the current turn.
@@ -1200,22 +1181,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         )
         items.append(item)
         indexAppend(item)
-        bumpRenderVersion()
-        timelineMatchesTrace = false
-    }
-
-    // MARK: - Permission Resolution
-
-    func resolvePermission(id: String, outcome: PermissionOutcome, tool: String, summary: String) {
-        let resolved = ChatItem.permissionResolved(id: id, outcome: outcome, tool: tool, summary: summary)
-        if let idx = indexForID(id) {
-            // Replace old inline card (trace replay or prior state)
-            items[idx] = resolved
-        } else {
-            // New flow: permission was never inline — append the marker
-            items.append(resolved)
-            indexAppend(resolved)
-        }
         bumpRenderVersion()
         timelineMatchesTrace = false
     }

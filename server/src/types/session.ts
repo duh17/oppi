@@ -144,8 +144,6 @@ export interface SessionSummary {
   mirror?: PiTuiMirrorSessionMetadata;
   ephemeral?: boolean;
   parentSessionId?: string;
-  /** Cold-list attention badge count; omitted outside list endpoints. */
-  pendingPermissionCount?: number;
   /** Cold-list ask badge count; omitted outside list endpoints. */
   pendingAskCount?: number;
 }

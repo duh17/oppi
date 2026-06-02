@@ -118,7 +118,6 @@ extension View {
             .environment(connection.chatState)
             .environment(connection.sessionStore)
             .environment(connection.workspaceStore)
-            .environment(connection.permissionStore)
             .environment(connection.askRequestStore)
             .environment(connection.audioPlayer)
             .environment(connection.gitStatusStore)
@@ -714,7 +713,6 @@ struct WorkspaceHomeView: View {
             let attention = SessionRowPresentationBuilder.attentionCounts(
                 sessionId: session.id,
                 descendants: descendants,
-                pendingPermissionCountForSession: { pendingPermissionCount(for: $0, connection: connection) },
                 pendingAskCountForSession: { pendingAskCount(for: $0, connection: connection) }
             )
             attentionBySessionId[session.id] = attention
@@ -785,13 +783,6 @@ struct WorkspaceHomeView: View {
         return previews
     }
 
-    private func pendingPermissionCount(for sessionId: String, connection: ServerConnection) -> Int {
-        SessionListAttentionMerger.permissionCount(
-            listCount: connection.sessionStore.listPendingPermissionCount(for: sessionId),
-            liveCount: connection.permissionStore.pending(for: sessionId).count
-        )
-    }
-
     private func pendingAskCount(for sessionId: String, connection: ServerConnection) -> Int {
         SessionListAttentionMerger.askCount(
             listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
@@ -811,9 +802,7 @@ struct WorkspaceHomeView: View {
             presentation: SessionRowPresentationBuilder.make(
                 session: session,
                 descendants: descendants,
-                pendingPermissionCount: attention.permissionCount,
                 pendingAskCount: attention.askCount,
-                pendingPermissions: connection.permissionStore.pending(for: session.id),
                 pendingAsk: connection.askRequestStore.pending(for: session.id),
                 activity: connection.activityStore.lastActivity(for: session.id)
             )

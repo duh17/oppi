@@ -762,10 +762,9 @@ actor APIClient: ClientLogUploading {
 
     struct WorkspaceAttentionResponse: Decodable, Sendable {
         struct Attention: Decodable, Sendable {
-            let permissions: [PermissionRequest]
             let asks: [AskRequest]
 
-            static let empty = Attention(permissions: [], asks: [])
+            static let empty = Attention(asks: [])
         }
 
         let workspaceId: String
@@ -775,17 +774,15 @@ actor APIClient: ClientLogUploading {
 
     struct WorkspaceSessionManagedRow: Decodable, Sendable, Equatable {
         let summary: SessionSummary
-        let pendingPermissionCount: Int
         let pendingAskCount: Int
 
         private enum CodingKeys: String, CodingKey {
-            case pendingPermissionCount, pendingAskCount
+            case pendingAskCount
         }
 
         init(from decoder: Decoder) throws {
             summary = try SessionSummary(from: decoder)
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            pendingPermissionCount = try container.decodeIfPresent(Int.self, forKey: .pendingPermissionCount) ?? 0
             pendingAskCount = try container.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
         }
     }

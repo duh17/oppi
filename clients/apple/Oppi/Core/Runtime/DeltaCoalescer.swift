@@ -10,8 +10,8 @@ import Foundation
 /// - Initial `toolStart` / `toolUpdate` plus all other events: flush buffer
 ///   immediately, then deliver event.
 ///
-/// This prevents per-token/chunk SwiftUI diff thrash while keeping tool starts,
-/// permissions, and errors latency-free.
+/// This prevents per-token/chunk SwiftUI diff thrash while keeping tool starts
+/// and errors latency-free.
 ///
 /// Call `pause()` when the app enters background to stop the flush timer.
 /// Call `resume()` on foreground return to flush accumulated events in one batch.
@@ -45,7 +45,7 @@ final class DeltaCoalescer {
     private static let telemetryDrainMinimumBytes = 64 * 1024
 
     /// When true, high-frequency events accumulate but don't flush on timer.
-    /// Immediate events (tool start, permissions, etc.) still flush + deliver.
+    /// Immediate events (tool start, lifecycle, errors, etc.) still flush + deliver.
     private var isPaused = false
 
     /// Active session ID for metric attribution. Set by SessionStreamCoordinator.
@@ -103,9 +103,7 @@ final class DeltaCoalescer {
             onFlush?([event])
 
         // Everything else: flush pending deltas first, then deliver immediately
-        case .permissionRequest,
-             .permissionExpired,
-             .agentStart,
+        case .agentStart,
              .agentEnd,
              .messageEnd,
              .sessionEnded,

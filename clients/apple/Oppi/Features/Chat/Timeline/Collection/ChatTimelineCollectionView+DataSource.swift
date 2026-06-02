@@ -255,16 +255,6 @@ extension ChatTimelineCollectionHost.Controller {
             }
         }
 
-        let permissionRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
-                cell,
-                itemID: itemID,
-                rowLabel: "permission"
-            ) { item in
-                self?.permissionRowConfiguration(item: item)
-            }
-        }
-
         let systemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
             self?.configureNativeCell(
                 cell,
@@ -381,13 +371,6 @@ extension ChatTimelineCollectionHost.Controller {
             audio: { collectionView, indexPath, itemID in
                 collectionView.dequeueConfiguredReusableCell(
                     using: audioRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            permission: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: permissionRegistration,
                     for: indexPath,
                     item: itemID
                 )

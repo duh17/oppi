@@ -61,20 +61,6 @@ final class TestEventPipeline {
         }
 
         switch message {
-        case .permissionRequest(let perm):
-            conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
-            coalescer.receive(.permissionRequest(perm))
-        case .permissionExpired(let id, _):
-            let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
-            if let request = result.takenPermission {
-                reducer.resolvePermission(id: id, outcome: .expired, tool: request.tool, summary: request.displaySummary)
-            }
-            coalescer.receive(.permissionExpired(id: id))
-        case .permissionCancelled(let id):
-            let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
-            if let request = result.takenPermission {
-                reducer.resolvePermission(id: id, outcome: .cancelled, tool: request.tool, summary: request.displaySummary)
-            }
         case .agentStart:
             conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentStart(sessionId: sessionId))

@@ -30,7 +30,6 @@ struct ServerConnectionInvariantTests {
 
         let beforeStatus = scenario.firstSessionStatus()
         let beforeRenderVersion = scenario.reducer.renderVersion
-        let beforePermissionCount = scenario.connection.permissionStore.pending.count
 
         for message in deterministicForeignSessionMessages() {
             scenario.whenHandle(message, sessionId: "s-foreign")
@@ -38,8 +37,6 @@ struct ServerConnectionInvariantTests {
 
         #expect(scenario.firstSessionStatus() == beforeStatus)
         #expect(scenario.reducer.renderVersion == beforeRenderVersion)
-        // Permission store is shared across sessions — foreign permissions ARE added.
-        // The important invariant: the per-session reducer is NOT mutated.
     }
 
     @Test func liveActivityFilterSkipsDeltaOnlyFlushes() {
@@ -56,21 +53,11 @@ struct ServerConnectionInvariantTests {
 
     @Test func liveActivityFilterKeepsLifecycleEventsOnly() {
         let connection = ServerConnection()
-        let permission = PermissionRequest(
-            id: "p1",
-            sessionId: "s1",
-            tool: "bash",
-            input: [:],
-            displaySummary: "bash: pwd",
-            reason: "Need permission",
-            timeoutAt: Date().addingTimeInterval(60)
-        )
         let events: [AgentEvent] = [
             .textDelta(sessionId: "s1", delta: "ignore"),
             .agentStart(sessionId: "s1"),
             .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
             .toolOutput(sessionId: "s1", toolEventId: "t1", output: "chunk", isError: false),
-            .permissionRequest(permission),
             .error(sessionId: "s1", message: "Retrying (attempt 1/3)"),
             .error(sessionId: "s1", message: "boom"),
             .sessionEnded(sessionId: "s1", reason: "done"),
@@ -80,7 +67,6 @@ struct ServerConnectionInvariantTests {
         #expect(relevant.map(\.typeLabel) == [
             "agentStart",
             "toolStart",
-            "permissionRequest",
             "error",
             "sessionEnded",
         ])
@@ -141,23 +127,12 @@ private func reduceStopLifecycleModel(current: SessionStatus, event: StopLifecyc
 }
 
 private func deterministicForeignSessionMessages() -> [ServerMessage] {
-    let perm = PermissionRequest(
-        id: "p-foreign",
-        sessionId: "s-foreign",
-        tool: "bash",
-        input: [:],
-        displaySummary: "bash: ls",
-        reason: "Need permission",
-        timeoutAt: Date().addingTimeInterval(60)
-    )
-
     return [
         .agentStart,
         .textDelta(delta: "ignored"),
         .toolStart(tool: "bash", args: ["command": .string("pwd")], toolCallId: "t-1", callSegments: nil),
         .toolOutput(output: "x", isError: false, toolCallId: "t-1", mode: .append, truncated: false, totalBytes: nil, details: nil),
         .toolEnd(tool: "bash", toolCallId: "t-1", details: nil, isError: false, resultSegments: nil),
-        .permissionRequest(perm),
         .sessionEnded(reason: "done"),
     ]
 }

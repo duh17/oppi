@@ -282,7 +282,7 @@ enum TimelineSnapshotApplier {
     /// - assistant rows (the actively streaming one is handled separately by the caller)
     /// - in-flight tool rows
     /// - active thinking rows
-    /// - mutable marker rows such as permission / compaction system events
+    /// - mutable marker rows such as compaction system events
     /// - user rows carrying images (memory-warning stripping can change them)
     private static func changedItemIDs(
         nextIDs: [String],
@@ -347,7 +347,7 @@ enum TimelineSnapshotApplier {
             return !isDone
         case .thinking(_, _, _, let isDone):
             return !isDone
-        case .permission, .permissionResolved, .systemEvent:
+        case .systemEvent:
             return true
         case .userMessage(_, _, let images, _):
             return !images.isEmpty

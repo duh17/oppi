@@ -5,7 +5,6 @@ import SwiftUI
 /// Provides text + color status indication alongside the session title,
 /// keeping the list scannable even when section headers are off-screen.
 enum SessionPillVariant: Equatable {
-    case waiting
     case question
     case idle
     case working
@@ -13,9 +12,8 @@ enum SessionPillVariant: Equatable {
     case stopped
     case error
 
-    /// Priority: permission (waiting) > ask (question) > status-based.
-    static func from(status: SessionStatus, pendingCount: Int, pendingAskCount: Int = 0) -> SessionPillVariant {
-        if pendingCount > 0 { return .waiting }
+    /// Priority: ask/input request > status-based.
+    static func from(status: SessionStatus, pendingAskCount: Int = 0) -> SessionPillVariant {
         if pendingAskCount > 0 { return .question }
 
         switch status {
@@ -30,16 +28,14 @@ enum SessionPillVariant: Equatable {
         }
     }
 
-    static func from(session: Session, pendingCount: Int, pendingAskCount: Int = 0) -> SessionPillVariant {
-        if pendingCount > 0 { return .waiting }
+    static func from(session: Session, pendingAskCount: Int = 0) -> SessionPillVariant {
         if pendingAskCount > 0 { return .question }
         if session.isAwaitingFirstPrompt { return .idle }
-        return from(status: session.status, pendingCount: 0, pendingAskCount: 0)
+        return from(status: session.status)
     }
 
     var label: String {
         switch self {
-        case .waiting: "Waiting"
         case .question: "Question"
         case .idle: "Idle"
         case .working: "Working"
@@ -51,7 +47,6 @@ enum SessionPillVariant: Equatable {
 
     var foregroundColor: Color {
         switch self {
-        case .waiting: .themeOrange
         case .idle, .done: .themeGreen
         case .question, .working: .themeBlue
         case .stopped: .themeComment
@@ -61,7 +56,6 @@ enum SessionPillVariant: Equatable {
 
     var backgroundColor: Color {
         switch self {
-        case .waiting: .themeOrange.opacity(0.12)
         case .idle, .done: .themeGreen.opacity(0.12)
         case .question, .working: .themeBlue.opacity(0.12)
         case .stopped: .themeComment.opacity(0.1)

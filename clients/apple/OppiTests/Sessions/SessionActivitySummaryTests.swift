@@ -35,87 +35,6 @@ struct SessionActivitySummaryTests {
         )
     }
 
-    private func makePermission(
-        tool: String = "Write",
-        input: [String: JSONValue] = ["path": .string("src/types.ts")]
-    ) -> PermissionRequest {
-        PermissionRequest(
-            id: "perm-1",
-            sessionId: "s1",
-            tool: tool,
-            input: input,
-            displaySummary: "Write to src/types.ts",
-            reason: "needs approval",
-            timeoutAt: Date().addingTimeInterval(60)
-        )
-    }
-
-    // MARK: - Pending permissions
-
-    @Test func pendingPermission_showsPathPermission() {
-        let session = makeSession(status: .busy)
-        let perms = [makePermission(tool: "Write", input: ["path": .string("src/types.ts")])]
-        let result = SessionActivitySummary.text(
-            session: session,
-            pendingCount: 1,
-            pendingPermissions: perms,
-            activity: nil
-        )
-        #expect(result == "permission: write src/types.ts")
-    }
-
-    @Test func pendingPermission_showsCommandPermission() {
-        let session = makeSession(status: .busy)
-        let perms = [makePermission(tool: "Bash", input: ["command": .string("rm -rf build")])]
-        let result = SessionActivitySummary.text(
-            session: session,
-            pendingCount: 1,
-            pendingPermissions: perms,
-            activity: nil
-        )
-        #expect(result == "permission: rm -rf build")
-    }
-
-    @Test func pendingPermission_truncatesLongCommand() {
-        let longCmd = String(repeating: "x", count: 50)
-        let session = makeSession(status: .busy)
-        let perms = [makePermission(tool: "Bash", input: ["command": .string(longCmd)])]
-        let result = SessionActivitySummary.text(
-            session: session,
-            pendingCount: 1,
-            pendingPermissions: perms,
-            activity: nil
-        )
-        #expect(result != nil)
-        #expect(result!.contains("..."))
-    }
-
-    @Test func pendingPermission_fallsBackToToolName() {
-        let session = makeSession(status: .busy)
-        let perms = [makePermission(tool: "CustomTool", input: ["data": .number(42)])]
-        let result = SessionActivitySummary.text(
-            session: session,
-            pendingCount: 1,
-            pendingPermissions: perms,
-            activity: nil
-        )
-        #expect(result == "permission: CustomTool")
-    }
-
-    @Test func pendingPermission_overridesActivity() {
-        let session = makeSession(status: .busy)
-        let perms = [makePermission()]
-        let activity = SessionActivityStore.Activity(toolName: "Read", keyArg: "file.swift")
-        let result = SessionActivitySummary.text(
-            session: session,
-            pendingCount: 1,
-            pendingPermissions: perms,
-            activity: activity
-        )
-        // Should show permission, not the tool activity
-        #expect(result?.hasPrefix("permission:") == true)
-    }
-
     // MARK: - Working sessions
 
     @Test func working_showsToolActivity() {
@@ -123,8 +42,6 @@ struct SessionActivitySummaryTests {
         let activity = SessionActivityStore.Activity(toolName: "Read", keyArg: "server/src/types.ts")
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: activity
         )
         #expect(result == "reading src/types.ts")
@@ -134,8 +51,6 @@ struct SessionActivitySummaryTests {
         let session = makeSession(status: .busy)
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: nil
         )
         #expect(result == nil)
@@ -146,8 +61,6 @@ struct SessionActivitySummaryTests {
         let activity = SessionActivityStore.Activity(toolName: "Write", keyArg: "output.txt")
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: activity
         )
         #expect(result == "writing output.txt")
@@ -159,8 +72,6 @@ struct SessionActivitySummaryTests {
         let session = makeSession(status: .ready)
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: nil
         )
         #expect(result == nil)
@@ -170,8 +81,6 @@ struct SessionActivitySummaryTests {
         let session = makeSession(status: .ready, messageCount: 0, firstMessage: nil)
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: nil
         )
         #expect(result == nil)
@@ -190,8 +99,6 @@ struct SessionActivitySummaryTests {
         let session = makeSession(status: .stopped, changeStats: stats)
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: nil
         )
         #expect(result == nil)
@@ -201,8 +108,6 @@ struct SessionActivitySummaryTests {
         let session = makeSession(status: .stopped)
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: nil
         )
         #expect(result == nil)
@@ -214,8 +119,6 @@ struct SessionActivitySummaryTests {
         let session = makeSession(status: .error)
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             activity: nil
         )
         #expect(result == "agent error")
@@ -280,8 +183,6 @@ struct SessionActivitySummaryTests {
         )
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             pendingAsk: ask,
             activity: nil
         )
@@ -300,35 +201,12 @@ struct SessionActivitySummaryTests {
         )
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             pendingAsk: ask,
             activity: nil
         )
         #expect(result != nil)
         #expect(result!.hasPrefix("question:"))
         #expect(result!.hasSuffix("..."))
-    }
-
-    @Test func pendingPermission_takesPriorityOverAsk() {
-        let session = makeSession(status: .busy)
-        let perms = [makePermission()]
-        let ask = AskRequest(
-            id: "ask-1",
-            sessionId: "s1",
-            questions: [AskQuestion(id: "q1", question: "Pick one?", options: [], multiSelect: false)],
-            allowCustom: true,
-            timeout: nil
-        )
-        let result = SessionActivitySummary.text(
-            session: session,
-            pendingCount: 1,
-            pendingPermissions: perms,
-            pendingAsk: ask,
-            activity: nil
-        )
-        // Permission should win over ask
-        #expect(result?.hasPrefix("permission:") == true)
     }
 
     @Test func pendingAsk_overridesToolActivity() {
@@ -343,8 +221,6 @@ struct SessionActivitySummaryTests {
         let activity = SessionActivityStore.Activity(toolName: "Read", keyArg: "file.swift")
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             pendingAsk: ask,
             activity: activity
         )
@@ -356,8 +232,6 @@ struct SessionActivitySummaryTests {
         let activity = SessionActivityStore.Activity(toolName: "Read", keyArg: "server/src/types.ts")
         let result = SessionActivitySummary.text(
             session: session,
-            pendingCount: 0,
-            pendingPermissions: [],
             pendingAsk: nil,
             activity: activity
         )

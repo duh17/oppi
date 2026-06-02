@@ -96,7 +96,6 @@ final class ServerConnection {
 
     // Stores
     let sessionStore = SessionStore()
-    let permissionStore = PermissionStore()
     let askRequestStore = AskRequestStore()
     let workspaceStore = WorkspaceStore()
     let gitStatusStore = GitStatusStore()
@@ -192,9 +191,6 @@ final class ServerConnection {
     /// Test seam: observe view-driven session re-entry preparation.
     var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
 
-    // periphery:ignore - used by ServerConnectionPermissionTests via @testable import
-    /// Test seam: override REST permission responses without opening a real HTTP server.
-
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
     /// Pending generic extension dialogs for sessions the user is not currently viewing.
@@ -225,9 +221,6 @@ final class ServerConnection {
     /// Set when server sends a fatal error (e.g. session limit).
     /// ChatSessionManager checks this to suppress auto-reconnect.
     var fatalSetupError = false
-
-    /// Callback for historical permission timeline fixtures.
-    var onPermissionResolved: ((_ id: String, _ outcome: PermissionOutcome, _ tool: String, _ summary: String) -> Void)?
 
     /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
     var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
@@ -619,10 +612,9 @@ final class ServerConnection {
             ))
         }
 
-        // Also process events from non-focused sessions. If a
-        // non-focused full session has its own live consumer, let that
-        // per-session pipeline own destructive permission-store updates so
-        // its reducer still receives resolution metadata.
+        // Also process events from non-focused sessions. If a non-focused full
+        // session has its own live consumer, the per-session pipeline owns the
+        // timeline-specific work.
         if let sessionId, !isFocusedSession(sessionId) {
             let hasLiveSessionConsumer = sessionEventContinuations[sessionId] != nil
             handleCrossSessionMessage(
@@ -731,7 +723,7 @@ final class ServerConnection {
                     event: .error(sessionId: sessionId, message: errorMessage)
                 )
             }
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
         default:
             break
         }
@@ -739,12 +731,7 @@ final class ServerConnection {
 
     private func shouldDeferSharedStoreUpdateToLiveSessionConsumer(_ message: ServerMessage) -> Bool {
         switch message {
-        case .permissionRequest,
-             .permissionExpired,
-             .permissionCancelled,
-             .permissionResolved,
-             .permissionAutoReviewed,
-             .agentStart,
+        case .agentStart,
              .agentEnd,
              .toolStart,
              .toolUpdate,

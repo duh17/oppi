@@ -40,8 +40,6 @@ enum AgentEvent: Sendable {
     // Command response (model change, stats, etc.)
     case commandResult(sessionId: String, command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
 
-    case permissionRequest(PermissionRequest)
-    case permissionExpired(id: String)
     case sessionEnded(sessionId: String, reason: String)
     case error(sessionId: String, message: String)
 
@@ -85,8 +83,6 @@ enum AgentEvent: Sendable {
         case .retryStart: "retryStart"
         case .retryEnd: "retryEnd"
         case .commandResult: "commandResult"
-        case .permissionRequest: "permissionRequest"
-        case .permissionExpired: "permissionExpired"
         case .sessionEnded: "sessionEnded"
         case .error: "error"
         }

@@ -359,55 +359,29 @@ struct ContextBarScopingTests {
 
 @Suite("Context bar subagent status")
 struct ContextBarSubagentStatusTests {
-    @Test func waitingOverridesWorkingStatus() {
-        let status = ContextBarSubagentStatus.from(
-            status: .busy,
-            pendingPermissionCount: 1,
-            pendingAskCount: 0
-        )
-
-        #expect(status == .waiting)
-    }
-
     @Test func questionOverridesReadyStatus() {
         let status = ContextBarSubagentStatus.from(
             status: .ready,
-            pendingPermissionCount: 0,
             pendingAskCount: 1
         )
 
         #expect(status == .question)
     }
 
-    @Test func waitingTakesPriorityOverQuestion() {
-        let status = ContextBarSubagentStatus.from(
-            status: .busy,
-            pendingPermissionCount: 1,
-            pendingAskCount: 1
-        )
-
-        #expect(status == .waiting)
-    }
-
     @Test func countsClassifyAttentionAndRuntimeStatesExclusively() {
         let sessions = [
-            makeSession(id: "waiting", status: .busy),
             makeSession(id: "question", status: .busy),
             makeSession(id: "working", status: .starting),
             makeSession(id: "ready", status: .ready),
             makeSession(id: "stopped", status: .stopped),
             makeSession(id: "error", status: .error),
         ]
-        let permissionCounts = ["waiting": 1]
         let askCounts = ["question": 1]
 
         let counts = ContextBarSubagentStatus.counts(
             for: sessions,
-            pendingPermissionCount: { permissionCounts[$0, default: 0] },
             pendingAskCount: { askCounts[$0, default: 0] }
         )
-
-        #expect(counts.waiting == 1)
         #expect(counts.question == 1)
         #expect(counts.working == 1)
         #expect(counts.ready == 1)

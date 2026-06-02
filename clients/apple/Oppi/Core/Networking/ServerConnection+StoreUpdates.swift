@@ -5,7 +5,7 @@ import Foundation
 extension ServerConnection {
 
     /// Context returned by `applySharedStoreUpdate` for callers that need
-    /// details about pre-update session state or permission removals.
+    /// details about pre-update session state.
     struct StoreUpdateResult {
         struct SessionStateContext {
             let previousSession: Session?
@@ -20,19 +20,15 @@ extension ServerConnection {
             }
         }
 
-        /// Permission request removed from the store (expired/cancelled).
-        var takenPermission: PermissionRequest?
         /// Pre-update context for `.state(session:)` messages.
         var stateContext: SessionStateContext?
         /// Whether this message type was handled by the shared helper.
         var handled: Bool
 
         init(
-            takenPermission: PermissionRequest? = nil,
             stateContext: SessionStateContext? = nil,
             handled: Bool
         ) {
-            self.takenPermission = takenPermission
             self.stateContext = stateContext
             self.handled = handled
         }
@@ -46,8 +42,8 @@ extension ServerConnection {
 
     /// Apply store-level mutations shared by both active-session and cross-session paths.
     ///
-    /// Handles permission store, session store, screen-awake, and Live Activity sync
-    /// updates that are common to both message routing paths.
+    /// Handles session store, screen-awake, and Live Activity sync updates that
+    /// are common to both message routing paths.
     ///
     /// Does NOT handle:
     /// - Coalescer/reducer routing (active-session only)
@@ -61,30 +57,6 @@ extension ServerConnection {
         sessionId: String
     ) -> StoreUpdateResult {
         switch message {
-
-        // MARK: Permission events
-
-        case .permissionRequest(let perm):
-            let inserted = permissionStore.add(perm)
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: perm.workspaceId,
-                sessionId: perm.sessionId
-            ) {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            syncLiveActivityPermissions()
-            return StoreUpdateResult(handled: true)
-
-        case .permissionExpired(let id, _), .permissionCancelled(let id), .permissionResolved(let id, _):
-            let request = permissionStore.take(id: id)
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: request?.workspaceId,
-                sessionId: request?.sessionId
-            ) {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            syncLiveActivityPermissions()
-            return StoreUpdateResult(takenPermission: request, handled: true)
 
         // MARK: Tool activity tracking
 
@@ -108,7 +80,7 @@ extension ServerConnection {
                 }
             }
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         case .agentEnd:
@@ -125,7 +97,7 @@ extension ServerConnection {
             sessionStore.recordTurnEnded(sessionId: sessionId)
             activityStore.clear(sessionId: sessionId)
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         // MARK: Stop lifecycle
@@ -135,7 +107,7 @@ extension ServerConnection {
             if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         case .stopConfirmed:
@@ -144,7 +116,7 @@ extension ServerConnection {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         case .stopFailed:
@@ -153,7 +125,7 @@ extension ServerConnection {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         // MARK: Session state
@@ -177,7 +149,7 @@ extension ServerConnection {
             }
             activityStore.clear(sessionId: sessionId)
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         case .sessionDeleted(let deletedId):
@@ -190,7 +162,7 @@ extension ServerConnection {
             sessionUsageMetricLastEmittedAt.removeValue(forKey: deletedId)
             activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
-            syncLiveActivityPermissions()
+            syncLiveActivityState()
             return StoreUpdateResult(handled: true)
 
         default:
@@ -242,7 +214,7 @@ extension ServerConnection {
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
         }
 
-        syncLiveActivityPermissions()
+        syncLiveActivityState()
         return StoreUpdateResult(stateContext: stateContext, handled: true)
     }
 
@@ -304,14 +276,6 @@ extension ServerConnection {
                 workspaceIds.insert(workspaceId)
             }
         }
-        for permission in permissionStore.pending {
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: permission.workspaceId,
-                sessionId: permission.sessionId
-            ) {
-                workspaceIds.insert(workspaceId)
-            }
-        }
         for ask in askRequestStore.pending.values {
             if let workspaceId = attentionWorkspaceId(
                 explicitWorkspaceId: ask.workspaceId,
@@ -341,10 +305,6 @@ extension ServerConnection {
     private func fallbackWorkspaceSummary(workspaceId: String) -> WorkspaceListSummary? {
         let workspaceSessions = sessionStore.listProjectionSessions(workspaceId: workspaceId)
         let workspaceSessionIds = Set(workspaceSessions.map(\.id))
-        let hasPendingPermission = permissionStore.pending.contains { permission in
-            permission.workspaceId == workspaceId
-                || (permission.workspaceId == nil && workspaceSessionIds.contains(permission.sessionId))
-        }
         let hasPendingAsk = askRequestStore.pending.values.contains { ask in
             ask.workspaceId == workspaceId
                 || (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
@@ -353,14 +313,12 @@ extension ServerConnection {
             workspaceSessionIds.contains(request.sessionId)
         } || activeExtensionDialog.map { workspaceSessionIds.contains($0.sessionId) } == true
         let hasListAttention = workspaceSessions.contains { session in
-            sessionStore.listPendingPermissionCount(for: session.id) > 0
-                || sessionStore.listPendingAskCount(for: session.id) > 0
+            sessionStore.listPendingAskCount(for: session.id) > 0
         }
         let rootSessions = workspaceRootSessions(workspaceSessions)
         let hasLiveErrorRoot = rootSessions.contains { $0.status == .error }
 
         guard !rootSessions.isEmpty
-            || hasPendingPermission
             || hasPendingAsk
             || hasPendingExtensionDialog
             || hasListAttention else {
@@ -373,7 +331,6 @@ extension ServerConnection {
             activeCount: rootSessions.filter { $0.status != .stopped }.count,
             stoppedCount: rootSessions.filter { $0.status == .stopped }.count,
             hasAttention: hasLiveErrorRoot
-                || hasPendingPermission
                 || hasPendingAsk
                 || hasPendingExtensionDialog
                 || hasListAttention,
@@ -393,8 +350,8 @@ extension ServerConnection {
     /// Apply an authoritative workspace-scoped attention snapshot fetched over HTTP.
     ///
     /// The snapshot is destructive only inside the target workspace: pending
-    /// permissions/asks missing from a successful response are stale and should
-    /// be removed from list badges.
+    /// asks missing from a successful response are stale and should be removed
+    /// from list badges.
     func applyWorkspaceAttentionSnapshot(_ response: APIClient.WorkspaceAttentionResponse) {
         let workspaceId = response.workspaceId
         let workspaceSessionIds = Set(
@@ -403,11 +360,6 @@ extension ServerConnection {
                 .map(\.id)
         )
 
-        let removedPermissions = permissionStore.applyWorkspaceSnapshot(
-            workspaceId: workspaceId,
-            requests: response.attention.permissions,
-            workspaceSessionIds: workspaceSessionIds
-        )
         let removedAskSessionIds = askRequestStore.applyWorkspaceSnapshot(
             workspaceId: workspaceId,
             asks: response.attention.asks,
@@ -431,7 +383,7 @@ extension ServerConnection {
         }
 
         syncWorkspaceSummary(workspaceId: workspaceId)
-        syncLiveActivityPermissions()
+        syncLiveActivityState()
     }
 
     /// Apply a session snapshot fetched outside the live WS stream.

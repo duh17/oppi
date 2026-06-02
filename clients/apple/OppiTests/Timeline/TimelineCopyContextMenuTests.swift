@@ -41,14 +41,12 @@ struct TimelineCopyContextMenuTests {
 
 enum TimelineCopyRowCase: CaseIterable, Sendable {
     case user
-    case permission
     case error
     case compaction
 
     var name: String {
         switch self {
         case .user: return "user"
-        case .permission: return "permission"
         case .error: return "error"
         case .compaction: return "compaction"
         }
@@ -64,8 +62,6 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
         switch self {
         case .user:
             return UserTimelineRowContentView(configuration: userConfiguration)
-        case .permission:
-            return PermissionTimelineRowContentView(configuration: permissionConfiguration)
         case .error:
             return ErrorTimelineRowContentView(configuration: errorConfiguration)
         case .compaction:
@@ -82,13 +78,6 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
                 return
             }
             typedView.configuration = userConfiguration
-
-        case .permission:
-            guard let typedView = view as? PermissionTimelineRowContentView else {
-                Issue.record("Expected PermissionTimelineRowContentView for \(name)")
-                return
-            }
-            typedView.configuration = permissionConfiguration
 
         case .error:
             guard let typedView = view as? ErrorTimelineRowContentView else {
@@ -111,8 +100,6 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
         switch self {
         case .user:
             return (view as? UserTimelineRowContentView)?.buildContextMenu()
-        case .permission:
-            return (view as? PermissionTimelineRowContentView)?.buildContextMenu()
         case .error:
             return (view as? ErrorTimelineRowContentView)?.buildContextMenu()
         case .compaction:
@@ -126,14 +113,6 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
             images: [],
             canFork: false,
             onFork: nil
-        )
-    }
-
-    private var permissionConfiguration: PermissionTimelineRowConfiguration {
-        PermissionTimelineRowConfiguration(
-            outcome: .allowed,
-            tool: "bash",
-            summary: "command: ls"
         )
     }
 

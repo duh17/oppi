@@ -695,8 +695,6 @@ struct ScrollPropertyTestHarness {
             return 84
         case .toolCall(let id, _, _, _, _, _, _):
             return reducer.expandedItemIDs.contains(id) ? 220 : 92
-        case .permission, .permissionResolved:
-            return 76
         case .systemEvent:
             return 68
         case .error:

@@ -7,7 +7,6 @@ import Foundation
 /// history rows without making the row read observable stores directly.
 struct SessionRowPresentation {
     let session: Session
-    let pendingCount: Int
     let pendingAskCount: Int
     let activitySummary: String?
     let lineageHint: String?
@@ -20,9 +19,7 @@ enum SessionRowPresentationBuilder {
     static func make(
         session: Session,
         descendants: [Session] = [],
-        pendingPermissionCount: Int = 0,
         pendingAskCount: Int = 0,
-        pendingPermissions: [PermissionRequest] = [],
         pendingAsk: AskRequest? = nil,
         activity: SessionActivityStore.Activity? = nil,
         lineageHint: String? = nil,
@@ -30,12 +27,9 @@ enum SessionRowPresentationBuilder {
     ) -> SessionRowPresentation {
         SessionRowPresentation(
             session: session,
-            pendingCount: pendingPermissionCount,
             pendingAskCount: pendingAskCount,
             activitySummary: SessionActivitySummary.text(
                 session: session,
-                pendingCount: pendingPermissionCount,
-                pendingPermissions: pendingPermissions,
                 pendingAsk: pendingAsk,
                 activity: activity
             ),
@@ -49,12 +43,10 @@ enum SessionRowPresentationBuilder {
     static func attentionCounts(
         sessionId: String,
         descendants: [Session],
-        pendingPermissionCountForSession: (String) -> Int,
         pendingAskCountForSession: (String) -> Int
     ) -> SessionListAttentionCounts {
         let ids = [sessionId] + descendants.map(\.id)
         return SessionListAttentionCounts(
-            permissionCount: ids.reduce(0) { $0 + pendingPermissionCountForSession($1) },
             askCount: ids.reduce(0) { $0 + pendingAskCountForSession($1) }
         )
     }
@@ -104,7 +96,6 @@ extension SessionRow {
     init(presentation: SessionRowPresentation) {
         self.init(
             session: presentation.session,
-            pendingCount: presentation.pendingCount,
             pendingAskCount: presentation.pendingAskCount,
             activitySummary: presentation.activitySummary,
             lineageHint: presentation.lineageHint,

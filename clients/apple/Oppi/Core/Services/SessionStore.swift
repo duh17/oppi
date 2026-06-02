@@ -8,7 +8,6 @@ import Foundation
 /// external API unchanged.
 ///
 /// Scoped to prevent re-renders from unrelated state changes.
-/// Permission timer ticks don't touch this store.
 @MainActor @Observable
 final class SessionStore {
     // ── Per-server backing storage ──
@@ -26,9 +25,9 @@ final class SessionStore {
 
     /// Attention counts supplied by cold session-list HTTP snapshots.
     ///
-    /// This is intentionally separate from `PermissionStore` and `AskRequestStore`:
-    /// workspace-home previews only need badges, while focused chat/detail views
-    /// need the full request payloads from the live or attention snapshot paths.
+    /// This is intentionally separate from `AskRequestStore`: workspace-home
+    /// previews only need badges, while focused chat/detail views need the full
+    /// request payloads from the live or attention snapshot paths.
     private var serverListAttentionCounts: [String: [String: SessionSummaryAttentionCounts]] = [:]
 
     /// Which server's sessions are currently active. Set by ConnectionCoordinator
@@ -85,10 +84,6 @@ final class SessionStore {
 
     func listAttentionCounts(for sessionId: String) -> SessionSummaryAttentionCounts {
         serverListAttentionCounts[activeServerKey]?[sessionId] ?? .none
-    }
-
-    func listPendingPermissionCount(for sessionId: String) -> Int {
-        listAttentionCounts(for: sessionId).pendingPermissionCount
     }
 
     func listPendingAskCount(for sessionId: String) -> Int {

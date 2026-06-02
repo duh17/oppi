@@ -304,15 +304,6 @@ describe("LiveActivityBridge", () => {
   });
 
   describe("content state", () => {
-    it("sets pending permission count to zero", () => {
-      const { bridge, push } = makeBridge();
-
-      bridge.handleSessionEvent(event("agent_start"));
-      vi.advanceTimersByTime(800);
-
-      expect(push.updates[0].contentState.pendingPermissions).toBe(0);
-    });
-
     it("computes elapsed seconds from session createdAt", () => {
       const session = makeSession({ id: "s1", createdAt: Date.now() - 120_000 });
       const storage = makeStorageStub("la-token", [session]);
@@ -374,22 +365,6 @@ describe("LiveActivityBridge", () => {
     });
   });
 
-  describe("queueUpdate", () => {
-    it("queues direct updates", () => {
-      const { bridge, push } = makeBridge();
-
-      bridge.queueUpdate({
-        sessionId: "s1",
-        lastEvent: "Permission approved",
-        priority: 5,
-      });
-      vi.advanceTimersByTime(800);
-
-      expect(push.updates).toHaveLength(1);
-      expect(push.updates[0].contentState.lastEvent).toBe("Permission approved");
-    });
-  });
-
   describe("shutdown", () => {
     it("clears pending state and timer", () => {
       const { bridge, push } = makeBridge();
@@ -408,31 +383,4 @@ describe("LiveActivityBridge", () => {
     });
   });
 
-  describe("primary session selection", () => {
-    it("picks busy session over ready", () => {
-      const busy = makeSession({ id: "s1", status: "busy", createdAt: Date.now() - 60_000 });
-      const ready = makeSession({ id: "s2", status: "ready", createdAt: Date.now() - 30_000 });
-      const storage = makeStorageStub("la-token", [ready, busy]);
-      const { bridge, push } = makeBridge({ storage });
-
-      // No sessionId → falls back to primary session
-      bridge.queueUpdate({ lastEvent: "test" });
-      vi.advanceTimersByTime(800);
-
-      expect(push.updates[0].contentState.elapsedSeconds).toBeGreaterThanOrEqual(60);
-    });
-
-    it("breaks ties by most recent activity", () => {
-      const older = makeSession({ id: "s1", status: "ready", lastActivity: 1000 });
-      const newer = makeSession({ id: "s2", status: "ready", lastActivity: 2000 });
-      const storage = makeStorageStub("la-token", [older, newer]);
-      const { bridge, push } = makeBridge({ storage });
-
-      bridge.queueUpdate({ lastEvent: "test" });
-      vi.advanceTimersByTime(800);
-
-      // Should pick newer (s2) based on lastActivity tie-break
-      expect(push.updates).toHaveLength(1);
-    });
-  });
 });

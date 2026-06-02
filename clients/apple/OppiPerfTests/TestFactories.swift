@@ -51,23 +51,6 @@ func makeTestCredentials(
     )
 }
 
-func makeTestPermission(
-    id: String = "p1",
-    sessionId: String = "s1",
-    tool: String = "bash",
-    timeoutOffset: TimeInterval = 120
-) -> PermissionRequest {
-    PermissionRequest(
-        id: id,
-        sessionId: sessionId,
-        tool: tool,
-        input: [:],
-        displaySummary: "\(tool): test",
-        reason: "Test",
-        timeoutAt: Date().addingTimeInterval(timeoutOffset)
-    )
-}
-
 func makeTestWorkspace(
     id: String = "w1",
     name: String = "Workspace",

@@ -13,77 +13,54 @@ struct LiveActivityAlertTests {
 
     @Test("awaitingReply from working does not alert")
     func awaitingReplyFromWorking() {
-        let state = makeState(phase: .awaitingReply, approvals: 0)
+        let state = makeState(phase: .awaitingReply)
         #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .working, lastPushedApprovalCount: 0
+            state: state, lastPushedPhase: .working
         ))
     }
 
     @Test("awaitingReply from ended does not alert")
     func awaitingReplyFromEnded() {
-        let state = makeState(phase: .awaitingReply, approvals: 0)
+        let state = makeState(phase: .awaitingReply)
         #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .ended, lastPushedApprovalCount: 0
+            state: state, lastPushedPhase: .ended
         ))
     }
 
-    @Test("awaitingReply with unchanged approval count does not alert")
-    func awaitingReplyUnchangedApprovals() {
-        let state = makeState(phase: .awaitingReply, approvals: 2)
+    @Test("awaitingReply with unchanged count does not alert")
+    func awaitingReplyUnchangedCount() {
+        let state = makeState(phase: .awaitingReply)
         #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .working, lastPushedApprovalCount: 2
+            state: state, lastPushedPhase: .working
         ))
     }
 
-    // MARK: - needsApproval MUST alert
 
-    @Test("needsApproval from working alerts")
-    func needsApprovalFromWorking() {
-        let state = makeState(phase: .needsApproval, approvals: 1)
-        #expect(LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .working, lastPushedApprovalCount: 0
-        ))
-    }
 
-    @Test("needsApproval with increased count alerts")
-    func needsApprovalIncreasedCount() {
-        let state = makeState(phase: .needsApproval, approvals: 3)
-        #expect(LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .needsApproval, lastPushedApprovalCount: 2
-        ))
-    }
-
-    @Test("needsApproval same count same phase does not re-alert")
-    func needsApprovalSameCountSamePhase() {
-        let state = makeState(phase: .needsApproval, approvals: 2)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .needsApproval, lastPushedApprovalCount: 2
-        ))
-    }
 
     // MARK: - Other phases never alert
 
     @Test("working never alerts", arguments: [SessionPhase.ended, .awaitingReply, .working, .error])
     func workingNeverAlerts(from: SessionPhase) {
-        let state = makeState(phase: .working, approvals: 0)
+        let state = makeState(phase: .working)
         #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: from, lastPushedApprovalCount: 0
+            state: state, lastPushedPhase: from
         ))
     }
 
     @Test("error never alerts", arguments: [SessionPhase.working, .ended, .awaitingReply])
     func errorNeverAlerts(from: SessionPhase) {
-        let state = makeState(phase: .error, approvals: 0)
+        let state = makeState(phase: .error)
         #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: from, lastPushedApprovalCount: 0
+            state: state, lastPushedPhase: from
         ))
     }
 
     @Test("ended never alerts")
     func endedNeverAlerts() {
-        let state = makeState(phase: .ended, approvals: 0)
+        let state = makeState(phase: .ended)
         #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .awaitingReply, lastPushedApprovalCount: 0
+            state: state, lastPushedPhase: .awaitingReply
         ))
     }
 
@@ -95,16 +72,16 @@ struct LiveActivityAlertTests {
 
         for _ in 0..<10 {
             // working phase
-            let working = makeState(phase: .working, approvals: 0)
+            let working = makeState(phase: .working)
             if LiveActivityManager.shouldAlert(
-                state: working, lastPushedPhase: lastPhase, lastPushedApprovalCount: lastCount
+                state: working, lastPushedPhase: lastPhase
             ) { alertCount += 1 }
             lastPhase = .working
 
             // awaitingReply phase
-            let awaiting = makeState(phase: .awaitingReply, approvals: 0)
+            let awaiting = makeState(phase: .awaitingReply)
             if LiveActivityManager.shouldAlert(
-                state: awaiting, lastPushedPhase: lastPhase, lastPushedApprovalCount: lastCount
+                state: awaiting, lastPushedPhase: lastPhase
             ) { alertCount += 1 }
             lastPhase = .awaitingReply
         }
@@ -123,7 +100,7 @@ struct LiveActivityStateTests {
     @MainActor func syncBusyWorking() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         #expect(mgr.currentState.primaryPhase == .working)
         #expect(mgr.currentState.totalActiveSessions == 1)
@@ -136,7 +113,7 @@ struct LiveActivityStateTests {
         let turnStart = Date(timeIntervalSince1970: 1_700_000_123)
         let session = makeTestSession(id: "s1", status: .busy, currentTurnStartedAt: turnStart)
 
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         #expect(mgr.currentState.sessionStartDate == turnStart)
     }
@@ -145,7 +122,7 @@ struct LiveActivityStateTests {
     @MainActor func syncStoppedEnded() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .stopped)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         #expect(mgr.currentState.primaryPhase == .ended)
         #expect(mgr.currentState.totalActiveSessions == 0)
@@ -155,7 +132,7 @@ struct LiveActivityStateTests {
     @MainActor func agentStartWorking() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .agentStart(sessionId: "s1"))
         #expect(mgr.currentState.primaryPhase == .working)
@@ -165,7 +142,7 @@ struct LiveActivityStateTests {
     @MainActor func agentEndAwaitingReply() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .agentEnd(sessionId: "s1"))
         #expect(mgr.currentState.primaryPhase == .awaitingReply)
@@ -175,7 +152,7 @@ struct LiveActivityStateTests {
     @MainActor func toolStartShowsTool() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .toolStart(
             sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]
@@ -197,7 +174,7 @@ struct LiveActivityStateTests {
             removedLines: 4
         )
 
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         #expect(mgr.currentState.primaryMutatingToolCalls == 3)
         #expect(mgr.currentState.primaryFilesChanged == 2)
@@ -205,29 +182,7 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.primaryRemovedLines == 4)
     }
 
-    @Test("sync with permission sets needsApproval")
-    @MainActor func syncPermissionNeedsApproval() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        let perm = makePermission(id: "p1", sessionId: "s1", tool: "bash")
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [perm])
 
-        #expect(mgr.currentState.primaryPhase == .needsApproval)
-        #expect(mgr.currentState.pendingApprovalCount == 1)
-        #expect(mgr.currentState.topPermissionId == "p1")
-    }
-
-    @Test("needsApproval outranks working across sessions")
-    @MainActor func needsApprovalOutranksWorking() {
-        let mgr = LiveActivityManager()
-        let working = makeTestSession(id: "s1", status: .busy)
-        let ready = makeTestSession(id: "s2", status: .ready)
-        let perm = makePermission(id: "p1", sessionId: "s2", tool: "edit")
-
-        mgr.sync(connectionId: "c1", sessions: [working, ready], pendingPermissions: [perm])
-        #expect(mgr.currentState.primaryPhase == .needsApproval)
-        #expect(mgr.currentState.totalActiveSessions == 2)
-    }
 
     @Test("working outranks awaitingReply across sessions")
     @MainActor func workingOutranksAwaitingReply() {
@@ -235,34 +190,18 @@ struct LiveActivityStateTests {
         let working = makeTestSession(id: "s1", status: .busy)
         let ready = makeTestSession(id: "s2", status: .ready)
 
-        mgr.sync(connectionId: "c1", sessions: [working, ready], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [working, ready])
 
         #expect(mgr.currentState.primaryPhase == .working)
         #expect(mgr.currentState.primarySessionId == "s1")
     }
 
-    @Test("permission summary truncates for live activity width")
-    @MainActor func permissionSummaryTruncates() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        let summary = "abcdefghijklmnopqrstuvwxyz 0123456789 EXTRA"
-        let perm = makePermission(id: "p1", sessionId: "s1", tool: "bash", displaySummary: summary)
-
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [perm])
-
-        guard let truncated = mgr.currentState.topPermissionSummary else {
-            Issue.record("Expected topPermissionSummary")
-            return
-        }
-        #expect(truncated.count == 40)
-        #expect(truncated == String(summary.prefix(40)))
-    }
 
     @Test("removeConnection clears state")
     @MainActor func removeConnectionClears() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
         #expect(mgr.currentState.primaryPhase == .working)
 
         mgr.removeConnection("c1")
@@ -274,7 +213,7 @@ struct LiveActivityStateTests {
     @MainActor func errorSetsErrorPhase() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .error(sessionId: "s1", message: "Something broke"))
         #expect(mgr.currentState.primaryPhase == .error)
@@ -284,7 +223,7 @@ struct LiveActivityStateTests {
     @MainActor func retryingErrorIgnored() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .error(sessionId: "s1", message: "Retrying (attempt 2/3)"))
         #expect(mgr.currentState.primaryPhase == .working)
@@ -294,7 +233,7 @@ struct LiveActivityStateTests {
     @MainActor func sessionEndedSetsEnded() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .sessionEnded(sessionId: "s1", reason: "done"))
         #expect(mgr.currentState.primaryPhase == .ended)
@@ -311,45 +250,28 @@ struct LiveActivityAlertIntegrationTests {
     @MainActor func rapidCycleNoAlerts() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         var lastPhase: SessionPhase = mgr.lastPushedPrimaryPhase
-        let lastCount = mgr.lastPushedApprovalCount
         var alerts = 0
 
         // Agent ends
         mgr.recordEvent(connectionId: "c1", event: .agentEnd(sessionId: "s1"))
         if LiveActivityManager.shouldAlert(
-            state: mgr.currentState, lastPushedPhase: lastPhase, lastPushedApprovalCount: lastCount
+            state: mgr.currentState, lastPushedPhase: lastPhase
         ) { alerts += 1 }
         lastPhase = mgr.currentState.primaryPhase
 
         // Agent restarts
         mgr.recordEvent(connectionId: "c1", event: .agentStart(sessionId: "s1"))
         if LiveActivityManager.shouldAlert(
-            state: mgr.currentState, lastPushedPhase: lastPhase, lastPushedApprovalCount: lastCount
+            state: mgr.currentState, lastPushedPhase: lastPhase
         ) { alerts += 1 }
 
         #expect(alerts == 0)
     }
 
-    @Test("permission request after working correctly alerts once")
-    @MainActor func permissionAfterWorkingAlerts() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
-        mgr.lastPushedPrimaryPhase = .working
-        mgr.lastPushedApprovalCount = 0
 
-        let perm = makePermission(id: "p1", sessionId: "s1", tool: "bash")
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [perm])
-
-        #expect(LiveActivityManager.shouldAlert(
-            state: mgr.currentState,
-            lastPushedPhase: .working,
-            lastPushedApprovalCount: 0
-        ))
-    }
 }
 
 // MARK: - Lifecycle Recovery (P0: 8-hour silent death)
@@ -364,7 +286,7 @@ struct LiveActivityLifecycleTests {
 
         let source = LiveActivityManager()
         let session = makeTestSession(id: "s-orphan", status: .busy)
-        source.sync(connectionId: "c-source", sessions: [session], pendingPermissions: [])
+        source.sync(connectionId: "c-source", sessions: [session])
         #expect(source.activeActivity != nil)
 
         // Simulate app relaunch: a fresh manager instance has no in-memory
@@ -385,7 +307,7 @@ struct LiveActivityLifecycleTests {
     @MainActor func recoverWithActiveSessions() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
 
         #expect(mgr.currentState.primaryPhase == .working)
 
@@ -419,7 +341,7 @@ struct LiveActivityIdleDismissTests {
         // short dismiss rather than keeping the activity alive for a full minute.
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+        mgr.sync(connectionId: "c1", sessions: [session])
         #expect(mgr.currentState.primaryPhase == .working)
 
         // End the session — should transition to ended
@@ -450,37 +372,13 @@ struct LiveActivityDeepLinkTests {
         #expect(sessionId == "abc-123")
     }
 
-    @Test("permission deep link is preferred when topPermissionId exists")
-    func permissionDeepLinkPreferred() {
-        // Pending approval state should preserve the owning session.
-        let state = PiSessionAttributes.ContentState(
-            primaryPhase: .needsApproval,
-            primarySessionId: "s1",
-            primarySessionName: "Test",
-            primaryTool: "bash",
-            primaryLastActivity: "Approval required",
-            totalActiveSessions: 1,
-            sessionsAwaitingReply: 0,
-            sessionsWorking: 0,
-            primaryMutatingToolCalls: nil,
-            primaryFilesChanged: nil,
-            primaryAddedLines: nil,
-            primaryRemovedLines: nil,
-            topPermissionId: "perm-456",
-            topPermissionTool: "bash",
-            topPermissionSummary: "run ls",
-            pendingApprovalCount: 1,
-            sessionStartDate: nil
-        )
-        #expect(state.topPermissionId == "perm-456")
-        #expect(state.primarySessionId == "s1")
-    }
+
 }
 
 // MARK: - Helpers
 
 private func endAllLiveActivitiesImmediately() async {
-    let finalState = makeState(phase: .ended, approvals: 0)
+    let finalState = makeState(phase: .ended)
 
     for activity in Activity<PiSessionAttributes>.activities {
         await activity.end(
@@ -493,7 +391,7 @@ private func endAllLiveActivitiesImmediately() async {
     try? await Task.sleep(for: .milliseconds(50))
 }
 
-private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttributes.ContentState {
+private func makeState(phase: SessionPhase) -> PiSessionAttributes.ContentState {
     PiSessionAttributes.ContentState(
         primaryPhase: phase,
         primarySessionId: "test-session",
@@ -507,27 +405,6 @@ private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttribut
         primaryFilesChanged: nil,
         primaryAddedLines: nil,
         primaryRemovedLines: nil,
-        topPermissionId: phase == .needsApproval ? "p1" : nil,
-        topPermissionTool: phase == .needsApproval ? "bash" : nil,
-        topPermissionSummary: nil,
-        pendingApprovalCount: approvals,
         sessionStartDate: nil
-    )
-}
-
-private func makePermission(
-    id: String,
-    sessionId: String,
-    tool: String,
-    displaySummary: String? = nil
-) -> PermissionRequest {
-    PermissionRequest(
-        id: id,
-        sessionId: sessionId,
-        tool: tool,
-        input: [:],
-        displaySummary: displaySummary ?? "Test permission for \(tool)",
-        reason: "policy",
-        timeoutAt: Date().addingTimeInterval(120)
     )
 }

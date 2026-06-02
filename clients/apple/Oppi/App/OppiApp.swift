@@ -165,7 +165,6 @@ struct OppiApp: App {
             .environment(coordinator.activeConnection.chatState)
             .environment(coordinator.activeConnection.sessionStore)
             .environment(coordinator.activeConnection.workspaceStore)
-            .environment(coordinator.activeConnection.permissionStore)
             .environment(coordinator.activeConnection.askRequestStore)
             .environment(coordinator.activeConnection.audioPlayer)
             .environment(coordinator.activeConnection.gitStatusStore)
@@ -427,14 +426,13 @@ struct OppiApp: App {
 
             // Reset the new connection's state
             connection.disconnectSession()
-            connection.permissionStore.pending.removeAll()
             connection.sessionStore.sessions.removeAll()
             connection.sessionStore.activeSessionId = nil
 
             connection.sessionStore.markSyncStarted()
             connection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
             connection.sessionStore.markSyncSucceeded()
-            connection.syncLiveActivityPermissions()
+            connection.syncLiveActivityState()
             navigation.showOnboarding = false
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient {
@@ -500,8 +498,8 @@ struct OppiApp: App {
 #endif
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
 
-            // Keep the WS alive while agents are working so we receive
-            // permission requests and status updates without reconnecting.
+            // Keep the WS alive while agents are working so we receive status
+            // updates without reconnecting.
             let hasActiveAgent = connection.sessionStore.sessions.contains {
                 $0.status == .busy || $0.status == .starting
             }
@@ -744,7 +742,7 @@ struct OppiApp: App {
             usedCachedSessions = true
             connection.sessionStore.applyServerSnapshot(cachedSessions)
             connection.syncAllWorkspaceSummariesFromLocalState()
-            connection.syncLiveActivityPermissions()
+            connection.syncLiveActivityState()
         }
 
         // Cached workspace catalog — load before revealing UI so the

@@ -2,17 +2,15 @@ import SwiftUI
 
 /// Sort "Your Turn" sessions so the user sees the oldest waiting item first.
 ///
-/// Priority remains permission requests before ask requests before plain ready/error
-/// sessions. Within the same priority tier, use the same timestamp shown in the
-/// row (`lastActivity`) so the visual order matches the visible "xh ago" label.
+/// Priority remains ask/input requests before plain ready/error sessions.
+/// Within the same priority tier, use the same timestamp shown in the row
+/// (`lastActivity`) so the visual order matches the visible "xh ago" label.
 func workspaceYourTurnSorted(
     _ sessions: [Session],
-    hasPermissionInQueue: (String) -> Bool,
     hasAskInQueue: (String) -> Bool
 ) -> [Session] {
     SessionListPresentation.sortYourTurn(sessions) { sessionId in
         SessionListAttentionCounts(
-            permissionCount: hasPermissionInQueue(sessionId) ? 1 : 0,
             askCount: hasAskInQueue(sessionId) ? 1 : 0
         )
     }
@@ -114,7 +112,6 @@ struct WorkspaceDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
-    @Environment(PermissionStore.self) private var permissionStore
     @Environment(AskRequestStore.self) private var askRequestStore
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AppNavigation.self) private var navigation
@@ -287,7 +284,6 @@ struct WorkspaceDetailView: View {
         let attention = SessionRowPresentationBuilder.attentionCounts(
             sessionId: session.id,
             descendants: descendants,
-            pendingPermissionCountForSession: { pendingPermissionCount(for: $0) },
             pendingAskCountForSession: { pendingAskCount(for: $0) }
         )
 
@@ -344,13 +340,6 @@ struct WorkspaceDetailView: View {
                 : yourTurnUnfiltered
             return workspaceYourTurnSorted(
                 filtered,
-                hasPermissionInQueue: { sessionId in
-                    SessionTreeHelper.aggregatePendingCount(
-                        of: sessionId,
-                        in: activeSessions,
-                        pendingForSession: { pendingPermissionCount(for: $0) }
-                    ) > 0
-                },
                 hasAskInQueue: { sessionId in
                     SessionTreeHelper.aggregatePendingCount(
                         of: sessionId,
@@ -569,6 +558,9 @@ struct WorkspaceDetailView: View {
             ChatView(sessionId: sessionId)
         }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                workspaceListToolbarItem
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 workspaceFilesToolbarItem
             }
@@ -647,26 +639,16 @@ struct WorkspaceDetailView: View {
         let attention = SessionRowPresentationBuilder.attentionCounts(
             sessionId: session.id,
             descendants: descendants,
-            pendingPermissionCountForSession: { pendingPermissionCount(for: $0) },
             pendingAskCountForSession: { pendingAskCount(for: $0) }
         )
         return SessionRowPresentationBuilder.make(
             session: session,
             descendants: descendants,
-            pendingPermissionCount: attention.permissionCount,
             pendingAskCount: attention.askCount,
-            pendingPermissions: permissionStore.pending(for: session.id),
             pendingAsk: askRequestStore.pending(for: session.id),
             activity: activityStore.lastActivity(for: session.id),
             lineageHint: lineageHint,
             searchSnippet: searchStore.snippetsBySessionId[session.id]
-        )
-    }
-
-    private func pendingPermissionCount(for sessionId: String) -> Int {
-        SessionListAttentionMerger.permissionCount(
-            listCount: sessionStore.listPendingPermissionCount(for: sessionId),
-            liveCount: permissionStore.pending(for: sessionId).count
         )
     }
 
@@ -737,6 +719,21 @@ struct WorkspaceDetailView: View {
             .foregroundStyle(.themeFg)
     }
 
+    @ViewBuilder
+    private var workspaceListToolbarItem: some View {
+        if navigation.workspaceNavigationPresentation == .split {
+            Button {
+                navigation.showWorkspaceListInSplitSidebar()
+            } label: {
+                Label("Workspaces", systemImage: "chevron.left")
+                    .labelStyle(.iconOnly)
+            }
+            .foregroundStyle(.themeFg)
+            .accessibilityLabel("Show workspaces")
+            .accessibilityIdentifier("workspace.sidebar.showWorkspaces")
+        }
+    }
+
     private var newSessionToolbarItem: some View {
         Button {
             Task { await createSession() }
@@ -762,7 +759,18 @@ struct WorkspaceDetailView: View {
     }
 
     private var workspaceConfigurationButton: some View {
-        Button { showEditWorkspace = true } label: {
+        Button {
+            switch navigation.workspaceNavigationPresentation {
+            case .stack:
+                showEditWorkspace = true
+            case .split:
+                if let currentServerId {
+                    navigation.openWorkspaceConfiguration(
+                        WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+                    )
+                }
+            }
+        } label: {
             Image(systemName: "slider.horizontal.3")
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(.themeFg)
@@ -1028,11 +1036,6 @@ struct WorkspaceDetailView: View {
                 return false
             }
         }
-        let hasPermissionAttention = sessions.contains { pendingPermissionCount(for: $0.id) > 0 }
-            || permissionStore.pending.contains { permission in
-                permission.workspaceId == workspace.id ||
-                    (permission.workspaceId == nil && sessionIds.contains(permission.sessionId))
-            }
         let hasAskAttention = sessions.contains { pendingAskCount(for: $0.id) > 0 }
             || askRequestStore.pending.values.contains { ask in
                 ask.workspaceId == workspace.id ||
@@ -1041,7 +1044,7 @@ struct WorkspaceDetailView: View {
 
         return (
             hasActiveWork: hasActiveWork,
-            hasAttention: hasPermissionAttention || hasAskAttention
+            hasAttention: hasAskAttention
         )
     }
 

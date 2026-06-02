@@ -10,7 +10,7 @@ enum TimelineBubbleStyle {
     /// Standard message bubble (assistant, user, thinking, compaction).
     static let bubbleCornerRadius: CGFloat = 10
 
-    /// Compact chip rows (permission, audio clip).
+    /// Compact chip rows (audio clip).
     static let chipCornerRadius: CGFloat = 8
 
     /// Inset elements inside a bubble (user image thumbnails).
@@ -18,8 +18,8 @@ enum TimelineBubbleStyle {
 
     // MARK: - Background Alpha
 
-    /// Subtle bubble tint shared across assistant (purple), thinking-done
-    /// (comment), and permission-outcome rows.
+    /// Subtle bubble tint shared across assistant (purple) and thinking-done
+    /// (comment) rows.
     static let subtleBgAlpha: CGFloat = 0.08
 
     /// Lighter variant used for thinking-streaming bubbles.

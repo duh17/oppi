@@ -159,52 +159,8 @@ struct ServerConnectionTests {
         #expect(conn.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
     }
 
-    @Test func routePermissionRequest() {
-        let (conn, pipe) = makeTestConnection()
-        let perm = PermissionRequest(
-            id: "p1", sessionId: "s1", tool: "bash",
-            input: ["command": .string("rm -rf /")],
-            displaySummary: "bash: rm -rf /",
-            reason: "Destructive",
-            timeoutAt: Date().addingTimeInterval(120)
-        )
-
-        pipe.handle(.permissionRequest(perm), sessionId: "s1")
-
-        #expect(conn.permissionStore.count == 1)
-        #expect(conn.permissionStore.pending[0].id == "p1")
-    }
 
 
-    @Test func routePermissionExpired() {
-        let (conn, pipe) = makeTestConnection()
-        let perm = PermissionRequest(
-            id: "p1", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "bash: test",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(120)
-        )
-        conn.permissionStore.add(perm)
-
-        pipe.handle(.permissionExpired(id: "p1", reason: "timeout"), sessionId: "s1")
-
-        #expect(conn.permissionStore.pending.isEmpty)
-    }
-
-    @Test func routePermissionCancelled() {
-        let (conn, pipe) = makeTestConnection()
-        let perm = PermissionRequest(
-            id: "p1", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "bash: test",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(120)
-        )
-        conn.permissionStore.add(perm)
-
-        pipe.handle(.permissionCancelled(id: "p1"), sessionId: "s1")
-
-        #expect(conn.permissionStore.pending.isEmpty)
-    }
 
     @Test func routeAgentStartAndTextAndEnd() {
         let (conn, pipe) = makeTestConnection()
@@ -1411,25 +1367,6 @@ struct ForegroundRecoveryTests {
         #expect(idleSummary?.hasErrorRoot == false)
         #expect(idleSummary?.latestActivity == Date(timeIntervalSince1970: 1_700_000_500))
 
-        conn.permissionStore.add(
-            PermissionRequest(
-                id: "perm-1",
-                sessionId: "ready-root",
-                tool: "bash",
-                input: [:],
-                displaySummary: "bash: test",
-                reason: "Test",
-                timeoutAt: Date().addingTimeInterval(120),
-                workspaceId: "w1"
-            )
-        )
-        conn.syncWorkspaceSummary(workspaceId: "w1")
-
-        let pendingSummary = conn.workspaceStore.workspaceSummaries["w1"]
-        #expect(pendingSummary?.activeCount == 4)
-        #expect(pendingSummary?.stoppedCount == 12)
-        #expect(pendingSummary?.hasAttention == true)
-        #expect(pendingSummary?.hasErrorRoot == false)
     }
 
     @Test func syncWorkspaceSummaryUsesPendingExtensionDialogAttention() {
@@ -1732,18 +1669,11 @@ struct StreamLifecycleTests {
             }
         }
 
-        // Route a historical permission event for the active session
-        let permRequest = PermissionRequest(
-            id: "p1", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "test", reason: "",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
         let streamMsg = StreamMessage(
             sessionId: "s1",
             seq: 1,
             currentSeq: nil,
-            message: .permissionRequest(permRequest)
+            message: .agentStart
         )
         conn.routeStreamMessage(streamMsg)
 
@@ -1756,30 +1686,6 @@ struct StreamLifecycleTests {
         #expect(received, "Message should be yielded to session continuation")
     }
 
-    @Test func routeStreamMessageHandlesCrossSessionPermission() {
-        let (conn, pipe) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-
-        // Route a permission from a DIFFERENT session (cross-session)
-        let permRequest = PermissionRequest(
-            id: "p2", sessionId: "s2", tool: "bash",
-            input: [:], displaySummary: "cross-session", reason: "",
-            timeoutAt: Date().addingTimeInterval(60),
-            expires: true
-        )
-        let streamMsg = StreamMessage(
-            sessionId: "s2",
-            seq: 2,
-            currentSeq: nil,
-            message: .permissionRequest(permRequest)
-        )
-        conn.routeStreamMessage(streamMsg)
-
-        // Cross-session permission should be added to the store
-        #expect(conn.permissionStore.pending.count == 1,
-                "Cross-session permission should be added to store")
-        #expect(conn.permissionStore.pending.first?.id == "p2")
-    }
 
     // MARK: - reconnectIfNeeded restarts dead stream
 
@@ -1892,26 +1798,20 @@ struct StreamLifecycleTests {
                 hasErrorRoot: false
             )
         ])
-        conn.permissionStore.add(PermissionRequest(
-            id: "p1",
-            sessionId: "s1",
-            tool: "bash",
-            input: [:],
-            displaySummary: "run command",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(60),
-            workspaceId: "w1"
-        ))
+        conn.presentAskRequest(
+            AskRequest(id: "a1", sessionId: "s1", questions: [], allowCustom: true, timeout: nil, workspaceId: "w1"),
+            for: "s1"
+        )
 
         conn.applyWorkspaceAttentionSnapshot(
             APIClient.WorkspaceAttentionResponse(
                 workspaceId: "w1",
                 serverNow: 0,
-                attention: .init(permissions: [], asks: [])
+                attention: .init(asks: [])
             )
         )
 
-        #expect(conn.permissionStore.pending.isEmpty)
+        #expect(conn.askRequestStore.pending.isEmpty)
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == false)
     }
@@ -1928,22 +1828,16 @@ struct StreamLifecycleTests {
                 hasErrorRoot: true
             )
         ])
-        conn.permissionStore.add(PermissionRequest(
-            id: "p1",
-            sessionId: "s1",
-            tool: "bash",
-            input: [:],
-            displaySummary: "run command",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(60),
-            workspaceId: "w1"
-        ))
+        conn.presentAskRequest(
+            AskRequest(id: "a1", sessionId: "s1", questions: [], allowCustom: true, timeout: nil, workspaceId: "w1"),
+            for: "s1"
+        )
 
         conn.applyWorkspaceAttentionSnapshot(
             APIClient.WorkspaceAttentionResponse(
                 workspaceId: "w1",
                 serverNow: 0,
-                attention: .init(permissions: [], asks: [])
+                attention: .init(asks: [])
             )
         )
 
@@ -1951,34 +1845,6 @@ struct StreamLifecycleTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == true)
     }
 
-    @Test func permissionEventsSyncWorkspaceSummaryAttention() {
-        let (conn, _) = makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
-        conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
-            "w1": WorkspaceListSummary(
-                workspaceId: "w1",
-                activeCount: 1,
-                stoppedCount: 0,
-                hasAttention: false,
-                hasErrorRoot: false
-            )
-        ])
-        let permission = PermissionRequest(
-            id: "p1",
-            sessionId: "s1",
-            tool: "bash",
-            input: [:],
-            displaySummary: "run command",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(60)
-        )
-
-        _ = conn.applySharedStoreUpdate(for: .permissionRequest(permission), sessionId: "s1")
-        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
-
-        _ = conn.applySharedStoreUpdate(for: .permissionResolved(id: "p1", action: .allow), sessionId: "s1")
-        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
-    }
 
     @Test func askLifecycleSyncsWorkspaceSummaryAttention() {
         let (conn, _) = makeTestConnection()

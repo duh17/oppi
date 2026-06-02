@@ -2,7 +2,6 @@ import Foundation
 
 /// Observable store for pending ask requests (agent questions to the user).
 ///
-/// Similar to PermissionStore but for the `ask` extension tool.
 /// Each session can have at most one pending ask at a time.
 ///
 /// Separate from ServerConnection so session list views can observe

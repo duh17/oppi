@@ -90,7 +90,6 @@ struct WorkspaceSessionListModelsTests {
               "messageCount": 0,
               "tokens": {"input": 0, "output": 0},
               "cost": 0,
-              "pendingPermissionCount": 2,
               "pendingAskCount": 0
             }
           ],
@@ -132,11 +131,10 @@ struct WorkspaceSessionListModelsTests {
 
         #expect(response.workspaceId == "w1")
         #expect(response.sessionSummaries.map(\.id) == ["s-active", "s-old"])
-        #expect(response.sessionSummaries.first?.pendingPermissionCount == 2)
         #expect(response.sessionSummaries.first?.pendingAskCount == 0)
         #expect(response.importableSessions.map(\.path) == ["/tmp/local.jsonl"])
         if case .session(let row) = response.active[0] {
-            #expect(row.pendingPermissionCount == 2)
+            #expect(row.pendingAskCount == 0)
         } else {
             Issue.record("Expected managed session row")
         }

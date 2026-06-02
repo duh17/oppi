@@ -445,8 +445,6 @@ private enum ItemSignature: Equatable {
     case audio(String)
     case thinking(String, Bool)
     case tool(String, String, String, Bool, Bool)
-    case permission(String)
-    case permissionResolved(PermissionOutcome, String, String)
     case system(String)
     case error(String)
 }
@@ -464,10 +462,6 @@ private func itemSignatures(_ items: [ChatItem]) -> [ItemSignature] {
             return .thinking(preview, isDone)
         case .toolCall(let id, let tool, _, let outputPreview, _, let isError, let isDone):
             return .tool(id, tool, outputPreview, isError, isDone)
-        case .permission(let request):
-            return .permission(request.id)
-        case .permissionResolved(_, let outcome, let tool, let summary):
-            return .permissionResolved(outcome, tool, summary)
         case .systemEvent(_, let message):
             return .system(message)
         case .error(_, let message):

@@ -85,14 +85,6 @@ enum ServerMessage: Sendable, Equatable {
     case retryStart(attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
     case retryEnd(success: Bool, attempt: Int, finalError: String?)
 
-    // Legacy permission events are no longer decoded from the wire. The cases
-    // remain for historical timeline/store fixtures until those are migrated.
-    case permissionRequest(PermissionRequest)
-    case permissionExpired(id: String, reason: String)
-    case permissionCancelled(id: String)
-    case permissionResolved(id: String, action: PermissionAction)
-    case permissionAutoReviewed(AutoReviewTimelineItem, workspaceId: String?)
-
     // Extension UI
     case extensionUIRequest(ExtensionUIRequest)
     case extensionUINotification(ExtensionUINotification)
@@ -633,11 +625,6 @@ extension ServerMessage {
         case .compactionEnd: "compactionEnd"
         case .retryStart: "retryStart"
         case .retryEnd: "retryEnd"
-        case .permissionRequest: "permissionRequest"
-        case .permissionExpired: "permissionExpired"
-        case .permissionCancelled: "permissionCancelled"
-        case .permissionResolved: "permissionResolved"
-        case .permissionAutoReviewed: "permissionAutoReviewed"
         case .extensionUIRequest: "extensionUIRequest"
         case .extensionUINotification: "extensionUINotification"
         case .extensionUISettled: "extensionUISettled"

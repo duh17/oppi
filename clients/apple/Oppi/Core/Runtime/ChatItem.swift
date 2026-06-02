@@ -22,10 +22,6 @@ enum ChatItem: Identifiable, Equatable {
         isError: Bool,
         isDone: Bool
     )
-    /// Historical permission from trace replay. Not interactive — rendered
-    /// as a resolved marker (the permission is long past).
-    case permission(PermissionRequest)
-    case permissionResolved(id: String, outcome: PermissionOutcome, tool: String, summary: String)
     case systemEvent(id: String, message: String)
     case error(id: String, message: String)
 
@@ -36,8 +32,6 @@ enum ChatItem: Identifiable, Equatable {
         case .audioClip(let id, _, _, _): return id
         case .thinking(let id, _, _, _): return id
         case .toolCall(let id, _, _, _, _, _, _): return id
-        case .permission(let request): return request.id
-        case .permissionResolved(let id, _, _, _): return id
         case .systemEvent(let id, _): return id
         case .error(let id, _): return id
         }

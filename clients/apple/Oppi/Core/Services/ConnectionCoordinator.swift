@@ -97,7 +97,6 @@ final class ConnectionCoordinator {
 
         // Initialize the stores' active partition to this server
         conn.sessionStore.switchServer(to: serverId)
-        conn.permissionStore.switchServer(to: serverId)
         conn.askRequestStore.switchServer(to: serverId)
         conn.workspaceStore.switchServer(to: serverId)
         conn.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
@@ -509,17 +508,6 @@ final class ConnectionCoordinator {
     /// Whether any active playback still depends on live focused-session delivery.
     var hasActiveAudioTransportPlayback: Bool {
         connections.values.contains { $0.audioPlayer.hasActiveLiveTransportPlayback }
-    }
-
-    /// All pending permissions across all servers.
-    var allPendingPermissions: [PermissionRequest] {
-        connections.values.flatMap { $0.permissionStore.pending }
-    }
-
-    // periphery:ignore - used by ConnectionCoordinatorTests via @testable import
-    /// Total pending permission count across all servers.
-    var allPendingPermissionCount: Int {
-        connections.values.reduce(0) { $0 + $1.permissionStore.count }
     }
 
     /// Find a session by ID across all servers.

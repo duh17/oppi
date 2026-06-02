@@ -1,6 +1,6 @@
 /// Recursive JSON value type for decoding arbitrary server payloads.
 ///
-/// Used for tool args, permission inputs, and any untyped JSON from the server.
+/// Used for tool args and any untyped JSON from the server.
 /// Replaces third-party `AnyCodable` — stdlib has no recursive Codable JSON type.
 enum JSONValue: Sendable, Equatable, Hashable {
     case string(String)

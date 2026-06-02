@@ -3,7 +3,6 @@ import SwiftUI
 import WidgetKit
 
 private let liveActivityTransitionAnimation = Animation.easeInOut(duration: 0.22)
-private let liveActivityCountAnimation = Animation.easeInOut(duration: 0.18)
 
 /// Aggregate Live Activity + Dynamic Island UI for Oppi sessions.
 struct PiSessionLiveActivity: Widget {
@@ -35,34 +34,16 @@ struct PiSessionLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    if context.state.pendingApprovalCount > 0 {
-                        CounterBadgeView(
-                            count: context.state.pendingApprovalCount,
-                            phase: .needsApproval,
-                            isStale: context.isStale,
-                            prefix: "+"
-                        )
-                    } else {
-                        PhaseStatusBadge(
-                            label: LiveActivityPresentation.phaseLabel(context.state.primaryPhase),
-                            phase: context.state.primaryPhase,
-                            isStale: context.isStale
-                        )
-                    }
+                    PhaseStatusBadge(
+                        label: LiveActivityPresentation.phaseLabel(context.state.primaryPhase),
+                        phase: context.state.primaryPhase,
+                        isStale: context.isStale
+                    )
                 }
 
                 DynamicIslandExpandedRegion(.center) {
                     if context.isStale {
                         StaleStatusView(message: "Update delayed")
-                    } else if let summary = context.state.topPermissionSummary,
-                              !summary.isEmpty {
-                        StatusMessageView(
-                            title: "Approval required",
-                            message: summary,
-                            systemImage: "exclamationmark.shield.fill",
-                            phase: .needsApproval,
-                            monospacedMessage: true
-                        )
                     } else if let activity = LiveActivityPresentation.centerActivityText(context.state) {
                         StatusMessageView(
                             title: nil,
@@ -77,8 +58,7 @@ struct PiSessionLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            if context.state.pendingApprovalCount == 0,
-                               let changeSummary = LiveActivityPresentation.changeStatsSummary(context.state) {
+                            if let changeSummary = LiveActivityPresentation.changeStatsSummary(context.state) {
                                 ChangeStatsSummaryView(
                                     summary: changeSummary,
                                     phase: context.state.primaryPhase
@@ -95,10 +75,6 @@ struct PiSessionLiveActivity: Widget {
                                 TimerPill(start: start, phase: context.state.primaryPhase)
                             }
                         }
-
-                        if context.state.topPermissionId != nil {
-                            OpenAppReviewHint()
-                        }
                     }
                     .padding(.horizontal, 6)
                     .padding(.bottom, 6)
@@ -111,15 +87,7 @@ struct PiSessionLiveActivity: Widget {
                 )
                 .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
             } compactTrailing: {
-                if context.state.pendingApprovalCount > 0 {
-                    CounterBadgeView(
-                        count: context.state.pendingApprovalCount,
-                        phase: .needsApproval,
-                        isStale: context.isStale,
-                        prefix: nil
-                    )
-                    .accessibilityLabel("\(context.state.pendingApprovalCount) pending approvals")
-                } else if let badge = compactChangeBadge(context.state) {
+                if let badge = compactChangeBadge(context.state) {
                     CompactTrailingBadge(
                         text: badge,
                         phase: context.state.primaryPhase,
@@ -170,15 +138,6 @@ private struct LockScreenView: View {
 
                         if context.isStale {
                             StaleStatusView(message: "Update delayed")
-                        } else if let summary = context.state.topPermissionSummary,
-                                  !summary.isEmpty {
-                            StatusMessageView(
-                                title: nil,
-                                message: summary,
-                                systemImage: "exclamationmark.shield.fill",
-                                phase: .needsApproval,
-                                monospacedMessage: true
-                            )
                         } else if let activity = LiveActivityPresentation.centerActivityText(context.state) {
                             StatusMessageView(
                                 title: nil,
@@ -200,14 +159,7 @@ private struct LockScreenView: View {
                         isStale: context.isStale
                     )
 
-                    if context.state.pendingApprovalCount > 0 {
-                        CounterBadgeView(
-                            count: context.state.pendingApprovalCount,
-                            phase: .needsApproval,
-                            isStale: context.isStale,
-                            prefix: nil
-                        )
-                    } else if let changeSummary = LiveActivityPresentation.changeStatsSummary(context.state) {
+                    if let changeSummary = LiveActivityPresentation.changeStatsSummary(context.state) {
                         ChangeStatsSummaryView(
                             summary: changeSummary,
                             phase: context.state.primaryPhase
@@ -227,9 +179,6 @@ private struct LockScreenView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
 
-            if context.state.topPermissionId != nil {
-                OpenAppReviewHint()
-            }
         }
         .padding(16)
     }
@@ -308,28 +257,6 @@ private struct CompactTrailingBadge: View {
             Capsule().strokeBorder(phaseBorderColor(phase, isStale: isStale), lineWidth: 0.75)
         )
         .animation(liveActivityTransitionAnimation, value: text)
-    }
-}
-
-private struct CounterBadgeView: View {
-    let count: Int
-    let phase: SessionPhase
-    let isStale: Bool
-    let prefix: String?
-
-    var body: some View {
-        Text("\(prefix ?? "")\(count)")
-            .font(.caption2.bold())
-            .foregroundStyle(phaseAccentColor(for: phase, isStale: isStale))
-            .contentTransition(.numericText())
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(phaseBackgroundColor(phase, isStale: isStale)))
-            .overlay(
-                Capsule().strokeBorder(phaseBorderColor(phase, isStale: isStale), lineWidth: 0.8)
-            )
-            .animation(liveActivityCountAnimation, value: count)
     }
 }
 
@@ -431,30 +358,14 @@ private struct StaleStatusView: View {
     var body: some View {
         Label(message, systemImage: "clock.badge.exclamationmark")
             .font(.caption2.bold())
-            .foregroundStyle(phaseAccentColor(for: .needsApproval, isStale: true))
+            .foregroundStyle(phaseAccentColor(for: .error, isStale: true))
             .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(Capsule().fill(phaseBackgroundColor(.needsApproval, isStale: true)))
+            .background(Capsule().fill(phaseBackgroundColor(.error, isStale: true)))
             .overlay(
-                Capsule().strokeBorder(phaseBorderColor(.needsApproval, isStale: true), lineWidth: 0.8)
+                Capsule().strokeBorder(phaseBorderColor(.error, isStale: true), lineWidth: 0.8)
             )
-    }
-}
-
-private struct OpenAppReviewHint: View {
-    var body: some View {
-        Label("Open Oppi to review", systemImage: "iphone")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(neutralSurfaceColor()))
-            .overlay(
-                Capsule().strokeBorder(neutralSurfaceBorderColor(), lineWidth: 0.8)
-            )
-            .accessibilityLabel("Open Oppi to review this request")
     }
 }
 
@@ -465,7 +376,6 @@ private func glyphAnimationToken(_ state: PiSessionAttributes.ContentState, isSt
         state.primaryPhase.rawValue,
         state.primaryTool ?? "",
         state.primarySessionName,
-        String(state.pendingApprovalCount),
         isStale ? "stale" : "fresh",
     ].joined(separator: "|")
 }
@@ -604,7 +514,7 @@ private func shouldPulse(_ phase: SessionPhase) -> Bool {
     switch phase {
     case .working:
         return true
-    case .awaitingReply, .needsApproval, .error, .ended:
+    case .awaitingReply, .error, .ended:
         return false
     }
 }
@@ -617,9 +527,6 @@ private func accessibilitySummary(
     var parts = ["\(state.primarySessionName), \(LiveActivityPresentation.phaseLabel(state.primaryPhase))"]
     if isStale {
         parts.append("Update delayed")
-    }
-    if state.pendingApprovalCount > 0 {
-        parts.append("\(state.pendingApprovalCount) pending approval\(state.pendingApprovalCount == 1 ? "" : "s")")
     }
     if let activity = state.primaryLastActivity, !activity.isEmpty {
         parts.append(activity)

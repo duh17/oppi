@@ -19,7 +19,6 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId == "sha256:switch-test")
         #expect(coordinator.activeConnection.currentServerId == "sha256:switch-test")
         #expect(coordinator.activeConnection.sessionStore.activeServerId == "sha256:switch-test")
-        #expect(coordinator.activeConnection.permissionStore.activeServerId == "sha256:switch-test")
     }
 
     @Test func switchToUnknownServerReturnsFalse() {
@@ -88,29 +87,6 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeConnection.sessionStore.sessions[0].name == "Session A")
     }
 
-    // MARK: - Permission Isolation
-
-    @Test func permissionsAreIsolatedBetweenServers() {
-        let (coordinator, _) = makeCoordinator()
-        let serverA = makeServer(id: "sha256:perm-a", name: "A")
-        let serverB = makeServer(id: "sha256:perm-b", name: "B")
-
-        coordinator.serverStore.addOrUpdate(serverA)
-        coordinator.serverStore.addOrUpdate(serverB)
-
-        // Add permission on server A
-        coordinator.switchToServer(serverA)
-        coordinator.activeConnection.permissionStore.add(makePermission(id: "p1"))
-
-        // Server B should be empty
-        coordinator.switchToServer(serverB)
-        #expect(coordinator.activeConnection.permissionStore.pending.isEmpty)
-
-        // Cross-server query should find it
-        #expect(coordinator.allPendingPermissions.count == 1)
-        #expect(coordinator.allPendingPermissionCount == 1)
-    }
-
     // MARK: - Server Removal
 
     @Test func removeServerCleansConnection() {
@@ -120,7 +96,6 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(server)
         coordinator.switchToServer(server)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "Doomed"))
-        coordinator.activeConnection.permissionStore.add(makePermission(id: "p1"))
 
         coordinator.removeServer(id: "sha256:remove-test")
 
@@ -521,15 +496,5 @@ struct ConnectionCoordinatorTests {
         return server
     }
 
-    private func makePermission(id: String) -> PermissionRequest {
-        PermissionRequest(
-            id: id,
-            sessionId: "s1",
-            tool: "bash",
-            input: [:],
-            displaySummary: "test",
-            reason: "",
-            timeoutAt: Date().addingTimeInterval(60)
-        )
-    }
+
 }

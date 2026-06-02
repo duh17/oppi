@@ -32,7 +32,6 @@ const IOS_COLD_LIST_PROJECTION_CONSUMER_PATH_PREFIXES = [
 const IOS_ISOLATED_STORES = [
   { file: "clients/apple/Oppi/Core/Services/SessionStore.swift", typeName: "SessionStore" },
   { file: "clients/apple/Oppi/Core/Services/WorkspaceStore.swift", typeName: "WorkspaceStore" },
-  { file: "clients/apple/Oppi/Core/Services/PermissionStore.swift", typeName: "PermissionStore" },
   {
     file: "clients/apple/Oppi/Core/Services/MessageQueueStore.swift",
     typeName: "MessageQueueStore",

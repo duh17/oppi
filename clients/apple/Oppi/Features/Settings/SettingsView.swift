@@ -368,9 +368,9 @@ struct SettingsView: View {
             Text("Security")
         } footer: {
             if biometricEnabled {
-                Text("Permission approvals require \(bio.biometricName). Deny is always one tap.")
+                Text("Sensitive local actions require \(bio.biometricName).")
             } else {
-                Text("Permissions can be approved with a simple tap.")
+                Text("Sensitive local actions skip device authentication.")
             }
         }
     }

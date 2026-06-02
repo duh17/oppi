@@ -128,27 +128,6 @@ extension ChatTimelineCollectionHost.Controller {
         )
     }
 
-    func permissionRowConfiguration(item: ChatItem) -> PermissionTimelineRowConfiguration? {
-        switch item {
-        case .permission(let request):
-            return PermissionTimelineRowConfiguration(
-                outcome: .expired,
-                tool: request.tool,
-                summary: request.displaySummary
-            )
-
-        case .permissionResolved(_, let outcome, let tool, let summary):
-            return PermissionTimelineRowConfiguration(
-                outcome: outcome,
-                tool: tool,
-                summary: summary
-            )
-
-        default:
-            return nil
-        }
-    }
-
     func systemEventRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
         guard case .systemEvent(_, let message) = item else { return nil }
 

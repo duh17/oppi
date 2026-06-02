@@ -32,15 +32,13 @@ struct TraceRenderingTests {
         toolName: String? = nil,
         output: String? = nil,
         isError: Bool? = nil,
-        thinking: String? = nil,
-        permission: PermissionTracePayload? = nil
+        thinking: String? = nil
     ) -> TraceEvent {
         TraceEvent(
             id: id, type: type, timestamp: timestamp,
             text: text, tool: tool, args: args, output: output,
             toolCallId: toolCallId, toolName: toolName, isError: isError,
-            thinking: thinking,
-            permission: permission
+            thinking: thinking
         )
     }
 
@@ -51,43 +49,9 @@ struct TraceRenderingTests {
         case .audioClip: return "audio"
         case .thinking: return "thinking"
         case .toolCall(_, let tool, _, _, _, _, _): return "tool(\(tool))"
-        case .permission: return "permission"
-        case .permissionResolved: return "resolved"
         case .systemEvent: return "system"
         case .error: return "error"
         }
-    }
-
-    // MARK: - Permission decisions
-
-    @Test func permissionTraceEventsRenderAsResolvedPermissionRows() {
-        let reducer = TimelineReducer()
-        let events = [
-            traceEvent(
-                id: "perm-1",
-                type: .permission,
-                text: "git status",
-                tool: "bash",
-                permission: PermissionTracePayload(
-                    outcome: .autoAllowed,
-                    auditId: "audit-1",
-                    resolvedBy: "auto_review",
-                    decision: "allow",
-                    reason: "read-only"
-                )
-            ),
-        ]
-
-        reducer.loadSession(events)
-
-        guard case .permissionResolved(let id, let outcome, let tool, let summary) = reducer.items.first else {
-            Issue.record("Expected permissionResolved row")
-            return
-        }
-        #expect(id == "perm-1")
-        #expect(outcome == .autoAllowed)
-        #expect(tool == "bash")
-        #expect(summary == "git status — read-only")
     }
 
     // MARK: - Whitespace-only assistant messages

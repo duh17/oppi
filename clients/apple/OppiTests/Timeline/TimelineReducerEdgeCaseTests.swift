@@ -413,17 +413,6 @@ struct TimelineReducerEdgeCaseTests {
         let thinking = ChatItem.thinking(id: "4", preview: "", hasMore: false)
         #expect(thinking.timestamp == nil)
 
-        let perm = ChatItem.permission(PermissionRequest(
-            id: "5", sessionId: "s1", tool: "bash",
-            input: [:], displaySummary: "x",
-            reason: "r",
-            timeoutAt: Date()
-        ))
-        #expect(perm.timestamp == nil)
-
-        let resolved = ChatItem.permissionResolved(id: "6", outcome: .allowed, tool: "bash", summary: "test")
-        #expect(resolved.timestamp == nil)
-
         let system = ChatItem.systemEvent(id: "7", message: "x")
         #expect(system.timestamp == nil)
 

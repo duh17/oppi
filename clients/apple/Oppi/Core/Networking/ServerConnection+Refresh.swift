@@ -102,7 +102,7 @@ extension ServerConnection {
                let cached = await cache.loadSessionList(serverId: serverId) {
                 self.sessionStore.applyServerSnapshot(cached)
                 self.syncAllWorkspaceSummariesFromLocalState()
-                self.syncLiveActivityPermissions()
+                self.syncLiveActivityState()
             }
 
             self.sessionStore.markSyncStarted()
@@ -118,7 +118,7 @@ extension ServerConnection {
                 self.sessionStore.upsertManySummaries(sessionSummaries)
                 self.syncAllWorkspaceSummariesFromLocalState()
                 self.sessionStore.markSyncSucceeded()
-                self.syncLiveActivityPermissions()
+                self.syncLiveActivityState()
                 let cachedSessions = self.sessionStore.sessions
                 let serverId = self.currentServerId
                 Task.detached {
@@ -258,25 +258,7 @@ extension ServerConnection {
         // 1. Refresh global lists as needed (single-flight + freshness-gated).
         await refreshWorkspaceAndSessionLists(force: false)
 
-        // 2. Sweep expired permissions (safety net for missed WS messages)
-        let expiredRequests = permissionStore.sweepExpired()
-        for request in expiredRequests {
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: request.workspaceId,
-                sessionId: request.sessionId
-            ) {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            // Notify per-session reducer via callback
-            if isFocusedSession(request.sessionId) {
-                onPermissionResolved?(request.id, .expired, request.tool, request.displaySummary)
-            }
-        }
-        if !expiredRequests.isEmpty {
-            syncLiveActivityPermissions()
-        }
-
-        // 3. Refresh active session metadata (not timeline — ChatSessionManager owns that)
+        // 2. Refresh active session metadata (not timeline — ChatSessionManager owns that)
         guard let sessionId = focusedSessionId else { return }
         guard let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
               !workspaceId.isEmpty else {

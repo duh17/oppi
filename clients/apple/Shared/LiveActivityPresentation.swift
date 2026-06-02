@@ -11,7 +11,6 @@ enum LiveActivityPresentation {
     private static let genericActivities: Set<String> = [
         "working",
         "your turn",
-        "approval required",
         "attention needed",
         "session ended",
         "done",
@@ -40,7 +39,6 @@ enum LiveActivityPresentation {
         switch phase {
         case .working: return "Working"
         case .awaitingReply: return "Your turn"
-        case .needsApproval: return "Approval"
         case .error: return "Attention"
         case .ended: return "Done"
         }
@@ -50,7 +48,6 @@ enum LiveActivityPresentation {
         switch phase {
         case .working: return "Run"
         case .awaitingReply: return "Reply"
-        case .needsApproval: return "Ask"
         case .error: return "Err"
         case .ended: return "Done"
         }
@@ -60,7 +57,6 @@ enum LiveActivityPresentation {
         switch phase {
         case .working: return "waveform.path.ecg"
         case .awaitingReply: return "bubble.left.fill"
-        case .needsApproval: return "exclamationmark.shield.fill"
         case .error: return "exclamationmark.triangle.fill"
         case .ended: return "checkmark.circle.fill"
         }
@@ -72,8 +68,6 @@ enum LiveActivityPresentation {
             return Color(red: 0.98, green: 0.79, blue: 0.24)
         case .awaitingReply:
             return Color(red: 0.35, green: 0.86, blue: 0.62)
-        case .needsApproval:
-            return Color(red: 0.99, green: 0.56, blue: 0.22)
         case .error:
             return Color(red: 0.96, green: 0.37, blue: 0.34)
         case .ended:
@@ -88,9 +82,6 @@ enum LiveActivityPresentation {
                 return "1 active"
             case .awaitingReply:
                 return "Awaiting input"
-            case .needsApproval:
-                let approvals = max(state.pendingApprovalCount, 1)
-                return approvals == 1 ? "1 approval pending" : "\(approvals) approvals pending"
             case .error:
                 return "Needs attention"
             case .ended:

@@ -461,8 +461,7 @@ struct TreeSitterBashRealWorldTests {
         when agent asks a question
 
         Add AskRequestStore to track pending ask tool
-        requests per session,
-        mirroring PermissionStore architecture."
+        requests per session."
         """
         expectToken("cd", is: .function, in: code)
         expectToken("&&", is: .operator, in: code)

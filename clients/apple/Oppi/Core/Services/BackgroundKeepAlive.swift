@@ -5,8 +5,8 @@ import UIKit
 ///
 /// Uses `UIApplication.beginBackgroundTask` to prevent iOS from suspending
 /// the process when agents are in `busy` or `starting` status. This keeps
-/// the WebSocket alive so permission requests arrive instantly and session
-/// re-entry doesn't require a multi-second TLS reconnect.
+/// the WebSocket alive so status updates arrive promptly and session re-entry
+/// doesn't require a multi-second TLS reconnect.
 ///
 /// The task ends when:
 /// - All sessions leave busy/starting state (observed via polling)

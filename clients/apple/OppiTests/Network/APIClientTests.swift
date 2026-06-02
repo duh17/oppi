@@ -122,8 +122,8 @@ struct APIClientTests {
             #expect(request.url?.query == "recentDays=3")
             return self.mockResponse(json: """
             {"sessions":[
-                {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01,"pendingPermissionCount":0,"pendingAskCount":1},
-                {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"pendingPermissionCount":2,"pendingAskCount":0}
+                {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01,"pendingAskCount":1},
+                {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"pendingAskCount":0}
             ]}
             """)
         }
@@ -134,7 +134,7 @@ struct APIClientTests {
         #expect(summaries[1].id == "s1")
         #expect(summaries[0].status == .busy)
         #expect(summaries[0].pendingAskCount == 1)
-        #expect(summaries[1].pendingPermissionCount == 2)
+        #expect(summaries[1].pendingAskCount == 0)
     }
 
     @Test func listSessionsFromWorkspacesUsesAggregatedEndpoint() async throws {

@@ -71,11 +71,9 @@ struct SessionRowPresentationBuilderTests {
         let counts = SessionRowPresentationBuilder.attentionCounts(
             sessionId: "parent",
             descendants: [child, grandchild],
-            pendingPermissionCountForSession: { $0 == "grandchild" ? 2 : 0 },
             pendingAskCountForSession: { $0 == "child" ? 1 : 0 }
         )
 
-        #expect(counts.permissionCount == 2)
         #expect(counts.askCount == 1)
     }
 }

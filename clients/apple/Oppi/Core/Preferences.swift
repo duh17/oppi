@@ -604,8 +604,8 @@ enum AppPreferences {
 
     // MARK: - Biometric
 
-    /// Whether biometric gating is enabled for permission approvals.
-    /// Default is ON — all permissions require Face ID / Touch ID confirmation.
+    /// Whether biometric gating is enabled for sensitive local actions.
+    /// Default is ON.
     enum Biometric {
         private static let enabledKey = "\(AppIdentifiers.subsystem).biometric.enabled"
 
