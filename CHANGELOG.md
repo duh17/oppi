@@ -62,26 +62,26 @@ Example:
 - **Server:** Renamed mirror runtime terminology and logs from earlier Pi mirror naming to Oppi runtime naming.
 - **Client:** App-owned deep links now use only the `oppi://` scheme; legacy `pi://` handling was removed.
 - **Client:** Model switches now apply immediately without the prompt-cache warning dialog.
-- **Client:** Workspace home rows, workspace status controls, context counts, mirror status indicators, and link handling preferences were tightened for the new runtime model.
+- **Client:** Updated workspace home rows, workspace status controls, context counts, mirror status indicators, and link handling preferences for the new runtime model.
 - **Client:** Renamed the public diagnostics toggle to “Send Diagnostics to Server” and clarified that it covers performance metrics, client breadcrumbs, and crash diagnostics.
 
 ### Fixed
 
-- **Server:** Hardened sandbox workspace isolation, sandbox network defaults, mirror runtime handoff, shutdown, queue bridging, and stopped-session reconnection.
+- **Server:** Hardened sandbox workspace isolation, sandbox network defaults, mirror runtime handoff, shutdown, queue bridging, stopped-session reconnection, and shared session runtime routing.
 - **Server:** Reduced telemetry noise, corrected telemetry review accounting, limited hot telemetry importer integrity checks, and kept mirror errors out of terminal UI.
 - **Protocol/Client/Server:** Preserved approval notification session streams and restored mirror event catch-up for route changes.
-- **Client:** Improved session row hit targets, quick-session composer sizing, workspace overview wrapping/layout, live git/context refresh, streaming markdown height invalidation, and chat scroll stability.
-- **Client:** Restored file viewer review comments, preserved absolute tool diff line numbers, clamped expanded read-code viewports, and stabilized media preview sizing.
+- **Client:** Improved session row hit targets, quick-session composer sizing, quick-session workspace selection, workspace overview wrapping/layout, live git/context refresh, streaming markdown height invalidation, and chat scroll stability.
+- **Client:** Restored file viewer review comments, preserved absolute tool diff line numbers, clamped expanded read-code viewports, stabilized media preview sizing, and derived server badge colors from live connection state.
 
 ### Removed
 
-- **Server:** Removed the retired server policy gate entirely, including the policy/rules/audit stack, policy routes, and persistent user-events WebSocket path.
+- **Server:** Removed the retired server approval-policy stack, including policy/rules/audit files, policy routes, and the persistent user-events WebSocket path.
 - **Client:** Removed legacy Apple permission surfaces and replaced selected-text Pi actions with review-comment selection flows.
 - **Tooling:** Removed stale TestFlight notes and the retired TestFlight script.
 
 ### Migration notes
 
-- **Server:** Existing Pi extensions with their own input, confirm, or approval flows can use the mobile extension UI bridge and should mostly behave as they do in terminal Pi. Existing config files with `policy` or `permissionGate` keys still start; `policy` is ignored and `permissionGate` remains a compatibility switch.
+- **Server:** Existing Pi extensions with their own input, confirm, or approval flows can use the mobile extension UI bridge and should mostly behave as they do in terminal Pi. Existing configs with retired approval-policy keys still start, but approval behavior now belongs to Pi extensions.
 
 ## [0.1.2] - 2026-03-31
 

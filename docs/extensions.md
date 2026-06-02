@@ -16,12 +16,11 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 
 ## Extension surfaces
 
-| Surface | Enabled by | Declared in | Loaded by | Notes |
-|---|---|---|---|---|
-| Host pi extensions | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader | Must work without Oppi server services |
-| Configured global host extension | `permissionGate` server config, default `true` | `~/.pi/agent/extensions/permission-gate.ts` | pi resource loader via Oppi SDK session setup | Loaded as a normal Pi extension even when workspace allowlists omit it |
-| Oppi built-ins | Workspace `extensions` allowlist | `server/extensions/` | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
-| Mobile UI compatibility | Native Oppi client + server bridge | Protocol and UI bridge code | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs |
+| Surface                 | Enabled by                                                  | Declared in                        | Loaded by                          | Notes                                                 |
+| ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------------------- |
+| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader                 | Must work without Oppi server services                |
+| Oppi built-ins          | Workspace `extensions` allowlist                            | `server/extensions/`               | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
+| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client                 | Maps common `ctx.ui` calls to native cards/dialogs    |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
 
@@ -56,11 +55,21 @@ pi -e <package-or-path>
 Oppi keeps pi's extension system, then adds these rules:
 
 1. **Built-in workspace extensions**: `ask`, `subagents`, `voice`, and `oppi-admin`.
-2. **Configured host extension compatibility** through `permissionGate`.
-3. **Workspace allowlist filtering** through `workspace.extensions`.
-4. **Mobile UI compatibility** for most standard extension input and confirm UI calls.
+2. **Workspace allowlist filtering** through `workspace.extensions`.
+3. **Mobile UI compatibility** for most standard extension input, confirm, and approval UI calls.
 
 Oppi does not replace pi discovery. It filters host-loaded extensions and injects server-owned built-ins when the workspace explicitly enables them. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
+
+## Approval prompts
+
+Approval behavior belongs to Pi extensions. Command classification, route decisions, and user prompts live inside extension handlers.
+
+The behavior is the same shape for Oppi-owned sessions and mirrored terminal sessions:
+
+- A Pi extension can intercept `tool_call`, `session_before_switch`, `session_before_fork`, or other Pi events.
+- The extension can ask with `ctx.ui.confirm()`, `ctx.ui.select()`, `ctx.ui.input()`, `ctx.ui.editor()`, or the `ask` extension.
+- Oppi mobile renders those standard extension UI requests natively and sends responses through `extension_ui_response`.
+- Standalone terminal Pi uses the same extension logic through its normal TUI.
 
 ## How extension loading works
 
@@ -70,7 +79,7 @@ At session startup, Oppi begins with pi's normal extension sources for the sessi
 - settings-declared extension paths (`settings.json` `extensions` arrays)
 - package-provided extensions installed through pi (`pi install`)
 
-Oppi then filters host paths according to the workspace allowlist, keeps the configured global host extension loaded as a normal Pi extension, drops project-local duplicate `permission-gate` paths when that global extension is active, and injects enabled built-ins as in-process factories.
+Oppi then filters host paths according to the workspace allowlist and injects enabled built-ins as in-process factories.
 
 ## Reload behavior
 
@@ -97,7 +106,6 @@ That means:
 
 - include `ask`, `subagents`, `voice`, or `oppi-admin` explicitly if you want them
 - omitting one of those names disables it for that workspace
-- the configured global host extension is loaded when `permissionGate` is enabled, even if this allowlist omits it
 
 If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves Oppi built-ins off by default.
 
@@ -110,9 +118,8 @@ The picker response:
 - resolves host extensions through pi's normal settings and package resolver
 - includes auto-discovered global and project-local extensions
 - includes package-installed extensions
-- includes settings-declared local extension paths
+- includes settings-declared extension paths
 - includes Oppi built-ins (`ask`, `subagents`, `voice`, `oppi-admin`)
-- includes configured global host extensions
 - deduplicates by extension name using Oppi built-ins first, then pi host extensions
 
 ## Mobile rendering differences
@@ -142,13 +149,13 @@ For extension tools without a dedicated mobile renderer, Oppi still tries to ren
 
 Extension authors can improve the default expanded view by returning these `details` keys from the tool result:
 
-| Key | Purpose |
-|---|---|
-| `expandedText` | Text shown in the expanded mobile view instead of raw output |
-| `presentationFormat` | One of `markdown`, `json`, `code`, or `diff` |
-| `language` | Syntax hint for `presentationFormat: "code"` |
-| `filePath` | File path hint for language detection and diff/code metadata |
-| `startLine` | Starting line number for code views |
+| Key                  | Purpose                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| `expandedText`       | Text shown in the expanded mobile view instead of raw output |
+| `presentationFormat` | One of `markdown`, `json`, `code`, or `diff`                 |
+| `language`           | Syntax hint for `presentationFormat: "code"`                 |
+| `filePath`           | File path hint for language detection and diff/code metadata |
+| `startLine`          | Starting line number for code views                          |
 
 Example:
 
@@ -227,17 +234,17 @@ Mirror mode uses the same protocol surface from an interactive terminal Pi proce
 
 ## Relevant implementation files
 
-| File | Why it matters |
-|---|---|
-| `server/extensions/built-ins.ts` | Built-in and managed-name rules |
-| `server/src/routes/skills.ts` | Workspace extension picker (`GET /extensions`) |
-| `server/src/sdk-backend.ts` | Extension filtering, built-in injection, and workspace allowlist behavior |
-| `server/src/sdk-ui-bridge.ts` | Extension UI bridge from pi APIs to Oppi protocol events |
-| `server/extensions/ask.ts` | Built-in ask tool |
-| `server/extensions/subagents/` | Built-in subagents toolset |
-| `server/extensions/voice.ts` | Built-in voice tool |
-| `server/extensions/oppi-admin.ts` | Built-in workspace/admin tool |
-| `server/src/mobile-renderer.ts` | Mobile tool-row rendering |
+| File                              | Why it matters                                                            |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `server/extensions/built-ins.ts`  | Built-in and managed-name rules                                           |
+| `server/src/routes/skills.ts`     | Workspace extension picker (`GET /extensions`)                            |
+| `server/src/sdk-backend.ts`       | Extension filtering, built-in injection, and workspace allowlist behavior |
+| `server/src/sdk-ui-bridge.ts`     | Extension UI bridge from pi APIs to Oppi protocol events                  |
+| `server/extensions/ask.ts`        | Built-in ask tool                                                         |
+| `server/extensions/subagents/`    | Built-in subagents toolset                                                |
+| `server/extensions/voice.ts`      | Built-in voice tool                                                       |
+| `server/extensions/oppi-admin.ts` | Built-in workspace/admin tool                                             |
+| `server/src/mobile-renderer.ts`   | Mobile tool-row rendering                                                 |
 
 ## When to read pi docs instead
 

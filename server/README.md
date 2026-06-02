@@ -1,6 +1,6 @@
 # oppi-server
 
-Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/earendil-works/pi) to run agent sessions in-process.
+Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/earendil-works/pi) to run server-owned sessions in-process and supports terminal-owned mirror sessions through the `oppi-mirror` Pi extension.
 
 ## Quickstart
 

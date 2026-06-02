@@ -24,10 +24,6 @@
 
 ![Workspace and context](workspace-context-combined.png)
 
-## Permission gate and safety rules
-
-![Permission and safety](permission-safety-combined.png)
-
 ## Git context bar and commit detail
 
 ![Context bar and commit](context-commit-combined.png)

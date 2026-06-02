@@ -74,6 +74,12 @@ Or disable it for one process:
 OPPI_MIRROR_AUTO_START=false pi
 ```
 
+## Compatibility
+
+Mirror supports terminal-owned prompt, steer, follow-up, stop, queue, model, thinking, compaction, tree navigation, command-list, and standard Pi extension UI flows. Session-file replacement remains terminal-owned: use terminal Pi for `/new`, `/fork`, and `/resume`/switch.
+
+Mirror forwards Pi-native extension UI from terminal sessions. For example, a `tool_call` handler can ask through `ctx.ui.confirm()` or an `ask` flow, and Oppi renders the response path natively.
+
 ## Requirements
 
 - Oppi server `0.4.0` or newer

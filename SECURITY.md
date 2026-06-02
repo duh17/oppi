@@ -10,7 +10,7 @@ Oppi supports Pi's standard extension UI API on mobile, including input and conf
 
 Pairing generates a shared bearer token via QR code scan. All HTTP and WebSocket connections require this token. The server generates an Ed25519 identity key pair on first run; the fingerprint is embedded in the pairing invite so the iOS app can verify it's connecting to the right server.
 
-Rotate the token with `npx oppi token rotate`.
+Rotate the token with `oppi token rotate`.
 
 ## Transport
 

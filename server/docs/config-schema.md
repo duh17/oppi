@@ -7,7 +7,7 @@ Oppi server uses a JSON config file with validated fields and sensible defaults.
 | `~/.config/oppi/config.json` | Default data dir |
 | `$OPPI_DATA_DIR/config.json` | Custom data dir  |
 
-Auto-created on first `npx oppi serve`, or manually via `npx oppi init`. Validated on load — invalid fields fall back to defaults with warnings. New fields are backfilled automatically on startup.
+Auto-created on first `oppi serve`, or manually via `oppi init`. Validated on load — invalid fields fall back to defaults with warnings. New fields are backfilled automatically on startup.
 
 ## All Settings
 
@@ -15,12 +15,12 @@ Settings are listed in the order they appear in the config file. Auth state is d
 
 ### Server
 
-| Setting         | Type   | Default            | Description                                                                           |
-| --------------- | ------ | ------------------ | ------------------------------------------------------------------------------------- |
-| `configVersion` | number | `2`                | Schema version. Managed automatically — do not edit.                                  |
-| `port`          | number | `7749`             | HTTP + WebSocket listen port. Range: 0-65535.                                         |
-| `host`          | string | `"0.0.0.0"`        | Bind address. Use `"127.0.0.1"` to restrict to localhost.                             |
-| `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, rules, config, and TLS material. |
+| Setting         | Type   | Default            | Description                                                                    |
+| --------------- | ------ | ------------------ | ------------------------------------------------------------------------------ |
+| `configVersion` | number | `2`                | Schema version. Managed automatically — do not edit.                           |
+| `port`          | number | `7749`             | HTTP + WebSocket listen port. Range: 0-65535.                                  |
+| `host`          | string | `"0.0.0.0"`        | Bind address. Use `"127.0.0.1"` to restrict to localhost.                      |
+| `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, and TLS material. |
 
 ### Model
 
@@ -53,11 +53,7 @@ Use `sessionIdleTimeoutMs` in config files.
 
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
 
-Compatibility config keys are still accepted so existing server configs continue to start:
-
-| Setting          | Type    | Default | Description                                                                                                                           |
-| ---------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `permissionGate` | boolean | `true`  | Keeps the configured global host extension available as a normal Pi extension. When `false`, Oppi does not add that global extension. |
+Approval behavior is extension-owned. If a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui` or the built-in `ask` extension. No server-side approval config is required.
 
 ### Runtime Environment
 

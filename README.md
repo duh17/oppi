@@ -17,7 +17,7 @@ The approach: [just talk to it](https://steipete.me/posts/just-talk-to-it), [fee
 
 ## How it works
 
-The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and standard Pi extension UI. Oppi bridges most Pi extension input and confirm UI to mobile through Pi's standard extension API.
+The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly for server-owned sessions, so there is no separate CLI process. Those sessions run in-process with tool execution, streaming, and standard Pi extension UI. Mirror mode can also project a terminal-owned Pi session through the `oppi-mirror` extension. Oppi bridges most Pi extension input and confirm UI to mobile through Pi's standard extension API.
 
 ```
 ┌─────────┐        WSS / HTTPS        ┌──────────────┐
