@@ -439,6 +439,7 @@ describe("SdkBackend.setModel", () => {
     const backend = Object.create(SdkBackend.prototype) as SdkBackend;
 
     const modelRegistry = {
+      refresh: vi.fn(),
       find: vi.fn(),
     };
 
@@ -489,6 +490,25 @@ describe("SdkBackend.setModel", () => {
     expect(result).toEqual({ success: false, error: "Unknown model: studio/qwen3-coder" });
     expect(modelRegistry.find).toHaveBeenCalledWith("studio", "qwen3-coder");
     expect(piSession.setModel).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the runtime model registry before resolving a requested model", async () => {
+    const { backend, modelRegistry, piSession } = makeSetModelHarness();
+    const model = {
+      provider: "omlx",
+      id: "gemma-4-31b-bf16",
+      name: "Gemma 4 31B",
+    };
+    modelRegistry.find.mockReturnValue(model);
+    piSession.model = model;
+
+    await backend.setModel("omlx/gemma-4-31b-bf16");
+
+    expect(modelRegistry.refresh).toHaveBeenCalledTimes(1);
+    expect(modelRegistry.find).toHaveBeenCalledWith("omlx", "gemma-4-31b-bf16");
+    expect(modelRegistry.refresh.mock.invocationCallOrder[0]).toBeLessThan(
+      modelRegistry.find.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("sets models resolved from ModelRegistry (including custom providers)", async () => {

@@ -67,6 +67,7 @@ Example:
 
 ### Fixed
 
+- **Server:** Fixed server-side model switching so requested models are resolved against a refreshed runtime model registry.
 - **Client:** Fixed the workspace session-list header wrapping/layout issue in the workspace overview.
 
 ### Removed

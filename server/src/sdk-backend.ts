@@ -866,6 +866,7 @@ export class SdkBackend {
       return { success: false, error: `Invalid model ID: ${modelId}` };
     }
 
+    this.modelRegistry.refresh();
     const model = this.modelRegistry.find(parsed.provider, parsed.model);
     if (!model) {
       return { success: false, error: `Unknown model: ${modelId}` };
