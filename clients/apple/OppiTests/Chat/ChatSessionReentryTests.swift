@@ -625,6 +625,45 @@ struct ChatSessionReentryTests {
         #expect(hasContent, "Stopped session should populate timeline from trace")
     }
 
+    @Test func staleStoppedSessionReentryOpensStreamAfterFreshBusyStatus() async {
+        let sessionId = "reentry-stale-stopped-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (
+                makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
+                [makeTraceEvent(id: "busy-t1", text: "parent resumed")]
+            )
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .stopped))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(
+            await streams.waitForCreated(1),
+            "If local state says stopped but REST says busy, re-entry must subscribe instead of staying history-only"
+        )
+        streams.yield(index: 0, message: .connected(
+            session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)
+        ))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
     // MARK: - Edge 10: Busy session re-entry fills gap (not deferred)
 
     /// Reproduces the first-reentry gap bug: re-entering a busy session with

@@ -282,7 +282,7 @@ final class ChatSessionManager {
         let sessionStatus = sessionStore.sessions.first(where: { $0.id == sessionId })?.status
         if sessionStatus == .stopped {
             transitionTo(.stopped(historyLoaded: false))
-            log.warning("Session \(self.sessionId) is stopped — loading history only (no WS)")
+            log.warning("Session \(self.sessionId) is stopped — loading history only unless the server reports it active")
             scheduleHistoryReload(
                 generation: generation,
                 connection: connection,
@@ -298,8 +298,14 @@ final class ChatSessionManager {
                 transitionTo(.disconnected(reason: .cancelled))
                 return
             }
-            transitionTo(.stopped(historyLoaded: true))
-            return
+
+            let refreshedStatus = sessionStore.sessions.first(where: { $0.id == sessionId })?.status
+            if refreshedStatus == .stopped {
+                transitionTo(.stopped(historyLoaded: true))
+                return
+            }
+
+            log.warning("Session \(self.sessionId) refreshed as \(String(describing: refreshedStatus), privacy: .public) — opening live stream")
         }
 
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
