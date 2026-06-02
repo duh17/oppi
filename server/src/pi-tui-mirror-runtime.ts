@@ -125,6 +125,7 @@ export interface PiBridgeStateSnapshot {
   sessionFile?: string;
   piSessionId?: string;
   sessionName?: string;
+  leafId?: string | null;
   model?: string | { provider?: unknown; id?: unknown; modelId?: unknown } | null;
   thinkingLevel?: string;
   isIdle?: boolean;
@@ -224,6 +225,7 @@ interface MirrorActiveSession extends EventProcessorSessionState, SessionInputSe
   streamingToolUpdatesSeen: Map<string, string>;
   toolFullOutputPaths: Map<string, string>;
   messageQueue: MessageQueueState;
+  leafId?: string;
   lastSummaryFingerprint?: string;
   sdkBackend: never;
 }
@@ -369,6 +371,10 @@ function normalizeModelId(model: PiBridgeStateSnapshot["model"]): string | undef
         ? model.modelId.trim()
         : "";
   return provider && modelId ? composeModelId(provider, modelId) : undefined;
+}
+
+function normalizeLeafId(leafId: PiBridgeStateSnapshot["leafId"]): string | undefined {
+  return typeof leafId === "string" && leafId.trim().length > 0 ? leafId.trim() : undefined;
 }
 
 function mergePiSessionFile(session: Session, file: string | undefined): void {
@@ -591,6 +597,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(sessionId)?.session ?? this.storage.getSession(sessionId);
+  }
+
+  getSessionTraceState(
+    sessionId: string,
+  ): { sessionFile?: string; sessionId?: string; leafId?: string } | null {
+    const active = this.ensureActiveFromStorage(sessionId);
+    if (!active) return null;
+    return {
+      sessionFile: active.session.piSessionFile,
+      sessionId: active.session.piSessionId,
+      ...(active.leafId ? { leafId: active.leafId } : {}),
+    };
   }
 
   isSessionConnected(sessionId: string): boolean {
@@ -1418,6 +1436,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
     const model = normalizeModelId(state.model);
     if (model) session.model = model;
+    active.leafId = normalizeLeafId(state.leafId);
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     if (state.piSessionId?.trim()) session.piSessionId = state.piSessionId.trim();
     mergePiSessionFile(session, state.sessionFile);

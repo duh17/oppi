@@ -904,6 +904,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session.piSessionFile = validation.path;
       session.piSessionFiles = [validation.path];
       if (localHeader.piSessionId) session.piSessionId = localHeader.piSessionId;
+      session.runtime = "pi-tui";
+      session.status = "stopped";
+      session.mirror = { status: "disconnected" };
       ctx.storage.saveSession(session);
       invalidateLocalSessionsCache();
 
@@ -1559,18 +1562,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const traceView = resolveTraceView(url);
     const live = await ctx.sessionRuntimes.refreshSessionState(sessionId);
+    const liveLeafId = typeof live?.leafId === "string" ? live.leafId : undefined;
     const refreshedSession = ctx.storage.getSession(sessionId) || session;
     const hydratedSession = ctx.ensureSessionContextWindow(refreshedSession);
     const baseDir = traceBaseDir();
 
-    let trace = loadSessionTrace(hydratedSession, traceView, live?.leafId);
+    let trace = loadSessionTrace(hydratedSession, traceView, liveLeafId);
 
     if (!trace || trace.length === 0) {
       const traceOptions = {
         view: traceView,
         attachmentDataDir: traceBaseDir(),
         attachmentSessionId: sessionId,
-        ...(live?.leafId !== undefined ? { leafId: live.leafId } : {}),
+        ...(liveLeafId !== undefined ? { leafId: liveLeafId } : {}),
       };
 
       if (live?.sessionFile) {
@@ -1588,7 +1592,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       const refreshed = ctx.storage.getSession(sessionId);
       if (refreshed && (!trace || trace.length === 0)) {
         ctx.ensureSessionContextWindow(refreshed);
-        trace = loadSessionTrace(refreshed, traceView, live?.leafId);
+        trace = loadSessionTrace(refreshed, traceView, liveLeafId);
       }
     }
 

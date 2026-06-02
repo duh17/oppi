@@ -36,7 +36,10 @@ function makeCommands(): WsSessionCommands {
   };
 }
 
-function makeRouter(session: Session, options: { mirrorConnected?: boolean } = {}) {
+function makeRouter(
+  session: Session,
+  options: { mirrorConnected?: boolean; mirrorLeafId?: string } = {},
+) {
   const storage = {
     getSession: vi.fn((sessionId: string) =>
       sessionId === "managed-1" ? makeSession({ id: "managed-1" }) : session,
@@ -82,6 +85,11 @@ function makeRouter(session: Session, options: { mirrorConnected?: boolean } = {
     getPendingUIRequestMessages: vi.fn(() => []),
     getToolFullOutputPath: vi.fn(() => "/tmp/mirror-full-output.txt"),
     getEventRing: vi.fn(() => ({ length: 2, capacity: 500 })),
+    getSessionTraceState: vi.fn(() => ({
+      sessionFile: session.piSessionFile,
+      sessionId: session.piSessionId,
+      ...(options.mirrorLeafId ? { leafId: options.mirrorLeafId } : {}),
+    })),
     isSessionConnected: vi.fn(
       () => options.mirrorConnected ?? session.mirror?.status === "connected",
     ),
@@ -191,7 +199,7 @@ describe("SessionRuntimes", () => {
       piSessionFile: "/tmp/mirror.jsonl",
       piSessionId: "pi-mirror-1",
     });
-    const { router, managed, mirror } = makeRouter(session);
+    const { router, managed, mirror } = makeRouter(session, { mirrorLeafId: "leaf-1" });
 
     expect(router.getCurrentSeq("sess-1")).toBe(22);
     expect(router.getCatchUp("sess-1", 10)?.currentSeq).toBe(22);
@@ -199,7 +207,7 @@ describe("SessionRuntimes", () => {
     await expect(router.refreshSessionState("sess-1")).resolves.toEqual({
       sessionFile: "/tmp/mirror.jsonl",
       sessionId: "pi-mirror-1",
-      leafId: null,
+      leafId: "leaf-1",
     });
     expect(managed.refreshSessionState).not.toHaveBeenCalled();
     expect(mirror.getCatchUp).toHaveBeenCalledWith("sess-1", 10);

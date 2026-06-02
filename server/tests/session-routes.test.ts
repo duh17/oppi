@@ -258,6 +258,82 @@ describe("sessions module", () => {
     });
   });
 
+  it("replays a pi-tui mirror JSONL trace without a live leaf id", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-mirror-trace-"));
+    try {
+      const tracePath = join(dataDir, "mirror.jsonl");
+      writeFileSync(
+        tracePath,
+        [
+          JSON.stringify({ type: "session", id: "pi-1", cwd: dataDir }),
+          JSON.stringify({
+            type: "message",
+            id: "u1",
+            message: { role: "user", content: [{ type: "text", text: "hello from tui" }] },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "a1",
+            parentId: "u1",
+            message: { role: "assistant", content: [{ type: "text", text: "hello from oppi" }] },
+          }),
+        ].join("\n"),
+        "utf8",
+      );
+
+      const session = {
+        id: "mirror-1",
+        workspaceId: "ws-1",
+        runtime: "pi-tui",
+        status: "ready",
+        createdAt: 0,
+        lastActivity: 1,
+        messageCount: 2,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionFile: tracePath,
+        piSessionFiles: [tracePath],
+        piSessionId: "pi-1",
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => session),
+          getDataDir: vi.fn(() => dataDir),
+        },
+        sessionRuntimes: {
+          refreshSessionState: vi.fn(async () => ({
+            sessionFile: tracePath,
+            sessionId: "pi-1",
+            leafId: null,
+          })),
+        },
+        ensureSessionContextWindow: vi.fn((s: unknown) => s),
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/sessions/mirror-1",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/mirror-1"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { trace: Array<{ type: string; text?: string }> };
+      expect(body.trace.map((event) => [event.type, event.text])).toEqual([
+        ["user", "hello from tui"],
+        ["assistant", "hello from oppi"],
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("routes pi-tui mirror session event catch-up through mirror runtime", async () => {
     const session = {
       id: "mirror-1",

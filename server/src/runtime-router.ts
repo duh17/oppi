@@ -101,11 +101,13 @@ export class SessionRuntimes implements AgentRuntimeTransport {
       return this.oppi.refreshSessionState(sessionId);
     }
 
+    const traceState = this.piTui.getSessionTraceState(sessionId);
+    if (traceState) return traceState;
+
     const snapshot = this.piTui.getActiveSession(sessionId) ?? session;
     return {
       sessionFile: snapshot.piSessionFile,
       sessionId: snapshot.piSessionId,
-      leafId: null,
     };
   }
 

@@ -191,7 +191,6 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
         return {
           sessionFile: session.piSessionFile,
           sessionId: session.piSessionId,
-          leafId: null,
         };
       }
       return sessions.refreshSessionState(sessionId);
@@ -663,6 +662,9 @@ describe("POST /workspaces/:id/sessions", () => {
       const saved = mock.storage.saveSession.mock.calls[0]![0] as Session;
       expect(saved.piSessionId).toBe("pi-new-1");
       expect(saved.piSessionFile).toBe(jsonl);
+      expect(saved.runtime).toBe("pi-tui");
+      expect(saved.status).toBe("stopped");
+      expect(saved.mirror).toEqual({ status: "disconnected" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

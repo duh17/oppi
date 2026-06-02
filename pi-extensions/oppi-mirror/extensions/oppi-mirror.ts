@@ -1242,6 +1242,7 @@ function stateSnapshot(pi: ExtensionAPI, ctx: ExtensionContext) {
     sessionFile: ctx.sessionManager.getSessionFile(),
     piSessionId: ctx.sessionManager.getSessionId(),
     sessionName: ctx.sessionManager.getSessionName?.() ?? undefined,
+    leafId: ctx.sessionManager.getLeafId(),
     model: modelWire(ctx),
     thinkingLevel: pi.getThinkingLevel(),
     isIdle: ctx.isIdle(),
