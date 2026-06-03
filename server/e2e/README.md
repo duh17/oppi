@@ -35,6 +35,8 @@ Exercises the full session lifecycle for an already-paired device:
 7. Session isolation between workspaces
 8. Workspace cleanup
 
+The session-list assertions use the harness `listWorkspaceSessions()` helper. The server API requires `status=active` or `status=stopped`; tests should not call the collection route without an explicit status filter.
+
 ## Running
 
 ```bash
@@ -53,19 +55,23 @@ E2E_NATIVE=1 npm run test:e2e
 
 ## Configuration
 
-| Env var         | Default         | Description                                        |
-| --------------- | --------------- | -------------------------------------------------- |
-| `E2E_PORT`      | `17760`         | Server port                                        |
-| `E2E_MODEL`     | auto-discovered | Model ID for sessions (resolved from `/v1/models`) |
-| `E2E_OMLX_PORT` | `8400`          | Local OMLX server port                             |
-| `E2E_MLX_PORT`  | unset           | Legacy alias for `E2E_OMLX_PORT`                   |
-| `E2E_NATIVE`    | `0`             | `1` to skip Docker, run server natively            |
+| Env var               | Default         | Description                                                                  |
+| --------------------- | --------------- | ---------------------------------------------------------------------------- |
+| `E2E_PORT`            | `17760`         | Server port                                                                  |
+| `E2E_MODEL`           | auto-discovered | Model ID for sessions (resolved from `/v1/models`)                           |
+| `E2E_OMLX_PORT`       | `8400`          | Local OMLX server port                                                       |
+| `E2E_MLX_PORT`        | unset           | Legacy alias for `E2E_OMLX_PORT`                                             |
+| `E2E_NATIVE`          | `0`             | `1` to skip Docker, run server natively                                      |
+| `E2E_SERVER_DIR`      | unset           | Override native server package dir for tarball/install validation            |
+| `E2E_TLS_MODE`        | `self-signed`   | Native mode TLS setting; use `disabled` for iOS harnesses that need HTTP     |
+| `OPPI_E2E_UI_HARNESS` | `0`             | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests |
 
 ## Architecture
 
 ```
 e2e/
-├── harness.ts                  # Shared: Docker lifecycle, API/WS helpers
+├── harness.ts                  # Shared: Docker/native/package lifecycle, API/WS/bootstrap helpers
+├── harness-cli.ts              # Thin CLI wrapper for non-Vitest harness callers
 ├── pairing-flow.e2e.test.ts    # Suite 1: pairing flow
 ├── paired-session.e2e.test.ts  # Suite 2: already-paired session flow
 ├── docker-compose.e2e.yml      # Ephemeral Docker server config
@@ -76,5 +82,8 @@ The harness supports two modes:
 
 - **Docker mode** (default): builds and starts `oppi-e2e` container, OMLX reached via `host.docker.internal`
 - **Native mode** (`E2E_NATIVE=1`): builds server locally, starts as child process in a temp directory
+- **Packaged native mode** (`E2E_NATIVE=1 E2E_SERVER_DIR=/path/to/node_modules/oppi-server`): runs the installed package tarball through the same native harness without rebuilding source
 
 Both modes generate a temporary `models.json` from the probed local OMLX model, preferring `Qwen3.6*` when available. Both modes share the same test code — only server lifecycle differs.
+
+Apple E2E scripts remain responsible for Xcode and simulator orchestration, but server bootstrap details should flow through this harness shape: model discovery, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.

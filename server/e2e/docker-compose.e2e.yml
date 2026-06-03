@@ -1,4 +1,4 @@
-# E2E test server — ephemeral, no persistent volumes, no host mounts.
+# E2E test server — ephemeral server state removed by `docker compose down -v`.
 # Expects the server image to be pre-built: docker compose build
 #
 # Usage:
@@ -23,21 +23,31 @@ services:
       PI_AGENT_SYNC_MODE: skip
       OPPI_PORT: ${E2E_PORT:-17760}
       OPPI_PAIR_HOST: ${E2E_PAIR_HOST:-host.docker.internal}
+      OPPI_E2E_UI_HARNESS: ${OPPI_E2E_UI_HARNESS:-0}
       # Use the real pi binary from node_modules (installed via npm ci in Dockerfile)
       OPPI_PI_BIN: /opt/oppi-server/node_modules/.bin/pi
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      # Keep server state durable across docker restart within one E2E run.
+      # `docker compose down -v` still removes it at harness teardown.
+      - oppi-e2e-data:/data/oppi
       # Mount e2e models.json so pi can resolve the omlx provider
       - ${E2E_MODELS_JSON:-/dev/null}:/data/pi-agent/models.json:ro
     tmpfs:
-      - /data/oppi
       # Host-path creation UI tests create ~/workspace/<name>.
       # Keep it ephemeral while ensuring the parent folder exists in Docker mode.
       - /root/workspace
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsSk https://localhost:${E2E_PORT:-17760}/health || curl -fsS http://localhost:${E2E_PORT:-17760}/health"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsSk https://localhost:${E2E_PORT:-17760}/health || curl -fsS http://localhost:${E2E_PORT:-17760}/health",
+        ]
       interval: 2s
       timeout: 3s
       retries: 30
       start_period: 30s
+
+volumes:
+  oppi-e2e-data:

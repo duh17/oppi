@@ -25,6 +25,7 @@ import {
   restartServerPreservingData,
   sessionStreamURL,
   isSecureTransport,
+  listWorkspaceSessions,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -116,10 +117,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
   it("session appears in list", async () => {
     if (!lmsReady()) return;
 
-    const res = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
-    expect(res.status).toBe(200);
-
-    const sessions = res.json?.sessions as { id: string }[];
+    const sessions = await listWorkspaceSessions(deviceToken, workspaceId);
     const found = sessions.find((s) => s.id === sessionId);
     expect(found).toBeTruthy();
   });
@@ -137,10 +135,12 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const workspaceList = workspaces.json?.workspaces as { id: string }[];
     expect(workspaceList.some((workspace) => workspace.id === workspaceId)).toBe(true);
 
-    const sessions = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
-    expect(sessions.status).toBe(200);
-    const sessionList = sessions.json?.sessions as { id: string }[];
-    expect(sessionList.some((session) => session.id === sessionId)).toBe(true);
+    const session = await api(
+      "GET",
+      `/workspaces/${workspaceId}/sessions/${sessionId}`,
+      deviceToken,
+    );
+    expect(session.status).toBe(200);
 
     const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
     await closeStream(sessionStream);
@@ -157,9 +157,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     expect(projected.status).toBe(201);
     const projectedSessionId = (projected.json!.session as Record<string, unknown>).id as string;
 
-    const listRes = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
-    expect(listRes.status).toBe(200);
-    const sessions = (listRes.json?.sessions ?? []) as { id: string }[];
+    const sessions = await listWorkspaceSessions(deviceToken, workspaceId);
     expect(sessions.some((session) => session.id === projectedSessionId)).toBe(true);
 
     const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
@@ -349,10 +347,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const wrongWorkspaceId = (ws2.json?.workspace as Record<string, unknown>).id as string;
 
     // Try to access the session via the wrong workspace's sessions list
-    const sessionsRes = await api("GET", `/workspaces/${wrongWorkspaceId}/sessions`, deviceToken);
-    expect(sessionsRes.status).toBe(200);
-
-    const sessions = sessionsRes.json?.sessions as { id: string }[];
+    const sessions = await listWorkspaceSessions(deviceToken, wrongWorkspaceId);
     const leaked = sessions.find((s) => s.id === sessionId);
     expect(leaked).toBeUndefined();
 

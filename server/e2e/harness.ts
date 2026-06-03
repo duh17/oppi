@@ -11,14 +11,16 @@
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_DIR = join(__dirname, "..");
+const HARNESS_SERVER_DIR = join(__dirname, "..");
+const TARGET_SERVER_DIR = resolve(process.env.E2E_SERVER_DIR || HARNESS_SERVER_DIR);
+const TARGET_SERVER_ENTRY = join(TARGET_SERVER_DIR, "dist", "src", "cli.js");
 
 // ── Configuration ──
 
@@ -74,10 +76,22 @@ function makeModelsConfig(baseUrl: string, modelId: string): Record<string, unkn
 
 const BOOT_TIMEOUT_MS = 120_000;
 const HEALTH_POLL_MS = 500;
+const DEFAULT_APP_INVITE_FILE = "/tmp/oppi-e2e-invite.txt";
+const DEFAULT_APP_DEVICE_TOKEN_FILE = "/tmp/oppi-e2e-device-token.txt";
 
-type E2ETransportScheme = "http" | "https";
+export type E2ETransportScheme = "http" | "https";
+export type NativeStartupStep = "build" | "assertEntrypoint";
 let transportScheme: E2ETransportScheme =
   process.env.E2E_TRANSPORT_SCHEME === "https" ? "https" : "http";
+
+export function nativeStartupStepsForTarget(
+  targetServerDir: string = TARGET_SERVER_DIR,
+  harnessServerDir: string = HARNESS_SERVER_DIR,
+): NativeStartupStep[] {
+  return resolve(targetServerDir) === resolve(harnessServerDir)
+    ? ["build", "assertEntrypoint"]
+    : ["assertEntrypoint"];
+}
 
 function activeTransportScheme(): E2ETransportScheme {
   const envScheme = process.env.E2E_TRANSPORT_SCHEME;
@@ -155,7 +169,7 @@ let nativeDataDir: string | null = null;
 function cleanStaleE2EListeners(): void {
   try {
     execSync("node scripts/e2e-clean.mjs", {
-      cwd: SERVER_DIR,
+      cwd: HARNESS_SERVER_DIR,
       stdio: "inherit",
       env: { ...process.env, E2E_PORT: String(E2E_PORT) },
     });
@@ -221,19 +235,36 @@ async function resolveDockerTransportScheme(): Promise<E2ETransportScheme> {
     }
   })();
 
-  for (const scheme of preferredOrder) {
-    if (await canReachHealthOver(scheme)) {
-      return scheme;
+  const started = Date.now();
+  while (Date.now() - started < BOOT_TIMEOUT_MS) {
+    for (const scheme of preferredOrder) {
+      if (await canReachHealthOver(scheme)) {
+        return scheme;
+      }
     }
+    await sleep(HEALTH_POLL_MS);
   }
 
   throw new Error("[e2e] Could not detect server transport (health check failed on http+https)");
+}
+
+export function dockerStartupCleanupCommand(composeFile: string): string {
+  return `docker compose -f ${composeFile} down -v --timeout 10`;
 }
 
 async function startDockerServer(): Promise<void> {
   console.log("[e2e] Building and starting Docker server...");
 
   const composeFile = join(__dirname, "docker-compose.e2e.yml");
+  try {
+    execSync(dockerStartupCleanupCommand(composeFile), {
+      cwd: HARNESS_SERVER_DIR,
+      stdio: "inherit",
+      env: { ...process.env, E2E_PORT: String(E2E_PORT) },
+    });
+  } catch {
+    console.warn("[e2e] Docker compose cleanup failed before startup; continuing");
+  }
 
   // Generate a container-compatible models.json that routes omlx/* to
   // host.docker.internal:<port>.
@@ -245,7 +276,7 @@ async function startDockerServer(): Promise<void> {
   dockerModelsJson = tmpModels;
 
   execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 120`, {
-    cwd: SERVER_DIR,
+    cwd: HARNESS_SERVER_DIR,
     stdio: "inherit",
     env: {
       ...process.env,
@@ -273,8 +304,8 @@ async function restartDockerServerPreservingData(): Promise<void> {
 async function stopDockerServer(): Promise<void> {
   const composeFile = join(__dirname, "docker-compose.e2e.yml");
   try {
-    execSync(`docker compose -f ${composeFile} down -v --timeout 10`, {
-      cwd: SERVER_DIR,
+    execSync(dockerStartupCleanupCommand(composeFile), {
+      cwd: HARNESS_SERVER_DIR,
       stdio: "inherit",
       env: { ...process.env, E2E_PORT: String(E2E_PORT) },
     });
@@ -289,22 +320,36 @@ async function stopDockerServer(): Promise<void> {
 }
 
 async function startNativeServer(): Promise<void> {
-  console.log("[e2e] Starting native server...");
+  console.log(`[e2e] Starting native server from ${TARGET_SERVER_DIR} ...`);
 
-  // Build first
-  execSync("npm run build", { cwd: SERVER_DIR, stdio: "inherit" });
+  const startupSteps = nativeStartupStepsForTarget();
+
+  // Build the repo checkout when the harness targets source. Installed package
+  // tarballs already contain dist/ and do not ship source/build tooling.
+  if (startupSteps.includes("build")) {
+    execSync("npm run build", { cwd: HARNESS_SERVER_DIR, stdio: "inherit" });
+  }
+
+  if (startupSteps.includes("assertEntrypoint") && !existsSync(TARGET_SERVER_ENTRY)) {
+    throw new Error(`[e2e] Missing server entrypoint: ${TARGET_SERVER_ENTRY}`);
+  }
 
   nativeDataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-native-"));
   process.env.E2E_NATIVE_DATA_DIR = nativeDataDir;
 
   // Pre-configure. ConfigStore merges this minimal file with defaults at startup.
+  const nativeTlsMode = process.env.E2E_TLS_MODE === "disabled" ? "disabled" : "self-signed";
   writeFileSync(
     join(nativeDataDir, "config.json"),
-    JSON.stringify({ host: "127.0.0.1", port: E2E_PORT, token: ADMIN_TOKEN }, null, 2),
+    JSON.stringify(
+      { host: "127.0.0.1", port: E2E_PORT, token: ADMIN_TOKEN, tls: { mode: nativeTlsMode } },
+      null,
+      2,
+    ),
     { mode: 0o600 },
   );
 
-  transportScheme = "https";
+  transportScheme = nativeTlsMode === "disabled" ? "http" : "https";
   process.env.E2E_TRANSPORT_SCHEME = transportScheme;
   applySelfSignedTlsBypass();
 
@@ -334,13 +379,14 @@ async function launchNativeServerProcess(): Promise<void> {
   const logPath = join(dataDir, "server.log");
   const logFd = openSync(logPath, "w");
 
-  serverProcess = spawn("node", ["dist/src/cli.js", "serve"], {
-    cwd: SERVER_DIR,
+  serverProcess = spawn("node", [TARGET_SERVER_ENTRY, "serve"], {
+    cwd: TARGET_SERVER_DIR,
     env: {
       ...process.env,
       OPPI_DATA_DIR: dataDir,
       PI_CODING_AGENT_DIR: join(dataDir, "pi-agent"),
       PI_AGENT_SYNC_MODE: "skip",
+      OPPI_E2E_UI_HARNESS: process.env.OPPI_E2E_UI_HARNESS,
     },
     stdio: ["ignore", logFd, logFd],
   });
@@ -376,6 +422,7 @@ async function terminateNativeServerProcess(): Promise<void> {
   }
   serverProcess = null;
   delete process.env.E2E_NATIVE_SERVER_PID;
+  cleanStaleE2EListeners();
 }
 
 async function restartNativeServerPreservingData(): Promise<void> {
@@ -415,6 +462,19 @@ export interface APIResponse {
   text: string;
 }
 
+export interface E2ESessionListRow {
+  id: string;
+  [key: string]: unknown;
+}
+
+export interface E2EAppleBootstrapResult {
+  deviceToken: string;
+  workspaceId: string;
+  inviteURL: string;
+  baseURL: string;
+  transportScheme: E2ETransportScheme;
+}
+
 export async function api(
   method: string,
   path: string,
@@ -443,33 +503,94 @@ export async function api(
   return { status: res.status, json, text };
 }
 
+export async function createWorkspace(
+  token: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await api("POST", "/workspaces", token, body);
+  if (res.status !== 201 || !res.json?.workspace) {
+    throw new Error(`Workspace create failed (${res.status}): ${res.text}`);
+  }
+  return res.json.workspace as Record<string, unknown>;
+}
+
+export async function createWorkspaceSession(
+  token: string,
+  workspaceId: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await api(
+    "POST",
+    `/workspaces/${encodeURIComponent(workspaceId)}/sessions`,
+    token,
+    body,
+  );
+  if (res.status !== 201 || !res.json?.session) {
+    throw new Error(`Session create failed (${res.status}): ${res.text}`);
+  }
+  return res.json.session as Record<string, unknown>;
+}
+
+export async function listWorkspaceSessions(
+  token: string,
+  workspaceId: string,
+  status: "active" | "stopped" = "active",
+  timeRange?: { sinceMs: number; untilMs: number },
+): Promise<E2ESessionListRow[]> {
+  const params = new URLSearchParams({ status });
+  if (timeRange) {
+    params.set("sinceMs", String(timeRange.sinceMs));
+    params.set("untilMs", String(timeRange.untilMs));
+  }
+
+  const res = await api(
+    "GET",
+    `/workspaces/${encodeURIComponent(workspaceId)}/sessions?${params.toString()}`,
+    token,
+  );
+  if (res.status !== 200) {
+    throw new Error(`Session list failed (${res.status}): ${res.text}`);
+  }
+
+  const rows = res.json?.[status];
+  if (!Array.isArray(rows)) {
+    throw new Error(`Session list response missing ${status} session list: ${res.text}`);
+  }
+  return rows as E2ESessionListRow[];
+}
+
 // ── Pairing helpers ──
 
 /**
  * Generate a pairing invite directly via Storage (bypasses server CLI).
  * Returns the invite deep-link URL and the raw invite payload.
  */
-export async function generateTestInvite(): Promise<{
+export async function generateTestInvite(opts?: {
+  inviteHost?: string;
+  pairingTokenTtlMs?: number;
+}): Promise<{
   inviteURL: string;
   invitePayload: Record<string, unknown>;
   pairingToken: string;
   fingerprint: string;
 }> {
+  const inviteHost = opts?.inviteHost ?? "host.docker.internal";
+  const pairingTokenTtlMs = opts?.pairingTokenTtlMs ?? 60_000;
   const storageImport =
     process.env.E2E_NATIVE === "1"
-      ? pathToFileURL(join(SERVER_DIR, "dist/src/storage.js")).href
+      ? pathToFileURL(join(TARGET_SERVER_DIR, "dist/src/storage.js")).href
       : "./dist/src/storage.js";
   const inviteImport =
     process.env.E2E_NATIVE === "1"
-      ? pathToFileURL(join(SERVER_DIR, "dist/src/invite.js")).href
+      ? pathToFileURL(join(TARGET_SERVER_DIR, "dist/src/invite.js")).href
       : "./dist/src/invite.js";
   const scriptContent = [
     `import { Storage } from ${JSON.stringify(storageImport)};`,
     `import { generateInvite } from ${JSON.stringify(inviteImport)};`,
     "const storage = new Storage(process.env.OPPI_DATA_DIR);",
     "const invite = generateInvite(",
-    '  storage, () => "host.docker.internal", () => "e2e-server",',
-    "  { pairingTokenTtlMs: 60000 }",
+    `  storage, () => ${JSON.stringify(inviteHost)}, () => "e2e-server",`,
+    `  { pairingTokenTtlMs: ${pairingTokenTtlMs} }`,
     ");",
     "const payload = {",
     `  v: 3, host: "127.0.0.1", port: ${E2E_PORT},`,
@@ -493,7 +614,7 @@ export async function generateTestInvite(): Promise<{
       const dataDir = process.env.E2E_NATIVE_DATA_DIR;
       if (!dataDir) throw new Error("[e2e] Native data dir not available for invite generation");
       const raw = execSync(`OPPI_DATA_DIR=${dataDir} node ${tmpScript}`, {
-        cwd: SERVER_DIR,
+        cwd: TARGET_SERVER_DIR,
         encoding: "utf-8",
       }).trim();
       return JSON.parse(raw);
@@ -507,6 +628,49 @@ export async function generateTestInvite(): Promise<{
   } finally {
     rmSync(tmpScript, { force: true });
   }
+}
+
+export async function pairDevice(pairingToken: string, deviceName = "e2e-device"): Promise<string> {
+  const res = await api("POST", "/pair", undefined, { pairingToken, deviceName });
+  const deviceToken = res.json?.deviceToken;
+  if (res.status !== 200 || typeof deviceToken !== "string" || deviceToken.length === 0) {
+    throw new Error(`Pairing failed (${res.status}): ${res.text}`);
+  }
+  return deviceToken;
+}
+
+export async function bootstrapAppleE2E(opts?: {
+  workspaceName?: string;
+  model?: string;
+  inviteFile?: string;
+  deviceTokenFile?: string;
+}): Promise<E2EAppleBootstrapResult> {
+  const scriptInvite = await generateTestInvite({ pairingTokenTtlMs: 600_000 });
+  const deviceToken = await pairDevice(scriptInvite.pairingToken, "e2e-script-bootstrap");
+  const workspace = await createWorkspace(deviceToken, {
+    name: opts?.workspaceName ?? "e2e-workspace",
+    skills: [],
+    ...(opts?.model ? { defaultModel: opts.model } : {}),
+  });
+  const workspaceId = String(workspace.id ?? "");
+  if (!workspaceId) {
+    throw new Error("Workspace create response did not include an id");
+  }
+
+  const appInvite = await generateTestInvite({
+    inviteHost: "127.0.0.1",
+    pairingTokenTtlMs: 600_000,
+  });
+  writeFileSync(opts?.inviteFile ?? DEFAULT_APP_INVITE_FILE, appInvite.inviteURL);
+  writeFileSync(opts?.deviceTokenFile ?? DEFAULT_APP_DEVICE_TOKEN_FILE, deviceToken);
+
+  return {
+    deviceToken,
+    workspaceId,
+    inviteURL: appInvite.inviteURL,
+    baseURL: baseURL(),
+    transportScheme: activeTransportScheme(),
+  };
 }
 
 // ── WebSocket helpers ──
