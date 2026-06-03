@@ -57,7 +57,7 @@ struct AskSilenceWatchdogTests {
                 "Watchdog should be stopped when ask is pending (silence is expected)")
     }
 
-    @Test func genericExtensionRequestDoesNotStopWatchdog() {
+    @Test func blockingExtensionRequestStopsWatchdog() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -65,7 +65,7 @@ struct AskSilenceWatchdogTests {
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
         #expect(conn.silenceWatchdog.lastEventTime != nil)
 
-        // Receive a non-ask extension request (e.g. "select")
+        // Receive a blocking non-ask extension request (e.g. "select")
         let selectRequest = ExtensionUIRequest(
             id: "ext-1",
             sessionId: "s1",
@@ -75,9 +75,9 @@ struct AskSilenceWatchdogTests {
         )
         conn.handleActiveSessionUI(.extensionUIRequest(selectRequest), sessionId: "s1")
 
-        // The watchdog should still be running (generic dialogs auto-timeout)
-        #expect(conn.silenceWatchdog.lastEventTime != nil,
-                "Watchdog should remain active for non-ask extension requests")
+        // The extension dialog waits for user input, so silence is expected.
+        #expect(conn.silenceWatchdog.lastEventTime == nil,
+                "Watchdog should stop while a blocking extension request is pending")
     }
 
     @Test func sessionEndedClearsAskAndStopsWatchdog() {

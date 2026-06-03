@@ -209,9 +209,6 @@ final class ServerConnection {
     /// Views observe this directly via `@Environment(ChatSessionState.self)`.
     let chatState = ChatSessionState()
 
-    /// Timer that auto-dismisses extension dialogs after their timeout expires.
-    var extensionTimeoutTask: Task<Void, Never>?
-
     /// Deferred queue refresh retry when initial streamSession queue sync times out.
     var deferredQueueSyncTask: Task<Void, Never>?
 
@@ -989,8 +986,6 @@ final class ServerConnection {
         focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
         // Reset per-connection UI state for the new focused session
         activeExtensionDialog = nil
-        extensionTimeoutTask?.cancel()
-        extensionTimeoutTask = nil
         chatState.resetSessionState()
 
         // Restore pending user-blocking UI for this session.
@@ -1046,8 +1041,6 @@ final class ServerConnection {
         }
         // Clear stale extension dialog — it's tied to the active session stream
         activeExtensionDialog = nil
-        extensionTimeoutTask?.cancel()
-        extensionTimeoutTask = nil
         silenceWatchdog.stop()
         chatState.resetSessionState()
 
@@ -1122,8 +1115,6 @@ final class ServerConnection {
         activeExtensionDialog = nil
         pendingExtensionDialogs.removeValue(forKey: sessionId)
         clearAskState(for: sessionId)
-        extensionTimeoutTask?.cancel()
-        extensionTimeoutTask = nil
     }
 
     func _setActiveSessionIdForTesting(_ sessionId: String?) {

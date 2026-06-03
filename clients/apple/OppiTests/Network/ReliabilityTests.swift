@@ -7,7 +7,7 @@ import Foundation
 /// Tests for reliability and server interaction hardening.
 ///
 /// Fix 1: Reconnect jitter (WebSocketClient backoff)
-/// Fix 2: Extension dialog timeout (auto-dismiss)
+/// Fix 2: Extension dialog persistence until server settlement
 /// Fix 3: Extension dialog cleared on disconnect
 /// Fix 4: Stop reconciliation (tested indirectly — timer setup/teardown)
 /// Fix 5: Timeline item cap (bounded memory growth)
@@ -183,7 +183,7 @@ struct ReliabilityTests {
         #expect(elapsed < .milliseconds(500), "Should resolve on disconnect, not timeout (\(elapsed))")
     }
 
-    // MARK: - Fix 2: Extension Dialog Timeout
+    // MARK: - Fix 2: Extension Dialog Persistence
 
     @Test func extensionDialogSetOnRequest() {
         let (conn, pipe) = makeTestConnection()
@@ -212,7 +212,7 @@ struct ReliabilityTests {
         #expect(conn.activeExtensionDialog?.id == "ext2", "New request should replace old")
     }
 
-    @Test func extensionDialogTimeoutUsesMilliseconds() async throws {
+    @Test func extensionDialogDoesNotAutoDismissBeforeServerSettlement() async throws {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
@@ -223,8 +223,11 @@ struct ReliabilityTests {
 
         try await Task.sleep(for: .milliseconds(150))
 
-        #expect(conn.activeExtensionDialog == nil, "Extension timeout should use server milliseconds")
-        #expect(conn.extensionToast == "Extension request timed out")
+        #expect(
+            conn.activeExtensionDialog?.id == "ext1",
+            "Timeout metadata should not make the client hide a still-pending extension request"
+        )
+        #expect(conn.extensionToast == nil)
     }
 
     @Test func extensionDialogRestoredAfterFocusRoundTrip() {

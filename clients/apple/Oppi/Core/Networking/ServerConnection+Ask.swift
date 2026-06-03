@@ -168,10 +168,10 @@ extension ServerConnection {
 
     func presentExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
         pendingExtensionDialogs.removeValue(forKey: sessionId)
-        extensionTimeoutTask?.cancel()
         activeExtensionDialog = request
-        scheduleExtensionTimeout(request)
         syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
+        // Blocking extension dialogs wait for user input, so silence is expected.
+        silenceWatchdog.stop()
     }
 
     func stashPendingExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
@@ -185,23 +185,21 @@ extension ServerConnection {
             return
         }
 
-        cancelExtensionTimeout()
         activeExtensionDialog = restored
-        scheduleExtensionTimeout(restored)
+        // Blocking extension dialogs wait for user input, so silence is expected.
+        silenceWatchdog.stop()
     }
 
     func stashActiveExtensionDialogIfNeeded() {
         guard let focusedSessionId, let request = activeExtensionDialog else { return }
         pendingExtensionDialogs[focusedSessionId] = request
         activeExtensionDialog = nil
-        cancelExtensionTimeout()
     }
 
     func clearExtensionDialog(for sessionId: String?) {
         guard let sessionId else {
             let previousSessionId = activeExtensionDialog?.sessionId
             activeExtensionDialog = nil
-            cancelExtensionTimeout()
             if let previousSessionId {
                 syncExtensionDialogWorkspaceSummary(sessionId: previousSessionId)
             }
@@ -212,7 +210,6 @@ extension ServerConnection {
         let hadActive = activeExtensionDialog?.sessionId == sessionId
         if hadActive {
             activeExtensionDialog = nil
-            cancelExtensionTimeout()
         }
         if hadPending || hadActive {
             syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
@@ -220,14 +217,12 @@ extension ServerConnection {
     }
 
     func clearExtensionDialog(id requestId: String) {
-        var clearedActive = false
         var changedSessionIds = Set<String>()
         if activeExtensionDialog?.id == requestId {
             if let sessionId = activeExtensionDialog?.sessionId {
                 changedSessionIds.insert(sessionId)
             }
             activeExtensionDialog = nil
-            clearedActive = true
         }
 
         for (sessionId, request) in Array(pendingExtensionDialogs) where request.id == requestId {
@@ -235,9 +230,6 @@ extension ServerConnection {
             changedSessionIds.insert(sessionId)
         }
 
-        if clearedActive {
-            cancelExtensionTimeout()
-        }
         for sessionId in changedSessionIds {
             syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
         }
@@ -253,8 +245,4 @@ extension ServerConnection {
         }
     }
 
-    private func cancelExtensionTimeout() {
-        extensionTimeoutTask?.cancel()
-        extensionTimeoutTask = nil
-    }
 }
