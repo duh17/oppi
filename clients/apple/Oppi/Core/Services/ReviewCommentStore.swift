@@ -170,6 +170,7 @@ final class ReviewCommentStore {
                !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append("")
                 lines.append("**Selected text:**")
+                lines.append("")
                 lines.append(contentsOf: fencedContextLines(
                     selectedText,
                     language: comment.reference.languageHint ?? languageHint(for: comment.reference.path),
