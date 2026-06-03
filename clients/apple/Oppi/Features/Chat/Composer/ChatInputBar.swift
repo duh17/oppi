@@ -4,18 +4,24 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+enum ChatInputPrimaryActionKind: Equatable {
+    case send
+    case ignoreAsk
+    case stop
+}
+
 /// Chat input bar with full-width composer and action row.
 ///
 /// **Layout**:
 /// ```
 /// ┌──────────────────────────────────────┐
 /// │ [image strip]                        │
-/// │ text input area…              [⬆/■]  │
+/// │ text input area…            [⬆/×/■] │
 /// └──────────────────────────────────────┘
 /// [+]  [action row content…]
 /// ```
 ///
-/// - Composer capsule spans full width; send/stop button lives inside it.
+/// - Composer capsule spans full width; send/ignore/stop button lives inside it.
 /// - `+` and any additional controls (model/thinking pills) sit in a
 ///   dedicated action row below the capsule.
 /// - Expand stays on the trailing side without taking text width.
@@ -101,6 +107,10 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var canSend: Bool {
+        if askRequest != nil {
+            return pendingAskSendTransition != nil
+        }
+
         let hasImages = pendingAttachments.contains { $0.source == .image }
         let hasFiles = pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty
         let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -117,10 +127,10 @@ struct ChatInputBar<ActionRow: View>: View {
         return askRequest.questions[askCurrentPage].id
     }
 
-    private var pendingAskCustomAnswers: [String: AskAnswer]? {
-        Self.customAskAnswers(
+    private var pendingAskSendTransition: AskComposerSendTransition? {
+        Self.askComposerSendTransition(
             request: askRequest,
-            activeQuestionID: activeAskQuestionID,
+            currentPage: askCurrentPage,
             draftAnswers: askDraftAnswers,
             text: composerDisplayText
         )
@@ -156,6 +166,15 @@ struct ChatInputBar<ActionRow: View>: View {
         return ThemeColorContrast.foreground(for: sendActionFillColor)
     }
 
+    private var primaryActionKind: ChatInputPrimaryActionKind {
+        Self.primaryActionKind(
+            isBusy: isBusy,
+            canSend: canSend,
+            isSending: isSending,
+            hasAskRequest: askRequest != nil
+        )
+    }
+
     private var autocompleteContext: ComposerAutocompleteContext {
         ComposerAutocomplete.context(for: text, isBusy: isBusy)
     }
@@ -182,6 +201,10 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
         alwaysShowActionRow || isBusy || isInputFocused || !pendingAttachments.isEmpty || !pendingRepoPointers.isEmpty
+    }
+
+    private var showsBusyModeSelector: Bool {
+        Self.showsBusyModeSelector(isBusy: isBusy, hasAskRequest: askRequest != nil)
     }
 
     /// Tapping the input while voice is active should switch back to typing:
@@ -392,7 +415,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 HStack(spacing: 6) {
                     attachButton
 
-                    if isBusy {
+                    if showsBusyModeSelector {
                         busyModeSelector
                     }
 
@@ -512,14 +535,13 @@ struct ChatInputBar<ActionRow: View>: View {
 
     @ViewBuilder
     private var primaryActionButton: some View {
-        if isBusy {
-            if canSend || isSending {
-                sendActionButton
-            } else {
-                stopActionButton
-            }
-        } else {
+        switch primaryActionKind {
+        case .send:
             sendActionButton
+        case .ignoreAsk:
+            ignoreAskActionButton
+        case .stop:
+            stopActionButton
         }
     }
 
@@ -544,6 +566,26 @@ struct ChatInputBar<ActionRow: View>: View {
         .buttonStyle(.plain)
         .disabled(!canSend || isSending)
         .accessibilityIdentifier("chat.send")
+        .accessibilityLabel(isSending ? "Sending" : "Send")
+    }
+
+    private var ignoreAskActionButton: some View {
+        Button(action: { onAskIgnoreAll?() }) {
+            ZStack {
+                Circle().fill(Color.themeBgHighlight)
+                Circle().stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
+
+                Image(systemName: "xmark")
+                    .font(.appActionBold)
+                    .foregroundStyle(.themeComment)
+            }
+            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
+        }
+        .buttonStyle(.plain)
+        .disabled(onAskIgnoreAll == nil)
+        .accessibilityIdentifier("chat.askIgnore")
+        .accessibilityLabel("Ignore request")
+        .accessibilityHint("Responds to the current extension request as ignored")
     }
 
     /// Compact mic toggle inside the capsule, left of the text field.
@@ -634,6 +676,7 @@ struct ChatInputBar<ActionRow: View>: View {
         .buttonStyle(.plain)
         .disabled(isStopping)
         .accessibilityIdentifier("chat.stop")
+        .accessibilityLabel(isStopping ? "Stopping" : "Stop response")
     }
 
     private var forceStopButton: some View {
@@ -698,15 +741,35 @@ struct ChatInputBar<ActionRow: View>: View {
         if pendingReviewCommentCount > 0 {
             return "Send review comments…"
         }
-        if let askRequest, askRequest.allowCustom {
-            if let placeholder = askRequest.customPlaceholder?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !placeholder.isEmpty {
-                return placeholder
+        if let askRequest {
+            if askRequest.allowCustom {
+                if let placeholder = askRequest.customPlaceholder?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !placeholder.isEmpty {
+                    return placeholder
+                }
+                return "Type answer…"
             }
-            return "Type answer…"
+            return "Choose an option…"
         }
         guard isBusy else { return "Message…" }
         return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
+    }
+
+    static func primaryActionKind(
+        isBusy: Bool,
+        canSend: Bool,
+        isSending: Bool,
+        hasAskRequest: Bool
+    ) -> ChatInputPrimaryActionKind {
+        if canSend || isSending {
+            return .send
+        }
+        guard isBusy else { return .send }
+        return hasAskRequest ? .ignoreAsk : .stop
+    }
+
+    static func showsBusyModeSelector(isBusy: Bool, hasAskRequest: Bool) -> Bool {
+        isBusy && !hasAskRequest
     }
 
     static func customAskAnswers(
@@ -738,7 +801,6 @@ struct ChatInputBar<ActionRow: View>: View {
 
     static func shouldSubmitAskResponseImmediately(request: AskRequest?, currentPage: Int) -> Bool {
         guard let request else { return false }
-        guard request.allowCustom else { return false }
         guard request.questions.count > 1 else { return true }
         return currentPage >= request.questions.count - 1
     }
@@ -782,13 +844,17 @@ struct ChatInputBar<ActionRow: View>: View {
         }
 
         let activeQuestionID = request.questions[currentPage].id
-        guard let answers = customAskAnswers(
+        let answers: [String: AskAnswer]
+        if let customAnswers = customAskAnswers(
             request: request,
             activeQuestionID: activeQuestionID,
             draftAnswers: draftAnswers,
             text: text
-        ) else {
-            return nil
+        ) {
+            answers = customAnswers
+        } else {
+            guard draftAnswers[activeQuestionID] != nil else { return nil }
+            answers = draftAnswers
         }
 
         if shouldSubmitAskResponseImmediately(request: request, currentPage: currentPage) {
@@ -840,16 +906,23 @@ struct ChatInputBar<ActionRow: View>: View {
                 } else {
                     await manager.cancelRecording()
                 }
-                if !handleAskComposerSendIfNeeded() {
-                    onSend()
-                }
+                submitCurrentComposerAction()
             }
             return
         }
 
-        if !handleAskComposerSendIfNeeded() {
-            onSend()
+        submitCurrentComposerAction()
+    }
+
+    private func submitCurrentComposerAction() {
+        if handleAskComposerSendIfNeeded() {
+            return
         }
+        if askRequest != nil {
+            onAskIgnoreAll?()
+            return
+        }
+        onSend()
     }
 
     private func handleAskComposerSendIfNeeded() -> Bool {

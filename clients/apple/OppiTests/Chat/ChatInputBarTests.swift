@@ -170,8 +170,8 @@ struct ChatInputBarTests {
         #expect(placeholder == "Type answer…")
     }
 
-    @Test("Ask without custom input keeps busy placeholder behavior")
-    func askWithoutCustomInputKeepsBusyPlaceholderBehavior() {
+    @Test("Ask without custom input prompts a decision instead of steering")
+    func askWithoutCustomInputPromptsDecisionInsteadOfSteering() {
         let request = AskRequest(
             id: "ask-1",
             sessionId: "s1",
@@ -187,7 +187,50 @@ struct ChatInputBarTests {
             busyStreamingBehavior: .steer
         )
 
-        #expect(placeholder == "Steer agent…")
+        #expect(placeholder == "Choose an option…")
+    }
+
+    @Test("Busy ask with no custom answer uses ignore instead of stop")
+    func busyAskWithoutAnswerUsesIgnoreInsteadOfStop() {
+        let action = ChatInputBar<EmptyView>.primaryActionKind(
+            isBusy: true,
+            canSend: false,
+            isSending: false,
+            hasAskRequest: true
+        )
+
+        #expect(action == .ignoreAsk)
+    }
+
+    @Test("Busy session without ask still uses stop")
+    func busySessionWithoutAskStillUsesStop() {
+        let action = ChatInputBar<EmptyView>.primaryActionKind(
+            isBusy: true,
+            canSend: false,
+            isSending: false,
+            hasAskRequest: false
+        )
+
+        #expect(action == .stop)
+    }
+
+    @Test("Custom ask answer keeps send as the primary action")
+    func customAskAnswerKeepsSendPrimaryAction() {
+        let action = ChatInputBar<EmptyView>.primaryActionKind(
+            isBusy: true,
+            canSend: true,
+            isSending: false,
+            hasAskRequest: true
+        )
+
+        #expect(action == .send)
+    }
+
+    @Test("Ask hides the busy steering mode selector")
+    func askHidesBusyModeSelector() {
+        #expect(!ChatInputBar<EmptyView>.showsBusyModeSelector(isBusy: true, hasAskRequest: true))
+        #expect(ChatInputBar<EmptyView>.showsBusyModeSelector(isBusy: true, hasAskRequest: false))
+        #expect(!ChatInputBar<EmptyView>.showsBusyModeSelector(isBusy: false, hasAskRequest: false))
     }
 
     @Test("Composer text answers ask instead of becoming steering or follow-up")
@@ -320,6 +363,38 @@ struct ChatInputBarTests {
         #expect(transition.answers == [
             "q1": .single("picked"),
             "q2": .custom("second custom answer")
+        ])
+        #expect(transition.nextComposerText.isEmpty)
+    }
+
+    @Test("Ask composer send transition submits selected option on final page")
+    func askComposerSendTransitionSubmitsSelectedFinalOption() throws {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [
+                AskQuestion(id: "q1", question: "First?", options: [AskOption(value: "a", label: "A")], multiSelect: false),
+                AskQuestion(id: "q2", question: "Second?", options: [AskOption(value: "b", label: "B")], multiSelect: false)
+            ],
+            allowCustom: false,
+            timeout: nil
+        )
+
+        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+            request: request,
+            currentPage: 1,
+            draftAnswers: [
+                "q1": .single("a"),
+                "q2": .single("b")
+            ],
+            text: ""
+        ))
+
+        #expect(transition.nextPage == 1)
+        #expect(transition.shouldSubmit)
+        #expect(transition.answers == [
+            "q1": .single("a"),
+            "q2": .single("b")
         ])
         #expect(transition.nextComposerText.isEmpty)
     }
