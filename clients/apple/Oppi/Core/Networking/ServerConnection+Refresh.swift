@@ -115,7 +115,11 @@ extension ServerConnection {
                 let sessionSummaries = try await apiClient.listRecentWorkspaceSessionSummaries(
                     recentDays: Self.globalSessionRefreshRecentDays
                 )
-                self.sessionStore.upsertManySummaries(sessionSummaries)
+                self.sessionStore.applyRecentWorkspaceSummaryProjection(
+                    workspaceIds: Set(workspaces.map(\.id)),
+                    summaries: sessionSummaries,
+                    requestStartedAt: requestStartedAt
+                )
                 self.syncAllWorkspaceSummariesFromLocalState()
                 self.sessionStore.markSyncSucceeded()
                 self.syncLiveActivityState()

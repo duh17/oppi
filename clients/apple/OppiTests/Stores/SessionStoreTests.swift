@@ -426,6 +426,54 @@ struct SessionStorePartitioningTests {
         #expect(!ids.contains("old-stopped"))
     }
 
+    @Test func recentWorkspaceSummariesPruneMissingRowsForKnownWorkspaces() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        store.upsert(makeTestSession(id: "stale-working", workspaceId: "w1", status: .busy, lastActivity: now.addingTimeInterval(-7_200)))
+        store.upsert(makeTestSession(id: "fresh-server", workspaceId: "w1", status: .stopped, lastActivity: now))
+        store.upsert(makeTestSession(id: "unloaded-workspace", workspaceId: "w3", status: .busy, lastActivity: now))
+
+        store.applyRecentWorkspaceSummaries(
+            workspaceIds: Set(["w1", "w2"]),
+            summaries: [
+                SessionSummary(from: makeTestSession(id: "fresh-server", workspaceId: "w1", status: .stopped, lastActivity: now)),
+                SessionSummary(from: makeTestSession(id: "other-known", workspaceId: "w2", status: .ready, lastActivity: now.addingTimeInterval(-60)))
+            ],
+            requestStartedAt: now
+        )
+
+        let ids = Set(store.listProjectionSessions.map(\.id))
+        #expect(ids.contains("fresh-server"))
+        #expect(ids.contains("other-known"))
+        #expect(ids.contains("unloaded-workspace"))
+        #expect(!ids.contains("stale-working"))
+    }
+
+    @Test func recentWorkspaceSummaryProjectionPrunesListButKeepsCachedSession() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        store.upsert(makeTestSession(id: "open-archive", workspaceId: "w1", status: .stopped, lastActivity: now.addingTimeInterval(-86_400)))
+        store.upsert(makeTestSession(id: "fresh-server", workspaceId: "w1", status: .ready, lastActivity: now))
+        store.activeSessionId = "open-archive"
+
+        store.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: Set(["w1"]),
+            summaries: [
+                SessionSummary(from: makeTestSession(id: "fresh-server", workspaceId: "w1", status: .ready, lastActivity: now))
+            ],
+            requestStartedAt: now
+        )
+
+        let backingIds = Set(store.sessions.map(\.id))
+        let projectionIds = Set(store.listProjectionSessions.map(\.id))
+        #expect(backingIds.contains("open-archive"))
+        #expect(projectionIds.contains("fresh-server"))
+        #expect(!projectionIds.contains("open-archive"))
+        #expect(store.activeSessionId == "open-archive")
+    }
+
     @Test func workspaceRecentSnapshotPreservesExistingAncestors() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

@@ -309,20 +309,136 @@ final class SessionStore {
         requestStartedAt: Date = Date(),
         preserveRecentWindow: TimeInterval = 180
     ) -> Bool {
+        applyRecentWorkspaceSummaries(
+            workspaceIds: Set([workspaceId]),
+            summaries: incomingSummaries,
+            requestStartedAt: requestStartedAt,
+            preserveRecentWindow: preserveRecentWindow
+        )
+    }
+
+    /// Apply the authoritative recent workspace snapshot used by workspace detail.
+    ///
+    /// The detail refresh owns the focused workspace's hot backing partition, so
+    /// missing rows can leave both the full store and list projection.
+    @discardableResult
+    func applyRecentWorkspaceSummaries(
+        workspaceIds: Set<String>,
+        summaries incomingSummaries: [SessionSummary],
+        requestStartedAt: Date = Date(),
+        preserveRecentWindow: TimeInterval = 180
+    ) -> Bool {
+        let targetWorkspaceIds = workspaceIds.filter { !$0.isEmpty }
+        guard !targetWorkspaceIds.isEmpty else { return upsertManySummaries(incomingSummaries) }
+
         let current = sessions
-        let incomingForWorkspace = incomingSummaries.map(\.session).compactMap { session -> Session? in
-            guard !isDeletedSessionTombstoned(session.id) else { return nil }
-            guard session.workspaceId == nil || session.workspaceId == workspaceId else { return nil }
-            var normalized = session
-            if normalized.workspaceId == nil {
-                normalized.workspaceId = workspaceId
-            }
-            return normalized
+        let incomingForWorkspaces = normalizedRecentWorkspaceSessions(
+            targetWorkspaceIds: targetWorkspaceIds,
+            summaries: incomingSummaries
+        )
+        let next = recentWorkspaceSnapshot(
+            current: current,
+            targetWorkspaceIds: targetWorkspaceIds,
+            incomingForWorkspaces: incomingForWorkspaces,
+            requestStartedAt: requestStartedAt,
+            preserveRecentWindow: preserveRecentWindow
+        )
+        let didMutateAttention = applyListAttentionCounts(
+            from: incomingSummaries,
+            replacingWorkspaceIds: targetWorkspaceIds
+        )
+        guard next != current else { return didMutateAttention }
+
+        let nextIds = Set(next.map(\.id))
+        let removedIds = Set(current.map(\.id)).subtracting(nextIds)
+        let key = activeServerKey
+        for removedId in removedIds {
+            serverTurnEndedDates[key]?.removeValue(forKey: removedId)
+        }
+        if let activeSessionId, removedIds.contains(activeSessionId) {
+            self.activeSessionId = nil
         }
 
+        setActiveSessionsPreservingListProjection(next)
+        return true
+    }
+
+    /// Apply the authoritative recent workspace snapshot used by workspace home.
+    ///
+    /// Home refreshes own the cold list projection, not every cached session in
+    /// the backing store. Missing rows leave workspace lists, while direct
+    /// navigation/cache-only sessions stay available for the active chat.
+    @discardableResult
+    func applyRecentWorkspaceSummaryProjection(
+        workspaceIds: Set<String>,
+        summaries incomingSummaries: [SessionSummary],
+        requestStartedAt: Date = Date(),
+        preserveRecentWindow: TimeInterval = 180
+    ) -> Bool {
+        let targetWorkspaceIds = workspaceIds.filter { !$0.isEmpty }
+        guard !targetWorkspaceIds.isEmpty else { return upsertManySummaries(incomingSummaries) }
+
+        let incomingForWorkspaces = normalizedRecentWorkspaceSessions(
+            targetWorkspaceIds: targetWorkspaceIds,
+            summaries: incomingSummaries
+        )
+
+        var backing = sessions
+        var didMutateBacking = false
+        for session in incomingForWorkspaces {
+            didMutateBacking = merge(session, into: &backing) || didMutateBacking
+        }
+        if didMutateBacking {
+            serverSessions[activeServerKey] = backing
+        }
+
+        let currentProjection = listProjectionSessions
+        let nextProjection = recentWorkspaceSnapshot(
+            current: currentProjection,
+            targetWorkspaceIds: targetWorkspaceIds,
+            incomingForWorkspaces: incomingForWorkspaces,
+            requestStartedAt: requestStartedAt,
+            preserveRecentWindow: preserveRecentWindow
+        )
+        let didMutateAttention = applyListAttentionCounts(
+            from: incomingSummaries,
+            replacingWorkspaceIds: targetWorkspaceIds
+        )
+
+        guard nextProjection != currentProjection else {
+            return didMutateBacking || didMutateAttention
+        }
+        serverListProjectionSessions[activeServerKey] = nextProjection
+        return true
+    }
+
+    private func normalizedRecentWorkspaceSessions(
+        targetWorkspaceIds: Set<String>,
+        summaries incomingSummaries: [SessionSummary]
+    ) -> [Session] {
+        let singleWorkspaceId = targetWorkspaceIds.count == 1 ? targetWorkspaceIds.first : nil
+        return incomingSummaries.map(\.session).compactMap { session -> Session? in
+            guard !isDeletedSessionTombstoned(session.id) else { return nil }
+            var normalized = session
+            if normalized.workspaceId == nil, let singleWorkspaceId {
+                normalized.workspaceId = singleWorkspaceId
+            }
+            guard let workspaceId = normalized.workspaceId,
+                  targetWorkspaceIds.contains(workspaceId) else { return nil }
+            return normalized
+        }
+    }
+
+    private func recentWorkspaceSnapshot(
+        current: [Session],
+        targetWorkspaceIds: Set<String>,
+        incomingForWorkspaces: [Session],
+        requestStartedAt: Date,
+        preserveRecentWindow: TimeInterval
+    ) -> [Session] {
         var incomingById: [String: Session] = [:]
         var incomingOrder: [String] = []
-        for session in incomingForWorkspace {
+        for session in incomingForWorkspaces {
             if incomingById[session.id] == nil {
                 incomingOrder.append(session.id)
             }
@@ -331,14 +447,16 @@ final class SessionStore {
 
         let incomingIds = Set(incomingById.keys)
         let currentById = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
-        let ancestorIds = ancestorIdsForVisibleRows(incomingForWorkspace, currentById: currentById)
+        let ancestorIds = ancestorIdsForVisibleRows(incomingForWorkspaces, currentById: currentById)
         var nextById: [String: Session] = [:]
 
-        for existing in current where existing.workspaceId != workspaceId {
-            nextById[existing.id] = existing
-        }
+        for existing in current {
+            guard let workspaceId = existing.workspaceId,
+                  targetWorkspaceIds.contains(workspaceId) else {
+                nextById[existing.id] = existing
+                continue
+            }
 
-        for existing in current where existing.workspaceId == workspaceId {
             if incomingIds.contains(existing.id) {
                 continue
             }
@@ -365,28 +483,10 @@ final class SessionStore {
             }
         }
 
-        let next = nextById.values.sorted { lhs, rhs in
+        return nextById.values.sorted { lhs, rhs in
             if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
             return lhs.id < rhs.id
         }
-        let didMutateAttention = applyListAttentionCounts(
-            from: incomingSummaries,
-            replacingWorkspaceId: workspaceId
-        )
-        guard next != current else { return didMutateAttention }
-
-        let nextIds = Set(next.map(\.id))
-        let removedIds = Set(current.map(\.id)).subtracting(nextIds)
-        let key = activeServerKey
-        for removedId in removedIds {
-            serverTurnEndedDates[key]?.removeValue(forKey: removedId)
-        }
-        if let activeSessionId, removedIds.contains(activeSessionId) {
-            self.activeSessionId = nil
-        }
-
-        setActiveSessionsPreservingListProjection(next)
-        return true
     }
 
     @discardableResult
@@ -394,12 +494,22 @@ final class SessionStore {
         from summaries: [SessionSummary],
         replacingWorkspaceId workspaceId: String? = nil
     ) -> Bool {
+        applyListAttentionCounts(
+            from: summaries,
+            replacingWorkspaceIds: workspaceId.map { Set([$0]) }
+        )
+    }
+
+    private func applyListAttentionCounts(
+        from summaries: [SessionSummary],
+        replacingWorkspaceIds workspaceIds: Set<String>?
+    ) -> Bool {
         let key = activeServerKey
         var counts = serverListAttentionCounts[key] ?? [:]
         let original = counts
 
-        if let workspaceId {
-            for session in listProjectionSessions where session.workspaceId == workspaceId {
+        if let workspaceIds {
+            for session in listProjectionSessions where session.workspaceId.map({ workspaceIds.contains($0) }) == true {
                 counts.removeValue(forKey: session.id)
             }
         }
