@@ -14,6 +14,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import type {
+  ExtensionUINativeSurface,
   ServerMessage,
   Session,
   SubagentConfig,
@@ -180,6 +181,17 @@ interface SubagentToolPolicyState {
   activeTools: string[];
 }
 
+interface NativeSubagentsWidgetComponent {
+  render(width: number): string[];
+  renderNative(): ExtensionUINativeSurface | undefined;
+  invalidate(): void;
+  dispose(): void;
+  requestRender?: () => void;
+}
+
+const SUBAGENTS_WIDGET_KEY = "subagents";
+const SUBAGENTS_WIDGET_RECENT_LIMIT = 3;
+
 const BUILT_IN_SUBAGENT_PROFILES: Record<string, SubagentModelProfileConfig> = {
   default: {
     description: "Default subagent profile. Use when no specialized lane is needed.",
@@ -256,6 +268,248 @@ function readPersistedToolPolicy(ctx: {
     if (policy) return policy;
   }
   return undefined;
+}
+
+function shortSessionId(sessionId: string): string {
+  return sessionId.length <= 8 ? sessionId : sessionId.slice(0, 8);
+}
+
+function subagentState(
+  status: Session["status"],
+): "queued" | "running" | "success" | "warning" | "error" | "inactive" {
+  switch (status) {
+    case "starting":
+      return "running";
+    case "busy":
+    case "stopping":
+      return "running";
+    case "ready":
+      return "success";
+    case "error":
+      return "error";
+    case "stopped":
+      return "inactive";
+  }
+}
+
+function isActiveSubagentStatus(status: Session["status"]): boolean {
+  return status === "starting" || status === "busy" || status === "stopping";
+}
+
+function subagentStatusLabel(session: Session): string {
+  switch (session.status) {
+    case "starting":
+      return "Starting";
+    case "ready":
+      return session.lastAgentReplyAt ? "Ready" : "Idle";
+    case "busy":
+      return "Running";
+    case "stopping":
+      return "Stopping";
+    case "stopped":
+      return "Stopped";
+    case "error":
+      return "Error";
+  }
+}
+
+function subagentSubtitle(session: Session): string {
+  const parts = [subagentStatusLabel(session)];
+  if (session.messageCount > 0) {
+    parts.push(`${session.messageCount} message${session.messageCount === 1 ? "" : "s"}`);
+  }
+  const totalTokens =
+    session.tokens.input +
+    session.tokens.output +
+    session.tokens.cacheRead +
+    session.tokens.cacheWrite;
+  if (totalTokens > 0) {
+    parts.push(`${Math.round(totalTokens / 100) / 10}k tokens`);
+  }
+  if (session.cost > 0) {
+    parts.push(`$${session.cost.toFixed(4)}`);
+  }
+  return parts.join(" · ");
+}
+
+function subagentDetail(session: Session): string | undefined {
+  const snippets = [session.lastMessage, session.firstMessage]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  return snippets[0];
+}
+
+function createSubagentsWidget(
+  ctx: SubagentsContext,
+  getTrackedSessionIds: () => Iterable<string>,
+): NativeSubagentsWidgetComponent {
+  const subscriptions = new Map<string, () => void>();
+  const snapshots = new Map<string, Session>();
+  let requestRender: (() => void) | undefined;
+
+  const mergeForDisplay = (authoritative: Session, snapshot: Session | undefined): Session => {
+    if (!snapshot) return authoritative;
+    return {
+      ...snapshot,
+      ...authoritative,
+      firstMessage: authoritative.firstMessage ?? snapshot.firstMessage,
+      lastMessage: authoritative.lastMessage ?? snapshot.lastMessage,
+      lastAgentReplyAt: authoritative.lastAgentReplyAt ?? snapshot.lastAgentReplyAt,
+    };
+  };
+
+  const currentChildren = (): Session[] => {
+    const sessionsById = new Map<string, Session>();
+    for (const child of ctx.listChildren()) {
+      sessionsById.set(child.id, mergeForDisplay(child, snapshots.get(child.id)));
+    }
+    for (const sessionId of getTrackedSessionIds()) {
+      const authoritative = ctx.getSession(sessionId);
+      const snapshot = snapshots.get(sessionId);
+      const session = authoritative ? mergeForDisplay(authoritative, snapshot) : snapshot;
+      if (session) {
+        sessionsById.set(session.id, session);
+      }
+    }
+    const sessions = Array.from(sessionsById.values()).sort(
+      (a, b) => b.lastActivity - a.lastActivity || a.id.localeCompare(b.id),
+    );
+    const active = sessions.filter((session) => isActiveSubagentStatus(session.status));
+    const recent = sessions
+      .filter((session) => !isActiveSubagentStatus(session.status))
+      .slice(0, SUBAGENTS_WIDGET_RECENT_LIMIT);
+    return [...active, ...recent];
+  };
+
+  const syncSubscriptions = (children: Session[]): void => {
+    const activeIds = new Set(children.map((child) => child.id));
+    for (const [childId, cleanup] of subscriptions) {
+      if (!activeIds.has(childId)) {
+        cleanup();
+        subscriptions.delete(childId);
+      }
+    }
+    for (const child of children) {
+      if (subscriptions.has(child.id)) continue;
+      snapshots.set(child.id, snapshots.get(child.id) ?? child);
+      subscriptions.set(
+        child.id,
+        ctx.subscribe(child.id, (msg) => {
+          if (msg.type === "state") {
+            snapshots.set(child.id, msg.session);
+          } else if (msg.type === "message_end" && msg.role === "assistant") {
+            const current = snapshots.get(child.id) ?? ctx.getSession(child.id);
+            if (current) {
+              snapshots.set(child.id, {
+                ...current,
+                lastMessage: msg.content,
+                lastAgentReplyAt: Date.now(),
+              });
+            }
+          } else if (msg.type === "agent_end") {
+            const current = snapshots.get(child.id) ?? ctx.getSession(child.id);
+            if (current) {
+              snapshots.set(child.id, {
+                ...current,
+                status: "ready",
+                lastActivity: Date.now(),
+              });
+            }
+          } else if (msg.type === "session_ended") {
+            const current = snapshots.get(child.id) ?? ctx.getSession(child.id);
+            if (current) {
+              snapshots.set(child.id, {
+                ...current,
+                status: "stopped",
+                lastActivity: Date.now(),
+              });
+            }
+          }
+          requestRender?.();
+        }),
+      );
+    }
+  };
+
+  const childrenForRender = (): Session[] => {
+    const children = currentChildren();
+    syncSubscriptions(children);
+    return children;
+  };
+
+  const component: NativeSubagentsWidgetComponent = {
+    get requestRender(): (() => void) | undefined {
+      return requestRender;
+    },
+
+    set requestRender(callback: (() => void) | undefined) {
+      requestRender = callback;
+    },
+
+    render(width: number): string[] {
+      const children = childrenForRender();
+      if (children.length === 0) return [];
+      const maxTitle = Math.max(12, Math.min(36, width - 24));
+      return [
+        "● Agents",
+        ...children.map((child) => {
+          const name = child.name ?? `Agent ${shortSessionId(child.id)}`;
+          const title = name.length > maxTitle ? `${name.slice(0, maxTitle - 1)}…` : name;
+          return `  ${subagentStatusLabel(child).padEnd(8)} ${title} · ${shortSessionId(child.id)}`;
+        }),
+      ];
+    },
+
+    renderNative(): ExtensionUINativeSurface | undefined {
+      const children = childrenForRender();
+      if (children.length === 0) return undefined;
+      const lines = this.render(88);
+      return {
+        version: 1,
+        id: `widget:${SUBAGENTS_WIDGET_KEY}`,
+        source: "widget",
+        presentation: {
+          style: "surfacePanel",
+          placement: "aboveEditor",
+          title: "Agents",
+        },
+        lifecycle: {
+          kind: "persistent",
+          updateMode: "replace",
+          clearOn: ["explicitClear", "sessionEnd", "sessionDelete", "runtimeDispose"],
+        },
+        blocks: [
+          {
+            type: "activityList",
+            id: "agents",
+            rows: children.map((child) => ({
+              id: child.id,
+              title: child.name ?? `Agent ${shortSessionId(child.id)}`,
+              subtitle: subagentSubtitle(child),
+              detail: subagentDetail(child),
+              state: subagentState(child.status),
+              link: `oppi://session/${encodeURIComponent(child.id)}`,
+            })),
+          },
+        ],
+        fallback: { lines },
+      };
+    },
+
+    invalidate(): void {
+      requestRender?.();
+    },
+
+    dispose(): void {
+      for (const cleanup of subscriptions.values()) {
+        cleanup();
+      }
+      subscriptions.clear();
+      requestRender = undefined;
+    },
+  };
+
+  return component;
 }
 
 function applyToolPolicy(pi: ExtensionAPI, policy: SubagentToolPolicyState): void {
@@ -365,11 +619,36 @@ export function createSubagentsFactory(
     const childMode = options?.childMode ?? false;
     const subagentConfig = options?.subagentConfig ?? defaultSubagentConfig();
     const completionWatchers = new Map<string, () => void>();
+    const trackedSubagentIds = new Set<string>();
     let currentToolPolicy: SubagentToolPolicyState | undefined;
+    let requestSubagentsWidgetRender: (() => void) | undefined;
+    let clearSubagentsWidget: (() => void) | undefined;
+
+    const refreshSubagentsWidget = (): void => {
+      requestSubagentsWidgetRender?.();
+      setTimeout(() => requestSubagentsWidgetRender?.(), 50);
+      setTimeout(() => requestSubagentsWidgetRender?.(), 500);
+    };
 
     installToolPolicyEnforcer(pi, () => currentToolPolicy);
-    pi.on("session_start", (_event, ctx) => {
-      const policy = readPersistedToolPolicy(ctx);
+    pi.on("session_start", (_event, piCtx) => {
+      if (!childMode && isRecord(piCtx.ui) && typeof piCtx.ui.setWidget === "function") {
+        piCtx.ui.setWidget(
+          SUBAGENTS_WIDGET_KEY,
+          (tui: unknown) => {
+            const component = createSubagentsWidget(ctx, () => trackedSubagentIds);
+            component.requestRender = (tui as { requestRender?: () => void }).requestRender;
+            requestSubagentsWidgetRender = component.requestRender;
+            return component;
+          },
+          { placement: "aboveEditor" },
+        );
+        clearSubagentsWidget = () => {
+          piCtx.ui.setWidget(SUBAGENTS_WIDGET_KEY, undefined);
+        };
+      }
+
+      const policy = readPersistedToolPolicy(piCtx);
       if (!policy) return;
       currentToolPolicy = policy;
       applyToolPolicy(pi, policy);
@@ -427,6 +706,7 @@ export function createSubagentsFactory(
         const parentSession = ctx.getSession(ctx.sessionId);
 
         cleanup();
+        refreshSubagentsWidget();
 
         if (isSessionBusy(parentSession)) {
           pi.sendMessage(
@@ -479,6 +759,7 @@ export function createSubagentsFactory(
 
       unsubscribe = ctx.subscribe(childId, (msg: ServerMessage) => {
         if (finished) return;
+        refreshSubagentsWidget();
         if (msg.type === "message_end" && msg.role === "assistant" && msg.content) {
           lastAssistantMessage = msg.content;
           return;
@@ -515,6 +796,10 @@ export function createSubagentsFactory(
         cleanup();
       }
       completionWatchers.clear();
+      trackedSubagentIds.clear();
+      clearSubagentsWidget?.();
+      clearSubagentsWidget = undefined;
+      requestSubagentsWidgetRender = undefined;
     });
 
     // ─── spawn_agent (root/detached only) ───
@@ -671,6 +956,8 @@ export function createSubagentsFactory(
             const session = params.detached
               ? await ctx.spawnDetached(spawnParams)
               : await ctx.spawnChild(spawnParams);
+            trackedSubagentIds.add(session.id);
+            refreshSubagentsWidget();
             const isDetached = params.detached ?? false;
 
             // ─── Fire-and-forget (default) ───
@@ -753,6 +1040,7 @@ export function createSubagentsFactory(
                 fallbackLastMessage: result.lastMessage,
               },
             );
+            refreshSubagentsWidget();
 
             return {
               content: [{ type: "text", text: completion.text }],
@@ -904,6 +1192,7 @@ export function createSubagentsFactory(
           const preamble = buildAgentPreamble(ctx);
           const fullMessage = `${preamble}\n${params.message}`;
           await ctx.sendMessage(params.id, fullMessage, behavior);
+          refreshSubagentsWidget();
 
           const modeLabel = autoResumed
             ? "as a new turn after auto-resuming the stopped session"

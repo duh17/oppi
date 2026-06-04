@@ -81,6 +81,8 @@ function setup(
     message: Record<string, unknown>;
     options?: Record<string, unknown>;
   }> = [];
+  const sessionStartHandlers: Array<(event: unknown, ctx: unknown) => void> = [];
+  const widgets = new Map<string, { content: unknown; options?: unknown }>();
 
   const ctx: SubagentsContext = {
     workspaceId: "ws-1",
@@ -141,8 +143,10 @@ function setup(
     registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
       tools.set(tool.name, { name: tool.name, execute: tool.execute });
     },
-    on() {
-      /* no-op */
+    on(event: string, handler: (event: unknown, ctx: unknown) => void) {
+      if (event === "session_start") {
+        sessionStartHandlers.push(handler);
+      }
     },
     sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>) {
       sentMessages.push({ message, options });
@@ -158,6 +162,20 @@ function setup(
     subscriberCallbacks,
     spawnChildCalls,
     sentMessages,
+    sessionStartHandlers,
+    widgets,
+    startSession() {
+      for (const handler of sessionStartHandlers) {
+        handler({}, {
+          ui: {
+            setWidget(key: string, content: unknown, options?: unknown) {
+              widgets.set(key, { content, options });
+            },
+          },
+          sessionManager: { getBranch: () => [] },
+        });
+      }
+    },
     spawn: tools.get("spawn_agent")!,
     inspect: tools.get("inspect_agent")!,
     /** Helper: set a session's status after spawn */
@@ -220,6 +238,38 @@ describe("spawn_agent", () => {
     });
 
     expect(result.details.name).toBe("Fix the login flow for OAuth2 providers");
+  });
+
+  it("uses authoritative child status when widget snapshots have stale activity", async () => {
+    const { spawn, sessions, subscriberCallbacks, startSession, widgets } = setup();
+    startSession();
+
+    const widgetFactory = widgets.get("subagents")?.content;
+    expect(typeof widgetFactory).toBe("function");
+    const component = (widgetFactory as (tui: unknown) => unknown)({ requestRender: () => {} }) as {
+      renderNative: () => { blocks: Array<{ type: string; rows?: Array<{ state?: string; subtitle?: string }> }> };
+    };
+
+    await spawn.execute("tc-1", {
+      message: "Write tests for auth module",
+      name: "auth-tests",
+    });
+
+    const childId = [...sessions.values()].find((session) => session.parentSessionId === "parent-1")!
+      .id;
+    const child = sessions.get(childId)!;
+    subscriberCallbacks.get(childId)?.({
+      type: "message_end",
+      role: "assistant",
+      content: "Finished the work",
+    } as ServerMessage);
+    (child as Record<string, unknown>).status = "ready";
+    (child as Record<string, unknown>).lastAgentReplyAt = Date.now();
+
+    const surface = component.renderNative();
+    const row = surface.blocks[0]?.rows?.[0];
+    expect(row?.state).toBe("success");
+    expect(row?.subtitle).toContain("Ready");
   });
 
   it("sends subagent_result and triggers parent turn when parent is idle", async () => {

@@ -1,4 +1,5 @@
 export type {
+  ExtensionUINativeSurface,
   ServerMessage,
   Session,
   SessionChangeStats,
