@@ -116,6 +116,7 @@ extension ServerConnection {
                 widgetKey: notification.widgetKey,
                 widgetLines: notification.widgetLines,
                 widgetPlacement: notification.widgetPlacement,
+                nativeSurface: notification.nativeSurface,
                 sessionId: sessionId,
                 isActiveSession: effects.isFocusedSession
             )
@@ -182,6 +183,7 @@ extension ServerConnection {
         widgetKey: String?,
         widgetLines: [String]?,
         widgetPlacement: String?,
+        nativeSurface: ExtensionUINativeSurface?,
         sessionId: String,
         isActiveSession: Bool
     ) {
@@ -210,7 +212,12 @@ extension ServerConnection {
         case "setWidget":
             guard let widgetKey else { return }
             var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            if let widgetLines {
+            let nativeSurfaceId = nativeSurface?.id ?? "widget:\(widgetKey)"
+            if let nativeSurface, nativeSurface.hasVisibleContent {
+                surface.widgets.removeValue(forKey: widgetKey)
+                surface.nativeSurfaces[nativeSurface.id] = nativeSurface
+            } else if let widgetLines {
+                surface.nativeSurfaces.removeValue(forKey: nativeSurfaceId)
                 let normalizedLines = widgetLines
                     .map { $0.trimmingCharacters(in: .newlines) }
                     .filter { !$0.isEmpty }
@@ -225,6 +232,7 @@ extension ServerConnection {
                 }
             } else {
                 surface.widgets.removeValue(forKey: widgetKey)
+                surface.nativeSurfaces.removeValue(forKey: nativeSurfaceId)
             }
             storeExtensionSurface(surface, for: sessionId)
 

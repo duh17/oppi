@@ -446,6 +446,144 @@ struct ServerMessageTests {
         #expect(sessionId == "s1")
     }
 
+    @Test func decodesExtensionUINativeSurfaceNotification() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "subagents",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:subagents",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel", "placement": "aboveEditor", "title": "Agents" },
+            "blocks": [
+              {
+                "type": "activityList",
+                "id": "agents",
+                "rows": [
+                  {
+                    "id": "child-1",
+                    "title": "Explore files",
+                    "subtitle": "Running · 3 messages",
+                    "state": "running",
+                    "link": "oppi://session/child-1"
+                  }
+                ]
+              }
+            ],
+            "fallback": { "lines": ["● Agents", "  Running Explore files"] }
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg else {
+            Issue.record("Expected .extensionUINotification")
+            return
+        }
+        #expect(notification.nativeSurface?.id == "widget:subagents")
+        guard case .activityList(_, let rows)? = notification.nativeSurface?.blocks.first else {
+            Issue.record("Expected native activityList block")
+            return
+        }
+        #expect(rows.first?.link == "oppi://session/child-1")
+    }
+
+    @Test func unsupportedExtensionUINativeBlocksDoNotFailMessageDecode() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "future",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:future",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel" },
+            "blocks": [{ "type": "futureBlock", "id": "f1" }],
+            "fallback": { "lines": ["future fallback"] }
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg else {
+            Issue.record("Expected .extensionUINotification")
+            return
+        }
+        guard case .unsupported(_, let type)? = notification.nativeSurface?.blocks.first else {
+            Issue.record("Expected unsupported native block")
+            return
+        }
+        #expect(type == "futureBlock")
+    }
+
+    @Test func decodesExtensionUINativeFormAndSettingsPayloads() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "settings",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:settings",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel" },
+            "blocks": [
+              {
+                "type": "form",
+                "id": "credentials",
+                "fields": [
+                  { "id": "token", "type": "text", "label": "Token", "placeholder": "paste token", "required": true, "sensitive": true },
+                  { "id": "enabled", "type": "toggle", "label": "Enabled", "value": true, "description": "Use this token" }
+                ]
+              },
+              {
+                "type": "settingsList",
+                "id": "models",
+                "items": [
+                  { "id": "model", "label": "Model", "value": "gpt", "description": "Default model", "values": ["gpt", "local"], "disabled": false }
+                ]
+              }
+            ]
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg,
+              let blocks = notification.nativeSurface?.blocks,
+              blocks.count == 2 else {
+            Issue.record("Expected native form and settings blocks")
+            return
+        }
+
+        guard case .form(_, let fields) = blocks[0] else {
+            Issue.record("Expected form fields to decode")
+            return
+        }
+        #expect(fields.count == 2)
+        guard case .text(let textField) = fields[0] else {
+            Issue.record("Expected text field")
+            return
+        }
+        #expect(textField.id == "token")
+        #expect(textField.placeholder == "paste token")
+        #expect(textField.required == true)
+        #expect(textField.sensitive == true)
+        guard case .toggle(let toggleField) = fields[1] else {
+            Issue.record("Expected toggle field")
+            return
+        }
+        #expect(toggleField.value == true)
+
+        guard case .settingsList(_, let items) = blocks[1] else {
+            Issue.record("Expected settings items to decode")
+            return
+        }
+        #expect(items.first?.id == "model")
+        #expect(items.first?.values == ["gpt", "local"])
+        #expect(items.first?.disabled == false)
+    }
+
     // MARK: - Malformed / Edge Cases
 
     @Test func missingTypeFieldThrows() {

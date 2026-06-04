@@ -18,7 +18,7 @@ import {
 import { extractQueuedUserText } from "./session-queue-utils.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
-import type { AskQuestion, Session, ServerMessage } from "./types.js";
+import type { AskQuestion, ExtensionUINativeSurface, Session, ServerMessage } from "./types.js";
 
 /** Extension UI request from pi SDK (stdout) */
 export interface ExtensionUIRequest {
@@ -41,6 +41,7 @@ export interface ExtensionUIRequest {
   timeoutAt?: number;
   questions?: AskQuestion[];
   allowCustom?: boolean;
+  nativeSurface?: ExtensionUINativeSurface;
 }
 
 const TERMINAL_ONLY_STATUS_KEYS = new Set(["oppi-mirror"]);

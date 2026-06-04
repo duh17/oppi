@@ -2,6 +2,8 @@
 
 This page explains Oppi's runtime behavior for pi extensions: what Oppi loads, what workspaces can enable, what standalone pi sees, and how terminal-oriented extension UI appears on mobile.
 
+For Oppi's public native UI block contract and Apple presentation mapping, see [`extension-native-ui.md`](extension-native-ui.md).
+
 It is for Oppi workspace admins and Oppi developers. It is not an extension-authoring guide. For pi package layout, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
 
 - pi extension docs: `@earendil-works/pi-coding-agent/docs/extensions.md`
@@ -22,7 +24,7 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 | ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------------------- |
 | Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader                 | Must work without Oppi server services                |
 | Oppi built-ins          | Workspace `extensions` allowlist                            | `server/extensions/`               | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
-| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client                 | Maps common `ctx.ui` calls to native cards/dialogs    |
+| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client                 | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
 
@@ -125,6 +127,12 @@ The picker response:
 - includes settings-declared extension paths
 - includes Oppi built-ins (`ask`, `subagents`, `voice`, `oppi-admin`)
 - deduplicates by extension name using Oppi built-ins first, then pi host extensions
+
+## Native extension UI contract
+
+Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract defines `ExtensionUINativeSurface`, native blocks such as `choiceGroup`, `form`, `settingsList`, `activityList`, and the Apple presentation mapping for inline cards, sheets, full-screen flows, surface panels, and timeline rows.
+
+The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components.
 
 ## Mobile rendering differences
 

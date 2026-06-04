@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { AudioStreamEvent } from "./tts-provider.js";
-import type { AskQuestion } from "./types.js";
+import type { AskQuestion, ExtensionUINativeSurface } from "./types.js";
 
 export interface PiMessageUsage {
   input?: number;
@@ -41,6 +41,7 @@ export interface ExtensionUIRequestEvent {
   timeoutAt?: number;
   questions?: AskQuestion[];
   allowCustom?: boolean;
+  nativeSurface?: ExtensionUINativeSurface;
 }
 
 export interface ExtensionUIRequestSettledEvent {

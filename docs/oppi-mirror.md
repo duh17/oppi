@@ -122,18 +122,18 @@ Supported from Oppi:
 - queue updates
 - model and thinking-level changes
 - session rename, compaction, and tree navigation
-- standard Pi extension UI such as ask, select, confirm, input, editor, notify, title, status, and simple widget text
+- standard Pi extension UI such as ask, select, confirm, input, editor, notify, title, status, and simple widget text, rendered through the native contract in [`extension-native-ui.md`](extension-native-ui.md)
 
 Still terminal-only:
 
 - creating a new session
 - fork and switch-session flows
-- terminal-specific custom UI, headers, footers, custom editors, and raw TUI rendering
+- terminal-specific custom UI, headers, footers, custom editors, and raw TUI rendering unless the mirror bridge advertises a future native-snapshot capability
 - session sharing from a mirrored session
 
 ## Known Limitations
 
-- Mirror supports standard Pi extension UI, but not custom terminal component trees or raw ANSI/TUI layouts.
+- Mirror supports standard semantic Pi extension UI. Custom terminal component trees and raw ANSI/TUI layouts require an explicit bridge-forwarded snapshot or native-snapshot capability; otherwise they remain terminal-owned.
 - Session-file replacement commands such as new session, fork, and switch session remain terminal-only.
 - Session sharing from a mirrored session is not supported yet.
 - Reconnect and stale terminal state still need more real-device soak testing.

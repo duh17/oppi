@@ -120,4 +120,30 @@ describe("extension UI contract", () => {
       sessionId: "sess-1",
     });
   });
+
+  it("canonicalizes forwarded widget native surface ids for reliable clearing", () => {
+    expect(
+      buildExtensionUINotificationMessage({
+        id: "widget-1",
+        method: "setWidget",
+        widgetKey: "agents",
+        widgetLines: ["Agents"],
+        nativeSurface: {
+          version: 1,
+          id: "extension-chosen-id",
+          source: "request",
+          presentation: { style: "surfacePanel" },
+          blocks: [],
+        },
+      }),
+    ).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "agents",
+      nativeSurface: {
+        id: "widget:agents",
+        source: "widget",
+      },
+    });
+  });
 });

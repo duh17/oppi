@@ -127,22 +127,26 @@ struct ExtensionSurfaceState: Equatable, Sendable {
     var title: String?
     var statuses: [String: String]
     var widgets: [String: ExtensionWidgetState]
+    var nativeSurfaces: [String: ExtensionUINativeSurface]
 
     init(
         title: String? = nil,
         statuses: [String: String] = [:],
-        widgets: [String: ExtensionWidgetState] = [:]
+        widgets: [String: ExtensionWidgetState] = [:],
+        nativeSurfaces: [String: ExtensionUINativeSurface] = [:]
     ) {
         self.title = title
         self.statuses = statuses
         self.widgets = widgets
+        self.nativeSurfaces = nativeSurfaces
     }
 
     var hasVisibleContent: Bool {
         let hasTitle = !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         let hasStatuses = !statuses.isEmpty
         let hasWidgets = widgets.values.contains { !$0.lines.isEmpty }
-        return hasTitle || hasStatuses || hasWidgets
+        let hasNativeSurfaces = nativeSurfaces.values.contains { $0.hasVisibleContent }
+        return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces
     }
 }
 

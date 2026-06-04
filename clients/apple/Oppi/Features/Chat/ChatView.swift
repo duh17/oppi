@@ -536,7 +536,7 @@ struct ChatView: View {
             VStack(spacing: 8) {
                 if let surface = extensionSurfaceState,
                    surface.hasVisibleContent {
-                    ExtensionSurfacePanel(surface: surface)
+                    ExtensionSurfacePanel(surface: surface, onOpenURL: openExtensionSurfaceURL)
                         .padding(.horizontal, 16)
                 }
 
@@ -1024,6 +1024,28 @@ struct ChatView: View {
         let feedback = UIImpactFeedbackGenerator(style: style)
         feedback.prepare()
         feedback.impactOccurred(intensity: intensity)
+    }
+
+    @MainActor
+    private func openExtensionSurfaceURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "oppi",
+              url.host?.lowercased() == "session" else {
+            return false
+        }
+        let pathParts = url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard let rawId = pathParts.first, !rawId.isEmpty else {
+            return false
+        }
+        let targetSessionId = rawId.removingPercentEncoding ?? rawId
+        guard targetSessionId != sessionId else {
+            return true
+        }
+
+        connection.prepareForSessionReentry(targetSessionId)
+        childSessionToOpen = ChildSessionRoute(id: targetSessionId)
+        return true
     }
 
     @MainActor
@@ -1789,8 +1811,359 @@ struct ChatView: View {
     }
 }
 
-private struct ExtensionSurfacePanel: View {
+private struct ExtensionWidgetLinesView: View {
+    let lines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                ExtensionWidgetLineView(line: line)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.themeBg.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.themeComment.opacity(0.16), lineWidth: 1)
+        }
+    }
+}
+
+private struct ExtensionNativeSurfaceView: View {
+    let surface: ExtensionUINativeSurface
+    var onOpenURL: ((URL) -> Bool)?
+
+    @State private var isExpanded = true
+
+    private var displayBlocks: [ExtensionUINativeBlock] {
+        surface.blocks.filter(\.isNativeDisplayable)
+    }
+
+    private var titleText: String {
+        let title = surface.presentation.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? "Extension" : title
+    }
+
+    private var activityRows: [ExtensionUIActivityRow] {
+        displayBlocks.flatMap { block -> [ExtensionUIActivityRow] in
+            if case .activityList(_, let rows) = block { return rows }
+            return []
+        }
+    }
+
+    private var summaryText: String? {
+        guard !activityRows.isEmpty else { return nil }
+        let activeCount = activityRows.filter { row in
+            row.state == "running" || row.state == "queued"
+        }.count
+        if activeCount > 0 {
+            return "\(activeCount) active"
+        }
+        return "\(activityRows.count) recent"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(titleText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+
+                    Spacer(minLength: 8)
+
+                    if let summaryText {
+                        Text(summaryText)
+                            .font(.caption2)
+                            .foregroundStyle(.themeComment)
+                    }
+
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(titleText)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(isExpanded ? "Collapse extension surface" : "Expand extension surface")
+
+            if isExpanded {
+                if displayBlocks.isEmpty,
+                   let fallbackLines = surface.fallback?.lines,
+                   !fallbackLines.isEmpty {
+                    ExtensionWidgetLinesView(lines: fallbackLines)
+                } else {
+                    ForEach(Array(displayBlocks.enumerated()), id: \.offset) { _, block in
+                        ExtensionNativeBlockView(block: block, onOpenURL: onOpenURL)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private extension ExtensionUINativeBlock {
+    var isNativeDisplayable: Bool {
+        switch self {
+        case .choiceGroup, .form, .settingsList, .image, .unsupported:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
+private struct ExtensionNativeBlockView: View {
+    let block: ExtensionUINativeBlock
+    var onOpenURL: ((URL) -> Bool)?
+
+    var body: some View {
+        switch block {
+        case .text(_, let spans):
+            ExtensionNativeTextSpansView(spans: spans)
+        case .markdown(_, let markdown):
+            Text(markdown)
+                .font(.caption)
+                .foregroundStyle(.themeFg)
+                .fixedSize(horizontal: false, vertical: true)
+        case .section(_, let title, let subtitle, let blocks):
+            VStack(alignment: .leading, spacing: 6) {
+                if let title, !title.isEmpty {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                }
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                }
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
+                    ExtensionNativeBlockView(block: child, onOpenURL: onOpenURL)
+                }
+            }
+            .padding(10)
+            .background(Color.themeBg.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        case .activityList(_, let rows):
+            ExtensionNativeActivityListView(rows: rows, onOpenURL: onOpenURL)
+        case .progress(_, let label, let value, let indeterminate):
+            HStack(spacing: 8) {
+                if indeterminate == true || value == nil {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if let value {
+                    ProgressView(value: value)
+                        .controlSize(.small)
+                }
+                if let label, !label.isEmpty {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(.themeFg)
+                }
+            }
+            .frame(minHeight: 28, alignment: .leading)
+        case .terminal(_, let lines):
+            ExtensionWidgetLinesView(lines: lines.map { spans in spans.map(\.text).joined() })
+        case .code(_, _, let text):
+            ExtensionWidgetLinesView(lines: text.components(separatedBy: .newlines))
+        case .divider:
+            Divider()
+        case .spacer(_, let size):
+            Color.clear.frame(height: spacerHeight(size))
+        case .choiceGroup, .form, .settingsList, .image, .unsupported:
+            EmptyView()
+        }
+    }
+
+    private func spacerHeight(_ size: String?) -> CGFloat {
+        switch size {
+        case "large": return 16
+        case "medium": return 10
+        default: return 6
+        }
+    }
+}
+
+private struct ExtensionNativeTextSpansView: View {
+    let spans: [ExtensionUITextSpan]
+
+    var body: some View {
+        Text(spans.map(\.text).joined())
+            .font(.caption)
+            .foregroundStyle(.themeFg)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct ExtensionNativeActivityListView: View {
+    let rows: [ExtensionUIActivityRow]
+    var onOpenURL: ((URL) -> Bool)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(rows) { row in
+                ExtensionNativeActivityRowView(row: row, onOpenURL: onOpenURL)
+            }
+        }
+    }
+}
+
+private struct ExtensionNativeActivityRowView: View {
+    @Environment(\.openURL) private var openURL
+
+    let row: ExtensionUIActivityRow
+    var onOpenURL: ((URL) -> Bool)?
+
+    var body: some View {
+        let content = ExtensionNativeActivityRowContent(row: row)
+        if let link = row.link, let url = URL(string: link) {
+            Button {
+                if onOpenURL?(url) != true {
+                    openURL(url)
+                }
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the related session")
+        } else {
+            content
+        }
+    }
+}
+
+private struct ExtensionNativeActivityRowContent: View {
+    let row: ExtensionUIActivityRow
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(stateColor)
+                .frame(width: 8, height: 8)
+                .padding(.top, 5)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let subtitle = row.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                if let detail = row.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                }
+
+                if let progress = row.progress {
+                    ProgressView(value: progress)
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: 44, alignment: .center)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var stateColor: Color {
+        switch row.state {
+        case "running": return .themeOrange
+        case "success": return .themeGreen
+        case "warning": return .themeOrange
+        case "error": return .themeRed
+        case "queued": return .themeComment
+        default: return .themeComment
+        }
+    }
+
+    private var accessibilityLabel: String {
+        [row.title, row.subtitle, row.detail]
+            .compactMap { value in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: ", ")
+    }
+}
+
+private struct ExtensionWidgetLineView: View {
+    let line: String
+
+    private var trimmedLine: String {
+        line.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isHeader: Bool {
+        trimmedLine.hasPrefix("● ") || trimmedLine.hasPrefix("○ ")
+    }
+
+    private var isActivity: Bool {
+        trimmedLine.contains("⎿")
+    }
+
+    private var markerColor: Color {
+        if trimmedLine.hasPrefix("●") { return .themeGreen }
+        if trimmedLine.hasPrefix("○") { return .themeComment }
+        if trimmedLine.contains("✗") { return .themeRed }
+        if trimmedLine.contains("✓") { return .themeGreen }
+        if trimmedLine.contains("⠋") || trimmedLine.contains("⠙") || trimmedLine.contains("⠹") || trimmedLine.contains("⠸") || trimmedLine.contains("⠼") || trimmedLine.contains("⠴") || trimmedLine.contains("⠦") || trimmedLine.contains("⠧") || trimmedLine.contains("⠇") || trimmedLine.contains("⠏") {
+            return .themeOrange
+        }
+        return .themeComment
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if isHeader {
+                Circle()
+                    .fill(markerColor)
+                    .frame(width: 7, height: 7)
+                    .padding(.top, -1)
+                Text(String(trimmedLine.dropFirst(2)))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else {
+                Text(line)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(isActivity ? .themeComment : .themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .accessibilityLabel(trimmedLine.isEmpty ? line : trimmedLine)
+    }
+}
+
+struct ExtensionSurfacePanel: View {
     let surface: ExtensionSurfaceState
+    var onOpenURL: ((URL) -> Bool)? = nil
 
     private var sortedStatuses: [(key: String, text: String)] {
         surface.statuses
@@ -1802,6 +2175,12 @@ private struct ExtensionSurfacePanel: View {
         surface.widgets
             .values
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+    }
+
+    private var sortedNativeSurfaces: [ExtensionUINativeSurface] {
+        surface.nativeSurfaces
+            .values
+            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     }
 
     var body: some View {
@@ -1825,6 +2204,11 @@ private struct ExtensionSurfacePanel: View {
                 }
             }
 
+            ForEach(sortedNativeSurfaces) { nativeSurface in
+                ExtensionNativeSurfaceView(surface: nativeSurface, onOpenURL: onOpenURL)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             ForEach(sortedWidgets, id: \.key) { widget in
                 if !widget.lines.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -1833,9 +2217,7 @@ private struct ExtensionSurfacePanel: View {
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.themeComment)
                         }
-                        Text(widget.lines.joined(separator: "\n"))
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.themeFg)
+                        ExtensionWidgetLinesView(lines: widget.lines)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }

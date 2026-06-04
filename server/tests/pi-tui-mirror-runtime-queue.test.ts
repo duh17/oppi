@@ -1048,6 +1048,38 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 });
 
 describe("PiTuiMirrorRuntime extension UI bridge", () => {
+  it("forwards mirrored callback widgets as extension UI notifications", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-1",
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: ["Goal tick 0"],
+      widgetPlacement: "belowEditor",
+    });
+
+    expect(received.at(-1)).toEqual({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      message: undefined,
+      notifyType: undefined,
+      statusKey: undefined,
+      statusText: undefined,
+      title: undefined,
+      text: undefined,
+      widgetKey: "goal",
+      widgetLines: ["Goal tick 0"],
+      widgetPlacement: "belowEditor",
+      nativeSurface: undefined,
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+  });
+
   it("ingests bridge UI requests and replays pending dialogs", () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);

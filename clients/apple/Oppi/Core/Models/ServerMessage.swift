@@ -130,6 +130,7 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     // Ask extension fields (method: "ask")
     var askQuestions: [AskQuestion]?
     var allowCustom: Bool?
+    var nativeSurface: ExtensionUINativeSurface?
 
     init(
         id: String,
@@ -143,7 +144,8 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
         timeout: Int? = nil,
         timeoutAt: Date? = nil,
         askQuestions: [AskQuestion]? = nil,
-        allowCustom: Bool? = nil
+        allowCustom: Bool? = nil,
+        nativeSurface: ExtensionUINativeSurface? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -157,6 +159,7 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
         self.timeoutAt = timeoutAt
         self.askQuestions = askQuestions
         self.allowCustom = allowCustom
+        self.nativeSurface = nativeSurface
     }
 }
 
@@ -171,6 +174,7 @@ struct ExtensionUINotification: Sendable, Equatable {
     let widgetKey: String?
     let widgetLines: [String]?
     let widgetPlacement: String?
+    var nativeSurface: ExtensionUINativeSurface? = nil
 }
 
 enum TurnAckStage: String, Codable, Sendable {
@@ -214,7 +218,7 @@ extension ServerMessage: Decodable {
         case stage, clientTurnId, duplicate
         // error
         case error, code, fatal
-        case id, sessionId, timeoutAt
+        case id, sessionId, timeoutAt, nativeSurface
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // ask extension (extension_ui_request with method: "ask")
@@ -425,7 +429,8 @@ extension ServerMessage: Decodable {
                 timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
                 timeoutAt: try c.decodeIfPresent(Double.self, forKey: .timeoutAt).map { Date(timeIntervalSince1970: $0 / 1000) },
                 askQuestions: askQuestions,
-                allowCustom: allowCustom
+                allowCustom: allowCustom,
+                nativeSurface: try c.decodeIfPresent(ExtensionUINativeSurface.self, forKey: .nativeSurface)
             )
             self = .extensionUIRequest(req)
 
@@ -445,6 +450,7 @@ extension ServerMessage: Decodable {
             let widgetKey = try c.decodeIfPresent(String.self, forKey: .widgetKey)
             let widgetLines = try c.decodeIfPresent([String].self, forKey: .widgetLines)
             let widgetPlacement = try c.decodeIfPresent(String.self, forKey: .widgetPlacement)
+            let nativeSurface = try c.decodeIfPresent(ExtensionUINativeSurface.self, forKey: .nativeSurface)
             self = .extensionUINotification(
                 ExtensionUINotification(
                     method: method,
@@ -456,7 +462,8 @@ extension ServerMessage: Decodable {
                     text: text,
                     widgetKey: widgetKey,
                     widgetLines: widgetLines,
-                    widgetPlacement: widgetPlacement
+                    widgetPlacement: widgetPlacement,
+                    nativeSurface: nativeSurface
                 )
             )
 

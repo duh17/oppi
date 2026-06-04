@@ -8,7 +8,7 @@ import type {
   ExtensionUIRequestEvent,
   SessionBackendEvent,
 } from "./pi-events.js";
-import type { AskQuestion } from "./types.js";
+import type { AskQuestion, ExtensionUINativeSurface } from "./types.js";
 
 type ExtensionAudioStreamInput = Omit<ExtensionAudioStreamEvent, "type">;
 
@@ -33,8 +33,15 @@ interface AskUIResult {
   allIgnored: boolean;
 }
 
+interface NativeRenderContext {
+  target: "oppi-native-v1";
+  capabilities: string[];
+  locale?: string;
+}
+
 interface CustomUIComponent {
   render: (width: number) => string[];
+  renderNative?: (context: NativeRenderContext) => ExtensionUINativeSurface | undefined;
   handleInput?: (data: string) => void;
   invalidate?: () => void;
   dispose?: () => void;
@@ -43,6 +50,20 @@ interface CustomUIComponent {
 interface ActiveWidgetComponent {
   component: CustomUIComponent;
   placement?: string;
+}
+
+// Snapshot callbacks are not attached to a real terminal, but Pi extension authors
+// commonly read this public TUI subset while producing render output.
+interface CustomUICompatTui {
+  requestRender: () => void;
+  terminal: {
+    columns: number;
+    rows: number;
+    kittyProtocolActive: boolean;
+    write(data: string): void;
+    setTitle(title: string): void;
+    setProgress(active: boolean): void;
+  };
 }
 
 type CustomUIControl = "up" | "down" | "enter" | "type" | "cancel";
@@ -55,11 +76,13 @@ const EXTENSION_AUDIO_MIME_TYPES = new Set<ExtensionAudioStreamEvent["mimeType"]
 ]);
 const CUSTOM_UI_COMPAT_TITLE = "Extension (TUI compatibility mode)";
 const CUSTOM_UI_COMPAT_WIDTH = 88;
+const CUSTOM_UI_COMPAT_ROWS = 40;
 const CUSTOM_UI_COMPAT_MAX_LINES = 28;
 const CUSTOM_UI_COMPAT_MAX_MESSAGE_CHARS = 6_000;
 const CUSTOM_UI_COMPAT_MAX_STEPS = 200;
 const CUSTOM_UI_COMPAT_TIMEOUT_MS = 5 * 60_000;
 const CUSTOM_UI_COMPAT_WIDGET_MAX_LINES = 8;
+const CUSTOM_UI_COMPAT_NATIVE_MAX_BYTES = 64 * 1024;
 const CUSTOM_UI_COMPAT_TYPE_PROMPT = "Type text for extension UI";
 const CUSTOM_UI_COMPAT_CONTROL_OPTIONS = [
   "↑ Up",
@@ -256,6 +279,70 @@ function renderWidgetSnapshotLines(component: CustomUIComponent): string[] {
   return limited;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeNativeSurface(value: unknown): ExtensionUINativeSurface | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.version !== 1) return undefined;
+  if (typeof value.id !== "string" || value.id.length === 0) return undefined;
+  if (typeof value.source !== "string") return undefined;
+  if (!isRecord(value.presentation)) return undefined;
+  if (!Array.isArray(value.blocks)) return undefined;
+
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+
+  if (Buffer.byteLength(json, "utf8") > CUSTOM_UI_COMPAT_NATIVE_MAX_BYTES) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(json) as ExtensionUINativeSurface;
+  } catch {
+    return undefined;
+  }
+}
+
+function renderWidgetNativeSurface(
+  component: CustomUIComponent,
+): ExtensionUINativeSurface | undefined {
+  if (!component.renderNative) return undefined;
+
+  try {
+    return normalizeNativeSurface(
+      component.renderNative({
+        target: "oppi-native-v1",
+        capabilities: [
+          "extension-native-ui:v1:text-fallback",
+          "extension-native-ui:v1:surface-native",
+        ],
+      }),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function createCustomUICompatTui(requestRender: () => void): CustomUICompatTui {
+  return {
+    requestRender,
+    terminal: {
+      columns: CUSTOM_UI_COMPAT_WIDTH,
+      rows: CUSTOM_UI_COMPAT_ROWS,
+      kittyProtocolActive: false,
+      write: () => {},
+      setTitle: () => {},
+      setProgress: () => {},
+    },
+  };
+}
+
 function createCustomUICompatTheme(): ExtensionUIContext["theme"] {
   const passthrough = (value: string): string => value;
 
@@ -403,7 +490,7 @@ export class SdkUiBridge {
 
         try {
           const component = content(
-            { requestRender: () => this.scheduleWidgetSnapshot(key) } as never,
+            createCustomUICompatTui(() => this.scheduleWidgetSnapshot(key)) as never,
             createCustomUICompatTheme() as never,
           ) as CustomUIComponent;
           this.activeWidgets.set(key, { component, placement: options?.placement });
@@ -580,12 +667,21 @@ export class SdkUiBridge {
       return;
     }
 
+    const nativeSurface = renderWidgetNativeSurface(active.component);
+
     this.emitExtensionUIRequest({
       id: randomUUID(),
       method: "setWidget",
       widgetKey: key,
       widgetLines: renderWidgetSnapshotLines(active.component),
       widgetPlacement: active.placement,
+      nativeSurface: nativeSurface
+        ? {
+            ...nativeSurface,
+            id: `widget:${key}`,
+            source: "widget",
+          }
+        : undefined,
     });
   }
 
@@ -678,11 +774,9 @@ export class SdkUiBridge {
       resolvedValue = value;
     };
 
-    const tui = {
-      requestRender: () => {
-        // Render is polled after each control action.
-      },
-    };
+    const tui = createCustomUICompatTui(() => {
+      // Render is polled after each control action.
+    });
 
     const theme = createCustomUICompatTheme();
     const keybindings = createCustomUICompatKeybindings();

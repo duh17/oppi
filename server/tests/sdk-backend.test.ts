@@ -15,7 +15,7 @@ import {
   type BuiltInExtensionContext,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
-import type { AskQuestion, Session, Workspace } from "../src/types.js";
+import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 
 describe("resolveSdkSessionCwd", () => {
   it("defaults to home dir when workspace is missing", () => {
@@ -637,6 +637,7 @@ describe("SdkBackend custom UI compatibility", () => {
     questions?: AskQuestion[];
     allowCustom?: boolean;
     widgetLines?: string[];
+    nativeSurface?: ExtensionUINativeSurface;
   }
 
   interface HarnessResponse {
@@ -699,6 +700,10 @@ describe("SdkBackend custom UI compatibility", () => {
           record.widgetLines.every((value) => typeof value === "string")
             ? (record.widgetLines as string[])
             : undefined,
+        nativeSurface:
+          record.nativeSurface && typeof record.nativeSurface === "object"
+            ? (record.nativeSurface as ExtensionUINativeSurface)
+            : undefined,
       };
       requests.push(request);
 
@@ -731,6 +736,61 @@ describe("SdkBackend custom UI compatibility", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].method).toBe("setWidget");
     expect(requests[0].widgetLines).toEqual(["Review session active"]);
+  });
+
+  it("forwards native surfaces from component widgets", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    ui.setWidget("agents", () => ({
+      render: () => ["● Agents", "  Running Explore files"],
+      renderNative: () => ({
+        version: 1,
+        id: "widget:agents",
+        source: "widget",
+        presentation: { style: "surfacePanel", placement: "aboveEditor", title: "Agents" },
+        lifecycle: { kind: "persistent", updateMode: "replace" },
+        blocks: [
+          {
+            type: "activityList",
+            id: "agents",
+            rows: [
+              {
+                id: "child-1",
+                title: "Explore files",
+                subtitle: "Running",
+                state: "running",
+                link: "oppi://session/child-1",
+              },
+            ],
+          },
+        ],
+        fallback: { lines: ["● Agents", "  Running Explore files"] },
+      }),
+    }));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("setWidget");
+    expect(requests[0].widgetLines).toEqual(["● Agents", "  Running Explore files"]);
+    expect(requests[0].nativeSurface?.id).toBe("widget:agents");
+    expect(requests[0].nativeSurface?.blocks[0]?.type).toBe("activityList");
+  });
+
+  it("provides terminal dimensions to TUI component snapshots", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    ui.setWidget("agents", (tui) => {
+      const compatTui = tui as { terminal?: { columns?: number; rows?: number } };
+      return {
+        render: () => [
+          `columns=${compatTui.terminal?.columns ?? "missing"}`,
+          `rows=${compatTui.terminal?.rows ?? "missing"}`,
+        ],
+      };
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("setWidget");
+    expect(requests[0].widgetLines).toEqual(["columns=88", "rows=40"]);
   });
 
   it("re-renders component widgets when they request a render", async () => {

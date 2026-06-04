@@ -1,4 +1,4 @@
-import type { AskQuestion, ServerMessage } from "./types.js";
+import type { AskQuestion, ExtensionUINativeSurface, ServerMessage } from "./types.js";
 
 export const EXTENSION_UI_DIALOG_METHODS = new Set(["ask", "select", "confirm", "input", "editor"]);
 
@@ -29,6 +29,7 @@ export interface ExtensionUIProtocolRequest {
   timeoutAt?: number;
   questions?: AskQuestion[];
   allowCustom?: boolean;
+  nativeSurface?: ExtensionUINativeSurface;
 }
 
 export function isExtensionUIFireAndForgetMethod(method: string): boolean {
@@ -39,6 +40,11 @@ export function buildExtensionUINotificationMessage(
   req: ExtensionUIProtocolRequest,
   overrides: { statusText?: string } = {},
 ): ServerMessage {
+  const nativeSurface =
+    req.method === "setWidget" && req.widgetKey && req.nativeSurface
+      ? { ...req.nativeSurface, id: `widget:${req.widgetKey}`, source: "widget" as const }
+      : req.nativeSurface;
+
   return {
     type: "extension_ui_notification",
     method: req.method,
@@ -51,6 +57,7 @@ export function buildExtensionUINotificationMessage(
     widgetKey: req.widgetKey,
     widgetLines: req.widgetLines,
     widgetPlacement: req.widgetPlacement,
+    nativeSurface,
   };
 }
 
@@ -68,6 +75,7 @@ export function buildExtensionUIRequestMessage(
       allowCustom: req.allowCustom,
       timeout: req.timeout,
       timeoutAt: req.timeoutAt,
+      nativeSurface: req.nativeSurface,
     };
   }
 
@@ -83,6 +91,7 @@ export function buildExtensionUIRequestMessage(
     prefill: req.prefill,
     timeout: req.timeout,
     timeoutAt: req.timeoutAt,
+    nativeSurface: req.nativeSurface,
   };
 }
 
