@@ -527,8 +527,17 @@ struct ToolExpandScrollMatrixFixture {
         min(max(0, targetY), maxOffsetY)
     }
 
+    /// The top-edge screen-relative Y of the target cell.
+    /// Used to assert collapse anchoring stability.
+    func targetTopScreenY() -> CGFloat? {
+        guard let attrs = collectionView.layoutAttributesForItem(at: targetIndexPath) else {
+            return nil
+        }
+        return attrs.frame.minY - collectionView.contentOffset.y
+    }
+
     /// The bottom-edge screen-relative Y of the target cell.
-    /// Used to assert bottom-edge anchoring stability across expand/collapse.
+    /// Used to assert expansion anchoring stability.
     func targetBottomScreenY() -> CGFloat? {
         guard let attrs = collectionView.layoutAttributesForItem(at: targetIndexPath) else {
             return nil

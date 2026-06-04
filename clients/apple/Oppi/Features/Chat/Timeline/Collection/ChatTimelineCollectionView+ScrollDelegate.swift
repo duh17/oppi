@@ -66,10 +66,16 @@ extension ChatTimelineCollectionHost.Controller {
                abs(contentHeightDelta) > 0.5,
                abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
                 isApplyingDetachedProgrammaticCorrection = true
-                scrollView.contentOffset.y = previousOffset
+                let didApply = TimelineOffsetController.apply(
+                    targetOffsetY: previousOffset,
+                    reason: .detachedFallback,
+                    collectionView: collectionView,
+                    scrollController: scrollController
+                )
                 isApplyingDetachedProgrammaticCorrection = false
                 detachedProgrammaticTargetOffsetY = nil
-                lastObservedContentOffsetY = previousOffset
+                let correctedOffsetY = didApply ? collectionView.contentOffset.y : previousOffset
+                lastObservedContentOffsetY = correctedOffsetY
                 updateLastDistanceFromBottom(scrollView)
                 updateDetachedStreamingHintVisibility()
                 return
@@ -81,10 +87,16 @@ extension ChatTimelineCollectionHost.Controller {
                abs(deltaY) > 0.5,
                abs(deltaY) < detachedProgrammaticCorrectionMaxDelta {
                 isApplyingDetachedProgrammaticCorrection = true
-                scrollView.contentOffset.y = targetOffsetY
+                let didApply = TimelineOffsetController.apply(
+                    targetOffsetY: targetOffsetY,
+                    reason: .detachedFallback,
+                    collectionView: collectionView,
+                    scrollController: scrollController
+                )
                 isApplyingDetachedProgrammaticCorrection = false
                 detachedProgrammaticTargetOffsetY = nil
-                lastObservedContentOffsetY = targetOffsetY
+                let correctedOffsetY = didApply ? collectionView.contentOffset.y : targetOffsetY
+                lastObservedContentOffsetY = correctedOffsetY
                 updateLastDistanceFromBottom(scrollView)
                 updateDetachedStreamingHintVisibility()
                 return
@@ -120,12 +132,12 @@ extension ChatTimelineCollectionHost.Controller {
                     -insets.top,
                     scrollView.contentSize.height - scrollView.bounds.height + insets.bottom
                 )
-                if abs(desiredBottomOffsetY - scrollView.contentOffset.y) > 0.5 {
-                    if let anchoredCV = scrollView as? AnchoredCollectionView {
-                        anchoredCV.applyOffsetCorrection(desiredBottomOffsetY)
-                    } else {
-                        scrollView.contentOffset.y = desiredBottomOffsetY
-                    }
+                if TimelineOffsetController.apply(
+                    targetOffsetY: desiredBottomOffsetY,
+                    reason: .idleBottomSettle,
+                    collectionView: collectionView,
+                    scrollController: scrollController
+                ) {
                     lastDistanceFromBottom = 0
                 }
             }

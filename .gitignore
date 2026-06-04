@@ -12,6 +12,7 @@ clients/apple/*.xcodeproj/
 # Tracked script allowlists
 scripts/*
 !scripts/duplication-scan.ts
+!scripts/scroll-offset-guard.ts
 clients/apple/scripts/*
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts

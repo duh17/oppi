@@ -553,14 +553,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // the last message and the input bar.
                 let delta = configuration.bottomOverlap - oldBottom
                 if delta > 0, scrollController?.isCurrentlyNearBottom ?? true {
-                    let maxOffsetY = max(
-                        -collectionView.adjustedContentInset.top,
-                        collectionView.contentSize.height
-                            - collectionView.bounds.height
-                            + collectionView.adjustedContentInset.bottom
+                    TimelineOffsetController.apply(
+                        targetOffsetY: collectionView.contentOffset.y + delta,
+                        reason: .bottomInsetGrowth,
+                        collectionView: collectionView,
+                        scrollController: scrollController
                     )
-                    let target = min(collectionView.contentOffset.y + delta, maxOffsetY)
-                    collectionView.contentOffset.y = target
                 }
             }
 
@@ -902,7 +900,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                         anchoredReconfigureToolRow(
                             itemID: itemID,
                             anchorIndexPath: indexPath,
-                            in: collectionView
+                            in: collectionView,
+                            preserveTopEdge: true
                         )
                     }
                     return
@@ -929,7 +928,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 anchoredReconfigureToolRow(
                     itemID: itemID,
                     anchorIndexPath: indexPath,
-                    in: collectionView
+                    in: collectionView,
+                    preserveTopEdge: wasExpanded
                 )
             case .thinking:
                 // Thinking rows own their long-form entry points (floating
@@ -1096,18 +1096,22 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private func anchoredReconfigureToolRow(
             itemID: String,
             anchorIndexPath: IndexPath,
-            in collectionView: UICollectionView
+            in collectionView: UICollectionView,
+            preserveTopEdge: Bool = false
         ) {
             let anchoredCV = collectionView as? AnchoredCollectionView
 
-            // Capture the bottom edge of the cell before the reconfigure.
-            // Bottom-edge anchoring makes the expansion grow upward so the
-            // working indicator and items below remain visible.
-            let bottomScreenYBefore: CGFloat?
+            // Expansions keep the bottom edge stable so the row grows upward
+            // and surrounding lower context remains visible. Collapses keep
+            // the top edge stable: a tall image row can shrink by hundreds of
+            // points, and bottom-edge anchoring yanks the user away from the
+            // header they just tapped.
+            let anchorScreenYBefore: CGFloat?
             if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
-                bottomScreenYBefore = attrs.frame.maxY - collectionView.contentOffset.y
+                anchorScreenYBefore = (preserveTopEdge ? attrs.frame.minY : attrs.frame.maxY)
+                    - collectionView.contentOffset.y
             } else {
-                bottomScreenYBefore = nil
+                anchorScreenYBefore = nil
             }
 
             reconfigureToolRow(itemID: itemID, in: collectionView)
@@ -1130,35 +1134,29 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Restore the detached flag after the forced layout.
             anchoredCV?.isDetachedFromBottom = savedDetached
 
-            // Compute the absolute target offset that keeps the bottom edge
+            // Compute the absolute target offset that keeps the chosen edge
             // at the same screen position as before the reconfigure.
-            if let bottomScreenYBefore,
+            if let anchorScreenYBefore,
                let newAttrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
-                // Target: newMaxY - targetOffset = savedBottomScreenY
-                //   => targetOffset = newMaxY - savedBottomScreenY
-                let targetOffset = newAttrs.frame.maxY - bottomScreenYBefore
+                // Target: newAnchorY - targetOffset = savedAnchorScreenY
+                //   => targetOffset = newAnchorY - savedAnchorScreenY
+                let newAnchorY = preserveTopEdge ? newAttrs.frame.minY : newAttrs.frame.maxY
+                let targetOffset = newAnchorY - anchorScreenYBefore
 
-                let insets = collectionView.adjustedContentInset
-                let minOffsetY = -insets.top
-                let maxOffsetY = max(
-                    minOffsetY,
-                    collectionView.contentSize.height
-                        - collectionView.bounds.height
-                        + insets.bottom
+                TimelineOffsetController.apply(
+                    targetOffsetY: targetOffset,
+                    reason: .expandCollapse(edge: preserveTopEdge ? .top : .bottom),
+                    collectionView: collectionView,
+                    scrollController: scrollController
                 )
-                let clamped = min(max(targetOffset, minOffsetY), maxOffsetY)
-                if abs(clamped - collectionView.contentOffset.y) > 0.5 {
-                    // Suppress AnchoredCollectionView's didSet interceptor
-                    // and internal layout passes that would fight this
-                    // correction. Without this, setting contentOffset
-                    // triggers an internal layout pass in the compositional
-                    // layout which adjusts the offset back immediately.
-                    anchoredCV?.applyOffsetCorrection(clamped)
-                        ?? { collectionView.contentOffset.y = clamped }()
-                }
             } else if abs(collectionView.contentOffset.y - offsetBeforeLayout) > 0.5 {
                 // No attrs but layout shifted the offset — restore.
-                collectionView.contentOffset.y = offsetBeforeLayout
+                TimelineOffsetController.apply(
+                    targetOffsetY: offsetBeforeLayout,
+                    reason: .expandCollapse(edge: preserveTopEdge ? .top : .bottom),
+                    collectionView: collectionView,
+                    scrollController: scrollController
+                )
             }
 
             // Sync the detached flag on the AnchoredCollectionView so the
@@ -1268,7 +1266,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             let targetOffsetY = collectionView.contentOffset.y
                 + (liveTailMinimumBottomPadding - distanceFromViewportBottom)
-            applyAmbientOffsetCorrection(targetOffsetY, in: collectionView)
+            applyAmbientOffsetCorrection(
+                targetOffsetY,
+                reason: .liveTailVisibility,
+                in: collectionView
+            )
         }
 
         private func settleAttachedBottom(_ collectionView: UICollectionView) {
@@ -1277,27 +1279,26 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 -insets.top,
                 collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
             )
-            applyAmbientOffsetCorrection(targetOffsetY, in: collectionView)
+            applyAmbientOffsetCorrection(
+                targetOffsetY,
+                reason: .idleBottomSettle,
+                in: collectionView
+            )
         }
 
         private func applyAmbientOffsetCorrection(
             _ proposedOffsetY: CGFloat,
+            reason: TimelineOffsetReason,
             in collectionView: UICollectionView
         ) {
-            let insets = collectionView.adjustedContentInset
-            let minOffsetY = -insets.top
-            let maxOffsetY = max(
-                minOffsetY,
-                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+            let didApply = TimelineOffsetController.apply(
+                targetOffsetY: proposedOffsetY,
+                reason: reason,
+                collectionView: collectionView,
+                scrollController: scrollController
             )
-            let targetOffsetY = min(max(proposedOffsetY, minOffsetY), maxOffsetY)
-            guard abs(collectionView.contentOffset.y - targetOffsetY) > 0.5 else { return }
+            guard didApply else { return }
 
-            if let anchoredCV = collectionView as? AnchoredCollectionView {
-                anchoredCV.applyOffsetCorrection(targetOffsetY)
-            } else {
-                collectionView.contentOffset.y = targetOffsetY
-            }
             scrollController?.updateNearBottom(true)
             updateLastDistanceFromBottom(collectionView)
         }
@@ -1398,28 +1399,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return
             }
 
-            let insets = collectionView.adjustedContentInset
-            let minOffsetY = -insets.top
-            let maxOffsetY = max(
-                minOffsetY,
-                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+            let desiredOffsetY = attrs.frame.minY - collectionView.adjustedContentInset.top
+            TimelineOffsetController.apply(
+                targetOffsetY: desiredOffsetY,
+                reason: .programmaticTopAlign,
+                collectionView: collectionView,
+                scrollController: scrollController
             )
-            let desiredOffsetY = min(max(attrs.frame.minY - insets.top, minOffsetY), maxOffsetY)
-            guard abs(collectionView.contentOffset.y - desiredOffsetY) > 0.5 else {
-                if let anchoredCV = collectionView as? AnchoredCollectionView,
-                   anchoredCV.isDetachedFromBottom {
-                    anchoredCV.captureDetachedAnchor()
-                }
-                return
-            }
-
-            if let anchoredCV = collectionView as? AnchoredCollectionView {
-                anchoredCV.applyOffsetCorrection(desiredOffsetY)
-                if anchoredCV.isDetachedFromBottom {
-                    anchoredCV.captureDetachedAnchor()
-                }
-            } else {
-                collectionView.contentOffset.y = desiredOffsetY
+            if let anchoredCV = collectionView as? AnchoredCollectionView,
+               anchoredCV.isDetachedFromBottom {
+                anchoredCV.captureDetachedAnchor()
             }
         }
 

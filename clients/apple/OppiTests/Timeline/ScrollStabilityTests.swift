@@ -632,10 +632,10 @@ struct ScrollStabilityTests {
     }
 
     @MainActor
-    @Test func toolRowCollapseViaTapPreservesContentOffsetWhenScrolledUp() {
+    @Test func toolRowCollapseViaTapPreservesHeaderPositionWhenScrolledUp() {
         // Mirror of the expansion test: collapse a visible expanded tool row
-        // via tap. The row shrinks through animateToolRowExpansion. Without
-        // offset compensation the viewport content jumps.
+        // via tap. The row shrinks below its header, so the header's top edge
+        // must remain stable on screen.
         let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
@@ -717,22 +717,22 @@ struct ScrollStabilityTests {
             return
         }
 
-        // Bottom-edge anchoring: the bottom of the cell should stay at the
-        // same screen position after collapse.
-        let bottomScreenYBefore: CGFloat? = {
+        // Top-edge anchoring: the header should stay at the same screen
+        // position after collapse.
+        let topScreenYBefore: CGFloat? = {
             guard let attrs = collectionView.layoutAttributesForItem(at: targetIP) else { return nil }
-            return attrs.frame.maxY - collectionView.contentOffset.y
+            return attrs.frame.minY - collectionView.contentOffset.y
         }()
 
         // Tap to collapse via real path.
         coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
 
-        if let before = bottomScreenYBefore,
+        if let before = topScreenYBefore,
            let attrs = collectionView.layoutAttributesForItem(at: targetIP) {
-            let after = attrs.frame.maxY - collectionView.contentOffset.y
+            let after = attrs.frame.minY - collectionView.contentOffset.y
             let drift = abs(after - before)
             #expect(drift < 2.0,
-                    "Bottom-edge drifted \(drift)pt after tap-collapsing tool row at index \(targetIP.item)")
+                    "Top-edge drifted \(drift)pt after tap-collapsing tool row at index \(targetIP.item)")
         }
     }
 
@@ -829,17 +829,18 @@ struct ScrollStabilityTests {
             return
         }
 
-        // Toggle expand/collapse 6 times and check bottom-edge screen position.
-        // Bottom-edge anchoring keeps the bottom of the cell in place across
-        // expand/collapse so the working indicator stays visible.
+        // Toggle expand/collapse 6 times. Expansions preserve the bottom edge;
+        // collapses preserve the top/header edge.
         // Allow a longer drain per toggle so UIKit's self-sizing cascade
         // settles — collapse triggers multi-frame re-estimation.
         for round in 1...6 {
+            let isExpandedBeforeToggle = reducer.expandedItemIDs.contains(items[targetIP.item].id)
             guard let attrsBefore = collectionView.layoutAttributesForItem(at: targetIP) else {
                 Issue.record("Missing layout attributes before toggle round \(round)")
                 continue
             }
-            let bottomScreenYBefore = attrsBefore.frame.maxY - collectionView.contentOffset.y
+            let anchorScreenYBefore = (isExpandedBeforeToggle ? attrsBefore.frame.minY : attrsBefore.frame.maxY)
+                - collectionView.contentOffset.y
 
             coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
             drainRunLoop(seconds: 0.30)
@@ -848,11 +849,12 @@ struct ScrollStabilityTests {
                 Issue.record("Missing layout attributes after toggle round \(round)")
                 continue
             }
-            let bottomScreenYAfter = attrsAfter.frame.maxY - collectionView.contentOffset.y
-            let shift = abs(bottomScreenYAfter - bottomScreenYBefore)
+            let anchorScreenYAfter = (isExpandedBeforeToggle ? attrsAfter.frame.minY : attrsAfter.frame.maxY)
+                - collectionView.contentOffset.y
+            let shift = abs(anchorScreenYAfter - anchorScreenYBefore)
 
             #expect(shift < 5.0,
-                    "Tool row shifted \(shift)pt on screen during toggle round \(round)")
+                    "Tool row anchor shifted \(shift)pt on screen during toggle round \(round)")
         }
     }
 

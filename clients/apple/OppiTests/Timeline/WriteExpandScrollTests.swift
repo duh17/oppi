@@ -300,6 +300,60 @@ struct WriteExpandScrollTests {
     }
 
     @MainActor
+    @Test func collapsingExpandedTallReadImageKeepsHeaderPositionStable() throws {
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "s-read-image-collapse",
+            useAnchoredCollectionView: true
+        )
+        let toolID = "tc-read-tall-image"
+        let image = Self.makeReadToolImage(size: CGSize(width: 80, height: 320))
+        let imageData = try #require(image.pngData())
+        let output = "Read image file [image/png]\n\ndata:image/png;base64,\(imageData.base64EncodedString())"
+        wh.toolArgsStore.set(["path": .string("/tmp/tall-read-image.png")], for: toolID)
+        wh.toolOutputStore.append(output, to: toolID)
+        wh.reducer.expandedItemIDs.insert(toolID)
+
+        let items: [ChatItem] = [
+            .assistantMessage(id: "before", text: String(repeating: "Before. ", count: 80), timestamp: Date()),
+            .toolCall(
+                id: toolID,
+                tool: "read",
+                argsSummary: "read /tmp/tall-read-image.png",
+                outputPreview: output,
+                outputByteCount: output.utf8.count,
+                isError: false,
+                isDone: true
+            ),
+            .assistantMessage(id: "after", text: String(repeating: "After. ", count: 600), timestamp: Date()),
+        ]
+        wh.applyItems(items, isBusy: false)
+        settleTimelineLayout(wh.collectionView, passes: 4)
+
+        let targetIP = IndexPath(item: 1, section: 0)
+        wh.collectionView.scrollToItem(at: targetIP, at: .top, animated: false)
+        settleTimelineLayout(wh.collectionView, passes: 3)
+        wh.scrollController.detachFromBottomForUserScroll()
+
+        guard let attrsBefore = wh.collectionView.layoutAttributesForItem(at: targetIP) else {
+            Issue.record("Missing expanded read image layout attributes")
+            return
+        }
+        let topScreenYBefore = attrsBefore.frame.minY - wh.collectionView.contentOffset.y
+        let offsetBefore = wh.collectionView.contentOffset.y
+
+        wh.coordinator.collectionView(wh.collectionView, didSelectItemAt: targetIP)
+        settleTimelineLayout(wh.collectionView, passes: 4)
+
+        let offsetJump = abs(wh.collectionView.contentOffset.y - offsetBefore)
+        #expect(offsetJump < 12, "Collapsing tall image should not yank the timeline offset by \(offsetJump)pt")
+        if let attrsAfter = wh.collectionView.layoutAttributesForItem(at: targetIP) {
+            let topScreenYAfter = attrsAfter.frame.minY - wh.collectionView.contentOffset.y
+            let topDrift = abs(topScreenYAfter - topScreenYBefore)
+            #expect(topDrift < 8, "Collapsed row header drifted \(topDrift)pt")
+        }
+    }
+
+    @MainActor
     @Test func collapsingExpandedWriteToolRestoresNormalScrolling() {
         // Expand a write tool, verify scroll works, collapse it, verify scroll still works.
         let wh = makeWindowedTimelineHarness(
@@ -352,5 +406,20 @@ struct WriteExpandScrollTests {
         let drift = abs(wh.collectionView.contentOffset.y - max(0, scrollTarget))
         #expect(drift < 5.0,
                 "Scroll position snapped back after collapse+scroll (\(drift)pt drift)")
+    }
+
+    private static func makeReadToolImage(size: CGSize) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.setFill()
+            context.fill(CGRect(
+                x: size.width * 0.25,
+                y: size.height * 0.08,
+                width: size.width * 0.5,
+                height: size.height * 0.84
+            ))
+        }
     }
 }
