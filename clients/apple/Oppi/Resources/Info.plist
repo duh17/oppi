@@ -73,8 +73,6 @@
 	<true/>
 	<key>OPPITelemetryMode</key>
 	<string>$(OPPI_TELEMETRY_MODE)</string>
-	<key>SentryDSN</key>
-	<string>$(SENTRY_DSN)</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>FiraCode-Regular.ttf</string>

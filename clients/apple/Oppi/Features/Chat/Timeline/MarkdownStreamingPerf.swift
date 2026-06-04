@@ -8,7 +8,7 @@ import os
 /// - FlatSegment build duration
 /// - Whether the tail-only path was taken (cache hit on prefix)
 ///
-/// Integrates with Instruments via `OSSignposter` and breadcrumbs slow paths via
+/// Integrates with Instruments via `OSSignposter` and logs slow paths via
 /// `ClientLog.info`.  Deliberately separate from `ChatTimelinePerf` to
 /// avoid coupling the markdown rendering subsystem to the timeline collection.
 @MainActor

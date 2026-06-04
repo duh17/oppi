@@ -6,9 +6,6 @@ packages:
   swift-cmark:
     url: https://github.com/swiftlang/swift-cmark.git
     from: "0.7.1"
-  sentry-cocoa:
-    url: https://github.com/getsentry/sentry-cocoa
-    from: "8.0.0"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.9.0"
@@ -122,7 +119,6 @@ targets:
           - MonaspaceNeon-SemiBold.otf
           - MonaspaceNeon-Bold.otf
         ITSAppUsesNonExemptEncryption: false
-        SentryDSN: "$(SENTRY_DSN)"
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -221,48 +217,11 @@ targets:
         basedOnDependencyAnalysis: false
         shell: /bin/bash
         showEnvVars: false
-    postBuildScripts:
-      - script: |
-          if [ "$CONFIGURATION" != "Release" ]; then
-            echo "note: Sentry dSYM upload skipped (Release builds only)"
-            exit 0
-          fi
-          if [[ "$PLATFORM_NAME" == *"simulator"* ]] || [[ "$EFFECTIVE_PLATFORM_NAME" == *"simulator"* ]]; then
-            echo "note: Sentry dSYM upload skipped (device builds only)"
-            exit 0
-          fi
-          if [ "$SENTRY_DSN" = "" ] || [[ "$SENTRY_DSN" == *'$('* ]]; then
-            echo "note: Sentry dSYM upload skipped (no DSN configured)"
-            exit 0
-          fi
-          SENTRY_CLI="/opt/homebrew/bin/sentry-cli"
-          if [ ! -x "$SENTRY_CLI" ]; then
-            echo "warning: sentry-cli not found — brew install getsentry/tools/sentry-cli"
-            exit 0
-          fi
-          DSYM_PATH="$DWARF_DSYM_FOLDER_PATH/$DWARF_DSYM_FILE_NAME"
-          if [ ! -d "$DSYM_PATH" ]; then
-            echo "warning: dSYM not found at $DSYM_PATH"
-            exit 0
-          fi
-          echo "Uploading dSYMs to Sentry ($SENTRY_ORG/$SENTRY_PROJECT)..."
-          "$SENTRY_CLI" debug-files upload \
-            --org "$SENTRY_ORG" \
-            --project "$SENTRY_PROJECT" \
-            --include-sources \
-            "$DSYM_PATH" &
-          echo "note: Sentry dSYM upload started in background"
-        name: SentryDSYMUpload
-        basedOnDependencyAnalysis: false
-        shell: /bin/bash
-        showEnvVars: false
     dependencies:
       - package: swift-cmark
         product: cmark-gfm
       - package: swift-cmark
         product: cmark-gfm-extensions
-      - package: sentry-cocoa
-        product: Sentry
       - package: swift-tree-sitter
         product: SwiftTreeSitter
       - package: tree-sitter-bash

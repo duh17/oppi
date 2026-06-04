@@ -100,7 +100,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
             )
             return markDiagnosticIfNew(item)
         }
-        recordDiagnosticBreadcrumbs(items, reason: "did_receive")
+        recordDiagnosticClientLogs(items, reason: "did_receive")
         upload(items)
     }
 
@@ -130,7 +130,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
             )
             return markDiagnosticIfNew(item)
         }
-        recordDiagnosticBreadcrumbs(items, reason: reason)
+        recordDiagnosticClientLogs(items, reason: reason)
         upload(items)
     }
 
@@ -150,7 +150,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         return item
     }
 
-    private func recordDiagnosticBreadcrumbs(_ items: [MetricKitPayloadItem], reason: String) {
+    private func recordDiagnosticClientLogs(_ items: [MetricKitPayloadItem], reason: String) {
         for item in items {
             let crashCount = Int(item.summary["crashDiagnosticCount"] ?? "0") ?? 0
             let hangCount = Int(item.summary["hangDiagnosticCount"] ?? "0") ?? 0

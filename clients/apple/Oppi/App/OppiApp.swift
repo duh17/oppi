@@ -213,7 +213,6 @@ struct OppiApp: App {
             }
             .task {
                 AppFont.rebuild()
-                await SentryService.shared.configure()
                 MetricKitService.shared.configure()
                 DeviceResourceSampler.shared.configure()
 #if DEBUG
@@ -467,7 +466,7 @@ struct OppiApp: App {
             mainThreadLagWatchdog.start()
 #endif
             // Footprint telemetry on foreground — helps diagnose jetsam kills.
-            let footprint = SentryService.currentFootprintMB()
+            let footprint = AppDiagnosticsService.currentFootprintMB()
             ClientLog.info("Memory", "Foreground", metadata: [
                 "footprintMB": footprint.map(String.init) ?? "n/a",
                 "reconnect": shouldReconnect ? "true" : "false",
@@ -528,7 +527,7 @@ struct OppiApp: App {
     }
 
     private func handleMemoryWarning() {
-        let footprintBefore = SentryService.currentFootprintMB()
+        let footprintBefore = AppDiagnosticsService.currentFootprintMB()
 
         ToolRowRenderCache.evictAll()
         let cacheStats = MarkdownSegmentCache.shared.snapshot()
@@ -537,7 +536,7 @@ struct OppiApp: App {
         // Per-session reducer memory cleanup is handled by ChatView
         // (reducer is now per-session, not on ServerConnection).
 
-        let footprintAfter = SentryService.currentFootprintMB()
+        let footprintAfter = AppDiagnosticsService.currentFootprintMB()
 
         let cacheEntries = cacheStats.entries
         let cacheBytes = cacheStats.totalSourceBytes
@@ -583,12 +582,6 @@ struct OppiApp: App {
                 "thresholdMs": String(context.thresholdMs),
                 "footprintMB": context.footprintMB.map(String.init) ?? "n/a",
             ]
-        )
-
-        await SentryService.shared.captureMainThreadStall(
-            thresholdMs: context.thresholdMs,
-            footprintMB: context.footprintMB,
-            sessionId: sessionId
         )
     }
 #endif

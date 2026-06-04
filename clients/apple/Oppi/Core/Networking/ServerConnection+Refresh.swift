@@ -22,21 +22,12 @@ extension ServerConnection {
         return String(message.prefix(maxLength)) + "…"
     }
 
-    func recordRefreshBreadcrumb(
+    func recordRefreshEvent(
         _ message: String,
         level: ClientLogLevel = .info,
         metadata: [String: String] = [:]
     ) {
-        _onRefreshBreadcrumbForTesting?(message, metadata, level)
-
-        Task.detached(priority: .utility) {
-            await SentryService.shared.recordBreadcrumb(
-                level: level,
-                category: "Refresh",
-                message: message,
-                metadata: metadata
-            )
-        }
+        _onRefreshEventForTesting?(message, metadata, level)
     }
 
     func shouldRefreshSessionList(now: Date = Date(), force: Bool) -> Bool {
@@ -68,7 +59,7 @@ extension ServerConnection {
         ]
 
         if let inFlight = sessionListRefreshTask {
-            recordRefreshBreadcrumb(
+            recordRefreshEvent(
                 "session_list.coalesced",
                 metadata: callMetadata.merging([
                     "durationMs": String(Self.elapsedMs(since: callStartedAt)),
@@ -80,7 +71,7 @@ extension ServerConnection {
 
         guard shouldRefreshSessionList(force: force) else {
             logger.debug("Skipping session list refresh (recent successful sync)")
-            recordRefreshBreadcrumb(
+            recordRefreshEvent(
                 "session_list.skip",
                 metadata: callMetadata.merging([
                     "durationMs": String(Self.elapsedMs(since: callStartedAt)),
@@ -89,7 +80,7 @@ extension ServerConnection {
             return
         }
 
-        recordRefreshBreadcrumb("session_list.start", metadata: callMetadata)
+        recordRefreshEvent("session_list.start", metadata: callMetadata)
 
         let task = Task { @MainActor [weak self, apiClient] in
             guard let self else { return }
@@ -130,7 +121,7 @@ extension ServerConnection {
                     await cache.saveSessionList(cachedSessions, serverId: serverId)
                 }
 
-                self.recordRefreshBreadcrumb(
+                self.recordRefreshEvent(
                     "session_list.end",
                     metadata: [
                         "force": force ? "1" : "0",
@@ -145,7 +136,7 @@ extension ServerConnection {
                 self.sessionStore.markSyncFailed()
                 logger.error("Failed to refresh sessions: \(error)")
 
-                self.recordRefreshBreadcrumb(
+                self.recordRefreshEvent(
                     "session_list.end",
                     level: .warning,
                     metadata: [
@@ -177,7 +168,7 @@ extension ServerConnection {
         ]
 
         if let inFlight = workspaceCatalogRefreshTask {
-            recordRefreshBreadcrumb(
+            recordRefreshEvent(
                 "workspace_catalog.coalesced",
                 metadata: callMetadata.merging([
                     "durationMs": String(Self.elapsedMs(since: callStartedAt)),
@@ -189,7 +180,7 @@ extension ServerConnection {
 
         guard shouldRefreshWorkspaceCatalog(force: force) else {
             logger.debug("Skipping workspace catalog refresh (recent successful sync)")
-            recordRefreshBreadcrumb(
+            recordRefreshEvent(
                 "workspace_catalog.skip",
                 metadata: callMetadata.merging([
                     "durationMs": String(Self.elapsedMs(since: callStartedAt)),
@@ -198,7 +189,7 @@ extension ServerConnection {
             return
         }
 
-        recordRefreshBreadcrumb("workspace_catalog.start", metadata: callMetadata)
+        recordRefreshEvent("workspace_catalog.start", metadata: callMetadata)
 
         let task = Task { @MainActor [weak self, apiClient] in
             guard let self else { return }
@@ -209,7 +200,7 @@ extension ServerConnection {
 
             let level: ClientLogLevel = self.workspaceStore.lastSyncFailed ? .warning : .info
             let result = self.workspaceStore.lastSyncFailed ? "failure" : "success"
-            self.recordRefreshBreadcrumb(
+            self.recordRefreshEvent(
                 "workspace_catalog.end",
                 level: level,
                 metadata: [

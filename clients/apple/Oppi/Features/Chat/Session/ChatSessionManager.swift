@@ -468,7 +468,7 @@ final class ChatSessionManager {
                     itemCount: reducer.items.count
                 )
 
-                let footprint = SentryService.currentFootprintMB()
+                let footprint = AppDiagnosticsService.currentFootprintMB()
                 ClientLog.info("Memory", "Session loaded (cache)", metadata: [
                     "footprintMB": footprint.map(String.init) ?? "n/a",
                     "traceEvents": String(cached.events.count),
@@ -1142,7 +1142,7 @@ final class ChatSessionManager {
                         sessionId: sessionId,
                         workspaceId: workspaceId
                     )
-                    let footprint = SentryService.currentFootprintMB()
+                    let footprint = AppDiagnosticsService.currentFootprintMB()
                     log.warning("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(self.reducer.items.count), replay=\(usedReplay), firstMessageFallback=\(usedFirstMessageFallback)]")
                     ClientLog.info("Memory", "Session loaded", metadata: [
                         "footprintMB": footprint.map(String.init) ?? "n/a",

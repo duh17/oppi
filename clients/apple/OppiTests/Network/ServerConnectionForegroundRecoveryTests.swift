@@ -81,7 +81,7 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(conn.sessionStore.lastSyncFailed == false)
     }
 
-    @Test func refreshSessionListSkipEmitsStructuredBreadcrumb() async {
+    @Test func refreshSessionListSkipEmitsStructuredRefreshEvent() async {
         let conn = makeForegroundRecoveryConnection()
 
         let now = Date()
@@ -89,7 +89,7 @@ struct ServerConnectionForegroundRecoveryTests {
         conn.sessionStore.markSyncSucceeded(at: now)
 
         var skipMetadata: [String: String] = [:]
-        conn._onRefreshBreadcrumbForTesting = { message, metadata, _ in
+        conn._onRefreshEventForTesting = { message, metadata, _ in
             if message == "session_list.skip" {
                 skipMetadata = metadata
             }
@@ -127,12 +127,12 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(conn.workspaceStore.lastSyncFailed == false)
     }
 
-    @Test func refreshWorkspaceCatalogForceEmitsEndBreadcrumbWithCounts() async {
+    @Test func refreshWorkspaceCatalogForceEmitsEndRefreshEventWithCounts() async {
         let conn = makeForegroundRecoveryConnection()
 
         var endMetadata: [String: String] = [:]
         var endLevel: ClientLogLevel?
-        conn._onRefreshBreadcrumbForTesting = { message, metadata, level in
+        conn._onRefreshEventForTesting = { message, metadata, level in
             if message == "workspace_catalog.end" {
                 endMetadata = metadata
                 endLevel = level

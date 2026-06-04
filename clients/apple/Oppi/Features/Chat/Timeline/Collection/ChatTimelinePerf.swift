@@ -1,10 +1,6 @@
 import Foundation
 import os
 
-#if canImport(Sentry)
-import Sentry
-#endif
-
 /// Chat timeline performance instrumentation.
 ///
 /// Tracks:
@@ -13,7 +9,7 @@ import Sentry
 /// - cell configure duration (by row type)
 /// - scroll command rate
 ///
-/// Uses OSSignposter for Instruments timelines and low-volume ClientLog breadcrumbs.
+/// Uses OSSignposter for Instruments timelines and low-volume ClientLog entries.
 @MainActor
 enum ChatTimelinePerf {
     struct Snapshot: Sendable {
@@ -88,16 +84,6 @@ enum ChatTimelinePerf {
     private static var scrollWindowCount = 0
     private static var scrollCommandsPerSecond = 0
 
-#if canImport(Sentry)
-    private static var activeTimelineApplySpan: (any Span)?
-    private static var activeTimelineApplyStartNs: UInt64 = 0
-    private static var activeTimelineApplyItems = 0
-    private static var activeTimelineApplyChanged = 0
-    private static var activeSnapshotBuildSpan: (any Span)?
-    private static var collectionApplySpansByStartNs: [UInt64: any Span] = [:]
-    private static var layoutPassSpansByStartNs: [UInt64: any Span] = [:]
-#endif
-
     static func reset() {
         activeSessionId = nil
         applyLastMs = 0
@@ -117,15 +103,6 @@ enum ChatTimelinePerf {
         scrollWindowCount = 0
         scrollCommandsPerSecond = 0
 
-#if canImport(Sentry)
-        activeTimelineApplySpan = nil
-        activeTimelineApplyStartNs = 0
-        activeTimelineApplyItems = 0
-        activeTimelineApplyChanged = 0
-        activeSnapshotBuildSpan = nil
-        collectionApplySpansByStartNs.removeAll(keepingCapacity: false)
-        layoutPassSpansByStartNs.removeAll(keepingCapacity: false)
-#endif
     }
 
     static func snapshot() -> Snapshot {
@@ -155,66 +132,18 @@ enum ChatTimelinePerf {
     }
 
     static func beginTimelineApplyCycle(itemCount: Int, changedCount: Int) {
-#if canImport(Sentry)
-        guard SentrySDK.isEnabled else { return }
-
-        let root = SentrySDK.startTransaction(
-            name: "chat.timeline.apply",
-            operation: "ui.render"
-        )
-        root.setData(value: itemCount, key: "items")
-        root.setData(value: changedCount, key: "changed")
-
-        activeTimelineApplySpan = root
-        activeTimelineApplyStartNs = timestampNs()
-        activeTimelineApplyItems = itemCount
-        activeTimelineApplyChanged = changedCount
-#endif
     }
 
     static func updateTimelineApplyCycle(itemCount: Int, changedCount: Int) {
-#if canImport(Sentry)
-        activeTimelineApplyItems = itemCount
-        activeTimelineApplyChanged = changedCount
-        activeTimelineApplySpan?.setData(value: itemCount, key: "items")
-        activeTimelineApplySpan?.setData(value: changedCount, key: "changed")
-#endif
     }
 
     static func endTimelineApplyCycle(didScroll: Bool) {
-#if canImport(Sentry)
-        guard let root = activeTimelineApplySpan else { return }
-
-        let durationMs = elapsedMs(since: activeTimelineApplyStartNs)
-        root.setData(value: durationMs, key: "durationMs")
-        root.setData(value: activeTimelineApplyItems, key: "items")
-        root.setData(value: activeTimelineApplyChanged, key: "changed")
-        root.setData(value: didScroll, key: "didScroll")
-        root.finish(status: .ok)
-
-        activeTimelineApplySpan = nil
-        activeTimelineApplyStartNs = 0
-        activeTimelineApplyItems = 0
-        activeTimelineApplyChanged = 0
-        activeSnapshotBuildSpan = nil
-#endif
     }
 
     static func beginSnapshotBuildPhase() {
-#if canImport(Sentry)
-        guard let root = activeTimelineApplySpan else { return }
-        activeSnapshotBuildSpan = root.startChild(
-            operation: "snapshot.build",
-            description: "Build diffable snapshot"
-        )
-#endif
     }
 
     static func endSnapshotBuildPhase() {
-#if canImport(Sentry)
-        activeSnapshotBuildSpan?.finish(status: .ok)
-        activeSnapshotBuildSpan = nil
-#endif
     }
 
     static func beginCollectionApply(
@@ -224,18 +153,6 @@ enum ChatTimelinePerf {
     ) -> IntervalToken {
         let startNs = timestampNs()
         let state = signposter.beginInterval("collection.apply")
-
-#if canImport(Sentry)
-        if let root = activeTimelineApplySpan {
-            let span = root.startChild(
-                operation: "datasource.apply",
-                description: "UICollectionViewDiffableDataSource.apply"
-            )
-            span.setData(value: itemCount, key: "items")
-            span.setData(value: changedCount, key: "changed")
-            collectionApplySpansByStartNs[startNs] = span
-        }
-#endif
 
         return IntervalToken(
             name: "collection.apply",
@@ -253,13 +170,6 @@ enum ChatTimelinePerf {
         let durationMs = elapsedMs(since: token.startNs)
         applyLastMs = durationMs
         applyMaxMs = max(applyMaxMs, durationMs)
-
-#if canImport(Sentry)
-        if let span = collectionApplySpansByStartNs.removeValue(forKey: token.startNs) {
-            span.setData(value: durationMs, key: "durationMs")
-            span.finish(status: .ok)
-        }
-#endif
 
         if durationMs >= guardrailApplyThresholdMs {
             hardGuardrailBreachCount &+= 1
@@ -311,17 +221,6 @@ enum ChatTimelinePerf {
         let startNs = timestampNs()
         let state = signposter.beginInterval("collection.layout")
 
-#if canImport(Sentry)
-        if let root = activeTimelineApplySpan {
-            let span = root.startChild(
-                operation: "layout.pass",
-                description: "UICollectionView.layoutIfNeeded"
-            )
-            span.setData(value: itemCount, key: "items")
-            layoutPassSpansByStartNs[startNs] = span
-        }
-#endif
-
         return IntervalToken(
             name: "collection.layout",
             state: state,
@@ -338,13 +237,6 @@ enum ChatTimelinePerf {
         let durationMs = elapsedMs(since: token.startNs)
         layoutLastMs = durationMs
         layoutMaxMs = max(layoutMaxMs, durationMs)
-
-#if canImport(Sentry)
-        if let span = layoutPassSpansByStartNs.removeValue(forKey: token.startNs) {
-            span.setData(value: durationMs, key: "durationMs")
-            span.finish(status: .ok)
-        }
-#endif
 
         if durationMs >= guardrailLayoutThresholdMs {
             hardGuardrailBreachCount &+= 1
@@ -431,24 +323,6 @@ enum ChatTimelinePerf {
         }
 
         guard durationMs >= slowCellThresholdMs else { return }
-
-#if canImport(Sentry)
-        if let root = activeTimelineApplySpan {
-            let span = root.startChild(
-                operation: "chat.cell.configure",
-                description: rowType
-            )
-            span.setData(value: rowType, key: "rowType")
-            span.setData(value: durationMs, key: "durationMs")
-            if let ctx = toolContext {
-                span.setData(value: ctx.tool, key: "tool")
-                span.setData(value: ctx.isExpanded, key: "expanded")
-                span.setData(value: ctx.contentType, key: "contentType")
-                span.setData(value: ctx.outputBytes, key: "outputBytes")
-            }
-            span.finish(status: .ok)
-        }
-#endif
 
         guard shouldEmitSlowLog() else { return }
 
@@ -577,18 +451,6 @@ enum ChatTimelinePerf {
         sessionId: String? = nil
     ) {
         signposter.emitEvent("scroll.command")
-
-#if canImport(Sentry)
-        if let root = activeTimelineApplySpan {
-            let span = root.startChild(
-                operation: "scroll.command",
-                description: String(describing: anchor)
-            )
-            span.setData(value: String(describing: anchor), key: "anchor")
-            span.setData(value: animated, key: "animated")
-            span.finish(status: .ok)
-        }
-#endif
 
         let nowNs = DispatchTime.now().uptimeNanoseconds
         let oneSecondNs: UInt64 = 1_000_000_000

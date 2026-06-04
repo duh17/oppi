@@ -51,7 +51,7 @@ Oppi diagnostics are designed for self-hosted debugging.
 
 - Public iOS release builds set `OPPI_TELEMETRY_MODE=public`.
 - Public iOS release builds do not upload diagnostics unless the user enables **Settings → Diagnostics → Send Diagnostics to Server**.
-- Public iOS release builds do not start Sentry, even when the diagnostics toggle is enabled.
+- iOS builds do not link an external crash-reporting SDK; diagnostics upload only to the configured Oppi server.
 - Internal/debug builds set `OPPI_TELEMETRY_MODE=internal` and upload diagnostics automatically to the configured Oppi server.
 - The server also enforces `OPPI_TELEMETRY_MODE`: `public`, `release`, `prod`, `off`, and equivalent values reject telemetry uploads with HTTP 403.
 
@@ -70,7 +70,7 @@ Allowed diagnostic data:
 - low-cardinality tags such as `transport=lan`, `status=ok`, `error_kind=network`, or `tool=bash`
 - numeric timings, counts, ratios, byte counts, and resource samples
 - sanitized MetricKit summaries and crash diagnostics
-- redacted client log breadcrumbs
+- redacted client logs
 
 ## Upload channels
 
@@ -78,7 +78,7 @@ Allowed diagnostic data:
 |---|---|---|---|
 | Chat metrics | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl` | Client UX, rendering, queueing, dictation, and device metrics. |
 | MetricKit | `POST /telemetry/metrickit` | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl` | Apple crash, hang, CPU, disk, and battery diagnostics. |
-| Client logs | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl` | Redacted warning/error breadcrumbs and selected high-value info logs. |
+| Client logs | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl` | Redacted warning/error events and selected high-value info logs. |
 | Server resource metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl` | Server CPU, memory, event loop, sessions, and WebSocket counts. |
 | Server ops metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics. |
 | Server log | local JSONL/text log | `<OPPI_DATA_DIR>/server.log` | Structured server events and warnings. |
@@ -157,7 +157,7 @@ The front page should focus on metrics that map directly to user experience. Low
 | `server.rss_mb` and `server.heap_mb` | Server memory pressure. |
 | `server.sessions_total` and `server.ws_connections` | Local server concurrency pressure. |
 | MetricKit diagnostics | Crashes, hangs, CPU exceptions, and disk-write exceptions. |
-| Client logs | Breadcrumbs for what the user was doing before failure. |
+| Client logs | Redacted diagnostic context for what happened before failure. |
 
 ## Informational metrics policy
 

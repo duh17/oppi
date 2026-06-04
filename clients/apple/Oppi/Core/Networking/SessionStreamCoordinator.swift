@@ -84,9 +84,6 @@ final class SessionStreamCoordinator {
 
         connection.focusSession(sessionId)
         connection.chatState.thinkingLevel = .medium
-        Task {
-            await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
-        }
 
         let perSessionStream = AsyncStream<SessionStreamEvent> { continuation in
             connection.sessionEventContinuations[sessionId] = continuation

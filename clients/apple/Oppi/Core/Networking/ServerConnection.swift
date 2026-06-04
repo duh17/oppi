@@ -178,8 +178,8 @@ final class ServerConnection {
         set { sender._turnSendRetryDelayForTesting = newValue }
     }
 
-    /// Test seam: observe refresh breadcrumbs emitted by list refresh paths.
-    var _onRefreshBreadcrumbForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
+    /// Test seam: observe refresh events emitted by list refresh paths.
+    var _onRefreshEventForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
 
     // periphery:ignore - test seam used by ServerConnectionStreamTests via @testable import
     /// Test seam: replace WebSocket opening with a deterministic stream.
@@ -1036,9 +1036,6 @@ final class ServerConnection {
 
         focusedSessionStore.clear()
         sessionStreamCoordinator.noteStreamDisconnected()
-        Task {
-            await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
-        }
         // Clear stale extension dialog — it's tied to the active session stream
         activeExtensionDialog = nil
         silenceWatchdog.stop()

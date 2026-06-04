@@ -320,7 +320,6 @@ struct SettingsView: View {
     private var diagnosticsSection: some View {
         if TelemetryMode.current == .public {
             // Release builds: opt-in toggle for diagnostics to user's own server.
-            // Sentry (external crash reporting) is always disabled in release.
             Section {
                 Toggle("Send Diagnostics to Server", isOn: $telemetryEnabled)
                     .onChange(of: telemetryEnabled) { _, newValue in
@@ -332,7 +331,7 @@ struct SettingsView: View {
                 Text("Diagnostics")
             } footer: {
                 Text(
-                    "Send performance metrics, client log breadcrumbs, and crash diagnostics to your server. "
+                    "Send performance metrics, client logs, and crash diagnostics to your server. "
                         + "Data stays on your server and is never shared externally."
                 )
             }

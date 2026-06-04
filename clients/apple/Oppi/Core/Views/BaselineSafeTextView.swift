@@ -11,8 +11,6 @@ import UIKit
 ///
 /// Fix: Override the private method to return a safe default (font ascent)
 /// when called in an unsafe state, preventing the assertion.
-///
-/// Sentry: APPLE-IOS-G (23 events, fatal crash in ChatTimelineCollectionView)
 final class BaselineSafeTextView: UITextView {
 
     override func layoutSubviews() {

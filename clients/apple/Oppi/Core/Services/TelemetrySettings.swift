@@ -47,19 +47,6 @@ enum TelemetryMode: Sendable, Equatable {
         self == .internalDiagnostics
     }
 
-    var sentryEnvironmentName: String {
-#if DEBUG
-        return "debug"
-#else
-        switch self {
-        case .public:
-            return "release"
-        case .internalDiagnostics:
-            return "test"
-        }
-#endif
-    }
-
     var label: String {
         switch self {
         case .public:
@@ -83,10 +70,6 @@ enum TelemetrySettings {
         )
     }
 
-    static var sentryEnvironmentName: String {
-        mode.sentryEnvironmentName
-    }
-
     static func allowsRemoteDiagnosticsUpload(
         mode: TelemetryMode,
         userOptIn: Bool = false,
@@ -103,9 +86,6 @@ enum TelemetrySettings {
 
         // Release/public builds upload metrics to the user's own server
         // only if the user explicitly opts in via Settings.
-        // Note: Sentry (external crash reporting) is always disabled in
-        // public mode — SentryService checks mode.allowsRemoteDiagnosticsUpload
-        // directly, bypassing this opt-in path.
         return userOptIn
     }
 
