@@ -171,6 +171,7 @@ struct AskCardExpanded: View {
                 isStreaming: false,
                 textSelectionEnabled: true
             )
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: 10) {
