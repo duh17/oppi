@@ -291,13 +291,7 @@ private struct ExtensionDialogSheet: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if isTUICompatibilityRequest {
-                    compatibilityContent
-                } else {
-                    nativeDialogContent
-                }
-            }
+            nativeDialogContent
             .navigationTitle(dialogTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -457,74 +451,6 @@ private struct ExtensionDialogSheet: View {
         }
     }
 
-    private var compatibilityContent: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                Text(request.message ?? "")
-                    .font(.system(.callout, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(14)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .padding()
-            }
-            .background(Color(.systemGroupedBackground))
-
-            VStack(spacing: 12) {
-                Text("Compatibility mode")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 10) {
-                    compatButton("Up", systemImage: "arrow.up", value: "↑ Up")
-                    compatButton("Down", systemImage: "arrow.down", value: "↓ Down")
-                    compatButton("Return", systemImage: "return", value: "⏎ Enter")
-                }
-
-                HStack(spacing: 10) {
-                    compatButton("Type Text", systemImage: "keyboard", value: "Type text…")
-                    compatButton("Cancel", systemImage: "xmark.circle", value: "Cancel", role: .cancel)
-                }
-            }
-            .padding()
-            .background(.bar)
-        }
-    }
-
-    @ViewBuilder
-    private func compatButton(
-        _ title: String,
-        systemImage: String,
-        value: String,
-        role: ButtonRole? = nil
-    ) -> some View {
-        let isDisabled = isSubmitting || !(request.options ?? []).contains(value)
-
-        if role == .cancel {
-            Button(role: role) {
-                cancelRequest()
-            } label: {
-                compatButtonLabel(title: title, systemImage: systemImage)
-            }
-            .buttonStyle(.bordered)
-            .disabled(isDisabled)
-        } else {
-            Button(role: role) {
-                submitSelect(value)
-            } label: {
-                compatButtonLabel(title: title, systemImage: systemImage)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isDisabled)
-        }
-    }
-
-    private func compatButtonLabel(title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .frame(maxWidth: .infinity, minHeight: 44)
-    }
-
     private var dialogTitle: String {
         guard let trimmedTitle = request.title?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmedTitle.isEmpty else {
@@ -553,12 +479,6 @@ private struct ExtensionDialogSheet: View {
 
     private var showsTextInput: Bool {
         request.method == "input" || request.method == "editor"
-    }
-
-    private var isTUICompatibilityRequest: Bool {
-        request.method == "select"
-            && request.title == "Extension (TUI compatibility mode)"
-            && Set(request.options ?? []).isSuperset(of: ["↑ Up", "↓ Down", "⏎ Enter", "Type text…", "Cancel"])
     }
 
     private func submitSelect(_ option: String) {

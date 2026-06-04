@@ -628,7 +628,7 @@ describe("Oppi queue delivery defaults", () => {
   });
 });
 
-describe("SdkBackend custom UI compatibility", () => {
+describe("SdkBackend extension UI bridge", () => {
   interface CapturedRequest {
     id: string;
     method: string;
@@ -726,7 +726,7 @@ describe("SdkBackend custom UI compatibility", () => {
     return { backend, ui, requests };
   }
 
-  it("provides a compatibility theme on the UI context", () => {
+  it("provides a snapshot theme on the UI context", () => {
     const { ui } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     expect(ui.theme.bold("Review session active")).toBe("Review session active");
@@ -786,11 +786,11 @@ describe("SdkBackend custom UI compatibility", () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.setWidget("agents", (tui) => {
-      const compatTui = tui as { terminal?: { columns?: number; rows?: number } };
+      const snapshotTui = tui as { terminal?: { columns?: number; rows?: number } };
       return {
         render: () => [
-          `columns=${compatTui.terminal?.columns ?? "missing"}`,
-          `rows=${compatTui.terminal?.rows ?? "missing"}`,
+          `columns=${snapshotTui.terminal?.columns ?? "missing"}`,
+          `rows=${snapshotTui.terminal?.rows ?? "missing"}`,
         ],
       };
     });
@@ -940,113 +940,29 @@ describe("SdkBackend custom UI compatibility", () => {
     ).rejects.toThrow(/Malformed ask response:/);
   });
 
-  it("routes keyboard-only custom selectors through compatibility controls", async () => {
-    const selectResponses = ["↓ Down", "⏎ Enter"];
-    const { ui, requests } = makeCustomUIHarness((request) => {
-      if (request.method === "select") {
-        return { value: selectResponses.shift() ?? "Cancel" };
-      }
+  it("does not invoke arbitrary custom TUI factories in Oppi sessions", async () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+    let factoryCalled = false;
 
-      return { cancelled: true };
+    const result = await ui.custom<string | undefined>(() => {
+      factoryCalled = true;
+      return { render: () => ["terminal-only"] };
     });
-
-    const result = await ui.custom<string | undefined>((_tui, _theme, keybindings, done) => {
-      const options = ["alpha", "beta"];
-      let index = 0;
-
-      const kb = keybindings as { matches: (data: string, keybinding: string) => boolean };
-
-      return {
-        render: () => [`selection: ${options[index]}`],
-        handleInput: (data: string) => {
-          if (kb.matches(data, "tui.select.down")) {
-            index = Math.min(options.length - 1, index + 1);
-            return;
-          }
-
-          if (kb.matches(data, "tui.select.up")) {
-            index = Math.max(0, index - 1);
-            return;
-          }
-
-          if (kb.matches(data, "tui.select.confirm")) {
-            done(options[index]);
-          }
-        },
-      };
-    });
-
-    expect(result).toBe("beta");
-    expect(requests).toHaveLength(2);
-    expect(requests[0].message).toContain("selection: alpha");
-    expect(requests[1].message).toContain("selection: beta");
-  });
-
-  it("supports text entry in compatibility mode", async () => {
-    const selectResponses = ["Type text…", "⏎ Enter"];
-    const { ui, requests } = makeCustomUIHarness((request) => {
-      if (request.method === "select") {
-        return { value: selectResponses.shift() ?? "Cancel" };
-      }
-      if (request.method === "input") {
-        return { value: "release" };
-      }
-
-      return { cancelled: true };
-    });
-
-    const result = await ui.custom<string | undefined>((_tui, _theme, keybindings, done) => {
-      let value = "";
-      const kb = keybindings as { matches: (data: string, keybinding: string) => boolean };
-
-      return {
-        render: () => [`typed: ${value}`],
-        handleInput: (data: string) => {
-          if (kb.matches(data, "tui.select.confirm")) {
-            done(value);
-            return;
-          }
-
-          value += data;
-        },
-      };
-    });
-
-    expect(result).toBe("release");
-    expect(requests.some((request) => request.method === "input")).toBe(true);
-  });
-
-  it("returns undefined when compatibility dialog is cancelled", async () => {
-    const { ui } = makeCustomUIHarness((request) => {
-      if (request.method === "select") {
-        return { cancelled: true };
-      }
-      return { cancelled: true };
-    });
-
-    const result = await ui.custom<string | undefined>(() => ({
-      render: () => ["idle"],
-    }));
 
     expect(result).toBeUndefined();
+    expect(factoryCalled).toBe(false);
+    expect(requests).toHaveLength(0);
   });
 
-  it("rethrows custom UI failures after emitting a warning notification", async () => {
+  it("returns undefined for custom UI even if the factory would throw", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
-    await expect(
-      ui.custom<string>(() => {
-        throw new Error("compat boom");
-      }),
-    ).rejects.toThrow("compat boom");
+    const result = await ui.custom<string | undefined>(() => {
+      throw new Error("terminal-only boom");
+    });
 
-    expect(
-      requests.some(
-        (request) =>
-          request.method === "notify" &&
-          request.message?.includes("Extension custom UI failed: compat boom") === true,
-      ),
-    ).toBe(true);
+    expect(result).toBeUndefined();
+    expect(requests).toHaveLength(0);
   });
 });
 
