@@ -78,10 +78,15 @@ final class NativeFullScreenCodeBody: UIView {
         gutterView.backgroundColor = .clear
         gutterView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         gutterView.textContainer.lineFragmentPadding = 0
+        gutterView.textContainer.lineBreakMode = .byClipping
         contentContainer.addSubview(gutterView)
 
         let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
-        let (numbers, gutterWidth) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
+        let (numbers, gutterWidth) = lineNumberInfo(
+            lineCount: lineCount,
+            startLine: startLine,
+            font: FullScreenCodeTypography.codeFont
+        )
         gutterView.text = numbers
 
         // Separator

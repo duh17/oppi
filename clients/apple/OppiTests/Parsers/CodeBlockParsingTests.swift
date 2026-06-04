@@ -1,4 +1,5 @@
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("lineNumberInfo")
@@ -39,5 +40,13 @@ struct LineNumberInfoTests {
         let (numbers, width) = lineNumberInfo(lineCount: 2, startLine: 999)
         #expect(numbers == "999\n1000")
         #expect(width == 30.0)
+    }
+
+    @Test func gutterWidthFitsConfiguredFontDigits() {
+        let font = UIFont.monospacedSystemFont(ofSize: 18, weight: .regular)
+        let (_, width) = lineNumberInfo(lineCount: 2, startLine: 999, font: font)
+        let measured = ("8888" as NSString).size(withAttributes: [.font: font]).width
+
+        #expect(width >= ceil(measured) + 2)
     }
 }

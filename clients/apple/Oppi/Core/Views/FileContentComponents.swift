@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Source Context Helper
 
@@ -111,11 +112,19 @@ struct TruncationNotice: View {
 // MARK: - Line Number Info
 
 /// Generate line number string and compute gutter width.
-func lineNumberInfo(lineCount: Int, startLine: Int) -> (numbers: String, width: CGFloat) {
+func lineNumberInfo(lineCount: Int, startLine: Int, font: UIFont? = nil) -> (numbers: String, width: CGFloat) {
     let endLine = startLine + lineCount - 1
     let numbers = (startLine...endLine).map(String.init).joined(separator: "\n")
     let digits = max(String(endLine).count, 2)
-    let width = CGFloat(digits) * 7.5
+    let fixedWidth = CGFloat(digits) * 7.5
+    let width: CGFloat
+    if let font {
+        let sample = String(repeating: "8", count: digits) as NSString
+        let measuredWidth = sample.size(withAttributes: [.font: font]).width
+        width = max(fixedWidth, ceil(measuredWidth) + 2)
+    } else {
+        width = fixedWidth
+    }
     return (numbers, width)
 }
 
