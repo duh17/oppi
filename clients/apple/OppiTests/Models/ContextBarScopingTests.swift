@@ -31,6 +31,16 @@ struct ContextBarScopingTests {
         #expect(hasContent == false)
     }
 
+    @Test func workspaceSessionListCanShowBarWhenRepoClean() {
+        let hasContent = ContextBarScoping.hasContent(
+            gitStatus: makeCleanGitStatus(),
+            sessionId: nil,
+            sessionScope: nil,
+            showCleanWorkspace: true
+        )
+        #expect(hasContent == true)
+    }
+
     @Test func sessionViewHidesBarWhenNoSessionChanges() {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: makeDirtyGitStatus(),

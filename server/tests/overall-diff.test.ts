@@ -41,6 +41,42 @@ describe("overall-diff helpers", () => {
     ]);
   });
 
+  it("collects codex patch edit mutations for the requested path", () => {
+    const trace: TraceEvent[] = [
+      {
+        id: "tc-patch",
+        type: "toolCall",
+        timestamp: "2026-02-11T01:00:01.000Z",
+        tool: "edit",
+        args: {
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: file.txt",
+            "@@",
+            "before",
+            "-old",
+            "+new",
+            "after",
+            "*** Update File: other.txt",
+            "@@",
+            "-no",
+            "+yes",
+            "*** End Patch",
+          ].join("\n"),
+        },
+      },
+    ];
+
+    expect(collectFileMutations(trace, "file.txt")).toEqual([
+      {
+        id: "tc-patch",
+        kind: "edit",
+        oldText: "before\nold\nafter",
+        newText: "before\nnew\nafter",
+      },
+    ]);
+  });
+
   it("returns empty list for non-toolCall events", () => {
     const trace: TraceEvent[] = [
       {

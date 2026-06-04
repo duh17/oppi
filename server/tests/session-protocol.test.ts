@@ -389,6 +389,54 @@ describe("updateSessionChangeStats", () => {
     });
   });
 
+  it("multi edit args track every changed file", () => {
+    const session = makeSession();
+
+    updateSessionChangeStats(session, "edit", {
+      multi: [
+        { path: "/src/a.ts", oldText: "a", newText: "a\nb" },
+        { path: "/src/b.ts", oldText: "x\ny", newText: "x" },
+      ],
+    });
+
+    expect(session.changeStats).toMatchObject({
+      mutatingToolCalls: 1,
+      filesChanged: 2,
+      changedFiles: ["/src/a.ts", "/src/b.ts"],
+      addedLines: 1,
+      removedLines: 1,
+    });
+  });
+
+  it("codex patch edit args track every patched file", () => {
+    const session = makeSession();
+
+    updateSessionChangeStats(session, "edit", {
+      patch: [
+        "*** Begin Patch",
+        "*** Update File: /src/a.ts",
+        "@@",
+        "before",
+        "-old",
+        "+new",
+        "after",
+        "*** Add File: /src/new.ts",
+        "+one",
+        "+two",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(session.changeStats).toMatchObject({
+      mutatingToolCalls: 1,
+      filesChanged: 2,
+      changedFiles: ["/src/a.ts", "/src/new.ts"],
+      addedLines: 2,
+      removedLines: 0,
+    });
+    expect(session.changeStats!._sessionCreatedFiles).toEqual(["/src/new.ts"]);
+  });
+
   it("_fileLineCounts survives session round-trip through JSON", () => {
     const session = makeSession();
     updateSessionChangeStats(session, "write", { path: "/a.ts", content: "x\ny\nz" });
@@ -2020,8 +2068,16 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ type: "thinking_delta", delta: "first thought", contentIndex: 0 });
-      expect(result[1]).toEqual({ type: "thinking_delta", delta: "second thought", contentIndex: 2 });
+      expect(result[0]).toEqual({
+        type: "thinking_delta",
+        delta: "first thought",
+        contentIndex: 0,
+      });
+      expect(result[1]).toEqual({
+        type: "thinking_delta",
+        delta: "second thought",
+        contentIndex: 2,
+      });
     });
 
     it("recovers only unstreamed thinking blocks when indexed thinking streamed live", () => {

@@ -10,10 +10,12 @@ enum ContextBarScoping {
     static func hasContent(
         gitStatus: GitStatus?,
         sessionId: String?,
-        sessionScope: SessionScopedGitStatus?
+        sessionScope: SessionScopedGitStatus?,
+        showCleanWorkspace: Bool = false
     ) -> Bool {
         guard let gitStatus, gitStatus.isGitRepo else { return false }
         if sessionId != nil { return sessionScope != nil }
+        if showCleanWorkspace { return true }
         return !gitStatus.isClean
     }
 
@@ -156,6 +158,7 @@ struct WorkspaceContextBar: View {
     let appliesOuterHorizontalPadding: Bool
     let workspaceId: String?
     let sessionId: String?
+    let showCleanWorkspace: Bool
     let childSessions: [Session]
     var onSelectChild: ((String) -> Void)?
     var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
@@ -197,6 +200,7 @@ struct WorkspaceContextBar: View {
         appliesOuterHorizontalPadding: Bool = true,
         workspaceId: String? = nil,
         sessionId: String? = nil,
+        showCleanWorkspace: Bool = false,
         initialExpanded: Bool = false,
         childSessions: [Session] = [],
         onSelectChild: ((String) -> Void)? = nil,
@@ -210,6 +214,7 @@ struct WorkspaceContextBar: View {
         self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
         self.workspaceId = workspaceId
         self.sessionId = sessionId
+        self.showCleanWorkspace = showCleanWorkspace
         _isExpanded = State(initialValue: initialExpanded)
         self.childSessions = childSessions
         self.onSelectChild = onSelectChild
@@ -262,7 +267,8 @@ struct WorkspaceContextBar: View {
         ContextBarScoping.hasContent(
             gitStatus: gitStatus,
             sessionId: sessionId,
-            sessionScope: sessionScope
+            sessionScope: sessionScope,
+            showCleanWorkspace: showCleanWorkspace
         )
     }
 
@@ -1085,5 +1091,4 @@ private struct RowFramePreferenceKey: PreferenceKey {
         value.merge(nextValue()) { _, new in new }
     }
 }
-
 

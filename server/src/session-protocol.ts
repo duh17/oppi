@@ -19,6 +19,12 @@ import { stripAnsiEscapes } from "./ansi.js";
 import { normalizePiUsage } from "./token-usage.js";
 import { createLogger } from "./logger.js";
 import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
+import {
+  countTextLines,
+  extractToolMutations,
+  normalizeMutationToolName,
+  type ParsedToolMutation,
+} from "./tool-mutations.js";
 
 // ─── Shell Preview Constants ───
 
@@ -1268,7 +1274,7 @@ export function updateSessionChangeStats(
   rawToolName: unknown,
   rawArgs: unknown,
 ): void {
-  const toolName = typeof rawToolName === "string" ? rawToolName.toLowerCase() : "";
+  const toolName = normalizeMutationToolName(rawToolName);
   if (toolName !== "edit" && toolName !== "write") {
     return;
   }
@@ -1296,42 +1302,45 @@ export function updateSessionChangeStats(
 
   stats.mutatingToolCalls += 1;
 
-  const path = extractChangedFilePath(rawArgs);
-  const wasAlreadyTracked = path ? stats.changedFiles.includes(path) : false;
-  if (path && !wasAlreadyTracked) {
-    stats.filesChanged += 1;
-
-    if (stats.changedFiles.length < MAX_TRACKED_CHANGED_FILES) {
-      stats.changedFiles.push(path);
-    } else {
-      stats.changedFilesOverflow += 1;
-    }
-  }
-
   const fileLineCounts: Record<string, number> = existing?._fileLineCounts
     ? { ...existing._fileLineCounts }
     : {};
   const sessionCreatedFiles = new Set<string>(existing?._sessionCreatedFiles ?? []);
-  const { added, removed, isNewFile } = estimateLineDelta(toolName, rawArgs, path, fileLineCounts);
 
-  // Track files first created in this session.  Only mark as created if
-  // this is the first write (previousLines=0) AND the file wasn't already
-  // touched by a prior edit (which proves it pre-existed).
-  if (isNewFile && path && !wasAlreadyTracked) {
-    sessionCreatedFiles.add(path);
-  }
+  for (const mutation of extractToolMutations(toolName, rawArgs)) {
+    const path = mutation.path;
+    const wasAlreadyTracked = path ? stats.changedFiles.includes(path) : false;
+    if (path && !wasAlreadyTracked) {
+      stats.filesChanged += 1;
 
-  // For files created in this session, "removed" lines should reduce
-  // addedLines instead of incrementing removedLines.  From the pre-session
-  // baseline the file didn't exist — you can't remove lines that were never
-  // there.  Without this, writing a 568-line file then editing it 3 lines
-  // shorter shows (+568, -3) instead of the correct (+565, -0).
-  if (path && sessionCreatedFiles.has(path) && removed > 0) {
-    stats.addedLines = Math.max(0, stats.addedLines - removed);
-  } else {
-    stats.removedLines += removed;
+      if (stats.changedFiles.length < MAX_TRACKED_CHANGED_FILES) {
+        stats.changedFiles.push(path);
+      } else {
+        stats.changedFilesOverflow += 1;
+      }
+    }
+
+    const { added, removed, isNewFile } = estimateMutationLineDelta(mutation, fileLineCounts);
+
+    // Track files first created in this session. Only mark as created if
+    // this is the first write/add-file patch AND the file wasn't already
+    // touched by a prior edit (which proves it pre-existed).
+    if (isNewFile && path && !wasAlreadyTracked) {
+      sessionCreatedFiles.add(path);
+    }
+
+    // For files created in this session, "removed" lines should reduce
+    // addedLines instead of incrementing removedLines. From the pre-session
+    // baseline the file didn't exist — you can't remove lines that were never
+    // there. Without this, writing a 568-line file then editing it 3 lines
+    // shorter shows (+568, -3) instead of the correct (+565, -0).
+    if (path && sessionCreatedFiles.has(path) && removed > 0) {
+      stats.addedLines = Math.max(0, stats.addedLines - removed);
+    } else {
+      stats.removedLines += removed;
+    }
+    stats.addedLines += added;
   }
-  stats.addedLines += added;
 
   session.changeStats = {
     mutatingToolCalls: stats.mutatingToolCalls,
@@ -1348,53 +1357,29 @@ export function updateSessionChangeStats(
   };
 }
 
-function extractChangedFilePath(rawArgs: unknown): string | null {
-  if (!rawArgs || typeof rawArgs !== "object") {
-    return null;
-  }
-
-  const args = rawArgs as Record<string, unknown>;
-  const candidate = args.path;
-  if (typeof candidate !== "string") {
-    return null;
-  }
-
-  const normalized = candidate.trim();
-  return normalized.length > 0 ? normalized : null;
-}
-
 /**
- * Estimate line additions/removals for a write or edit tool call.
+ * Estimate line additions/removals for a single parsed write/edit mutation.
  *
  * `fileLineCounts` tracks per-file line counts across calls so that repeated
  * writes to the same file compute a delta instead of counting every line as
  * added.  The map is mutated in place (caller persists it on changeStats).
  */
-function estimateLineDelta(
-  toolName: string,
-  rawArgs: unknown,
-  filePath: string | null,
+function estimateMutationLineDelta(
+  mutation: ParsedToolMutation,
   fileLineCounts: Record<string, number>,
 ): { added: number; removed: number; isNewFile: boolean } {
-  if (!rawArgs || typeof rawArgs !== "object") {
-    return { added: 0, removed: 0, isNewFile: false };
-  }
-
-  const args = rawArgs as Record<string, unknown>;
-
-  if (toolName === "write") {
-    const content = typeof args.content === "string" ? args.content : "";
-    if (content.length === 0) {
+  if (mutation.kind === "write") {
+    if (mutation.content.length === 0) {
       return { added: 0, removed: 0, isNewFile: false };
     }
 
-    const newLines = countLines(content);
-    const previousLines = filePath !== null ? (fileLineCounts[filePath] ?? 0) : 0;
+    const newLines = countTextLines(mutation.content);
+    const previousLines = mutation.path !== null ? (fileLineCounts[mutation.path] ?? 0) : 0;
     const isNewFile = previousLines === 0;
 
     // Update tracked count for this file
-    if (filePath !== null) {
-      fileLineCounts[filePath] = newLines;
+    if (mutation.path !== null) {
+      fileLineCounts[mutation.path] = newLines;
     }
 
     return {
@@ -1404,69 +1389,22 @@ function estimateLineDelta(
     };
   }
 
-  // edit tool. Newer pi edit calls use a batched `edits` array; older
-  // calls used top-level `oldText` / `newText`. Count each replacement
-  // independently so a single tool call that adds in one block and removes
-  // in another streams both numbers through the session summary.
-  const editDeltas = extractEditLineDeltas(args);
-  if (editDeltas.length === 0) {
+  if (mutation.oldText.length === 0 && mutation.newText.length === 0) {
     return { added: 0, removed: 0, isNewFile: false };
   }
 
-  let added = 0;
-  let removed = 0;
-  let netLineDelta = 0;
-  for (const delta of editDeltas) {
-    netLineDelta += delta;
-    if (delta > 0) {
-      added += delta;
-    } else if (delta < 0) {
-      removed += -delta;
-    }
-  }
+  const oldLines = countTextLines(mutation.oldText);
+  const newLines = countTextLines(mutation.newText);
+  const added = Math.max(0, newLines - oldLines);
+  const removed = Math.max(0, oldLines - newLines);
+  const netLineDelta = newLines - oldLines;
 
   // Update tracked count so subsequent writes to this file are accurate.
-  if (filePath !== null && filePath in fileLineCounts) {
-    fileLineCounts[filePath] = Math.max(0, fileLineCounts[filePath] + netLineDelta);
+  if (mutation.path !== null && mutation.path in fileLineCounts) {
+    fileLineCounts[mutation.path] = Math.max(0, fileLineCounts[mutation.path] + netLineDelta);
   }
 
-  return { added, removed, isNewFile: false };
-}
-
-function extractEditLineDeltas(args: Record<string, unknown>): number[] {
-  const batched = Array.isArray(args.edits)
-    ? args.edits
-        .map((entry) => editLineDelta(entry))
-        .filter((delta): delta is number => delta !== null)
-    : [];
-  if (batched.length > 0) {
-    return batched;
-  }
-
-  const legacy = editLineDelta(args);
-  return legacy === null ? [] : [legacy];
-}
-
-function editLineDelta(rawEdit: unknown): number | null {
-  if (!rawEdit || typeof rawEdit !== "object") {
-    return null;
-  }
-
-  const edit = rawEdit as Record<string, unknown>;
-  const oldText = typeof edit.oldText === "string" ? edit.oldText : "";
-  const newText = typeof edit.newText === "string" ? edit.newText : "";
-  if (oldText.length === 0 && newText.length === 0) {
-    return null;
-  }
-
-  return countLines(newText) - countLines(oldText);
-}
-
-function countLines(text: string): number {
-  if (text.length === 0) {
-    return 0;
-  }
-  return text.split("\n").length;
+  return { added, removed, isNewFile: mutation.isNewFile === true };
 }
 
 // ─── Session Message Counters ───

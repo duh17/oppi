@@ -18,6 +18,7 @@ import {
 import { extractQueuedUserText } from "./session-queue-utils.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
+import { normalizeMutationToolName } from "./tool-mutations.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, ServerMessage } from "./types.js";
 
 /** Extension UI request from pi SDK (stdout) */
@@ -634,7 +635,7 @@ export class SessionEventProcessor {
    * processes when the agent edits 10 files in quick succession.
    */
   private maybeEmitGitStatus(key: string, session: Session, toolName: unknown): void {
-    const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
+    const name = normalizeMutationToolName(toolName);
     if (name !== "edit" && name !== "write" && name !== "bash") return;
 
     const wsId = session.workspaceId;

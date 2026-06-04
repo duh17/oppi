@@ -508,11 +508,12 @@ struct WorkspaceDetailView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let gitStatus = gitStatusStore.gitStatus, gitStatus.isGitRepo, !gitStatus.isClean {
+            if let gitStatus = gitStatusStore.gitStatus, gitStatus.isGitRepo {
                 WorkspaceContextBar(
                     gitStatus: gitStatus,
                     isLoading: false,
                     workspaceId: workspace.id,
+                    showCleanWorkspace: true,
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: { contextBarExpanded = $0 }
                 )
