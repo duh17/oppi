@@ -4,14 +4,39 @@ import UIKit
 
 @MainActor
 final class ReviewCommentSelectionRouter {
-    private let dispatchClosure: (ReviewCommentSelectionRequest, UIViewController?) -> Void
+    typealias InlineSaveHandler = (String, ReviewCommentSelectionRequest) async -> Bool
 
-    init(dispatch: @escaping (ReviewCommentSelectionRequest) -> Void) {
-        dispatchClosure = { request, _ in dispatch(request) }
+    private let dispatchClosure: (ReviewCommentSelectionRequest, UIViewController?) -> Void
+    private let inlineSaveClosure: InlineSaveHandler?
+    let inlineQuickComments: [QuickCommentTemplate]
+    let voiceInputManager: VoiceInputManager?
+
+    var supportsInlineCommentComposer: Bool {
+        inlineSaveClosure != nil
     }
 
-    init(dispatchWithPresentation: @escaping (ReviewCommentSelectionRequest, UIViewController?) -> Void) {
+    init(
+        dispatch: @escaping (ReviewCommentSelectionRequest) -> Void,
+        inlineSave: InlineSaveHandler? = nil,
+        inlineQuickComments: [QuickCommentTemplate] = [],
+        voiceInputManager: VoiceInputManager? = nil
+    ) {
+        dispatchClosure = { request, _ in dispatch(request) }
+        inlineSaveClosure = inlineSave
+        self.inlineQuickComments = inlineQuickComments
+        self.voiceInputManager = voiceInputManager
+    }
+
+    init(
+        dispatchWithPresentation: @escaping (ReviewCommentSelectionRequest, UIViewController?) -> Void,
+        inlineSave: InlineSaveHandler? = nil,
+        inlineQuickComments: [QuickCommentTemplate] = [],
+        voiceInputManager: VoiceInputManager? = nil
+    ) {
         dispatchClosure = dispatchWithPresentation
+        inlineSaveClosure = inlineSave
+        self.inlineQuickComments = inlineQuickComments
+        self.voiceInputManager = voiceInputManager
     }
 
     func dispatch(_ request: ReviewCommentSelectionRequest) {
@@ -20,6 +45,11 @@ final class ReviewCommentSelectionRouter {
 
     func dispatch(_ request: ReviewCommentSelectionRequest, presentingViewController: UIViewController?) {
         dispatchClosure(request, presentingViewController)
+    }
+
+    func saveInlineComment(body: String, request: ReviewCommentSelectionRequest) async -> Bool {
+        guard let inlineSaveClosure else { return false }
+        return await inlineSaveClosure(body, request)
     }
 }
 
@@ -44,6 +74,15 @@ enum ReviewCommentSurfaceKind: Equatable {
         case .assistantCodeBlock, .toolCommand, .toolOutput, .toolExpandedText, .fullScreenCode, .fullScreenDiff, .fullScreenSource, .fullScreenTerminal:
             true
         case .assistantProse, .userMessage, .assistantTable, .thinking, .fullScreenMarkdown, .fullScreenThinking:
+            false
+        }
+    }
+
+    var usesInlineCommentWidget: Bool {
+        switch self {
+        case .fullScreenCode, .fullScreenDiff, .fullScreenSource, .fullScreenTerminal, .fullScreenMarkdown, .fullScreenThinking:
+            true
+        case .assistantProse, .userMessage, .assistantCodeBlock, .assistantTable, .thinking, .toolCommand, .toolOutput, .toolExpandedText:
             false
         }
     }
@@ -246,13 +285,17 @@ enum ReviewCommentSelectionMenuBuilder {
         selectedText: String,
         sourceContext: ReviewCommentSourceContext,
         router: ReviewCommentSelectionRouter,
-        presentingViewController: UIViewController? = nil
+        presentingViewController: UIViewController? = nil,
+        textView: UITextView? = nil,
+        selectedRange: NSRange? = nil
     ) -> UIMenu? {
         guard let commentAction = commentAction(
             selectedText: selectedText,
             sourceContext: sourceContext,
             router: router,
-            presentingViewController: presentingViewController
+            presentingViewController: presentingViewController,
+            textView: textView,
+            selectedRange: selectedRange
         ) else {
             return nil
         }
@@ -265,22 +308,35 @@ enum ReviewCommentSelectionMenuBuilder {
         selectedText: String,
         sourceContext: ReviewCommentSourceContext,
         router: ReviewCommentSelectionRouter,
-        presentingViewController: UIViewController? = nil
+        presentingViewController: UIViewController? = nil,
+        textView: UITextView? = nil,
+        selectedRange: NSRange? = nil
     ) -> UIAction? {
         let normalized = ReviewCommentSelectionTextFormatter.normalizedSelectedText(selectedText)
         guard !normalized.isEmpty else { return nil }
+
+        let request = ReviewCommentSelectionRequest(
+            selectedText: normalized,
+            source: sourceContext
+        )
 
         return UIAction(
             title: "Comment",
             image: UIImage(systemName: "text.bubble")
         ) { _ in
-            router.dispatch(
-                .init(
-                    selectedText: normalized,
-                    source: sourceContext
-                ),
-                presentingViewController: presentingViewController
-            )
+            if router.supportsInlineCommentComposer,
+               sourceContext.surface.usesInlineCommentWidget,
+               let textView,
+               let selectedRange {
+                ReviewCommentInlineDraftPresenter.present(
+                    textView: textView,
+                    selectedRange: selectedRange,
+                    request: request,
+                    router: router
+                )
+            } else {
+                router.dispatch(request, presentingViewController: presentingViewController)
+            }
         }
     }
 }
@@ -306,7 +362,9 @@ enum ReviewCommentSelectionEditMenuSupport {
             selectedText: selectedText,
             sourceContext: enrichedSourceContext(sourceContext, textView: textView, range: range),
             router: router,
-            presentingViewController: presentingViewController
+            presentingViewController: presentingViewController,
+            textView: textView,
+            selectedRange: range
         )
     }
 

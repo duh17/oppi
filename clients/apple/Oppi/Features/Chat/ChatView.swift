@@ -72,6 +72,7 @@ struct ChatView: View {
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var reviewComments = ChatReviewCommentsController()
+    @State private var activeReviewCommentRequest: ReviewCommentSelectionRequest?
 
     init(sessionId: String, initialInputText: String = "", initialPendingFiles: [PendingFileReference] = []) {
         self.sessionId = sessionId
@@ -298,42 +299,6 @@ struct ChatView: View {
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
             .sheet(isPresented: $showShareRedactionSheet) { shareRedactionSheet }
-            .sheet(isPresented: reviewCommentsSheetBinding) { reviewCommentsSheet }
-            .sheet(item: focusedReviewCommentBinding) { comment in
-                ReviewCommentDetailSheet(
-                    comment: comment,
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-                    onClose: { reviewComments.clearFocusedComment() },
-                    onShowAll: {
-                        reviewComments.clearFocusedComment()
-                        Task { @MainActor in
-                            await Task.yield()
-                            reviewComments.openSheet()
-                        }
-                    },
-                    onUpdateBody: { comment, body in
-                        await updateReviewComment(comment, body: body)
-                    },
-                    onDelete: { comment in
-                        Task { await deleteReviewComment(comment) }
-                    },
-                    onResolve: { comment in
-                        Task { await updateReviewComment(comment, status: .resolved) }
-                    }
-                )
-            }
-            .sheet(item: reviewCommentDraftBinding) { context in
-                ReviewCommentComposerSheet(
-                    selectedText: context.request.selectedText,
-                    source: context.request.source,
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-                    quickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
-                    onCancel: { reviewComments.pendingDraft = nil },
-                    onSave: { body in
-                        await saveReviewComment(body: body, request: context.request)
-                    }
-                )
-            }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
             .alert("Compact Context", isPresented: $showCompactConfirmation) {
@@ -453,6 +418,8 @@ struct ChatView: View {
                 // Stand up new session
                 sessionManager = ChatSessionManager(sessionId: newId)
                 scrollController = ChatScrollController()
+                reviewComments = ChatReviewCommentsController()
+                activeReviewCommentRequest = nil
                 inputText = ""
                 pendingAttachments = []
                 pendingRepoPointers = []
@@ -513,11 +480,6 @@ struct ChatView: View {
     private var footerArea: some View {
         if isStopped {
             VStack(spacing: 8) {
-                if reviewComments.activeCount > 0 {
-                    reviewCommentBar
-                        .padding(.horizontal, 16)
-                }
-
                 SessionEndedFooter(
                     session: session,
                     isResuming: actionHandler.isResuming,
@@ -584,11 +546,6 @@ struct ChatView: View {
                     .padding(.horizontal, 16)
                 }
 
-                if reviewComments.activeCount > 0 {
-                    reviewCommentBar
-                        .padding(.horizontal, 16)
-                }
-
                 ChatInputBar(
                     text: $inputText,
                     textBeforeRecording: $composerTextBeforeRecording,
@@ -598,7 +555,8 @@ struct ChatView: View {
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: isPreparingAttachments || actionHandler.isSending,
-                    pendingReviewCommentCount: reviewComments.stagedCount,
+                    pendingReviewCommentCount: activeReviewCommentRequest == nil ? reviewComments.stagedCount : 0,
+                    placeholderOverride: activeReviewCommentRequest == nil ? nil : "Comment…",
                     sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
@@ -613,7 +571,7 @@ struct ChatView: View {
                     onFileSuggestionQuery: { query in
                         updateFileSuggestions(query: query)
                     },
-                    onSend: sendPrompt,
+                    onSend: sendComposerAction,
                     onStop: {
                         actionHandler.stop(
                             connection: connection, reducer: reducer,
@@ -632,34 +590,63 @@ struct ChatView: View {
                     appliesOuterPadding: true,
                     alwaysShowActionRow: true,
                     actionRow: {
-                        SessionToolbar(
-                            session: session,
-                            thinkingLevel: chatState.thinkingLevel,
-                            onModelTap: { showModelPicker = true },
-                            onThinkingSelect: { level in
-                                actionHandler.setThinking(
-                                    level,
-                                    connection: connection,
-                                    reducer: reducer,
-                                    sessionId: sessionId
-                                )
-                            }
-                        )
+                        composerActionRow
                     }
                 )
             }
         }
     }
 
-    private var reviewCommentBar: some View {
-        ReviewCommentChip(
-            commentCount: reviewComments.activeCount,
-            stagedCount: reviewComments.stagedCount,
-            onTap: {
-                reviewComments.openSheet()
-                Task { await loadReviewCommentsIfPossible() }
+    @ViewBuilder
+    private var composerActionRow: some View {
+        if let request = activeReviewCommentRequest {
+            HStack(spacing: 8) {
+                ForEach(QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates)) { template in
+                    Button {
+                        applyQuickCommentTemplate(template)
+                    } label: {
+                        Label(template.title, systemImage: template.systemImage)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.themeBgHighlight.opacity(0.85), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.themeFg)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    cancelReviewCommentInput()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.bold))
+                        .frame(width: 32, height: 32)
+                        .background(Color.themeBgHighlight.opacity(0.85), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.themeFgDim)
+                .accessibilityLabel("Cancel comment")
             }
-        )
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Comment actions for selected text: \(request.selectedText)")
+        } else {
+            SessionToolbar(
+                session: session,
+                thinkingLevel: chatState.thinkingLevel,
+                onModelTap: { showModelPicker = true },
+                onThinkingSelect: { level in
+                    actionHandler.setThinking(
+                        level,
+                        connection: connection,
+                        reducer: reducer,
+                        sessionId: sessionId
+                    )
+                }
+            )
+        }
     }
 
     @ViewBuilder
@@ -775,9 +762,16 @@ struct ChatView: View {
     }
 
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter {
-        ReviewCommentSelectionRouter(dispatchWithPresentation: { request, presentingViewController in
-            handleReviewCommentSelection(request, presentingViewController: presentingViewController)
-        })
+        ReviewCommentSelectionRouter(
+            dispatchWithPresentation: { request, presentingViewController in
+                handleReviewCommentSelection(request, presentingViewController: presentingViewController)
+            },
+            inlineSave: { body, request in
+                await saveReviewComment(body: body, request: request)
+            },
+            inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
+        )
     }
 
     // MARK: - Actions
@@ -792,19 +786,12 @@ struct ChatView: View {
 
     @MainActor
     private func handleInlineReviewCommentTap(_ notification: Notification) {
-        guard let commentId = notification.userInfo?["commentId"] as? String else { return }
         if let notificationSessionId = notification.userInfo?["sessionId"] as? String,
            !notificationSessionId.isEmpty,
            notificationSessionId != sessionId {
             return
         }
-
-        if let commentIds = notification.userInfo?["commentIds"] as? [String], commentIds.count > 1 {
-            reviewComments.openSheet()
-            return
-        }
-
-        reviewComments.focusComment(id: commentId)
+        connection.extensionToast = "Inline comments are saved. Select text to add another compact comment."
     }
 
     @MainActor
@@ -812,69 +799,56 @@ struct ChatView: View {
         _ request: ReviewCommentSelectionRequest,
         presentingViewController: UIViewController? = nil
     ) {
-        if let presentingViewController,
-           presentFullscreenReviewCommentSheet(from: presentingViewController, request: request) {
-            return
-        }
-        reviewComments.beginComment(request)
+        activeReviewCommentRequest = request
+        inputText = ""
+        composerTextBeforeRecording = nil
+        pendingAttachments = []
+        pendingRepoPointers = []
+        composerExternalFocusRequestID &+= 1
+        contextBarCollapseToken &+= 1
     }
 
-    @MainActor
-    private func presentFullscreenReviewCommentSheet(
-        from presentingViewController: UIViewController,
-        request: ReviewCommentSelectionRequest
-    ) -> Bool {
-        guard Self.isInsideFullScreenViewer(presentingViewController),
-              presentingViewController.viewIfLoaded?.window != nil,
-              presentingViewController.presentedViewController == nil else {
-            return false
+    private func applyQuickCommentTemplate(_ template: QuickCommentTemplate) {
+        let text = template.quickCommentText
+        guard !text.isEmpty else { return }
+        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            inputText = text
+        } else if inputText.hasSuffix("\n") {
+            inputText += text
+        } else {
+            inputText += "\n" + text
         }
-
-        weak var sheetController: UIViewController?
-        let rootView = ReviewCommentComposerSheet(
-            selectedText: request.selectedText,
-            source: request.source,
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-            quickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
-            onCancel: {
-                sheetController?.dismiss(animated: true)
-            },
-            onSave: { body in
-                let didSave = await saveReviewComment(body: body, request: request)
-                if didSave {
-                    await MainActor.run {
-                        sheetController?.dismiss(animated: true)
-                    }
-                }
-                return didSave
-            }
-        )
-
-        let controller = UIHostingController(rootView: rootView)
-        controller.modalPresentationStyle = .pageSheet
-        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
-        if let sheet = controller.sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
-            sheet.prefersGrabberVisible = true
-        }
-        sheetController = controller
-
-        DispatchQueue.main.async {
-            guard presentingViewController.presentedViewController == nil else { return }
-            presentingViewController.present(controller, animated: true)
-        }
-        return true
+        composerExternalFocusRequestID &+= 1
     }
 
-    private static func isInsideFullScreenViewer(_ controller: UIViewController) -> Bool {
-        var current: UIViewController? = controller
-        while let node = current {
-            if node is FullScreenCodeViewController {
-                return true
-            }
-            current = node.parent
+    private func cancelReviewCommentInput() {
+        activeReviewCommentRequest = nil
+        inputText = ""
+        composerTextBeforeRecording = nil
+    }
+
+    private func sendComposerAction() {
+        if activeReviewCommentRequest != nil {
+            sendActiveReviewComment()
+        } else {
+            sendPrompt()
         }
-        return false
+    }
+
+    private func sendActiveReviewComment() {
+        guard let request = activeReviewCommentRequest else { return }
+        let body = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        Task { @MainActor in
+            let didSave = await saveReviewComment(body: body, request: request)
+            if didSave {
+                activeReviewCommentRequest = nil
+                inputText = ""
+                composerTextBeforeRecording = nil
+                await loadReviewCommentsIfPossible()
+            }
+        }
     }
 
     private func presentComposer() {
@@ -912,55 +886,6 @@ struct ChatView: View {
         } else if !showComposer {
             composerExternalFocusRequestID &+= 1
         }
-    }
-
-    private var reviewCommentsSheetBinding: Binding<Bool> {
-        Binding(
-            get: { reviewComments.showsSheet },
-            set: { reviewComments.showsSheet = $0 }
-        )
-    }
-
-    private var reviewCommentDraftBinding: Binding<ReviewCommentDraftContext?> {
-        Binding(
-            get: { reviewComments.pendingDraft },
-            set: { reviewComments.pendingDraft = $0 }
-        )
-    }
-
-    private var focusedReviewCommentBinding: Binding<ReviewComment?> {
-        Binding(
-            get: {
-                guard let id = reviewComments.focusedCommentID else { return nil }
-                return reviewComments.comments.first { $0.id == id }
-            },
-            set: { comment in
-                reviewComments.focusedCommentID = comment?.id
-            }
-        )
-    }
-
-    private var reviewCommentsSheet: some View {
-        ReviewCommentsSheet(
-            comments: reviewComments.comments,
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-            onRefresh: {
-                Task { await loadReviewCommentsIfPossible() }
-            },
-            onClose: {
-                reviewComments.closeSheet()
-            },
-            onUpdateBody: { comment, body in
-                await updateReviewComment(comment, body: body)
-            },
-            onDelete: { comment in
-                Task { await deleteReviewComment(comment) }
-            },
-            onResolve: { comment in
-                Task { await updateReviewComment(comment, status: .resolved) }
-            }
-        )
-        .presentationDetents([.medium, .large])
     }
 
     private func loadReviewCommentsIfPossible() async {
@@ -1388,8 +1313,7 @@ struct ChatView: View {
 
         if rawTrimmedInput.caseInsensitiveCompare("/review-comments") == .orderedSame {
             inputText = ""
-            reviewComments.openSheet()
-            Task { await loadReviewCommentsIfPossible() }
+            connection.extensionToast = "Review comments use compact inline selection now."
             return
         }
 

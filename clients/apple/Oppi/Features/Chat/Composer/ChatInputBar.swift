@@ -35,6 +35,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @Binding var busyStreamingBehavior: StreamingBehavior
     let isSending: Bool
     var pendingReviewCommentCount: Int = 0
+    var placeholderOverride: String? = nil
     let sendProgressText: String?
     let isStopping: Bool
     var voiceInputManager: VoiceInputManager?
@@ -139,7 +140,7 @@ struct ChatInputBar<ActionRow: View>: View {
     private var accentColor: Color { .themeBlue }
 
     private var composerPlaceholder: String {
-        Self.composerPlaceholder(
+        placeholderOverride ?? Self.composerPlaceholder(
             askRequest: askRequest,
             pendingReviewCommentCount: pendingReviewCommentCount,
             isBusy: isBusy,

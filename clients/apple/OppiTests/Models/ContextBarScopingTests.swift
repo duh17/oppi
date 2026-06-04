@@ -18,7 +18,6 @@ struct ContextBarScopingTests {
             gitStatus: makeDirtyGitStatus(),
             sessionId: nil,
             sessionScope: nil,
-            childSessions: [],
         )
         #expect(hasContent == true)
     }
@@ -28,7 +27,6 @@ struct ContextBarScopingTests {
             gitStatus: makeCleanGitStatus(),
             sessionId: nil,
             sessionScope: nil,
-            childSessions: [],
         )
         #expect(hasContent == false)
     }
@@ -38,7 +36,6 @@ struct ContextBarScopingTests {
             gitStatus: makeDirtyGitStatus(),
             sessionId: "session-1",
             sessionScope: nil,
-            childSessions: [],
         )
         #expect(hasContent == false)
     }
@@ -49,7 +46,6 @@ struct ContextBarScopingTests {
             gitStatus: makeDirtyGitStatus(),
             sessionId: "session-1",
             sessionScope: scope,
-            childSessions: [],
         )
         #expect(hasContent == true)
     }
@@ -59,7 +55,6 @@ struct ContextBarScopingTests {
             gitStatus: nil,
             sessionId: "session-1",
             sessionScope: nil,
-            childSessions: [],
         )
         #expect(hasContent == false)
     }
@@ -69,22 +64,8 @@ struct ContextBarScopingTests {
             gitStatus: makeNonGitStatus(),
             sessionId: "session-1",
             sessionScope: nil,
-            childSessions: [],
         )
         #expect(hasContent == false)
-    }
-
-    // MARK: - Agent/parent visibility
-
-    @Test func barVisibleWhenChildSessionsExistEvenWithoutGit() {
-        let child = makeSession(id: "child-1", status: .busy)
-        let hasContent = ContextBarScoping.hasContent(
-            gitStatus: nil,
-            sessionId: "parent-1",
-            sessionScope: nil,
-            childSessions: [child],
-        )
-        #expect(hasContent == true)
     }
 
     // MARK: - displayFileCount
@@ -235,6 +216,35 @@ struct ContextBarScopingTests {
         #expect(shared.isEmpty)
     }
 
+    // MARK: - Quick action routing
+
+    @Test func quickActionTapInSessionUsesCurrentSessionByDefault() {
+        let route = ContextBarQuickActionRouting.defaultTapRoute(
+            sessionId: "session-1",
+            canReviewInCurrentSession: true
+        )
+
+        #expect(route == .currentSession)
+    }
+
+    @Test func quickActionTapInWorkspaceStartsNewSessionByDefault() {
+        let route = ContextBarQuickActionRouting.defaultTapRoute(
+            sessionId: nil,
+            canReviewInCurrentSession: false
+        )
+
+        #expect(route == .newSession)
+    }
+
+    @Test func quickActionTapInSessionFallsBackToNewSessionWithoutCurrentSessionHandler() {
+        let route = ContextBarQuickActionRouting.defaultTapRoute(
+            sessionId: "session-1",
+            canReviewInCurrentSession: false
+        )
+
+        #expect(route == .newSession)
+    }
+
     // MARK: - Dirty workspace does not leak into session
 
     @Test func dirtyWorkspaceDoesNotLeakIntoSessionWithNoChanges() {
@@ -247,8 +257,7 @@ struct ContextBarScopingTests {
 
         // Session exists but hasn't touched any files
         let hasContent = ContextBarScoping.hasContent(
-            gitStatus: gitStatus, sessionId: "session-1", sessionScope: nil,
-            childSessions: []
+            gitStatus: gitStatus, sessionId: "session-1", sessionScope: nil
         )
         let fileCount = ContextBarScoping.displayFileCount(
             gitStatus: gitStatus, sessionId: "session-1", sessionScope: nil
@@ -353,51 +362,6 @@ struct ContextBarScopingTests {
             sessionAddedLines: added,
             sessionRemovedLines: removed,
             totalFileCount: 10
-        )
-    }
-}
-
-@Suite("Context bar subagent status")
-struct ContextBarSubagentStatusTests {
-    @Test func questionOverridesReadyStatus() {
-        let status = ContextBarSubagentStatus.from(
-            status: .ready,
-            pendingAskCount: 1
-        )
-
-        #expect(status == .question)
-    }
-
-    @Test func countsClassifyAttentionAndRuntimeStatesExclusively() {
-        let sessions = [
-            makeSession(id: "question", status: .busy),
-            makeSession(id: "working", status: .starting),
-            makeSession(id: "ready", status: .ready),
-            makeSession(id: "stopped", status: .stopped),
-            makeSession(id: "error", status: .error),
-        ]
-        let askCounts = ["question": 1]
-
-        let counts = ContextBarSubagentStatus.counts(
-            for: sessions,
-            pendingAskCount: { askCounts[$0, default: 0] }
-        )
-        #expect(counts.question == 1)
-        #expect(counts.working == 1)
-        #expect(counts.ready == 1)
-        #expect(counts.stopped == 1)
-        #expect(counts.error == 1)
-    }
-
-    private func makeSession(id: String, status: SessionStatus) -> Session {
-        Session(
-            id: id,
-            status: status,
-            createdAt: Date(),
-            lastActivity: Date(),
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0
         )
     }
 }

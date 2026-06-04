@@ -1,43 +1,14 @@
 import Foundation
 import Observation
 
-struct ReviewCommentDraftContext: Identifiable, Equatable {
-    let id = UUID()
-    let request: ReviewCommentSelectionRequest
-}
-
 @MainActor @Observable
 final class ChatReviewCommentsController {
     private let store = ReviewCommentStore()
-
-    var pendingDraft: ReviewCommentDraftContext?
-    var showsSheet = false
-    var focusedCommentID: String?
 
     var comments: [ReviewComment] { store.comments }
     var stagedCount: Int { store.stagedCount }
     var activeCount: Int { store.activeCount }
     var stagedCommentIds: [String] { store.stagedComments.map(\.id) }
-
-    func beginComment(_ request: ReviewCommentSelectionRequest) {
-        pendingDraft = ReviewCommentDraftContext(request: request)
-    }
-
-    func openSheet() {
-        showsSheet = true
-    }
-
-    func closeSheet() {
-        showsSheet = false
-    }
-
-    func focusComment(id: String) {
-        focusedCommentID = id
-    }
-
-    func clearFocusedComment() {
-        focusedCommentID = nil
-    }
 
     func load(api: APIClient?, workspaceId: String?, sessionId: String) async {
         guard let api, let workspaceId else { return }
@@ -65,7 +36,6 @@ final class ChatReviewCommentsController {
                 body: body,
                 reference: Self.reviewReference(for: request)
             )
-            pendingDraft = nil
             return nil
         } catch {
             return "Failed to save review comment: \(error.localizedDescription)"

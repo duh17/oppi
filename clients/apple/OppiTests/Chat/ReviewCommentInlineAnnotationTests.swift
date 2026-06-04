@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Inline review comment annotations")
@@ -150,6 +151,45 @@ struct ReviewCommentInlineAnnotationTests {
         )
 
         #expect(annotations.map(\.id) == ["c1"])
+    }
+
+    @MainActor
+    @Test func bubbleFramesStayInContentCoordinatesWhenTextViewScrolls() {
+        let selected = "line 8 target"
+        let text = (1...30)
+            .map { line in line == 8 ? selected : "line \(line) filler" }
+            .joined(separator: "\n")
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        textView.isScrollEnabled = true
+        textView.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+        textView.attributedText = NSAttributedString(
+            string: text,
+            attributes: [.font: UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)]
+        )
+        textView.layoutIfNeeded()
+
+        let comment = Self.comment(
+            id: "c1",
+            reference: Self.reference(source: .file, path: "Sources/App.swift", selectedText: selected)
+        )
+        let context = ReviewCommentSourceContext(
+            sessionId: "s1",
+            surface: .fullScreenCode,
+            filePath: "Sources/App.swift"
+        )
+        let annotations = ReviewCommentInlineAnnotationMatcher.annotations(from: [comment], for: context)
+        ReviewCommentInlineAnnotationRenderer.apply(to: textView, annotations: annotations, sourceContext: context)
+
+        guard let bubble = textView.subviews.first(where: { $0 is UIButton }) else {
+            Issue.record("Expected an inline review bubble")
+            return
+        }
+        let initialFrame = bubble.frame
+
+        textView.contentOffset = CGPoint(x: 0, y: 60)
+        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: textView)
+
+        #expect(abs(bubble.frame.minY - initialFrame.minY) < 1)
     }
 
     private static func comment(

@@ -10,11 +10,8 @@ enum ContextBarScoping {
     static func hasContent(
         gitStatus: GitStatus?,
         sessionId: String?,
-        sessionScope: SessionScopedGitStatus?,
-        childSessions: [Session]
+        sessionScope: SessionScopedGitStatus?
     ) -> Bool {
-        // Show bar if there are child agents, even without git
-        if !childSessions.isEmpty { return true }
         guard let gitStatus, gitStatus.isGitRepo else { return false }
         if sessionId != nil { return sessionScope != nil }
         return !gitStatus.isClean
@@ -54,6 +51,20 @@ enum ContextBarScoping {
     ) -> [GitFileStatus] {
         if sessionId != nil { return sessionScope?.sessionFiles ?? [] }
         return gitStatus?.files ?? []
+    }
+}
+
+enum ContextBarQuickActionRoute: Equatable {
+    case currentSession
+    case newSession
+}
+
+enum ContextBarQuickActionRouting {
+    static func defaultTapRoute(sessionId: String?, canReviewInCurrentSession: Bool) -> ContextBarQuickActionRoute {
+        if sessionId != nil && canReviewInCurrentSession {
+            return .currentSession
+        }
+        return .newSession
     }
 }
 
@@ -128,107 +139,6 @@ enum ContextBarCrossSessionEdits {
         }
 
         return matches
-    }
-}
-
-enum ContextBarSubagentStatus: Equatable {
-    case question
-    case working
-    case ready
-    case stopped
-    case error
-
-    struct Counts: Equatable {
-        var question = 0
-        var working = 0
-        var ready = 0
-        var stopped = 0
-        var error = 0
-    }
-
-    static func from(
-        status: SessionStatus,
-        pendingAskCount: Int
-    ) -> Self {
-        if pendingAskCount > 0 { return .question }
-
-        switch status {
-        case .starting, .busy, .stopping:
-            return .working
-        case .ready:
-            return .ready
-        case .stopped:
-            return .stopped
-        case .error:
-            return .error
-        }
-    }
-
-    static func counts(
-        for sessions: [Session],
-        pendingAskCount: (String) -> Int
-    ) -> Counts {
-        var counts = Counts()
-
-        for session in sessions {
-            switch from(
-                status: session.status,
-                pendingAskCount: pendingAskCount(session.id)
-            ) {
-            case .question:
-                counts.question += 1
-            case .working:
-                counts.working += 1
-            case .ready:
-                counts.ready += 1
-            case .stopped:
-                counts.stopped += 1
-            case .error:
-                counts.error += 1
-            }
-        }
-
-        return counts
-    }
-
-    var label: String {
-        switch self {
-        case .question: "question"
-        case .working: "working"
-        case .ready: "ready"
-        case .stopped: "stopped"
-        case .error: "error"
-        }
-    }
-
-    var foregroundColor: Color {
-        switch self {
-        case .working:
-            .themeOrange
-        case .question:
-            .themeBlue
-        case .ready:
-            .themeGreen
-        case .stopped:
-            .themeComment
-        case .error:
-            .themeRed
-        }
-    }
-
-    var backgroundColor: Color {
-        switch self {
-        case .working:
-            Color.themeOrange.opacity(0.12)
-        case .question:
-            Color.themeBlue.opacity(0.12)
-        case .ready:
-            Color.themeGreen.opacity(0.12)
-        case .stopped:
-            Color.themeComment.opacity(0.1)
-        case .error:
-            Color.themeRed.opacity(0.12)
-        }
     }
 }
 
@@ -311,6 +221,7 @@ struct WorkspaceContextBar: View {
 
     // MARK: - Session scoping
 
+    @MainActor
     static func makeFileDetailReviewCommentScope(
         parentScope: ReviewCommentSelectionScope?,
         fallbackScope: ReviewCommentSelectionScope?,
@@ -319,10 +230,17 @@ struct WorkspaceContextBar: View {
         if let parentScope {
             switch parentScope {
             case .activeSession(let router):
-                return .activeSession(ReviewCommentSelectionRouter(dispatch: { request in
-                    dismissFileDetail()
-                    router.dispatch(request)
-                }))
+                let inlineSave: ReviewCommentSelectionRouter.InlineSaveHandler? = router.supportsInlineCommentComposer ? { body, request in
+                    await router.saveInlineComment(body: body, request: request)
+                } : nil
+                return .activeSession(ReviewCommentSelectionRouter(
+                    dispatch: { request in
+                        dismissFileDetail()
+                        router.dispatch(request)
+                    },
+                    inlineSave: inlineSave,
+                    inlineQuickComments: router.inlineQuickComments
+                ))
             }
         }
 
@@ -344,8 +262,7 @@ struct WorkspaceContextBar: View {
         ContextBarScoping.hasContent(
             gitStatus: gitStatus,
             sessionId: sessionId,
-            sessionScope: sessionScope,
-            childSessions: childSessions
+            sessionScope: sessionScope
         )
     }
 
@@ -387,15 +304,6 @@ struct WorkspaceContextBar: View {
         !selectedPaths.isEmpty && launchActionInFlightTitle == nil
     }
 
-    // MARK: - Agent counts
-
-    private var agentStatusCounts: ContextBarSubagentStatus.Counts {
-        ContextBarSubagentStatus.counts(
-            for: childSessions,
-            pendingAskCount: pendingAskCount(for:)
-        )
-    }
-
     /// All commits: recent from git status + any additionally loaded ones.
     private var allCommits: [GitCommitSummary] {
         (gitStatus?.recentCommits ?? []) + additionalCommits
@@ -405,14 +313,13 @@ struct WorkspaceContextBar: View {
     /// Estimates row heights to hug content; capped at 480.
     /// Note: selectionActionBar is outside the ScrollView — not counted here.
     private func expandedMaxHeight(displayFiles: [GitFileStatus], sharedEditPaths: Set<String>) -> CGFloat {
-        let agentRows = CGFloat(childSessions.count) * 44
         let fileRows = CGFloat(displayFiles.count) * 26
         let commitRows = CGFloat(allCommits.count) * 17
         let loadMoreRow: CGFloat = hasMoreCommits ? 24 : 0
-        let sectionHeaders: CGFloat = (!childSessions.isEmpty && !displayFiles.isEmpty) ? 48 : 24
+        let sectionHeaders: CGFloat = 24
         let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : 22
         let chrome: CGFloat = 20
-        return min(agentRows + fileRows + commitRows + loadMoreRow + sectionHeaders + overlapHint + chrome, 480)
+        return min(fileRows + commitRows + loadMoreRow + sectionHeaders + overlapHint + chrome, 480)
     }
 
     // MARK: - Body
@@ -565,10 +472,6 @@ struct WorkspaceContextBar: View {
                         }
                     }
 
-                    // Agent status pills (right-aligned)
-                    if !childSessions.isEmpty {
-                        agentStatusPills
-                    }
 
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.appTagBold)
@@ -664,14 +567,6 @@ struct WorkspaceContextBar: View {
                 .padding(.vertical, 6)
 
                 Divider().overlay(Color.themeComment.opacity(0.15))
-            }
-
-            // Agents section
-            if !childSessions.isEmpty {
-                agentsSection
-                if !displayFiles.isEmpty {
-                    Divider().overlay(Color.themeComment.opacity(0.15))
-                }
             }
 
             // File list
@@ -973,39 +868,61 @@ struct WorkspaceContextBar: View {
     }
 
     private func quickActionButton(option: WorkspaceQuickActionOption) -> some View {
-        Menu {
-            if onReviewInCurrentSession != nil {
-                Button("Use in this session") {
-                    Task { await useSelectionInCurrentSession(option: option) }
-                }
-            }
-            Button("Use in new session") {
+        let route = ContextBarQuickActionRouting.defaultTapRoute(
+            sessionId: sessionId,
+            canReviewInCurrentSession: onReviewInCurrentSession != nil
+        )
+
+        return Button {
+            switch route {
+            case .currentSession:
+                Task { await useSelectionInCurrentSession(option: option) }
+            case .newSession:
                 Task { await launchSelection(option: option) }
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: SlashCommand.Source.prompt.iconName)
-                    .font(.caption2)
-                    .foregroundStyle(quickActionSourceColor(option.sourceScope))
-                    .frame(width: 13)
-
-                Text("/\(option.commandName)")
-                    .font(.caption2.monospaced().weight(.medium))
-                    .foregroundStyle(.themeBlue)
-
-                Text(quickActionSourceLabel(option.sourceScope))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.themeComment)
-            }
-            .accessibilityLabel(option.title)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(Color.themeBgDark.opacity(0.92), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(Color.themeComment.opacity(0.22), lineWidth: 1)
-            )
+            quickActionButtonLabel(option: option)
         }
+        .buttonStyle(.plain)
+        .contextMenu {
+            switch route {
+            case .currentSession:
+                Button("Use in new session") {
+                    Task { await launchSelection(option: option) }
+                }
+            case .newSession:
+                if onReviewInCurrentSession != nil {
+                    Button("Use in this session") {
+                        Task { await useSelectionInCurrentSession(option: option) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func quickActionButtonLabel(option: WorkspaceQuickActionOption) -> some View {
+        return HStack(spacing: 6) {
+            Image(systemName: SlashCommand.Source.prompt.iconName)
+                .font(.caption2)
+                .foregroundStyle(quickActionSourceColor(option.sourceScope))
+                .frame(width: 13)
+
+            Text("/\(option.commandName)")
+                .font(.caption2.monospaced().weight(.medium))
+                .foregroundStyle(.themeBlue)
+
+            Text(quickActionSourceLabel(option.sourceScope))
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeComment)
+        }
+        .accessibilityLabel(option.title)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(Color.themeBgDark.opacity(0.92), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.themeComment.opacity(0.22), lineWidth: 1)
+        )
     }
 
     private func resetQuickActionCache() {
@@ -1141,188 +1058,6 @@ struct WorkspaceContextBar: View {
         guard isSelecting,
               let path = DragSelectState.pathAtLocation(location, in: rowFrames) else { return }
         dragSelect.handleRow(path, selectedPaths: &selectedPaths)
-    }
-
-    // MARK: - Agent Status Pills (collapsed header)
-
-    private var agentStatusPills: some View {
-        let counts = agentStatusCounts
-
-        return HStack(spacing: 4) {
-            if counts.question > 0 {
-                compactAgentStatusPill(count: counts.question, status: .question)
-            }
-            if counts.working > 0 {
-                compactAgentStatusPill(count: counts.working, status: .working)
-            }
-            if counts.ready > 0 {
-                compactAgentStatusPill(count: counts.ready, status: .ready)
-            }
-            if counts.stopped > 0 {
-                compactAgentStatusPill(count: counts.stopped, status: .stopped)
-            }
-            if counts.error > 0 {
-                compactAgentStatusPill(count: counts.error, status: .error)
-            }
-        }
-    }
-
-    private func compactAgentStatusPill(
-        count: Int,
-        status: ContextBarSubagentStatus
-    ) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(status.foregroundColor)
-                .frame(width: 5, height: 5)
-
-            Text("\(count)")
-                .font(.appTagBold)
-                .foregroundStyle(status.foregroundColor)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(status.backgroundColor, in: Capsule())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(count) \(status.label)")
-    }
-
-    // MARK: - Agents Section (expanded)
-
-    private var agentsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("SUB-AGENTS")
-                .font(.caption2.monospaced().weight(.semibold))
-                .foregroundStyle(.themeComment)
-                .tracking(0.8)
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
-                .padding(.bottom, 2)
-
-            ForEach(childSessions) { child in
-                agentRow(child)
-            }
-        }
-        .padding(.bottom, 4)
-    }
-
-    private var agentIsStoppable: (Session) -> Bool {
-        { child in
-            !stoppingAgentIds.contains(child.id)
-                && (child.status == .busy || child.status == .starting)
-        }
-    }
-
-    private func agentRow(_ child: Session) -> some View {
-        let status = agentStatus(for: child)
-
-        return HStack(spacing: 0) {
-            Button {
-                onSelectChild?(child.id)
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    // Top line: status pill + name + chevron
-                    HStack(spacing: 8) {
-                        agentStatusLabel(for: status)
-                            .fixedSize()
-
-                        Text(child.displayTitle)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(status == .error ? .themeRed : .themeFg)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        Spacer(minLength: 4)
-
-                        if !agentIsStoppable(child) {
-                            Image(systemName: "chevron.right")
-                                .font(.appBadgeLight)
-                                .foregroundStyle(.themeComment.opacity(0.5))
-                        }
-                    }
-
-                    // Bottom line: model, cost, duration
-                    HStack(spacing: 6) {
-                        if let model = SessionFormatting.shortModelName(child.model) {
-                            Text(model)
-                        }
-                        if child.cost > 0 {
-                            Text(SessionFormatting.costString(child.cost))
-                        }
-                        if let currentTurnStartedAt = child.currentTurnStartedAt,
-                           child.status == .busy || child.status == .starting || child.status == .stopping {
-                            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                                Text(SessionFormatting.durationString(since: currentTurnStartedAt))
-                            }
-                        }
-                    }
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.themeComment)
-                    .padding(.leading, 2)
-                }
-                .padding(.leading, 12)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if agentIsStoppable(child) {
-                Button {
-                    Task { await stopAgent(child) }
-                } label: {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.body)
-                        .foregroundStyle(.themeRed)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            } else if stoppingAgentIds.contains(child.id) {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-            }
-        }
-    }
-
-    private func stopAgent(_ child: Session) async {
-        guard let api = apiClient,
-              let workspaceId = child.workspaceId ?? workspaceId else { return }
-        stoppingAgentIds.insert(child.id)
-        defer { stoppingAgentIds.remove(child.id) }
-        do {
-            let updated = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: child.id)
-            sessionStore.upsert(updated)
-        } catch {
-            launchError = "Stop failed: \(error.localizedDescription)"
-        }
-    }
-
-    private func pendingAskCount(for sessionId: String) -> Int {
-        SessionListAttentionMerger.askCount(
-            listCount: sessionStore.listPendingAskCount(for: sessionId),
-            hasPendingAsk: askRequestStore.hasPending(for: sessionId),
-            hasPendingExtensionDialog: false
-        )
-    }
-
-    private func agentStatus(for child: Session) -> ContextBarSubagentStatus {
-        ContextBarSubagentStatus.from(
-            status: child.status,
-            pendingAskCount: pendingAskCount(for: child.id)
-        )
-    }
-
-    private func agentStatusLabel(for status: ContextBarSubagentStatus) -> some View {
-        Text(status.label)
-            .font(.caption2.monospaced().weight(.semibold))
-            .foregroundStyle(status.foregroundColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(status.backgroundColor, in: RoundedRectangle(cornerRadius: 4))
     }
 
     // MARK: - Helpers

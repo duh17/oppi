@@ -4,8 +4,8 @@ import WebKit
 /// WKWebView subclass that adds the Comment action to the text selection edit menu.
 ///
 /// When the user selects text, a single Comment action appears in the edit menu.
-/// Quick comment templates live inside the comment composer sheet rather than
-/// crowding the selection menu.
+/// Chat-scoped routers render the draft composer inline near the web view;
+/// fallback routers keep the existing routed composer behavior.
 final class ReviewCommentWKWebView: WKWebView {
     /// Called when the user picks the comment action on selected text.
     var reviewCommentHandler: ((String, UIViewController?) -> Void)?
@@ -69,14 +69,21 @@ extension ReviewCommentWKWebView {
             reviewCommentHandler = nil
             return
         }
-        reviewCommentHandler = { text, presentingViewController in
-            router.dispatch(
-                ReviewCommentSelectionRequest(
-                    selectedText: text,
-                    source: sourceContext
-                ),
-                presentingViewController: presentingViewController
+        reviewCommentHandler = { [weak self] text, presentingViewController in
+            let request = ReviewCommentSelectionRequest(
+                selectedText: text,
+                source: sourceContext
             )
+            if router.supportsInlineCommentComposer, let self {
+                evaluateJavaScript("window.getSelection()?.removeAllRanges()")
+                ReviewCommentInlineDraftPresenter.present(
+                    sourceView: self,
+                    request: request,
+                    router: router
+                )
+            } else {
+                router.dispatch(request, presentingViewController: presentingViewController)
+            }
         }
     }
 }

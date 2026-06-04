@@ -764,7 +764,9 @@ extension NativeTableBlockView: UITextViewDelegate {
             suggestedActions: suggestedActions,
             selectedText: fallbackText,
             sourceContext: sourceContext,
-            router: router
+            router: router,
+            textView: textView,
+            selectedRange: range
         )
     }
 
