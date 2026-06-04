@@ -246,6 +246,7 @@ struct SettingsView: View {
             // Refresh provider label when returning from AutoTitleSettingsView
             autoTitleProvider = AppPreferences.Session.autoTitleProvider
         }
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
         .themedListSurface()
         .navigationTitle("Settings")
     }

@@ -182,6 +182,7 @@ struct ServerDetailView: View {
                 Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
             }
         }
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
         .themedListSurface()
         .navigationTitle(pairedServer.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -365,6 +366,7 @@ struct ServerDetailView: View {
                     }
                 }
             }
+            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .themedListSurface()
             .navigationTitle("Model Providers")
             .navigationBarTitleDisplayMode(.inline)
@@ -634,6 +636,7 @@ struct ServerDetailView: View {
                     }
                 }
             }
+            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .themedListSurface()
             .navigationTitle("Provider Sign In")
             .navigationBarTitleDisplayMode(.inline)
@@ -662,6 +665,7 @@ struct ServerDetailView: View {
                         .foregroundStyle(.themeComment)
                 }
             }
+            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .navigationTitle("Set API Key")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

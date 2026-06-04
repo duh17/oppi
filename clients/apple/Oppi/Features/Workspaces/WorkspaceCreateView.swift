@@ -150,6 +150,7 @@ struct WorkspaceCreateView: View {
                     configureView
                 }
             }
+            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .themedListSurface()
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)

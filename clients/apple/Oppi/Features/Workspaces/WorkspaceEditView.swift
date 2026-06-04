@@ -280,6 +280,7 @@ struct WorkspaceEditView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
         .themedListSurface()
         .navigationTitle("Edit Workspace")
         .navigationBarTitleDisplayMode(.inline)
