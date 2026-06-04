@@ -31,6 +31,8 @@ type SdkModelInfo = {
   baseUrl?: string;
 };
 
+type ModelAllowlist = string[] | (() => string[] | undefined);
+
 // ─── Helpers ───
 
 /** Normalize model labels/IDs for tolerant matching (e.g. "GPT-5.3 Codex" ~= "gpt-5.3-codex"). */
@@ -70,6 +72,41 @@ function isLocalModel(model: SdkModelInfo): boolean {
   }
 }
 
+function stripThinkingLevel(pattern: string): string {
+  const colonIndex = pattern.lastIndexOf(":");
+  if (colonIndex === -1) return pattern;
+  const suffix = pattern.substring(colonIndex + 1);
+  return ["off", "minimal", "low", "medium", "high", "xhigh"].includes(suffix)
+    ? pattern.substring(0, colonIndex)
+    : pattern;
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let source = "^";
+  for (const char of pattern) {
+    if (char === "*") {
+      source += ".*";
+    } else if (char === "?") {
+      source += ".";
+    } else {
+      source += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${source}$`, "i");
+}
+
+function modelMatchesPattern(model: ModelInfo, rawPattern: string): boolean {
+  const pattern = stripThinkingLevel(rawPattern.trim());
+  if (!pattern) return false;
+  const modelId = model.id.substring(model.id.indexOf("/") + 1);
+  const hasGlob = /[*?[]/.test(pattern);
+  if (hasGlob) {
+    const regex = globToRegExp(pattern);
+    return regex.test(model.id) || regex.test(modelId);
+  }
+  return model.id === pattern || modelId === pattern;
+}
+
 // ─── ModelCatalog ───
 
 export class ModelCatalog {
@@ -78,8 +115,12 @@ export class ModelCatalog {
   constructor(
     private registry: ModelRegistry,
     private storage: Storage,
-    private allowlist?: string[],
+    private allowlist?: ModelAllowlist,
   ) {}
+
+  private getAllowlist(): string[] | undefined {
+    return typeof this.allowlist === "function" ? this.allowlist() : this.allowlist;
+  }
 
   /** Refresh the model catalog from the SDK registry. */
   refresh(): void {
@@ -91,9 +132,12 @@ export class ModelCatalog {
         (model) => isLocalModel(model) && !availableIds.has(`${model.provider}/${model.id}`),
       );
       const allModels = sdkModelsToModelInfo([...available, ...localModels]);
-      const allowed =
-        this.allowlist && this.allowlist.length > 0 ? new Set(this.allowlist) : undefined;
-      this.catalog = allowed ? allModels.filter((model) => allowed.has(model.id)) : allModels;
+      const allowlist = this.getAllowlist();
+      this.catalog = allowlist?.length
+        ? allModels.filter((model) =>
+            allowlist.some((pattern) => modelMatchesPattern(model, pattern)),
+          )
+        : allModels;
       this.updatedAt = Date.now();
 
       if (this.catalog.length > 0) {

@@ -177,7 +177,7 @@ describe("ModelCatalog", () => {
   });
 
   describe("getContextWindow", () => {
-    function catalogWith(...models: typeof SONNET[]) {
+    function catalogWith(...models: (typeof SONNET)[]) {
       const catalog = new ModelCatalog(makeRegistry(models), makeStorage());
       catalog.refresh();
       return catalog;
@@ -327,9 +327,7 @@ describe("ModelCatalog", () => {
 
     it("excludes models not in the allowlist", () => {
       const registry = makeRegistry([SONNET, GPT, GEMINI]);
-      const catalog = new ModelCatalog(registry, makeStorage(), [
-        "openai/gpt-5.3-codex",
-      ]);
+      const catalog = new ModelCatalog(registry, makeStorage(), ["openai/gpt-5.3-codex"]);
 
       catalog.refresh();
 
@@ -356,11 +354,55 @@ describe("ModelCatalog", () => {
       expect(catalog.getAll()).toHaveLength(3);
     });
 
-    it("returns empty when allowlist is set but no model is authenticated/configured", () => {
-      const registry = makeRegistry([], [SONNET, GPT, GEMINI]);
-      const catalog = new ModelCatalog(registry, makeStorage(), [
+    it("supports Pi enabledModels glob patterns against canonical IDs", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), ["openai/*", "google/gemini-*"]);
+
+      catalog.refresh();
+
+      expect(catalog.getAll().map((m) => m.id)).toEqual([
+        "openai/gpt-5.3-codex",
+        "google/gemini-3.0-pro",
+      ]);
+    });
+
+    it("supports Pi enabledModels glob patterns against model IDs", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), ["*sonnet*", "gpt-*"]);
+
+      catalog.refresh();
+
+      expect(catalog.getAll().map((m) => m.id)).toEqual([
+        "anthropic/claude-sonnet-4-20250514",
         "openai/gpt-5.3-codex",
       ]);
+    });
+
+    it("ignores optional Pi thinking suffixes in allowlist patterns", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), ["openai/*:high"]);
+
+      catalog.refresh();
+
+      expect(catalog.getAll().map((m) => m.id)).toEqual(["openai/gpt-5.3-codex"]);
+    });
+
+    it("re-reads dynamic allowlist providers on refresh", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      let allowlist = ["openai/*"];
+      const catalog = new ModelCatalog(registry, makeStorage(), () => allowlist);
+
+      catalog.refresh();
+      expect(catalog.getAll().map((m) => m.id)).toEqual(["openai/gpt-5.3-codex"]);
+
+      allowlist = ["google/*"];
+      catalog.refresh();
+      expect(catalog.getAll().map((m) => m.id)).toEqual(["google/gemini-3.0-pro"]);
+    });
+
+    it("returns empty when allowlist is set but no model is authenticated/configured", () => {
+      const registry = makeRegistry([], [SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), ["openai/gpt-5.3-codex"]);
 
       catalog.refresh();
 
@@ -369,9 +411,7 @@ describe("ModelCatalog", () => {
 
     it("returns empty catalog when no models match the allowlist", () => {
       const registry = makeRegistry([SONNET, GPT]);
-      const catalog = new ModelCatalog(registry, makeStorage(), [
-        "google/gemini-3.0-pro",
-      ]);
+      const catalog = new ModelCatalog(registry, makeStorage(), ["google/gemini-3.0-pro"]);
 
       catalog.refresh();
 
@@ -407,9 +447,7 @@ describe("ModelCatalog", () => {
     it("ensureSessionContextWindow uses 200k default for model excluded by allowlist", () => {
       const storage = makeStorage();
       const registry = makeRegistry([GPT]);
-      const catalog = new ModelCatalog(registry, storage, [
-        "anthropic/claude-sonnet-4-20250514",
-      ]);
+      const catalog = new ModelCatalog(registry, storage, ["anthropic/claude-sonnet-4-20250514"]);
       catalog.refresh();
 
       const session = makeSession({ model: "gpt-5.3-codex", contextWindow: undefined });
@@ -430,9 +468,7 @@ describe("ModelCatalog", () => {
 
       const storage = makeStorage([s1, s2]);
       const registry = makeRegistry([SONNET, GPT]);
-      const catalog = new ModelCatalog(registry, storage, [
-        "anthropic/claude-sonnet-4-20250514",
-      ]);
+      const catalog = new ModelCatalog(registry, storage, ["anthropic/claude-sonnet-4-20250514"]);
       catalog.refresh();
 
       catalog.healPersistedSessionContextWindows();

@@ -33,7 +33,12 @@ import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import { SessionRuntimes } from "./runtime-router.js";
-import { ModelRegistry, AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+  ModelRegistry,
+  AuthStorage,
+  getAgentDir,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { SkillRegistry, UserSkillStore } from "./skills.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
@@ -404,7 +409,9 @@ export class Server {
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
     this.modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-    this.models = new ModelCatalog(this.modelRegistry, this.storage);
+    this.models = new ModelCatalog(this.modelRegistry, this.storage, () =>
+      SettingsManager.create(process.cwd(), agentDir).getEnabledModels(),
+    );
     this.providerAuth = new ProviderAuthManager({
       authStorage,
       getKnownApiKeyProviderIds: () => {
