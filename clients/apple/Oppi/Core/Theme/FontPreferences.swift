@@ -114,13 +114,12 @@ enum FontPreferences {
         }
     }
 
-    /// Current code font size. Defaults to Standard so primary code content is
-    /// above Apple's 11 pt iOS/iPadOS minimum, while still keeping dense diffs
-    /// and terminal output usable on iPhone.
+    /// Current code font size. Defaults to Compact to preserve the existing
+    /// chat timeline density unless the user explicitly opts into larger code.
     static var codeFontSize: CodeFontSize {
         guard let raw = UserDefaults.standard.string(forKey: codeFontSizeKey),
               let size = CodeFontSize(rawValue: raw) else {
-            return .standard
+            return .compact
         }
         return size
     }

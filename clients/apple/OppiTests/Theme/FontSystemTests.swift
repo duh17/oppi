@@ -222,6 +222,27 @@ struct FontPreferencesTests {
         #expect(FontPreferences.codeFontSize == .comfortable)
     }
 
+    @Test func defaultCodeFontSizePreservesLegacyTimelineDensity() {
+        let originalRaw = UserDefaults.standard.string(forKey: "codeFontSize")
+        defer {
+            if let originalRaw {
+                UserDefaults.standard.set(originalRaw, forKey: "codeFontSize")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "codeFontSize")
+            }
+            AppFont.rebuild()
+        }
+
+        UserDefaults.standard.removeObject(forKey: "codeFontSize")
+        AppFont.rebuild()
+
+        #expect(FontPreferences.codeFontSize == .compact)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 11)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .pad) == 12)
+        #expect(AppFont.mono.pointSize == 11)
+        #expect(AppFont.monoMedium.pointSize == 12)
+    }
+
     @Test func codePointSizeRespectsPlatformAndPreference() {
         let original = FontPreferences.codeFontSize
         defer { FontPreferences.setCodeFontSize(original) }
@@ -397,9 +418,10 @@ struct AppFontRebuildTests {
         FontPreferences.setUseMonoForMessages(false)
         AppFont.rebuild()
 
-        // Should be the system body font
+        // Should be the system body font, not a code-font clone at the same size.
         let expected = UIFont.preferredFont(forTextStyle: .body)
         #expect(AppFont.messageBody.pointSize == expected.pointSize)
+        #expect(AppFont.messageBody.fontName == expected.fontName)
     }
 
     @Test func messageBodyIsMonoWhenMonoMessagesEnabled() {
@@ -414,9 +436,10 @@ struct AppFontRebuildTests {
         FontPreferences.setUseMonoForMessages(true)
         AppFont.rebuild()
 
-        // Point size should match system body
+        // Point size should match system body, while the family switches to monospace.
         let expectedSize = UIFont.preferredFont(forTextStyle: .body).pointSize
         #expect(AppFont.messageBody.pointSize == expectedSize)
+        #expect(AppFont.messageBody.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
     }
 
     // MARK: - System fonts are static
