@@ -152,23 +152,33 @@ extension ToolPresentationBuilder {
         details: JSONValue?,
         args: [String: JSONValue]? = nil
     ) -> (content: ToolExpandedContent, copyOutput: String) {
-        // Server/extension-provided expanded text overrides raw output for display.
-        // The extension sets details.expandedText + details.presentationFormat to
-        // control how the expanded content appears without iOS knowing tool specifics.
-        let textOutput: String
+        // Media tools keep their attachment-specific rendering. Text-only extension
+        // tools can provide either a server-captured Pi TUI render snapshot or an
+        // explicit details.expandedText payload without iOS knowing tool specifics.
+        let audioPresentation = toolAudioPresentationDetails(from: details)
+        let imageAttachment = toolImageAttachmentDetails(from: details)
+        if audioPresentation == nil,
+           imageAttachment == nil,
+           let tuiExpandedText = toolTuiRenderExpandedText(from: details) {
+            return (.text(text: tuiExpandedText, language: nil), tuiExpandedText)
+        }
+
+        let fallbackTextOutput: String
         if let expandedText = extensionDetailString(details, keys: ["expandedText"]),
            !expandedText.isEmpty {
-            textOutput = expandedText
+            fallbackTextOutput = expandedText
         } else {
             let sanitized = sanitizeGenericExtensionOutput(output, toolName: toolName)
-            textOutput = sanitized.isEmpty ? output : sanitized
+            fallbackTextOutput = sanitized.isEmpty ? output : sanitized
         }
-        if let presentation = toolAudioPresentationDetails(from: details) {
-            return voiceAudioExpandedContent(presentation: presentation, fallbackText: textOutput, args: args)
+        if let presentation = audioPresentation {
+            return voiceAudioExpandedContent(presentation: presentation, fallbackText: fallbackTextOutput, args: args)
         }
-        if let image = toolImageAttachmentDetails(from: details) {
-            return imageExpandedContent(image: image, fallbackText: textOutput)
+        if let image = imageAttachment {
+            return imageExpandedContent(image: image, fallbackText: fallbackTextOutput)
         }
+
+        let textOutput = fallbackTextOutput
 
         let format = normalizedExtensionPresentationFormat(details)
         let filePathHint = extensionDetailString(details, keys: ["filePath"])
@@ -434,6 +444,18 @@ extension ToolPresentationBuilder {
 
     private static func normalizedExtensionPresentationFormat(_ details: JSONValue?) -> String? {
         extensionDetailString(details, keys: ["presentationFormat"])?.lowercased()
+    }
+
+    private static func toolTuiRenderExpandedText(from details: JSONValue?) -> String? {
+        guard let object = details?.objectValue,
+              let tuiRender = object["tuiRender"]?.objectValue,
+              tuiRender["source"]?.stringValue == "renderResult",
+              Int(tuiRender["version"]?.numberValue ?? 0) == 1,
+              let expandedText = tuiRender["expandedText"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !expandedText.isEmpty else {
+            return nil
+        }
+        return expandedText
     }
 
     private static func extensionDetailString(_ details: JSONValue?, keys: [String]) -> String? {

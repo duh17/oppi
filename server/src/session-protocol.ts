@@ -398,6 +398,8 @@ export interface TranslationContext {
   mobileRenderers?: MobileRendererRegistry;
   /** Tool names per toolCallId — tracked for shell preview logic. */
   toolNames: Map<string, string>;
+  /** Tool call arguments per toolCallId — used by deferred result renderers. */
+  toolArgs?: Map<string, Record<string, unknown>>;
   /** Last time a shell preview snapshot was sent per toolCallId (ms). */
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews (tool_output emitted from args). */
@@ -888,6 +890,7 @@ export function translatePiEvent(
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
         ctx.toolNames.set(toolCallId, event.toolName);
+        ctx.toolArgs?.set(toolCallId, asRecord(event.args) ?? {});
         ctx.streamingToolUpdatesSeen.delete(toolCallId);
       }
 
@@ -1083,6 +1086,7 @@ export function translatePiEvent(
 
       ctx.partialResults.delete(key);
       ctx.toolNames.delete(key);
+      ctx.toolArgs?.delete(key);
       ctx.shellPreviewLastSent.delete(key);
       if (toolCallId) {
         ctx.streamingArgPreviews.delete(toolCallId);

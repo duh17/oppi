@@ -32,6 +32,7 @@ export interface SessionStartActiveSession {
   streamedThinkingContentIndexes: Set<number>;
   currentThinkingContentIndex?: number;
   toolNames: Map<string, string>;
+  toolArgs: Map<string, Record<string, unknown>>;
   shellPreviewLastSent: Map<string, number>;
   streamingArgPreviews: Set<string>;
   streamingToolUpdatesSeen: Map<string, string>;
@@ -169,6 +170,7 @@ export class SessionStartCoordinator {
           hasStreamedThinking: false,
           streamedThinkingContentIndexes: new Set(),
           toolNames: new Map(),
+          toolArgs: new Map(),
           shellPreviewLastSent: new Map(),
           streamingArgPreviews: new Set(),
           streamingToolUpdatesSeen: new Map(),

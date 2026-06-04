@@ -1509,6 +1509,40 @@ struct ToolPresentationBuilderTests {
         #expect(!md.contains("Saved to journal"))
     }
 
+    @Test("extension expanded prefers tui render snapshot over expandedText")
+    func extensionExpandedTextFromTuiRenderSnapshot() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-tui-expanded", tool: "todo",
+            argsSummary: "action: get",
+            outputPreview: "raw todo output",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "expandedText": .string("markdown fallback"),
+                    "presentationFormat": .string("markdown"),
+                    "tuiRender": .object([
+                        "version": .number(1),
+                        "source": .string("renderResult"),
+                        "width": .number(80),
+                        "expandedText": .string("TODO-123\nStatus: open\n\nBody from TUI"),
+                    ]),
+                ]),
+                expanded: ["t-tui-expanded"],
+                fullOutput: "raw todo output"
+            )
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text content from details.tuiRender.expandedText")
+            return
+        }
+
+        #expect(text.contains("TODO-123"))
+        #expect(text.contains("Body from TUI"))
+        #expect(!text.contains("markdown fallback"))
+        #expect(language == nil)
+    }
+
     @Test("extension expanded falls back to raw output when no expandedText")
     func extensionExpandedTextFallback() {
         let config = ToolPresentationBuilder.build(

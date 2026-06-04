@@ -43,6 +43,7 @@ describe("SessionAgentEventCoordinator", () => {
       hasStreamedThinking: false,
       streamedThinkingContentIndexes: new Set(),
       toolNames: new Map(),
+      toolArgs: new Map(),
       shellPreviewLastSent: new Map(),
       streamingArgPreviews: new Set<string>(),
       streamingToolUpdatesSeen: new Map<string, string>(),
@@ -83,6 +84,7 @@ describe("SessionAgentEventCoordinator", () => {
             renderResult: vi.fn(),
           } as never,
           toolNames: active.toolNames,
+          toolArgs: active.toolArgs,
           shellPreviewLastSent: active.shellPreviewLastSent,
           streamingArgPreviews: active.streamingArgPreviews,
           streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
@@ -150,6 +152,139 @@ describe("SessionAgentEventCoordinator", () => {
       ([, message]) => message.type === "session_summary",
     );
     expect(summaryBroadcasts).toHaveLength(0);
+  });
+
+  it("attaches managed SDK renderResult snapshots to tool_end details", () => {
+    const active = makeActiveSession({ status: "busy" });
+    active.sdkBackend = {
+      session: {
+        getToolDefinition: () => ({
+          renderResult: (
+            result: { details?: unknown },
+            options: { expanded: boolean },
+            _theme: unknown,
+            context: { args: Record<string, unknown> },
+          ) => ({
+            render: () => {
+              const details = result.details as { body?: string } | undefined;
+              return [
+                options.expanded ? "expanded" : "collapsed",
+                `title: ${String(context.args.title ?? "")}`,
+                `body: ${details?.body ?? ""}`,
+              ];
+            },
+          }),
+        }),
+        sessionManager: {
+          getHeader: () => ({ cwd: "/tmp/oppi-test" }),
+        },
+      },
+    } as never;
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "todo",
+      args: { title: "Ship it" },
+    } as unknown as SessionBackendEvent);
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "todo",
+      result: {
+        content: [{ type: "text", text: "saved" }],
+        details: { body: "Use the TUI renderer" },
+      },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+
+    const toolEnd = broadcast.mock.calls.find(([, message]) => message.type === "tool_end")?.[1];
+    expect(toolEnd).toBeDefined();
+    expect(toolEnd).toMatchObject({
+      type: "tool_end",
+      tool: "todo",
+      details: {
+        body: "Use the TUI renderer",
+        tuiRender: {
+          version: 1,
+          source: "renderResult",
+          width: 80,
+        },
+      },
+    });
+    expect(toolEnd?.details?.tuiRender?.expandedText).toContain("title: Ship it");
+    expect(toolEnd?.details?.tuiRender?.expandedText).toContain("body: Use the TUI renderer");
+  });
+
+  it("does not attach TUI render snapshots for native tool rows", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const renderResult = vi.fn(() => ({ render: () => ["native renderer"] }));
+    active.sdkBackend = {
+      session: {
+        getToolDefinition: () => ({ renderResult }),
+        sessionManager: {
+          getHeader: () => ({ cwd: "/tmp/oppi-test" }),
+        },
+      },
+    } as never;
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "echo hi" },
+    } as unknown as SessionBackendEvent);
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: {
+        content: [{ type: "text", text: "hi" }],
+        details: { exitCode: 0 },
+      },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+
+    const toolEnd = broadcast.mock.calls.find(([, message]) => message.type === "tool_end")?.[1];
+    expect(renderResult).not.toHaveBeenCalled();
+    expect(toolEnd?.details).toEqual({ exitCode: 0 });
+  });
+
+  it("preserves primitive tool details instead of wrapping them for tuiRender", () => {
+    const active = makeActiveSession({ status: "busy" });
+    active.sdkBackend = {
+      session: {
+        getToolDefinition: () => ({
+          renderResult: () => ({ render: () => ["rendered snapshot"] }),
+        }),
+        sessionManager: {
+          getHeader: () => ({ cwd: "/tmp/oppi-test" }),
+        },
+      },
+    } as never;
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "custom_tool",
+      args: {},
+    } as unknown as SessionBackendEvent);
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "custom_tool",
+      result: {
+        content: [{ type: "text", text: "ok" }],
+        details: "primitive-details",
+      },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+
+    const toolEnd = broadcast.mock.calls.find(([, message]) => message.type === "tool_end")?.[1];
+    expect(toolEnd?.details).toBe("primitive-details");
   });
 
   it("broadcasts edit/write summaries after real change stats update", () => {

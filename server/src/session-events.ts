@@ -247,6 +247,8 @@ export interface EventProcessorSessionState {
   pendingStop?: PendingStop;
   /** Tool names per toolCallId — tracked for shell preview decisions. */
   toolNames: Map<string, string>;
+  /** Tool call arguments per toolCallId, retained until the final tool result. */
+  toolArgs?: Map<string, Record<string, unknown>>;
   /** Last time a shell preview snapshot was sent per toolCallId (ms). */
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews. */
@@ -312,6 +314,7 @@ export class SessionEventProcessor {
       currentThinkingContentIndex: active.currentThinkingContentIndex,
       mobileRenderers: this.deps.mobileRenderers,
       toolNames: active.toolNames,
+      toolArgs: active.toolArgs,
       shellPreviewLastSent: active.shellPreviewLastSent,
       streamingArgPreviews: active.streamingArgPreviews,
       streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
