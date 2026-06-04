@@ -53,6 +53,124 @@ function terminalOnlyStatusText(req: ExtensionUIRequest): string | undefined {
   return req.statusText;
 }
 
+function notificationReplayKey(req: ExtensionUIRequest): string | undefined {
+  switch (req.method) {
+    case "setStatus":
+      return req.statusKey && !TERMINAL_ONLY_STATUS_KEYS.has(req.statusKey)
+        ? `status:${req.statusKey}`
+        : undefined;
+    case "setWidget":
+      return req.widgetKey ? `widget:${req.widgetKey}` : undefined;
+    case "setTitle":
+      return "title";
+    default:
+      return undefined;
+  }
+}
+
+function widgetLinesHaveContent(lines: string[] | undefined): boolean {
+  return lines?.some((line) => line.replace(/[\r\n]/g, "").length > 0) ?? false;
+}
+
+function hasPersistentNotificationContent(req: ExtensionUIRequest): boolean {
+  switch (req.method) {
+    case "setStatus":
+      return (req.statusText?.trim().length ?? 0) > 0;
+    case "setWidget":
+      return req.nativeSurface !== undefined || widgetLinesHaveContent(req.widgetLines);
+    case "setTitle":
+      return (req.title?.trim().length ?? 0) > 0;
+    default:
+      return false;
+  }
+}
+
+function normalizeFireAndForgetNotificationRequest(req: ExtensionUIRequest): ExtensionUIRequest {
+  if (req.method === "setStatus") {
+    return { ...req, statusText: terminalOnlyStatusText(req) };
+  }
+  return req;
+}
+
+export function updatePersistentExtensionUINotifications(
+  active: Pick<EventProcessorSessionState, "persistentExtensionUINotifications">,
+  req: ExtensionUIRequest,
+): void {
+  const key = notificationReplayKey(req);
+  if (!key) {
+    return;
+  }
+
+  const store = (active.persistentExtensionUINotifications ??= new Map());
+  if (hasPersistentNotificationContent(req)) {
+    store.set(key, req);
+    return;
+  }
+
+  const clearReq = buildPersistentExtensionUIClearRequest(req);
+  if (clearReq) {
+    store.set(key, clearReq);
+  } else {
+    store.delete(key);
+  }
+}
+
+export function buildPersistentExtensionUINotificationMessages(
+  active: Pick<EventProcessorSessionState, "persistentExtensionUINotifications">,
+): ServerMessage[] {
+  return Array.from(active.persistentExtensionUINotifications?.values() ?? []).map((req) =>
+    buildExtensionUINotificationMessage(req),
+  );
+}
+
+function buildPersistentExtensionUIClearRequest(
+  req: ExtensionUIRequest,
+): ExtensionUIRequest | undefined {
+  switch (req.method) {
+    case "setStatus":
+      return req.statusKey
+        ? {
+            type: "extension_ui_request",
+            id: req.id,
+            method: "setStatus",
+            statusKey: req.statusKey,
+          }
+        : undefined;
+    case "setWidget":
+      return req.widgetKey
+        ? {
+            type: "extension_ui_request",
+            id: req.id,
+            method: "setWidget",
+            widgetKey: req.widgetKey,
+          }
+        : undefined;
+    case "setTitle":
+      return { type: "extension_ui_request", id: req.id, method: "setTitle" };
+    default:
+      return undefined;
+  }
+}
+
+export function drainPersistentExtensionUIClearMessages(
+  active: Pick<EventProcessorSessionState, "persistentExtensionUINotifications">,
+): ServerMessage[] {
+  const store = active.persistentExtensionUINotifications;
+  if (!store?.size) {
+    return [];
+  }
+
+  const messages: ServerMessage[] = [];
+  for (const req of store.values()) {
+    const clearReq = buildPersistentExtensionUIClearRequest(req);
+    if (clearReq) {
+      messages.push(buildExtensionUINotificationMessage(clearReq));
+    }
+  }
+  store.clear();
+  return messages;
+}
+
 function estimateCharsFromContent(content: unknown): number {
   if (typeof content === "string") {
     return content.length;
@@ -119,6 +237,8 @@ export interface PendingAskState {
 export interface EventProcessorSessionState {
   session: Session;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
+  /** Last persistent extension UI surfaces/status/title, replayed to late focused clients. */
+  persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
@@ -210,10 +330,9 @@ export class SessionEventProcessor {
     req: ExtensionUIRequest,
   ): void {
     if (isExtensionUIFireAndForgetMethod(req.method)) {
-      this.deps.broadcast(
-        key,
-        buildExtensionUINotificationMessage(req, { statusText: terminalOnlyStatusText(req) }),
-      );
+      const notificationReq = normalizeFireAndForgetNotificationRequest(req);
+      updatePersistentExtensionUINotifications(active, notificationReq);
+      this.deps.broadcast(key, buildExtensionUINotificationMessage(notificationReq));
       return;
     }
 

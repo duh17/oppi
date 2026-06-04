@@ -12,9 +12,39 @@ struct ExtensionUINativeSurface: Sendable, Equatable, Identifiable, Decodable {
     let fallback: ExtensionUINativeFallback?
 
     var hasVisibleContent: Bool {
-        !blocks.isEmpty
-            || !(fallback?.lines?.isEmpty ?? true)
-            || !(fallback?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        hasRenderableContent
+    }
+
+    var nativeDisplayBlocks: [ExtensionUINativeBlock] {
+        blocks.compactMap(\.nativeDisplayBlock)
+    }
+
+    var fallbackDisplayLines: [String] {
+        if let lines = fallback?.lines {
+            let normalizedLines = lines
+                .map { $0.trimmingCharacters(in: .newlines) }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !normalizedLines.isEmpty {
+                return normalizedLines
+            }
+        }
+
+        let fallbackText = fallback?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !fallbackText.isEmpty {
+            return fallbackText.components(separatedBy: .newlines)
+        }
+
+        guard !blocks.isEmpty, nativeDisplayBlocks.isEmpty else {
+            return []
+        }
+
+        let blockTypes = Array(Set(blocks.flatMap(\.nonDisplayableFallbackIdentities))).sorted()
+        let suffix = blockTypes.isEmpty ? "" : ": \(blockTypes.joined(separator: ", "))"
+        return ["Unsupported extension surface\(suffix)"]
+    }
+
+    var hasRenderableContent: Bool {
+        !nativeDisplayBlocks.isEmpty || !fallbackDisplayLines.isEmpty
     }
 }
 
@@ -245,6 +275,50 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
              .spacer(let base, _),
              .unsupported(let base, _):
             return base.accessibility
+        }
+    }
+
+    var nativeDisplayBlock: ExtensionUINativeBlock? {
+        switch self {
+        case .section(let base, let title, let subtitle, let blocks):
+            let displayableChildren = blocks.compactMap(\.nativeDisplayBlock)
+            let hasHeader = !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                || !(subtitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            guard hasHeader || !displayableChildren.isEmpty else { return nil }
+            return .section(
+                base: base,
+                title: title,
+                subtitle: subtitle,
+                blocks: displayableChildren
+            )
+        case .choiceGroup, .form, .settingsList, .image, .unsupported:
+            return nil
+        default:
+            return self
+        }
+    }
+
+    var isNativeDisplayable: Bool {
+        nativeDisplayBlock != nil
+    }
+
+    var nonDisplayableFallbackIdentities: [String] {
+        switch self {
+        case .section(_, let title, let subtitle, let blocks):
+            if nativeDisplayBlock != nil {
+                return []
+            }
+            let childIdentities = blocks.flatMap(\.nonDisplayableFallbackIdentities)
+            if !childIdentities.isEmpty {
+                return childIdentities
+            }
+            let hasHeader = !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                || !(subtitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            return hasHeader ? [] : [fallbackIdentity]
+        case .choiceGroup, .form, .settingsList, .image, .unsupported:
+            return [fallbackIdentity]
+        default:
+            return []
         }
     }
 

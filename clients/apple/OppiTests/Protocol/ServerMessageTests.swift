@@ -435,6 +435,32 @@ struct ServerMessageTests {
         #expect(req.timeoutAt == Date(timeIntervalSince1970: 1_893_456_000))
     }
 
+    @Test func decodesExtensionUIRequestNativeSurface() throws {
+        let json = """
+        {
+          "type": "extension_ui_request",
+          "id": "ext-native",
+          "sessionId": "s1",
+          "method": "editor",
+          "title": "Edit plan",
+          "nativeSurface": {
+            "version": 1,
+            "id": "request:plan",
+            "source": "custom",
+            "presentation": { "style": "sheet", "title": "Edit plan" },
+            "blocks": [{ "type": "text", "spans": [{ "text": "Review before submit." }] }]
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUIRequest(let request) = msg else {
+            Issue.record("Expected .extensionUIRequest")
+            return
+        }
+        #expect(request.nativeSurface?.id == "request:plan")
+        #expect(request.nativeSurface?.hasVisibleContent == true)
+    }
+
     @Test func decodesExtensionUISettled() throws {
         let json = #"{"type":"extension_ui_settled","id":"ext1","sessionId":"s1"}"#
         let msg = try ServerMessage.decode(from: json)
@@ -515,6 +541,66 @@ struct ServerMessageTests {
             return
         }
         #expect(type == "futureBlock")
+        #expect(notification.nativeSurface?.nativeDisplayBlocks.isEmpty == true)
+        #expect(notification.nativeSurface?.fallbackDisplayLines == ["future fallback"])
+    }
+
+    @Test func extensionUINativeSurfaceFallbackTextIsRenderable() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "future",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:future",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel" },
+            "blocks": [],
+            "fallback": { "text": "fallback one\\nfallback two" }
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg else {
+            Issue.record("Expected .extensionUINotification")
+            return
+        }
+        #expect(notification.nativeSurface?.hasVisibleContent == true)
+        #expect(notification.nativeSurface?.fallbackDisplayLines == ["fallback one", "fallback two"])
+    }
+
+    @Test func extensionUINativeSurfaceFallsBackForUndisplayableSection() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "nested-settings",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:nested-settings",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel" },
+            "blocks": [
+              {
+                "type": "section",
+                "id": "outer",
+                "blocks": [
+                  { "type": "form", "id": "credentials", "fields": [] },
+                  { "type": "settingsList", "id": "models", "items": [] }
+                ]
+              }
+            ]
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg else {
+            Issue.record("Expected .extensionUINotification")
+            return
+        }
+        #expect(notification.nativeSurface?.nativeDisplayBlocks.isEmpty == true)
+        #expect(notification.nativeSurface?.fallbackDisplayLines == ["Unsupported extension surface: form, settingsList"])
     }
 
     @Test func decodesExtensionUINativeFormAndSettingsPayloads() throws {
@@ -582,6 +668,8 @@ struct ServerMessageTests {
         #expect(items.first?.id == "model")
         #expect(items.first?.values == ["gpt", "local"])
         #expect(items.first?.disabled == false)
+        #expect(notification.nativeSurface?.nativeDisplayBlocks.isEmpty == true)
+        #expect(notification.nativeSurface?.fallbackDisplayLines == ["Unsupported extension surface: form, settingsList"])
     }
 
     // MARK: - Malformed / Edge Cases

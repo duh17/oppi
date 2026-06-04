@@ -378,6 +378,9 @@ export class BoundSessionStreamMux {
       for (const pendingUIMsg of pendingUIMsgs) {
         send(pendingUIMsg);
       }
+      const pendingUIDialogCount = pendingUIMsgs.filter(
+        (message) => message.type === "extension_ui_request",
+      ).length;
 
       metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {
         level: "bound_session",
@@ -387,7 +390,7 @@ export class BoundSessionStreamMux {
         catchup_complete: "true",
         started_session: isMirrorSession ? "false" : hadActiveSession ? "false" : "true",
         pending_permissions: countBucketForTag(0),
-        pending_ui_requests: countBucketForTag((pendingAskMsg ? 1 : 0) + pendingUIMsgs.length),
+        pending_ui_requests: countBucketForTag((pendingAskMsg ? 1 : 0) + pendingUIDialogCount),
       });
 
       ws.on("message", (data, isBinary) => {

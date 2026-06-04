@@ -164,6 +164,7 @@ enum ServerMessageEffects {
             }
             effects.clearAskSessionIds.insert(sessionId)
             effects.clearExtensionDialogSessionIds.insert(sessionId)
+            effects.clearExtensionSurfaceSessionIds.insert(sessionId)
 
         case .sessionSummary(let summary) where summary.status.isTerminal:
             if isFocusedSession {
@@ -171,6 +172,7 @@ enum ServerMessageEffects {
             }
             effects.clearAskSessionIds.insert(summary.id)
             effects.clearExtensionDialogSessionIds.insert(summary.id)
+            effects.clearExtensionSurfaceSessionIds.insert(summary.id)
 
         case .sessionEnded:
             if isFocusedSession {

@@ -330,16 +330,22 @@ private struct ExtensionDialogSheet: View {
             extensionEditorContent
         } else {
             Form {
-            if let message = request.message, !message.isEmpty {
-                Section {
-                    Text(message)
-                        .font(.body)
-                        .textSelection(.enabled)
+                if let nativeSurface = request.nativeSurface, nativeSurface.hasVisibleContent {
+                    Section {
+                        ExtensionNativeSurfaceView(surface: nativeSurface)
+                    }
                 }
-            }
 
-            switch request.method {
-            case "select":
+                if let message = request.message, !message.isEmpty {
+                    Section {
+                        Text(message)
+                            .font(.body)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                switch request.method {
+                case "select":
                 Section {
                     ForEach(request.options ?? [], id: \.self) { option in
                         Button {
@@ -361,7 +367,7 @@ private struct ExtensionDialogSheet: View {
                     Text("Choose one")
                 }
 
-            case "confirm":
+                case "confirm":
                 Section {
                     Button {
                         submitCurrentValue()
@@ -373,7 +379,7 @@ private struct ExtensionDialogSheet: View {
                     .disabled(isSubmitting)
                 }
 
-            case "input":
+                case "input":
                 Section {
                     TextField(request.placeholder ?? "Value", text: $inputValue, axis: .vertical)
                         .lineLimit(1...4)
@@ -385,10 +391,10 @@ private struct ExtensionDialogSheet: View {
                     Text(request.placeholder ?? "Value")
                 }
 
-            case "editor":
+                case "editor":
                 EmptyView()
 
-            default:
+                default:
                 Section {
                     ContentUnavailableView(
                         "Unsupported extension UI",
@@ -396,14 +402,14 @@ private struct ExtensionDialogSheet: View {
                         description: Text("This extension asked for \"\(request.method)\". Cancel and try the task another way.")
                     )
                 }
-            }
-
-            if let timeoutSummary {
-                Section {
-                    Label(timeoutSummary, systemImage: "timer")
-                        .foregroundStyle(.secondary)
                 }
-            }
+
+                if let timeoutSummary {
+                    Section {
+                        Label(timeoutSummary, systemImage: "timer")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .themedListSurface()
         }
@@ -411,6 +417,13 @@ private struct ExtensionDialogSheet: View {
 
     private var extensionEditorContent: some View {
         VStack(spacing: 0) {
+            if let nativeSurface = request.nativeSurface, nativeSurface.hasVisibleContent {
+                ExtensionNativeSurfaceView(surface: nativeSurface)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.themeBgDark)
+            }
+
             if let message = request.message, !message.isEmpty {
                 Text(message)
                     .font(.body)

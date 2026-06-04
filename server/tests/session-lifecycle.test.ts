@@ -76,6 +76,7 @@ function makeManagerHarness(
     workspaceId: session.workspaceId ?? "w1",
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingUIRequests: new Map(),
+    persistentExtensionUINotifications: new Map(),
     partialResults: new Map(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
@@ -107,7 +108,8 @@ function makeManagerHarness(
     sdkPrompt,
     abort,
     dispose,
-    storage,  };
+    storage,
+  };
 }
 
 // Helper to call handlePiEvent which is private
@@ -319,6 +321,162 @@ describe("SessionManager extension UI", () => {
     });
   });
 
+  it("replays the latest persistent fire-and-forget surfaces", () => {
+    const { manager } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "review",
+      statusText: "running",
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "review",
+      statusText: "done",
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "agents",
+      widgetLines: ["Agents active"],
+      nativeSurface: {
+        version: 1,
+        id: "extension-picked-id",
+        source: "request",
+        presentation: { style: "surfacePanel" },
+        blocks: [{ type: "text", spans: [{ text: "Agents active" }] }],
+      },
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "title-1",
+      method: "setTitle",
+      title: "Review pass",
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "notify-1",
+      method: "notify",
+      message: "Transient toast",
+    });
+
+    expect(manager.getPendingUIRequestMessages("s1")).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "review",
+        statusText: "done",
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "agents",
+        widgetLines: ["Agents active"],
+        nativeSurface: expect.objectContaining({
+          id: "widget:agents",
+          source: "widget",
+        }),
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setTitle",
+        title: "Review pass",
+      }),
+    ]);
+  });
+
+  it("replays explicit clears for persistent fire-and-forget surfaces", () => {
+    const { manager } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "review",
+      statusText: "running",
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "agents",
+      widgetLines: ["Agents active"],
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "title-1",
+      method: "setTitle",
+      title: "Review pass",
+    });
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-clear",
+      method: "setStatus",
+      statusKey: "review",
+      statusText: " ",
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-clear",
+      method: "setWidget",
+      widgetKey: "agents",
+      widgetLines: [],
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "title-clear",
+      method: "setTitle",
+      title: "",
+    });
+
+    expect(manager.getPendingUIRequestMessages("s1")).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "review",
+        statusText: undefined,
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "agents",
+        widgetLines: undefined,
+        nativeSurface: undefined,
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setTitle",
+        title: undefined,
+      }),
+    ]);
+  });
+
+  it("does not replay terminal-only mirror statuses", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "oppi-mirror",
+      statusText: "connected",
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setStatus",
+      statusKey: "oppi-mirror",
+      statusText: undefined,
+    });
+    expect(manager.getPendingUIRequestMessages("s1")).toEqual([]);
+  });
+
   it("tracks dialog methods as pending UI requests", () => {
     const { manager, events, active } = makeManagerHarness();
 
@@ -376,6 +534,36 @@ describe("SessionManager extension UI", () => {
 
     expect(active.pendingUIRequests.has("ui-settled")).toBe(false);
     expect(manager.getPendingUIRequestMessages("s1")).toEqual([]);
+  });
+
+  it("preserves native surfaces when replaying pending extension UI requests", () => {
+    const { manager } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "ui-native",
+      method: "editor",
+      title: "Edit plan",
+      nativeSurface: {
+        version: 1,
+        id: "request:plan-editor",
+        source: "custom",
+        presentation: { style: "sheet", title: "Edit plan" },
+        blocks: [{ type: "text", spans: [{ text: "Review before submitting." }] }],
+      },
+    });
+
+    expect(manager.getPendingUIRequestMessages("s1")).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_request",
+        id: "ui-native",
+        sessionId: "s1",
+        nativeSurface: expect.objectContaining({
+          id: "request:plan-editor",
+          source: "custom",
+        }),
+      }),
+    ]);
   });
 
   it("respondToUIRequest returns false for unknown request", () => {

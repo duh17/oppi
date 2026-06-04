@@ -34,6 +34,8 @@ import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summar
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
 import {
+  buildPersistentExtensionUINotificationMessages,
+  drainPersistentExtensionUIClearMessages,
   SessionEventProcessor,
   type EventProcessorSessionState,
   type ExtensionUIRequest,
@@ -642,6 +644,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return true;
   }
 
+  private settleAllExtensionUIRequests(active: MirrorActiveSession, cancelled: boolean): void {
+    for (const requestId of Array.from(active.pendingUIRequests.keys())) {
+      this.settleExtensionUIRequest(active, requestId, cancelled);
+    }
+  }
+
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
     this.ensureActiveFromStorage(sessionId);
     return this.broadcaster.subscribe(sessionId, callback);
@@ -665,7 +673,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       return [];
     }
 
-    const messages: ServerMessage[] = [];
+    const messages: ServerMessage[] = buildPersistentExtensionUINotificationMessages(active);
     for (const req of active.pendingUIRequests.values()) {
       if (req.method === "ask") {
         continue;
@@ -1245,6 +1253,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     const active = this.active.get(connection.sessionId);
     if (active) {
+      this.settleAllExtensionUIRequests(active, true);
+      for (const message of drainPersistentExtensionUIClearMessages(active)) {
+        this.broadcast(connection.sessionId, message);
+      }
       const disconnectedAt = Date.now();
       const terminal = {
         ...(active.session.mirror?.terminal ?? {}),
@@ -1296,6 +1308,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       const active = this.active.get(sessionId);
       if (!active) continue;
 
+      this.settleAllExtensionUIRequests(active, true);
+      for (const message of drainPersistentExtensionUIClearMessages(active)) {
+        this.broadcast(sessionId, message);
+      }
       const disconnectedAt = Date.now();
       active.session.mirror = {
         ...(active.session.mirror ?? { status: "disconnected" }),
@@ -1428,6 +1444,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       seq: 0,
       eventRing: new EventRing(EVENT_RING_CAPACITY),
       pendingUIRequests: new Map(),
+      persistentExtensionUINotifications: new Map(),
       partialResults: new Map(),
       streamedAssistantText: "",
       hasStreamedThinking: false,

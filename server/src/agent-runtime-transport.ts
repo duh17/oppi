@@ -192,6 +192,7 @@ export interface AgentRuntimeEventTransport {
   getCurrentSeq(sessionId: string): number;
   getCatchUp(sessionId: string, sinceSeq: number): SessionCatchUpResponse | null;
   getPendingAskMessage(sessionId: string): ServerMessage | undefined;
+  /** Replayable extension UI messages: persistent notifications plus pending dialogs. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[];
 }
 

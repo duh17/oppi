@@ -584,7 +584,7 @@ export class SdkUiBridge {
       getEditorComponent: () => editorComponentFactory,
 
       get theme() {
-        return {} as ExtensionUIContext["theme"];
+        return createCustomUICompatTheme();
       },
 
       getAllThemes: () => [],

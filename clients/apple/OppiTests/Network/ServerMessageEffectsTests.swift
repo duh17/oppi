@@ -14,7 +14,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.stopSilenceWatchdog)
         #expect(effects.clearAskSessionIds == ["s1"])
         #expect(effects.clearExtensionDialogSessionIds == ["s1"])
-        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearExtensionSurfaceSessionIds == ["s1"])
         #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 
@@ -28,6 +28,19 @@ struct ServerMessageEffectsTests {
         #expect(!effects.stopSilenceWatchdog)
         #expect(effects.clearAskSessionIds == ["s2"])
         #expect(effects.clearExtensionDialogSessionIds == ["s2"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+    }
+
+    @Test func terminalSessionSummaryClearsPersistentExtensionSurfaces() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionSummary(SessionSummary(from: makeTestSession(id: "summary-s1", status: .stopped))),
+            routedSessionId: "broadcast-key",
+            isFocusedSession: false
+        )
+
+        #expect(effects.clearAskSessionIds == ["summary-s1"])
+        #expect(effects.clearExtensionDialogSessionIds == ["summary-s1"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["summary-s1"])
     }
 
     @Test func sessionEndedHasFocusedAndInactiveVariants() {

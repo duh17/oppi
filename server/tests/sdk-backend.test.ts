@@ -726,6 +726,13 @@ describe("SdkBackend custom UI compatibility", () => {
     return { backend, ui, requests };
   }
 
+  it("provides a compatibility theme on the UI context", () => {
+    const { ui } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    expect(ui.theme.bold("Review session active")).toBe("Review session active");
+    expect(ui.theme.fg("warning", "Needs attention")).toBe("Needs attention");
+  });
+
   it("renders component widgets into mobile-friendly line snapshots", () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 

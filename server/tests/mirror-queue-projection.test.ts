@@ -5,7 +5,9 @@ import {
   createMirrorWidgetForwardingTui,
   MirrorQueueProjection,
   serializeSessionTree,
+  normalizeMirrorAskAnswers,
   snapshotMirrorWidgetLines,
+  snapshotMirrorWidgetNativeSurface,
   type MessageQueueState,
 } from "../../pi-extensions/oppi-mirror.ts";
 
@@ -45,6 +47,35 @@ describe("mirror widget snapshots", () => {
 
     expect(lines).toHaveLength(13);
     expect(lines.at(-1)).toBe("… (2 more lines)");
+  });
+
+  it("renders callback widget native surfaces when provided", () => {
+    const surface = snapshotMirrorWidgetNativeSurface({
+      render: () => ["● Agents"],
+      renderNative: (context: { target: string; capabilities: string[] }) => ({
+        version: 1,
+        id: "widget:agents",
+        source: "widget",
+        presentation: { style: "surfacePanel", title: "Agents" },
+        blocks: [
+          {
+            type: "activityList",
+            rows: [{ id: "child-1", title: "Review", state: "running" }],
+          },
+        ],
+        fallback: { lines: [context.target] },
+      }),
+    });
+
+    expect(surface).toMatchObject({
+      version: 1,
+      id: "widget:agents",
+      source: "widget",
+      presentation: { style: "surfacePanel" },
+    });
+    expect((surface?.fallback as { lines?: string[] } | undefined)?.lines).toEqual([
+      "oppi-native-v1",
+    ]);
   });
 
   it("forwards requestRender through a TUI proxy without hiding terminal fields", () => {
@@ -100,6 +131,18 @@ describe("mirror widget snapshots", () => {
     expect(forwardedInvalidations).toBe(1);
     expect(originalDisposals).toBe(1);
     expect(forwardedDisposals).toBe(1);
+  });
+});
+
+describe("mirror ask response normalization", () => {
+  it("fails fast on malformed ask response JSON", () => {
+    expect(() => normalizeMirrorAskAnswers("not json")).toThrow(/Malformed ask response/);
+  });
+
+  it("fails fast on invalid ask answer values", () => {
+    expect(() => normalizeMirrorAskAnswers(JSON.stringify({ scope: 42 }))).toThrow(
+      /Malformed ask response/,
+    );
   });
 });
 

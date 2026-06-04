@@ -25,6 +25,7 @@ export interface SessionStartActiveSession {
   workspaceId: string;
   subscribers: Set<(msg: ServerMessage) => void>;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
+  persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
@@ -162,6 +163,7 @@ export class SessionStartCoordinator {
           workspaceId: identity.workspaceId,
           subscribers: new Set(),
           pendingUIRequests: new Map(),
+          persistentExtensionUINotifications: new Map(),
           partialResults: new Map(),
           streamedAssistantText: "",
           hasStreamedThinking: false,

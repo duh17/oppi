@@ -1077,6 +1077,136 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
       widgetPlacement: "belowEditor",
       nativeSurface: undefined,
     });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "goal",
+        widgetLines: ["Goal tick 0"],
+      }),
+    ]);
+  });
+
+  it("forwards native surfaces from mirrored callback widgets", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-native-1",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["● Agents", "  Running Review"],
+      widgetPlacement: "aboveEditor",
+      nativeSurface: {
+        version: 1,
+        id: "extension-chosen-id",
+        source: "widget",
+        presentation: { style: "surfacePanel", placement: "aboveEditor", title: "Agents" },
+        blocks: [
+          {
+            type: "activityList",
+            id: "agents",
+            rows: [{ id: "child-1", title: "Review", state: "running" }],
+          },
+        ],
+      },
+    });
+
+    expect(received.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["● Agents", "  Running Review"],
+      widgetPlacement: "aboveEditor",
+      nativeSurface: {
+        id: "widget:subagents",
+        source: "widget",
+      },
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "subagents",
+        nativeSurface: expect.objectContaining({ id: "widget:subagents", source: "widget" }),
+      }),
+    ]);
+  });
+
+  it("replays mirrored clear notifications after explicit clears", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-1",
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: ["Goal active"],
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toHaveLength(1);
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-clear",
+      method: "setWidget",
+      widgetKey: "goal",
+    });
+
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "goal",
+        widgetLines: undefined,
+      }),
+    ]);
+  });
+
+  it("clears persistent mirrored surfaces when the bridge disconnects", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-status-1",
+      method: "setStatus",
+      statusKey: "review",
+      statusText: "running",
+    });
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-1",
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: ["Goal active"],
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toHaveLength(2);
+
+    ws.readyState = WebSocket.CLOSED;
+    ws.emit("close");
+
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "review",
+        statusText: undefined,
+      }),
+    );
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "goal",
+        widgetLines: undefined,
+      }),
+    );
     expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
   });
 
@@ -1179,6 +1309,36 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
         type: "extension_ui_response",
         id: "ui-1",
         confirmed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("settles pending bridge UI requests when the bridge disconnects", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-disconnect",
+      method: "input",
+      title: "Name",
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toHaveLength(1);
+
+    ws.readyState = WebSocket.CLOSED;
+    ws.emit("close");
+
+    expect(received.filter((message) => message.type === "extension_ui_settled")).toEqual([
+      { type: "extension_ui_settled", id: "ui-disconnect", sessionId },
+    ]);
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+    expect(
+      runtime.respondToUIRequest(sessionId, {
+        type: "extension_ui_response",
+        id: "ui-disconnect",
+        value: "Ada",
       }),
     ).toBe(false);
   });

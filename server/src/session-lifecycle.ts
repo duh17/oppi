@@ -10,6 +10,7 @@ export interface SessionLifecycleSessionState {
   sdkBackend: SdkBackend;
   workspaceId: string;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
+  persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
   /** Output tokens when this activation started. Used to detect new work vs. prior-life tokens. */
   outputTokensAtStart: number;
 }
@@ -79,6 +80,7 @@ export class SessionLifecycleCoordinator {
     }
 
     active.pendingUIRequests.clear();
+    active.persistentExtensionUINotifications?.clear();
 
     if (!active.sdkBackend.isDisposed) {
       await active.sdkBackend.dispose();

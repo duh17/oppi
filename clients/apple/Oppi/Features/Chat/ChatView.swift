@@ -791,7 +791,9 @@ struct ChatView: View {
            notificationSessionId != sessionId {
             return
         }
-        connection.extensionToast = "Inline comments are saved. Select text to add another compact comment."
+
+        // The old comment detail/list UI is gone. Tapping an existing inline
+        // marker should not fall through to the generic Extension toast sheet.
     }
 
     @MainActor
@@ -1755,14 +1757,14 @@ private struct ExtensionWidgetLinesView: View {
     }
 }
 
-private struct ExtensionNativeSurfaceView: View {
+struct ExtensionNativeSurfaceView: View {
     let surface: ExtensionUINativeSurface
     var onOpenURL: ((URL) -> Bool)?
 
     @State private var isExpanded = true
 
     private var displayBlocks: [ExtensionUINativeBlock] {
-        surface.blocks.filter(\.isNativeDisplayable)
+        surface.nativeDisplayBlocks
     }
 
     private var titleText: String {
@@ -1821,10 +1823,11 @@ private struct ExtensionNativeSurfaceView: View {
             .accessibilityHint(isExpanded ? "Collapse extension surface" : "Expand extension surface")
 
             if isExpanded {
-                if displayBlocks.isEmpty,
-                   let fallbackLines = surface.fallback?.lines,
-                   !fallbackLines.isEmpty {
-                    ExtensionWidgetLinesView(lines: fallbackLines)
+                if displayBlocks.isEmpty {
+                    let fallbackLines = surface.fallbackDisplayLines
+                    if !fallbackLines.isEmpty {
+                        ExtensionWidgetLinesView(lines: fallbackLines)
+                    }
                 } else {
                     ForEach(Array(displayBlocks.enumerated()), id: \.offset) { _, block in
                         ExtensionNativeBlockView(block: block, onOpenURL: onOpenURL)
@@ -1833,17 +1836,6 @@ private struct ExtensionNativeSurfaceView: View {
             }
         }
         .accessibilityElement(children: .contain)
-    }
-}
-
-private extension ExtensionUINativeBlock {
-    var isNativeDisplayable: Bool {
-        switch self {
-        case .choiceGroup, .form, .settingsList, .image, .unsupported:
-            return false
-        default:
-            return true
-        }
     }
 }
 

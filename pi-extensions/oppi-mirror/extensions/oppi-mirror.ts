@@ -1320,16 +1320,34 @@ type MirrorIndicatorMode =
   | "error";
 type MirrorIndicatorColor = "success" | "error" | "warning" | "muted";
 
-type MirrorExtensionUIMethod = "select" | "confirm" | "input" | "editor";
+type MirrorExtensionUIMethod =
+  | "ask"
+  | "select"
+  | "confirm"
+  | "input"
+  | "editor";
+
+interface NativeRenderContext {
+  target: "oppi-native-v1";
+  capabilities: string[];
+  locale?: string;
+}
 
 interface MirrorWidgetComponent {
   render(width: number): string[];
+  renderNative?(context: NativeRenderContext): unknown;
   invalidate?(): void;
   dispose?(): void;
 }
 
+interface MirrorAskUIResult {
+  answers: Record<string, string | string[]>;
+  allIgnored: boolean;
+}
+
 const MIRROR_WIDGET_SNAPSHOT_WIDTH = 88;
 const MIRROR_WIDGET_SNAPSHOT_MAX_LINES = 12;
+const MIRROR_NATIVE_SURFACE_MAX_BYTES = 64 * 1024;
 
 function stripAnsiCodes(input: string): string {
   return input.replace(
@@ -1371,6 +1389,54 @@ export function snapshotMirrorWidgetLines(component: unknown): string[] {
     );
   }
   return limited;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function snapshotMirrorWidgetNativeSurface(
+  component: unknown,
+): Record<string, unknown> | undefined {
+  if (!isMirrorWidgetComponent(component) || !component.renderNative)
+    return undefined;
+
+  let value: unknown;
+  try {
+    value = component.renderNative({
+      target: "oppi-native-v1",
+      capabilities: [
+        "extension-native-ui:v1:text-fallback",
+        "extension-native-ui:v1:surface-native",
+      ],
+    });
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecord(value)) return undefined;
+  if (value.version !== 1) return undefined;
+  if (typeof value.id !== "string" || value.id.length === 0) return undefined;
+  if (typeof value.source !== "string") return undefined;
+  if (!isRecord(value.presentation)) return undefined;
+  if (!Array.isArray(value.blocks)) return undefined;
+
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+
+  if (Buffer.byteLength(json, "utf8") > MIRROR_NATIVE_SURFACE_MAX_BYTES) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 export function createMirrorWidgetForwardingTui(
@@ -1440,6 +1506,51 @@ interface MirrorExtensionUIResponse {
 
 interface PendingMirrorUIResponse<T> {
   resolve: (value: T) => void;
+}
+
+function invalidMirrorAskResponse(message: string): Error {
+  return new Error(`Malformed ask response: ${message}`);
+}
+
+export function normalizeMirrorAskAnswers(
+  value: string | undefined,
+): MirrorAskUIResult {
+  if (!value) {
+    return { answers: {}, allIgnored: true };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw invalidMirrorAskResponse(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (!isRecord(parsed)) {
+    throw invalidMirrorAskResponse("expected a JSON object");
+  }
+
+  const answers: Record<string, string | string[]> = {};
+  for (const [key, answer] of Object.entries(parsed)) {
+    if (typeof answer === "string") {
+      answers[key] = answer;
+      continue;
+    }
+
+    if (
+      Array.isArray(answer) &&
+      answer.every((item) => typeof item === "string")
+    ) {
+      answers[key] = answer;
+      continue;
+    }
+
+    throw invalidMirrorAskResponse(`expected string or string[] for "${key}"`);
+  }
+
+  return { answers, allIgnored: Object.keys(answers).length === 0 };
 }
 
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
@@ -1666,10 +1777,13 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       (resolve) => {
         pendingUIResponses.set(id, {
           resolve: (response) => {
+            const value = parsePhoneResponse(
+              response as MirrorExtensionUIResponse,
+            );
             settledByPhone = true;
             resolve({
               source: "phone",
-              value: parsePhoneResponse(response as MirrorExtensionUIResponse),
+              value,
             });
           },
         });
@@ -1721,6 +1835,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     proxiedUIContexts.add(ui as object);
 
     const original = {
+      ask: ui.ask.bind(ui),
       select: ui.select.bind(ui),
       confirm: ui.confirm.bind(ui),
       input: ui.input.bind(ui),
@@ -1732,6 +1847,19 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       setEditorText: ui.setEditorText.bind(ui),
       pasteToEditor: ui.pasteToEditor.bind(ui),
     };
+
+    ui.ask = (questions, allowCustom = true, opts) =>
+      raceMirrorDialog(
+        "ask",
+        { questions, allowCustom },
+        opts,
+        { answers: {}, allIgnored: true },
+        (nextOpts) => original.ask(questions, allowCustom, nextOpts),
+        (response) =>
+          response.cancelled
+            ? { answers: {}, allIgnored: true }
+            : normalizeMirrorAskAnswers(response.value),
+      );
 
     ui.select = (title, options, opts) =>
       raceMirrorDialog(
@@ -1810,7 +1938,10 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         const forwardingSuppressed = suppressUIForwarding;
         let component: unknown;
         let snapshotPending = false;
-        const sendWidgetLines = (widgetLines: string[]) => {
+        const sendWidgetSnapshot = (
+          widgetLines: string[],
+          nativeSurface?: Record<string, unknown>,
+        ) => {
           if (
             forwardingSuppressed ||
             suppressUIForwarding ||
@@ -1824,10 +1955,14 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
             widgetKey: key,
             widgetLines,
             widgetPlacement: options?.placement,
+            nativeSurface,
           });
         };
         const sendSnapshot = () => {
-          sendWidgetLines(snapshotMirrorWidgetLines(component));
+          sendWidgetSnapshot(
+            snapshotMirrorWidgetLines(component),
+            snapshotMirrorWidgetNativeSurface(component),
+          );
         };
         const scheduleSnapshot = () => {
           if (snapshotPending) return;
@@ -1838,14 +1973,13 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           });
         };
         const wrappedContent = (tui: unknown, theme: unknown) => {
-          const originalComponent = (content as (tui: unknown, theme: unknown) => unknown)(
-            createMirrorWidgetForwardingTui(tui, scheduleSnapshot),
-            theme,
-          );
+          const originalComponent = (
+            content as (tui: unknown, theme: unknown) => unknown
+          )(createMirrorWidgetForwardingTui(tui, scheduleSnapshot), theme);
           component = createMirrorWidgetForwardingComponent(
             originalComponent,
             scheduleSnapshot,
-            () => sendWidgetLines([]),
+            () => sendWidgetSnapshot([]),
           );
           scheduleSnapshot();
           return component;

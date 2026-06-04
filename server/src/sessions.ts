@@ -37,6 +37,8 @@ import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { type ExtensionUIResponse } from "./session-ui.js";
 import { createLogger } from "./logger.js";
+import { buildExtensionUIRequestMessage } from "./extension-ui-contract.js";
+import { buildPersistentExtensionUINotificationMessages } from "./session-events.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import { createSubagentToolPolicyFactory } from "../extensions/subagents/index.js";
 import type { SpawnSessionParams } from "./session-spawn-types.js";
@@ -585,7 +587,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       return [];
     }
 
-    const messages: ServerMessage[] = [];
+    const messages: ServerMessage[] = buildPersistentExtensionUINotificationMessages(active);
     for (const req of active.pendingUIRequests.values()) {
       // Ask has a dedicated replay path because its broadcast payload has
       // ask-specific fields and mobile state handling.
@@ -593,19 +595,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         continue;
       }
 
-      messages.push({
-        type: "extension_ui_request",
-        id: req.id,
-        sessionId,
-        method: req.method,
-        title: req.title,
-        options: req.options,
-        message: req.message,
-        placeholder: req.placeholder,
-        prefill: req.prefill,
-        timeout: req.timeout,
-        timeoutAt: req.timeoutAt,
-      });
+      messages.push(buildExtensionUIRequestMessage(sessionId, req));
     }
     return messages;
   }
