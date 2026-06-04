@@ -1322,6 +1322,114 @@ type MirrorIndicatorColor = "success" | "error" | "warning" | "muted";
 
 type MirrorExtensionUIMethod = "select" | "confirm" | "input" | "editor";
 
+interface MirrorWidgetComponent {
+  render(width: number): string[];
+  invalidate?(): void;
+  dispose?(): void;
+}
+
+const MIRROR_WIDGET_SNAPSHOT_WIDTH = 88;
+const MIRROR_WIDGET_SNAPSHOT_MAX_LINES = 12;
+
+function stripAnsiCodes(input: string): string {
+  return input.replace(
+    // eslint-disable-next-line no-control-regex
+    /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
+    "",
+  );
+}
+
+function isMirrorWidgetComponent(
+  value: unknown,
+): value is MirrorWidgetComponent {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { render?: unknown }).render === "function"
+  );
+}
+
+export function snapshotMirrorWidgetLines(component: unknown): string[] {
+  if (!isMirrorWidgetComponent(component)) return [];
+
+  let lines: string[];
+  try {
+    lines = component.render(MIRROR_WIDGET_SNAPSHOT_WIDTH);
+  } catch (error) {
+    lines = [
+      `[render error] ${error instanceof Error ? error.message : String(error)}`,
+    ];
+  }
+
+  const safeLines = lines
+    .map((line) => stripAnsiCodes(String(line)).trimEnd())
+    .filter((line) => line.length > 0);
+  const limited = safeLines.slice(0, MIRROR_WIDGET_SNAPSHOT_MAX_LINES);
+  if (safeLines.length > MIRROR_WIDGET_SNAPSHOT_MAX_LINES) {
+    limited.push(
+      `… (${safeLines.length - MIRROR_WIDGET_SNAPSHOT_MAX_LINES} more lines)`,
+    );
+  }
+  return limited;
+}
+
+export function createMirrorWidgetForwardingTui(
+  tui: unknown,
+  onRequestRender: () => void,
+): unknown {
+  if (typeof tui !== "object" || tui === null) return tui;
+
+  return new Proxy(tui, {
+    get(target, property, receiver) {
+      if (property !== "requestRender") {
+        return Reflect.get(target, property, receiver);
+      }
+
+      const originalRequestRender = Reflect.get(target, property, receiver);
+      return (...args: unknown[]) => {
+        if (typeof originalRequestRender === "function") {
+          originalRequestRender.apply(target, args);
+        }
+        onRequestRender();
+      };
+    },
+  });
+}
+
+export function createMirrorWidgetForwardingComponent(
+  component: unknown,
+  onInvalidate: () => void,
+  onDispose: () => void,
+): unknown {
+  if (typeof component !== "object" || component === null) return component;
+
+  return new Proxy(component, {
+    get(target, property, receiver) {
+      const original = Reflect.get(target, property, receiver);
+      if (property === "invalidate") {
+        return (...args: unknown[]) => {
+          if (typeof original === "function") {
+            original.apply(target, args);
+          }
+          onInvalidate();
+        };
+      }
+      if (property === "dispose") {
+        return (...args: unknown[]) => {
+          try {
+            if (typeof original === "function") {
+              original.apply(target, args);
+            }
+          } finally {
+            onDispose();
+          }
+        };
+      }
+      return original;
+    },
+  });
+}
+
 interface MirrorExtensionUIResponse {
   type: "extension_ui_response";
   id: string;
@@ -1356,6 +1464,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     PendingMirrorUIResponse<unknown>
   >();
   const proxiedUIContexts = new WeakSet<object>();
+  const widgetForwardingGenerations = new Map<string, number>();
   let suppressUIForwarding = false;
   let runtimeActive = true;
   let connectionSerial = 0;
@@ -1368,7 +1477,9 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   const queueUpdateBridge = await (async () => {
     try {
       const { AgentSession } = await import("@earendil-works/pi-coding-agent");
-      return installQueueUpdateBridge(AgentSession.prototype as AgentSessionPrototype);
+      return installQueueUpdateBridge(
+        AgentSession.prototype as AgentSessionPrototype,
+      );
     } catch (error) {
       writeMirrorLog("error", "queue_update_bridge_install_failed", { error });
       return getQueueUpdateBridge();
@@ -1692,6 +1803,57 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       content: unknown,
       options?: { placement?: string },
     ) => {
+      const generation = (widgetForwardingGenerations.get(key) ?? 0) + 1;
+      widgetForwardingGenerations.set(key, generation);
+
+      if (typeof content === "function") {
+        const forwardingSuppressed = suppressUIForwarding;
+        let component: unknown;
+        let snapshotPending = false;
+        const sendWidgetLines = (widgetLines: string[]) => {
+          if (
+            forwardingSuppressed ||
+            suppressUIForwarding ||
+            widgetForwardingGenerations.get(key) !== generation
+          ) {
+            return;
+          }
+          sendUIRequest({
+            id: nextUIRequestId("setWidget"),
+            method: "setWidget",
+            widgetKey: key,
+            widgetLines,
+            widgetPlacement: options?.placement,
+          });
+        };
+        const sendSnapshot = () => {
+          sendWidgetLines(snapshotMirrorWidgetLines(component));
+        };
+        const scheduleSnapshot = () => {
+          if (snapshotPending) return;
+          snapshotPending = true;
+          queueMicrotask(() => {
+            snapshotPending = false;
+            sendSnapshot();
+          });
+        };
+        const wrappedContent = (tui: unknown, theme: unknown) => {
+          const originalComponent = (content as (tui: unknown, theme: unknown) => unknown)(
+            createMirrorWidgetForwardingTui(tui, scheduleSnapshot),
+            theme,
+          );
+          component = createMirrorWidgetForwardingComponent(
+            originalComponent,
+            scheduleSnapshot,
+            () => sendWidgetLines([]),
+          );
+          scheduleSnapshot();
+          return component;
+        };
+        original.setWidget(key, wrappedContent as never, options as never);
+        return;
+      }
+
       original.setWidget(key, content as never, options as never);
       if (
         !suppressUIForwarding &&

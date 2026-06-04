@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createMirrorWidgetForwardingComponent,
+  createMirrorWidgetForwardingTui,
   MirrorQueueProjection,
   serializeSessionTree,
+  snapshotMirrorWidgetLines,
   type MessageQueueState,
 } from "../../pi-extensions/oppi-mirror.ts";
 
@@ -25,6 +28,80 @@ function queue(
     })),
   };
 }
+
+describe("mirror widget snapshots", () => {
+  it("renders callback widget components into mobile-safe line snapshots", () => {
+    const lines = snapshotMirrorWidgetLines({
+      render: (width: number) => ["\u001b[32m●\u001b[0m Agents", `  running width=${width}`, ""],
+    });
+
+    expect(lines).toEqual(["● Agents", "  running width=88"]);
+  });
+
+  it("limits long widget snapshots", () => {
+    const lines = snapshotMirrorWidgetLines({
+      render: () => Array.from({ length: 14 }, (_, index) => `line ${index + 1}`),
+    });
+
+    expect(lines).toHaveLength(13);
+    expect(lines.at(-1)).toBe("… (2 more lines)");
+  });
+
+  it("forwards requestRender through a TUI proxy without hiding terminal fields", () => {
+    let originalRenderRequests = 0;
+    let forwardedRenderRequests = 0;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      requestRender() {
+        originalRenderRequests += 1;
+      },
+    };
+
+    const proxied = createMirrorWidgetForwardingTui(tui, () => {
+      forwardedRenderRequests += 1;
+    }) as typeof tui;
+
+    expect(proxied.terminal.columns).toBe(120);
+    proxied.requestRender();
+    expect(originalRenderRequests).toBe(1);
+    expect(forwardedRenderRequests).toBe(1);
+  });
+
+  it("forwards widget invalidation and disposal through a component proxy", () => {
+    let originalInvalidations = 0;
+    let originalDisposals = 0;
+    let forwardedInvalidations = 0;
+    let forwardedDisposals = 0;
+    const component = {
+      render: () => ["● Agents"],
+      invalidate() {
+        originalInvalidations += 1;
+      },
+      dispose() {
+        originalDisposals += 1;
+      },
+    };
+
+    const proxied = createMirrorWidgetForwardingComponent(
+      component,
+      () => {
+        forwardedInvalidations += 1;
+      },
+      () => {
+        forwardedDisposals += 1;
+      },
+    ) as typeof component;
+
+    expect(proxied.render(88)).toEqual(["● Agents"]);
+    proxied.invalidate();
+    proxied.dispose();
+
+    expect(originalInvalidations).toBe(1);
+    expect(forwardedInvalidations).toBe(1);
+    expect(originalDisposals).toBe(1);
+    expect(forwardedDisposals).toBe(1);
+  });
+});
 
 describe("mirror session tree serialization", () => {
   it("serializes terminal session trees into mobile outline snapshots", () => {
