@@ -223,7 +223,6 @@ struct MessageQueueEditorState: Equatable, Sendable {
             id: item.id,
             message: item.message,
             attachments: item.attachments,
-            images: item.images,
             createdAt: item.createdAt
         )
     }

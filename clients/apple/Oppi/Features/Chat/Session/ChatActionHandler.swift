@@ -121,7 +121,7 @@ final class ChatActionHandler {
             reducer.process(
                 .error(
                     sessionId: sessionId,
-                    message: "Image upload refs are not wired on this server yet. Remove image chips and try again."
+                    message: "Legacy image payloads are not supported. Upload images as attachments and try again."
                 )
             )
             onAsyncFailure?(text, images)
@@ -184,7 +184,7 @@ final class ChatActionHandler {
                 kind: queuedKind,
                 message: trimmed,
                 attachments: queuedAttachments,
-                images: optimisticImages.isEmpty ? nil : optimisticImages,
+                optimisticImages: optimisticImages.isEmpty ? nil : optimisticImages,
                 id: queueTurnId
             )
 

@@ -61,7 +61,6 @@ export interface SessionInputCoordinatorDeps {
     key: string,
     kind: "steer" | "follow_up",
     message: string,
-    images?: SdkImageInput[],
     attachments?: ChatAttachmentRef[],
     idHint?: string,
     sdkMessage?: string,
@@ -128,7 +127,6 @@ export class SessionInputCoordinator {
     key: string,
     message: string,
     opts?: {
-      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
@@ -143,7 +141,6 @@ export class SessionInputCoordinator {
 
     const turnPayload = {
       message,
-      images: opts?.images ?? [],
       attachments: opts?.attachments ?? [],
       streamingBehavior: opts?.streamingBehavior,
     };
@@ -177,7 +174,7 @@ export class SessionInputCoordinator {
       clientTurnId: opts?.clientTurnId,
       requestId: opts?.requestId,
     });
-    const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
+    const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
 
     if (this.deps.recordPromptLocally !== false) {
@@ -237,7 +234,6 @@ export class SessionInputCoordinator {
         key,
         kind,
         message,
-        opts?.images,
         opts.attachments,
         turn.clientTurnId,
         dispatchMessage,
@@ -252,7 +248,6 @@ export class SessionInputCoordinator {
     key: string,
     message: string,
     opts?: {
-      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -265,7 +260,6 @@ export class SessionInputCoordinator {
     key: string,
     message: string,
     opts?: {
-      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -279,7 +273,6 @@ export class SessionInputCoordinator {
     kind: StreamingInputKind,
     message: string,
     opts?: {
-      images?: SdkImageInput[];
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -304,7 +297,6 @@ export class SessionInputCoordinator {
       kind,
       {
         message,
-        images: opts?.images ?? [],
         attachments: opts?.attachments ?? [],
       },
       opts?.clientTurnId,
@@ -320,7 +312,7 @@ export class SessionInputCoordinator {
       clientTurnId: opts?.clientTurnId,
       requestId: opts?.requestId,
     });
-    const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
+    const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
 
     const cmd: Record<string, unknown> = {
@@ -357,7 +349,6 @@ export class SessionInputCoordinator {
       key,
       kind,
       message,
-      opts?.images,
       opts?.attachments,
       turn.clientTurnId,
       dispatchMessage,

@@ -831,9 +831,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       thinking?: string;
       parentSessionId?: string;
       ephemeral?: boolean;
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
+      images?: unknown;
     }>(req);
+    if (Array.isArray(body.images) && body.images.length > 0) {
+      helpers.error(
+        res,
+        400,
+        "Raw base64 image transport is not supported; upload images as chat attachments first",
+      );
+      return;
+    }
     const requestedModel = body.model;
 
     // ── Local session import: validate path confinement + CWD alignment ──
@@ -976,7 +984,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           session.thinkingLevel = body.thinking;
         }
         await ctx.sessions.sendPrompt(session.id, prompt, {
-          ...(body.images ? { images: body.images } : {}),
           ...(body.attachments ? { attachments: body.attachments } : {}),
         });
         session.firstMessage = prompt.slice(0, 200);

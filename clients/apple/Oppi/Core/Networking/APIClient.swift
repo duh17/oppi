@@ -964,14 +964,8 @@ actor APIClient: ClientLogUploading {
         prompt: String? = nil,
         thinking: String? = nil,
         ephemeral: Bool? = nil,
-        attachments: [ChatAttachmentRef]? = nil,
-        images: [ImageAttachment]? = nil
+        attachments: [ChatAttachmentRef]? = nil
     ) async throws -> CreateSessionResponse {
-        struct ImageBody: Encodable {
-            let type: String
-            let data: String
-            let mimeType: String
-        }
         struct Body: Encodable {
             let name: String?
             let model: String?
@@ -979,9 +973,7 @@ actor APIClient: ClientLogUploading {
             let thinking: String?
             let ephemeral: Bool?
             let attachments: [ChatAttachmentRef]?
-            let images: [ImageBody]?
         }
-        let imagesBodies = images?.map { ImageBody(type: "image", data: $0.data, mimeType: $0.mimeType) }
         let data = try await post(
             "/workspaces/\(workspaceId)/sessions",
             body: Body(
@@ -990,8 +982,7 @@ actor APIClient: ClientLogUploading {
                 prompt: prompt,
                 thinking: thinking,
                 ephemeral: ephemeral,
-                attachments: attachments,
-                images: imagesBodies
+                attachments: attachments
             )
         )
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)

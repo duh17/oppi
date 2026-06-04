@@ -36,7 +36,7 @@ final class MessageQueueStore {
         kind: MessageQueueKind,
         message: String,
         attachments: [ChatAttachmentRef]?,
-        images: [ImageAttachment]? = nil,
+        optimisticImages: [ImageAttachment]? = nil,
         id: String = "local-\(UUID().uuidString)"
     ) -> MessageQueueItem {
         var state = queuesBySessionId[sessionId] ?? .empty
@@ -44,7 +44,7 @@ final class MessageQueueStore {
             id: id,
             message: message,
             attachments: attachments,
-            images: images,
+            optimisticImages: optimisticImages,
             createdAt: Int(Date().timeIntervalSince1970 * 1_000)
         )
 
@@ -63,14 +63,14 @@ final class MessageQueueStore {
         for sessionId: String,
         kind: MessageQueueKind,
         message: String,
-        images: [ImageAttachment]?
+        optimisticImages: [ImageAttachment]?
     ) -> MessageQueueItem {
         enqueueOptimisticItem(
             for: sessionId,
             kind: kind,
             message: message,
             attachments: nil,
-            images: images
+            optimisticImages: optimisticImages
         )
     }
 

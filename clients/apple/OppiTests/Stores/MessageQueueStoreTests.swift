@@ -20,7 +20,7 @@ struct MessageQueueStoreTests {
             for: "s1",
             kind: .steer,
             message: "queued",
-            images: nil
+            optimisticImages: nil
         )
 
         let queue = store.queue(for: "s1")
@@ -33,7 +33,7 @@ struct MessageQueueStoreTests {
         store.apply(
             MessageQueueState(
                 version: 7,
-                steering: [MessageQueueItem(id: "local-1", message: "queued", images: nil, createdAt: 1)],
+                steering: [MessageQueueItem(id: "local-1", message: "queued", createdAt: 1)],
                 followUp: []
             ),
             for: "s1"
@@ -68,12 +68,12 @@ struct MessageQueueStoreTests {
             kind: .steer,
             message: "queued",
             attachments: [attachment],
-            images: [image]
+            optimisticImages: [image]
         )
 
         let queue = store.queue(for: "s1")
         #expect(queue.steering.first?.attachments == [attachment])
-        #expect(queue.steering.first?.images == [image])
+        #expect(queue.steering.first?.optimisticImages == [image])
     }
 
     @Test func enqueueOptimisticItemCanUseStableTurnId() {
@@ -106,13 +106,13 @@ struct MessageQueueStoreTests {
             for: "s1",
             kind: .steer,
             message: "queued",
-            images: nil
+            optimisticImages: nil
         )
 
         store.applyQueueItemStarted(
             for: "s1",
             kind: .steer,
-            item: MessageQueueItem(id: "server-1", message: "queued", images: nil, createdAt: 2),
+            item: MessageQueueItem(id: "server-1", message: "queued", createdAt: 2),
             queueVersion: 10
         )
 

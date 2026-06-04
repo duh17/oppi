@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// Messages sent from the iOS client to the server over WebSocket.
 ///
@@ -130,20 +127,6 @@ struct ChatAttachmentRef: Codable, Sendable, Equatable, Identifiable {
         self.kind = kind
         self.workspacePath = workspacePath
     }
-}
-
-struct ImageAttachment: Codable, Sendable, Equatable {
-    let data: String      // base64
-    let mimeType: String  // image/jpeg, image/png, etc.
-
-#if canImport(UIKit)
-    // periphery:ignore - API surface for image attachment display in UI
-    /// Decode base64 data to UIImage for display.
-    var decodedImage: UIImage? {
-        guard let imageData = Data(base64Encoded: data) else { return nil }
-        return UIImage(data: imageData)
-    }
-#endif
 }
 
 enum StreamingBehavior: String, Codable, Sendable {
@@ -413,7 +396,7 @@ extension ClientMessage: Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, message, attachments, images, streamingBehavior, requestId, clientTurnId
+        case type, message, attachments, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, filterMode

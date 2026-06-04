@@ -9,14 +9,7 @@ import type {
   Session,
 } from "./types.js";
 
-export interface RuntimeImageAttachment {
-  type: "image";
-  data: string;
-  mimeType: string;
-}
-
 export interface RuntimePromptOptions {
-  images?: RuntimeImageAttachment[];
   attachments?: ChatAttachmentRef[];
   clientTurnId?: string;
   requestId?: string;
@@ -25,7 +18,6 @@ export interface RuntimePromptOptions {
 }
 
 export interface RuntimeQueuedInputOptions {
-  images?: RuntimeImageAttachment[];
   attachments?: ChatAttachmentRef[];
   clientTurnId?: string;
   requestId?: string;

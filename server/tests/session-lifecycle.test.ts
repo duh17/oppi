@@ -782,17 +782,39 @@ describe("SessionManager prompt", () => {
     expect(sdkBackend.prompt).toHaveBeenCalledWith("hello world", expect.objectContaining({}));
   });
 
-  it("sends images with prompt", async () => {
-    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
+  it("materializes image attachments before sending a prompt", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-prompt-image-"));
+    const imageBytes = Buffer.from("base64data");
+    await writeFile(join(workspaceRoot, "screenshot.png"), imageBytes);
+    const workspace: Workspace = {
+      id: "w1",
+      name: "test",
+      skills: [],
+      systemPromptMode: "append",
+      hostMount: workspaceRoot,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" }, { workspace });
 
     await manager.sendPrompt("s1", "look at this", {
-      images: [{ type: "image", data: "base64data", mimeType: "image/png" }],
+      attachments: [
+        {
+          type: "attachment",
+          id: "att-image",
+          source: "workspace",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: imageBytes.byteLength,
+          workspacePath: "screenshot.png",
+        },
+      ],
     });
 
     expect(sdkBackend.prompt).toHaveBeenCalledWith(
-      "look at this",
+      expect.stringContaining("Attached files:\n- screenshot.png:"),
       expect.objectContaining({
-        images: [{ type: "image", data: "base64data", mimeType: "image/png" }],
+        images: [{ type: "image", data: imageBytes.toString("base64"), mimeType: "image/png" }],
       }),
     );
   });
@@ -1116,7 +1138,7 @@ describe("SessionManager message queue", () => {
 
     const queued = manager.getMessageQueue("s1");
     expect(queued.steering[0]?.attachments?.[0]?.id).toBe("att-image");
-    expect(queued.steering[0]?.images).toBeUndefined();
+    expect(JSON.stringify(queued)).not.toContain(imageBytes.toString("base64").slice(0, 16));
 
     await manager.setMessageQueue("s1", {
       baseVersion: queued.version,

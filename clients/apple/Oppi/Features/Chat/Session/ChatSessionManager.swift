@@ -890,7 +890,7 @@ final class ChatSessionManager {
                 text: item.message,
                 uploadedAttachments: item.attachments ?? []
             )
-            reducer.appendUserMessage(displayText, images: item.images ?? [])
+            reducer.appendUserMessage(displayText, images: item.optimisticImages ?? [])
 
         case .stopRequested(_, let reason):
             reducer.appendSystemEvent(reason ?? "Stopping…")

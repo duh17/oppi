@@ -269,17 +269,11 @@ function rawDataToText(data: RawData): string {
 function isMirrorReloadPrompt(
   message: string,
   opts: {
-    images?: unknown[];
     attachments?: unknown[];
     streamingBehavior?: "steer" | "followUp";
   },
 ): boolean {
-  return (
-    message.trim() === "/reload" &&
-    !opts.streamingBehavior &&
-    !opts.images?.length &&
-    !opts.attachments?.length
-  );
+  return message.trim() === "/reload" && !opts.streamingBehavior && !opts.attachments?.length;
 }
 
 function isTerminalStoppedReason(reason: string): boolean {
@@ -711,7 +705,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     sessionId: string,
     message: string,
     opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -741,7 +734,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     sessionId: string,
     message: string,
     opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -757,7 +749,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     sessionId: string,
     message: string,
     opts: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;

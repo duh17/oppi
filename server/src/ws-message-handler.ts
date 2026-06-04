@@ -8,7 +8,6 @@ import { safeErrorMessage } from "./log-utils.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
-  ImageAttachment,
   MessageQueueDraftItem,
   ServerMessage,
   Session,
@@ -22,7 +21,6 @@ function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
 
 interface TurnCommandMessage {
   message: string;
-  images?: ImageAttachment[];
   attachments?: ChatAttachmentRef[];
   clientTurnId?: string;
   requestId?: string;
@@ -44,6 +42,17 @@ export interface WsMessageHandlerDeps {
 
 export interface WsCommandMeta {
   connId?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function legacyImageCount(value: unknown): number {
+  const images = asRecord(value)?.images;
+  return Array.isArray(images) ? images.length : 0;
 }
 
 export class WsMessageHandler {
@@ -243,7 +252,6 @@ export class WsMessageHandler {
       sessionId: string,
       message: string,
       opts: {
-        images?: Array<{ type: "image"; data: string; mimeType: string }>;
         attachments?: ChatAttachmentRef[];
         clientTurnId?: string;
         requestId?: string;
@@ -254,14 +262,30 @@ export class WsMessageHandler {
     const startedAt = Date.now();
     const requestId = msg.requestId;
     const chars = msg.message.length;
-    const images = msg.images?.map((img) => ({
-      type: "image" as const,
-      data: img.data,
-      mimeType: img.mimeType,
-    }));
-    const imageCount = images?.length ?? 0;
+    const rawImageCount = legacyImageCount(msg);
     const attachments = msg.attachments ? [...msg.attachments] : undefined;
     const attachmentCount = attachments?.length ?? 0;
+
+    if (rawImageCount > 0) {
+      const message =
+        "Raw base64 image transport is not supported; upload images as chat attachments first";
+      log.warn("ws.turn_command.legacy_images_rejected", {
+        connId: meta.connId,
+        sessionId: session.id,
+        runtime: runtimeLogTag(session),
+        command,
+        requestId,
+        clientTurnId: msg.clientTurnId,
+        imageCount: rawImageCount,
+      });
+
+      if (requestId) {
+        send(runtimeCommandFailure(command, requestId, message));
+        return;
+      }
+
+      throw new Error(message);
+    }
 
     log.info("ws.turn_command.received", {
       connId: meta.connId,
@@ -271,13 +295,11 @@ export class WsMessageHandler {
       requestId,
       clientTurnId: msg.clientTurnId,
       chars,
-      imageCount,
       attachmentCount,
     });
 
     try {
       await handler(session.id, msg.message, {
-        images,
         attachments,
         clientTurnId: msg.clientTurnId,
         requestId,

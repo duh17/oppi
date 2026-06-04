@@ -78,7 +78,7 @@ function dispatch(harness: HandlerHarness, msg: ClientMessage): Promise<void> {
 }
 
 describe("WsMessageHandler", () => {
-  it("forwards prompt with mapped images and emits command_result success", async () => {
+  it("rejects legacy raw image prompt transport", async () => {
     const harness = makeHarness();
 
     await dispatch(harness, {
@@ -88,23 +88,18 @@ describe("WsMessageHandler", () => {
       clientTurnId: "turn-1",
       requestId: "req-1",
       streamingBehavior: "steer",
-    });
+    } as unknown as ClientMessage);
 
-    expect(harness.sessions.sendPrompt).toHaveBeenCalledTimes(1);
-    expect(harness.sessions.sendPrompt).toHaveBeenCalledWith("s1", "hello", {
-      images: [{ type: "image", data: "base64data", mimeType: "image/png" }],
-      clientTurnId: "turn-1",
-      requestId: "req-1",
-      streamingBehavior: "steer",
-      timestamp: expect.any(Number),
-    });
+    expect(harness.sessions.sendPrompt).not.toHaveBeenCalled();
 
     expect(harness.sent).toEqual([
       {
         type: "command_result",
         command: "prompt",
         requestId: "req-1",
-        success: true,
+        success: false,
+        error:
+          "Raw base64 image transport is not supported; upload images as chat attachments first",
       },
     ]);
   });

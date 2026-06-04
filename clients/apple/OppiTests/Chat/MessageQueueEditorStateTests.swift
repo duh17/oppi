@@ -35,8 +35,8 @@ struct MessageQueueEditorStateTests {
         state.receiveServerQueue(
             MessageQueueState(
                 version: 11,
-                steering: [MessageQueueItem(id: "s2", message: "follow build", images: nil, createdAt: 2)],
-                followUp: [MessageQueueItem(id: "f1", message: "summarize", images: nil, createdAt: 3)]
+                steering: [MessageQueueItem(id: "s2", message: "follow build", createdAt: 2)],
+                followUp: [MessageQueueItem(id: "f1", message: "summarize", createdAt: 3)]
             ),
             isExpanded: true
         )
@@ -64,8 +64,8 @@ struct MessageQueueEditorStateTests {
         state.receiveServerQueue(
             MessageQueueState(
                 version: 11,
-                steering: [MessageQueueItem(id: "s2", message: "follow build", images: nil, createdAt: 2)],
-                followUp: [MessageQueueItem(id: "f1", message: "summarize", images: nil, createdAt: 3)]
+                steering: [MessageQueueItem(id: "s2", message: "follow build", createdAt: 2)],
+                followUp: [MessageQueueItem(id: "f1", message: "summarize", createdAt: 3)]
             ),
             isExpanded: true
         )
@@ -92,8 +92,8 @@ struct MessageQueueEditorStateTests {
         state.receiveServerQueue(
             MessageQueueState(
                 version: 11,
-                steering: [MessageQueueItem(id: "s2", message: "follow build", images: nil, createdAt: 2)],
-                followUp: [MessageQueueItem(id: "f1", message: "summarize", images: nil, createdAt: 3)]
+                steering: [MessageQueueItem(id: "s2", message: "follow build", createdAt: 2)],
+                followUp: [MessageQueueItem(id: "f1", message: "summarize", createdAt: 3)]
             ),
             isExpanded: false
         )
@@ -109,8 +109,8 @@ struct MessageQueueEditorStateTests {
         state.receiveServerQueue(
             MessageQueueState(
                 version: 42,
-                steering: [MessageQueueItem(id: "s2", message: "follow build", images: nil, createdAt: 2)],
-                followUp: [MessageQueueItem(id: "f1", message: "summarize", images: nil, createdAt: 3)]
+                steering: [MessageQueueItem(id: "s2", message: "follow build", createdAt: 2)],
+                followUp: [MessageQueueItem(id: "f1", message: "summarize", createdAt: 3)]
             ),
             isExpanded: true
         )
@@ -126,11 +126,11 @@ private func makeQueue() -> MessageQueueState {
     MessageQueueState(
         version: 10,
         steering: [
-            MessageQueueItem(id: "s1", message: "fix tests", images: nil, createdAt: 1),
-            MessageQueueItem(id: "s2", message: "follow build", images: nil, createdAt: 2),
+            MessageQueueItem(id: "s1", message: "fix tests", createdAt: 1),
+            MessageQueueItem(id: "s2", message: "follow build", createdAt: 2),
         ],
         followUp: [
-            MessageQueueItem(id: "f1", message: "summarize", images: nil, createdAt: 3),
+            MessageQueueItem(id: "f1", message: "summarize", createdAt: 3),
         ]
     )
 }

@@ -266,21 +266,11 @@ export function createSessionCoordinatorBundle(
     markTurnDispatched: (key, active, command, turn, requestId) =>
       turnCoordinator.markTurnDispatched(key, active as TurnSessionState, command, turn, requestId),
     sendCommand: (key, command) => deps.sendCommand(key, command),
-    enqueueQueuedMessage: (
-      key,
-      kind,
-      message,
-      images,
-      attachments,
-      idHint,
-      sdkMessage,
-      sdkImages,
-    ) =>
+    enqueueQueuedMessage: (key, kind, message, attachments, idHint, sdkMessage, sdkImages) =>
       queueCoordinator.enqueueQueuedMessage(
         key,
         kind,
         message,
-        images,
         attachments,
         idHint,
         sdkMessage,

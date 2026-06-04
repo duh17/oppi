@@ -9,20 +9,26 @@ struct MessageQueueItem: Codable, Sendable, Equatable, Identifiable {
     let id: String
     var message: String
     var attachments: [ChatAttachmentRef]?
-    var images: [ImageAttachment]?
+    /// Local-only optimistic thumbnails for queued image uploads.
+    /// Not encoded on the wire; server queue state carries attachment refs only.
+    var optimisticImages: [ImageAttachment]? = nil
     var createdAt: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, message, attachments, createdAt
+    }
 
     init(
         id: String,
         message: String,
         attachments: [ChatAttachmentRef]? = nil,
-        images: [ImageAttachment]? = nil,
+        optimisticImages: [ImageAttachment]? = nil,
         createdAt: Int
     ) {
         self.id = id
         self.message = message
         self.attachments = attachments
-        self.images = images
+        self.optimisticImages = optimisticImages
         self.createdAt = createdAt
     }
 }
@@ -39,20 +45,17 @@ struct MessageQueueDraftItem: Codable, Sendable, Equatable, Identifiable {
     var id: String?
     var message: String
     var attachments: [ChatAttachmentRef]?
-    var images: [ImageAttachment]?
     var createdAt: Int?
 
     init(
         id: String?,
         message: String,
         attachments: [ChatAttachmentRef]? = nil,
-        images: [ImageAttachment]? = nil,
         createdAt: Int?
     ) {
         self.id = id
         self.message = message
         self.attachments = attachments
-        self.images = images
         self.createdAt = createdAt
     }
 }

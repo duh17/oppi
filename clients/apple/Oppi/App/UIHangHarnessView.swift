@@ -1477,7 +1477,7 @@ struct UIHangHarnessView: View {
             MessageQueueItem(
                 id: $0.id ?? UUID().uuidString,
                 message: $0.message,
-                images: $0.images,
+                attachments: $0.attachments,
                 createdAt: $0.createdAt ?? Int(Date().timeIntervalSince1970 * 1_000)
             )
         }
@@ -1486,7 +1486,7 @@ struct UIHangHarnessView: View {
             MessageQueueItem(
                 id: $0.id ?? UUID().uuidString,
                 message: $0.message,
-                images: $0.images,
+                attachments: $0.attachments,
                 createdAt: $0.createdAt ?? Int(Date().timeIntervalSince1970 * 1_000)
             )
         }
@@ -1507,7 +1507,6 @@ struct UIHangHarnessView: View {
             message: kind == .steer
                 ? "Harness steer message \(streamTick + 1)"
                 : "Harness follow-up message \(streamTick + 1)",
-            images: nil,
             createdAt: now
         )
 

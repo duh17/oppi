@@ -121,8 +121,8 @@ struct ServerConnectionRoutingTests {
         let (conn, pipe) = makeTestConnection()
         let state = MessageQueueState(
             version: 7,
-            steering: [MessageQueueItem(id: "q1", message: "steer one", images: nil, createdAt: 1)],
-            followUp: [MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2)]
+            steering: [MessageQueueItem(id: "q1", message: "steer one", createdAt: 1)],
+            followUp: [MessageQueueItem(id: "q2", message: "follow one", createdAt: 2)]
         )
 
         pipe.handle(.queueState(queue: state), sessionId: "s1")
@@ -138,7 +138,7 @@ struct ServerConnectionRoutingTests {
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 9,
-                steering: [MessageQueueItem(id: "q9", message: "latest", images: nil, createdAt: 9)],
+                steering: [MessageQueueItem(id: "q9", message: "latest", createdAt: 9)],
                 followUp: []
             ),
             for: "s1"
@@ -148,7 +148,7 @@ struct ServerConnectionRoutingTests {
             .queueState(
                 queue: MessageQueueState(
                     version: 8,
-                    steering: [MessageQueueItem(id: "q8", message: "stale", images: nil, createdAt: 8)],
+                    steering: [MessageQueueItem(id: "q8", message: "stale", createdAt: 8)],
                     followUp: []
                 )
             ),
@@ -164,15 +164,15 @@ struct ServerConnectionRoutingTests {
         let (conn, pipe) = makeTestConnection()
         let initial = MessageQueueState(
             version: 2,
-            steering: [MessageQueueItem(id: "q1", message: "steer one", images: nil, createdAt: 1)],
-            followUp: [MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2)]
+            steering: [MessageQueueItem(id: "q1", message: "steer one", createdAt: 1)],
+            followUp: [MessageQueueItem(id: "q2", message: "follow one", createdAt: 2)]
         )
         conn.messageQueueStore.apply(initial, for: "s1")
 
         pipe.handle(
             .queueItemStarted(
                 kind: .followUp,
-                item: MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2),
+                item: MessageQueueItem(id: "q2", message: "follow one", createdAt: 2),
                 queueVersion: 3
             ),
             sessionId: "s1"
@@ -303,7 +303,7 @@ struct ServerConnectionRoutingTests {
         #expect(stored.steering.count == 1)
         #expect(stored.steering.first?.attachments?.first?.id == "att-1")
         #expect(stored.steering.first?.attachments?.first?.kind == .pdf)
-        #expect(stored.steering.first?.images?.first?.mimeType == "image/png")
+        #expect(stored.steering.first?.optimisticImages == nil)
         #expect(stored.followUp.count == 1)
     }
 
@@ -312,7 +312,7 @@ struct ServerConnectionRoutingTests {
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 12,
-                steering: [MessageQueueItem(id: "q12", message: "fresh steer", images: nil, createdAt: 12)],
+                steering: [MessageQueueItem(id: "q12", message: "fresh steer", createdAt: 12)],
                 followUp: []
             ),
             for: "s1"
@@ -349,7 +349,7 @@ struct ServerConnectionRoutingTests {
             MessageQueueState(
                 version: 12,
                 steering: [],
-                followUp: [MessageQueueItem(id: "q12", message: "fresh follow", images: nil, createdAt: 12)]
+                followUp: [MessageQueueItem(id: "q12", message: "fresh follow", createdAt: 12)]
             ),
             for: "s1"
         )

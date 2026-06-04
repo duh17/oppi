@@ -21,7 +21,6 @@ import {
 } from "./session-queue-utils.js";
 import type {
   ChatAttachmentRef,
-  ImageAttachment,
   MessageQueueDraftItem,
   MessageQueueItem,
   MessageQueueKind,
@@ -33,8 +32,8 @@ import type {
 interface QueueStoreItem extends MessageQueueItem {
   /** SDK-only materialized message text. Queue UI/state keeps `message` raw. */
   sdkMessage?: string;
-  /** SDK-only image inputs. Queue UI/state keeps `images` as display metadata. */
-  sdkImages?: ImageAttachment[];
+  /** SDK-only image inputs. Public queue state never carries base64 image bytes. */
+  sdkImages?: QueueImageContent[];
 }
 
 const log = createLogger({ base: { component: "session_queue" } });
@@ -243,7 +242,6 @@ export class SessionMessageQueueCoordinator {
     key: string,
     kind: MessageQueueKind,
     message: string,
-    images?: QueueImageContent[],
     attachments?: ChatAttachmentRef[],
     idHint?: string,
     sdkMessage?: string,
@@ -258,11 +256,10 @@ export class SessionMessageQueueCoordinator {
     const nextItem: QueueStoreItem = {
       id: normalizeQueueId(idHint),
       message: normalizeQueueMessage(message),
-      images: queueImagesFromPromptImages(images),
       attachments: attachments ? [...attachments] : undefined,
       createdAt: Date.now(),
       sdkMessage: sdkMessage ? normalizeQueueMessage(sdkMessage) : normalizeQueueMessage(message),
-      sdkImages: queueImagesFromPromptImages(sdkImages ?? images),
+      sdkImages: queueImagesFromPromptImages(sdkImages),
     };
 
     if (kind === "steer") {
@@ -283,7 +280,6 @@ export class SessionMessageQueueCoordinator {
       return {
         ...cloneQueueItem(item),
         sdkMessage: item.message,
-        sdkImages: item.images ? item.images.map((image) => ({ ...image })) : undefined,
       };
     }
 
@@ -304,19 +300,12 @@ export class SessionMessageQueueCoordinator {
     });
 
     const materializedImages = queueImagesFromPromptImages(materialized.imageInputs) ?? [];
-    const existingImages = item.images ?? [];
 
     return {
       ...cloneQueueItem(item),
       message: item.message,
-      images: existingImages.length ? existingImages.map((image) => ({ ...image })) : undefined,
       sdkMessage: materialized.message,
-      sdkImages:
-        materializedImages.length > 0
-          ? materializedImages
-          : existingImages.length > 0
-            ? existingImages.map((image) => ({ ...image }))
-            : undefined,
+      sdkImages: materializedImages.length > 0 ? materializedImages : undefined,
     };
   }
 
@@ -429,20 +418,20 @@ export class SessionMessageQueueCoordinator {
     );
 
     active.sdkBackend.prompt(firstItem.sdkMessage ?? firstItem.message, {
-      images: promptImagesFromQueue(firstItem.sdkImages ?? firstItem.images),
+      images: promptImagesFromQueue(firstItem.sdkImages),
     });
 
     for (const item of remainingSteering) {
       await active.sdkBackend.session.steer(
         item.sdkMessage ?? item.message,
-        promptImagesFromQueue(item.sdkImages ?? item.images),
+        promptImagesFromQueue(item.sdkImages),
       );
     }
 
     for (const item of remainingFollowUp) {
       await active.sdkBackend.session.followUp(
         item.sdkMessage ?? item.message,
-        promptImagesFromQueue(item.sdkImages ?? item.images),
+        promptImagesFromQueue(item.sdkImages),
       );
     }
 
@@ -488,14 +477,14 @@ export class SessionMessageQueueCoordinator {
     for (const item of sdkSteeringItems) {
       await active.sdkBackend.session.steer(
         item.sdkMessage ?? item.message,
-        promptImagesFromQueue(item.sdkImages ?? item.images),
+        promptImagesFromQueue(item.sdkImages),
       );
     }
 
     for (const item of sdkFollowUpItems) {
       await active.sdkBackend.session.followUp(
         item.sdkMessage ?? item.message,
-        promptImagesFromQueue(item.sdkImages ?? item.images),
+        promptImagesFromQueue(item.sdkImages),
       );
     }
 

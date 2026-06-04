@@ -287,7 +287,7 @@ describe("RQ-PROTO-002: ClientMessage schema drift", () => {
     const msg: ClientMessage = {
       type: "set_queue",
       baseVersion: 1,
-      steering: [{ message: "do X", images: [] }],
+      steering: [{ message: "do X" }],
       followUp: [],
     };
 

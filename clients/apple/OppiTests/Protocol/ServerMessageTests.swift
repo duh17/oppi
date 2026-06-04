@@ -328,7 +328,7 @@ struct ServerMessageTests {
         #expect(queue.version == 4)
         #expect(queue.steering.count == 1)
         #expect(queue.steering.first?.id == "q1")
-        #expect(queue.steering.first?.images?.first?.mimeType == "image/png")
+        #expect(queue.steering.first?.optimisticImages == nil)
         #expect(queue.steering.first?.attachments?.first?.workspacePath == ".pi/attachments/demo/image-1.png")
         #expect(queue.followUp.count == 1)
         #expect(queue.followUp.first?.message == "follow one")

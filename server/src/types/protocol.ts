@@ -4,11 +4,6 @@ import type { StyledSegment } from "./shared.js";
 
 // ─── WebSocket Messages ───
 
-export interface ImageAttachment {
-  data: string; // base64
-  mimeType: string; // image/jpeg, image/png, etc.
-}
-
 export type AttachmentKind = "image" | "text" | "pdf" | "audio" | "video" | "archive" | "unknown";
 
 export type AttachmentSource = "upload" | "workspace";
@@ -29,7 +24,6 @@ export type MessageQueueKind = "steer" | "follow_up";
 
 export interface MessageQueuePayload {
   message: string;
-  images?: ImageAttachment[];
   attachments?: ChatAttachmentRef[];
 }
 
@@ -74,7 +68,6 @@ export type ClientMessage = // ── Prompting ──
     | {
         type: "prompt";
         message: string;
-        images?: ImageAttachment[];
         attachments?: ChatAttachmentRef[];
         streamingBehavior?: "steer" | "followUp";
         requestId?: string;
@@ -83,7 +76,6 @@ export type ClientMessage = // ── Prompting ──
     | {
         type: "steer";
         message: string;
-        images?: ImageAttachment[];
         attachments?: ChatAttachmentRef[];
         requestId?: string;
         clientTurnId?: string;
@@ -91,7 +83,6 @@ export type ClientMessage = // ── Prompting ──
     | {
         type: "follow_up";
         message: string;
-        images?: ImageAttachment[];
         attachments?: ChatAttachmentRef[];
         requestId?: string;
         clientTurnId?: string;

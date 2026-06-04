@@ -146,7 +146,7 @@ final class TestEventPipeline {
                 text: item.message,
                 uploadedAttachments: item.attachments ?? []
             )
-            reducer.appendUserMessage(displayText, images: item.images ?? [])
+            reducer.appendUserMessage(displayText, images: item.optimisticImages ?? [])
         case .state(let session):
             let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)

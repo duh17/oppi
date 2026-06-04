@@ -36,7 +36,6 @@ struct ClientMessageTests {
                     id: "q1",
                     message: "steer this",
                     attachments: nil,
-                    images: nil,
                     createdAt: 123
                 ),
             ],

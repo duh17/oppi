@@ -275,7 +275,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     message: string,
     opts?: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
@@ -301,7 +300,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     message: string,
     opts?: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
@@ -320,7 +318,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     message: string,
     opts?: {
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
       attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;

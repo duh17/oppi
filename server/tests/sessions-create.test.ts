@@ -472,16 +472,20 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(savedSession.thinkingLevel).toBe("high");
   });
 
-  it("passes images to sendPrompt when provided", async () => {
+  it("rejects legacy raw images on session creation", async () => {
     const mock = createMockContext();
     const images = [{ type: "image" as const, data: "base64data", mimeType: "image/jpeg" }];
 
     await dispatchCreate(mock, { prompt: "look at this", images });
 
-    expect(mock.sessions.sendPrompt).toHaveBeenCalledTimes(1);
-    const promptCall = mock.sessions.sendPrompt.mock.calls[0]!;
-    expect(promptCall[1]).toBe("look at this");
-    expect(promptCall[2]).toEqual({ images });
+    expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
+    expect(mock.errors).toEqual([
+      {
+        status: 400,
+        message:
+          "Raw base64 image transport is not supported; upload images as chat attachments first",
+      },
+    ]);
   });
 
   it("passes attachments to sendPrompt when provided", async () => {

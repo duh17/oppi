@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { PiMessage } from "./pi-events.js";
 import type {
   ChatAttachmentRef,
-  ImageAttachment,
   MessageQueueDraftItem,
   MessageQueueItem,
   MessageQueueKind,
@@ -32,23 +31,6 @@ export interface StartedQueueItem<T extends MessageQueueItem = MessageQueueItem>
 export type QueueStateMessage = Extract<ServerMessage, { type: "queue_state" }>;
 export type QueueItemStartedMessage = Extract<ServerMessage, { type: "queue_item_started" }>;
 
-function cloneImageAttachment(image: ImageAttachment): ImageAttachment {
-  return {
-    data: image.data,
-    mimeType: image.mimeType,
-  };
-}
-
-function cloneImageAttachments(
-  images: ImageAttachment[] | undefined,
-): ImageAttachment[] | undefined {
-  if (!images || images.length === 0) {
-    return undefined;
-  }
-
-  return images.map(cloneImageAttachment);
-}
-
 function cloneAttachmentRef(attachment: ChatAttachmentRef): ChatAttachmentRef {
   return {
     type: "attachment",
@@ -74,13 +56,11 @@ function cloneAttachmentRefs(
 }
 
 export function cloneQueueItem(item: MessageQueueItem): MessageQueueItem {
-  const images = cloneImageAttachments(item.images);
   const attachments = cloneAttachmentRefs(item.attachments);
   return {
     id: item.id,
     message: item.message,
     createdAt: item.createdAt,
-    ...(images ? { images } : {}),
     ...(attachments ? { attachments } : {}),
   };
 }
@@ -155,7 +135,6 @@ function parseQueueItems(value: unknown): MessageQueueItem[] | undefined {
           typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
             ? Math.trunc(record.createdAt)
             : Date.now(),
-        ...(Array.isArray(record.images) ? { images: record.images as ImageAttachment[] } : {}),
         ...(Array.isArray(record.attachments)
           ? { attachments: record.attachments as ChatAttachmentRef[] }
           : {}),
@@ -173,19 +152,20 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 export function queueImagesFromPromptImages(
   images: QueueImageContent[] | undefined,
-): ImageAttachment[] | undefined {
+): QueueImageContent[] | undefined {
   if (!images || images.length === 0) {
     return undefined;
   }
 
   return images.map((image) => ({
+    type: "image",
     data: image.data,
     mimeType: image.mimeType,
   }));
 }
 
 export function promptImagesFromQueue(
-  images: ImageAttachment[] | undefined,
+  images: QueueImageContent[] | undefined,
 ): QueueImageContent[] | undefined {
   if (!images || images.length === 0) {
     return undefined;
@@ -288,7 +268,6 @@ export function normalizeDraftItems(items: MessageQueueDraftItem[]): MessageQueu
     normalized.push({
       id: normalizeQueueId(item.id),
       message: normalizeQueueMessage(item.message),
-      images: cloneImageAttachments(item.images),
       attachments: cloneAttachmentRefs(item.attachments),
       createdAt:
         typeof item.createdAt === "number" && Number.isFinite(item.createdAt)
