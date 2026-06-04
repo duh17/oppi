@@ -43,6 +43,7 @@ import {
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { buildSessionSummary } from "../session-summary.js";
 import {
@@ -510,6 +511,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return session.status !== "stopped";
   }
 
+  function isOpenableManagedListSession(session: Session): boolean {
+    return !isPiTuiTaskRecordSession(session);
+  }
+
   function addCount(map: Map<string, number>, key: string, count: number): void {
     if (count <= 0) return;
     map.set(key, (map.get(key) ?? 0) + count);
@@ -606,7 +611,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId),
       workspaceId,
       {},
-    ).filter(isActiveListSession);
+    )
+      .filter(isOpenableManagedListSession)
+      .filter(isActiveListSession);
     return buildManagedSessionListRows(sessions, attention).sort(compareActiveSessionListRows);
   }
 
@@ -621,6 +628,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         timeRange.sinceMs,
         timeRange.untilMs,
       )
+      .filter(isOpenableManagedListSession)
       .filter(
         (session) =>
           session.status === "stopped" &&
@@ -655,9 +663,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const projectedSessions = ctx.storage
       .listWorkspaces()
       .flatMap((workspace) =>
-        recentDays > 0
+        (recentDays > 0
           ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspace.id, recentDays, serverNow)
-          : ctx.storage.listAllWorkspaceSessionSnapshots(workspace.id),
+          : ctx.storage.listAllWorkspaceSessionSnapshots(workspace.id)
+        ).filter(isOpenableManagedListSession),
       );
     const attention = collectPendingAttentionCounts();
     const sessions = buildManagedSessionListRows(

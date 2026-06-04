@@ -90,9 +90,11 @@ function makeRuntime(
 function connectBridge(
   runtime: PiTuiMirrorRuntime,
   options: {
+    bridgeId?: string;
     cwd?: string;
     workspaceId?: string | null;
-    sessionFile?: string;
+    piSessionId?: string;
+    sessionFile?: string | null;
     sessionName?: string;
   } = {},
 ): {
@@ -104,12 +106,14 @@ function connectBridge(
   ws.receive({
     type: "hello",
     protocolVersion: 1,
-    bridgeId: "bridge-1",
+    bridgeId: options.bridgeId ?? "bridge-1",
     ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
     cwd: options.cwd ?? "/tmp/oppi-mirror-test",
     state: {
-      piSessionId: "pi-1",
-      sessionFile: options.sessionFile ?? "/tmp/oppi-mirror-test/session.jsonl",
+      piSessionId: options.piSessionId ?? "pi-1",
+      ...(options.sessionFile === null
+        ? {}
+        : { sessionFile: options.sessionFile ?? "/tmp/oppi-mirror-test/session.jsonl" }),
       sessionName: options.sessionName,
     },
   });
@@ -188,6 +192,31 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1008);
+  });
+
+  it("does not register no-trace Pi Agent task records as openable mirror sessions", () => {
+    const { runtime, sessions } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-task",
+      cwd: "/tmp/oppi-mirror-test",
+      state: {
+        piSessionId: "pi-task",
+        sessionName: "general-purpose#738f21e6",
+      },
+    });
+
+    expect(ws.sent.at(-1)).toMatchObject({
+      type: "error",
+      code: "pi_tui_task_record_not_openable",
+      sessionName: "general-purpose#738f21e6",
+    });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(sessions.size).toBe(0);
   });
 
   it("reports oppi-runtime ownership conflicts as structured retryable bridge errors", () => {
@@ -612,6 +641,63 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
     expect(runtime.getActiveSession(sessionId)?.messageCount).toBe(1);
     expect(runtime.getActiveSession(sessionId)?.lastMessage).toBe("hello from phone");
+  });
+
+  it("does not route stale session commands after a bridge id is reused", async () => {
+    const { runtime } = makeRuntime();
+    const first = connectBridge(runtime, {
+      bridgeId: "bridge-reused",
+      piSessionId: "pi-first",
+      sessionFile: "/tmp/oppi-mirror-test/first.jsonl",
+      sessionName: "First terminal session",
+    });
+    const second = connectBridge(runtime, {
+      bridgeId: "bridge-reused",
+      piSessionId: "pi-second",
+      sessionFile: "/tmp/oppi-mirror-test/second.jsonl",
+      sessionName: "Second terminal session",
+    });
+
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(runtime.isSessionConnected(first.sessionId)).toBe(false);
+    expect(runtime.isSessionConnected(second.sessionId)).toBe(true);
+
+    await expect(
+      runtime.sendPrompt(first.sessionId, "must not reach second terminal", {
+        clientTurnId: "turn-stale",
+        requestId: "req-stale",
+        timestamp: Date.now(),
+      }),
+    ).rejects.toThrow("pi-tui is not connected");
+    expect(
+      second.ws.sent.some(
+        (message) =>
+          message.type === "command" &&
+          (message.command as { message?: string } | undefined)?.message ===
+            "must not reach second terminal",
+      ),
+    ).toBe(false);
+
+    const promptPromise = runtime.sendPrompt(second.sessionId, "reach second terminal", {
+      clientTurnId: "turn-second",
+      requestId: "req-second",
+      timestamp: Date.now(),
+    });
+    const command = await waitForLatestCommand(second.ws);
+    expect(command.command).toMatchObject({
+      type: "prompt",
+      message: "reach second terminal",
+      requestId: "req-second",
+      clientTurnId: "turn-second",
+    });
+
+    second.ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { queue: { version: 0, steering: [], followUp: [] } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
   });
 
   it("preserves returned queue state after remote abort", async () => {

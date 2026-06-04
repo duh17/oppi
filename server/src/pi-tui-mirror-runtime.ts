@@ -29,6 +29,7 @@ import {
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SessionAgentEventCoordinator } from "./session-agent-events.js";
 import { normalizeCommandError } from "./session-protocol.js";
+import { isPiTuiTaskRecordBridgeState } from "./pi-tui-session-classification.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
@@ -618,7 +619,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private connectedBridgeForSession(sessionId: string): BridgeConnection | undefined {
     const bridgeId = this.bridgeBySession.get(sessionId);
     const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
-    return connection?.ws.readyState === WebSocket.OPEN ? connection : undefined;
+    if (!connection || connection.ws.readyState !== WebSocket.OPEN) return undefined;
+    return connection.sessionId === sessionId ? connection : undefined;
   }
 
   private settleExtensionUIRequest(
@@ -710,6 +712,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     },
   ): Promise<void> {
     const active = this.requireActive(sessionId);
+    if (!this.connectedBridgeForSession(sessionId)) {
+      throw new Error("pi-tui is not connected");
+    }
     if (isMirrorReloadPrompt(message, opts)) {
       await this.dispatchBridgeCommand(sessionId, { type: "reload" });
       active.session.lastActivity = opts.timestamp;
@@ -734,6 +739,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       requestId?: string;
     },
   ): Promise<void> {
+    if (!this.connectedBridgeForSession(sessionId)) {
+      throw new Error("pi-tui is not connected");
+    }
     await this.inputCoordinator.sendSteer(sessionId, message, opts);
   }
 
@@ -747,6 +755,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       requestId?: string;
     },
   ): Promise<void> {
+    if (!this.connectedBridgeForSession(sessionId)) {
+      throw new Error("pi-tui is not connected");
+    }
     await this.inputCoordinator.sendFollowUp(sessionId, message, opts);
   }
 
@@ -779,10 +790,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   async stopSession(sessionId: string): Promise<void> {
-    const bridgeId = this.bridgeBySession.get(sessionId);
-    const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
+    const connection = this.connectedBridgeForSession(sessionId);
 
-    if (!connection || connection.ws.readyState !== WebSocket.OPEN) {
+    if (!connection) {
       throw new Error("pi-tui is not connected; stop it from the terminal");
     }
 
@@ -952,8 +962,22 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const bridgeId = hello.bridgeId?.trim() || `pi-tui-${process.pid}-${now}`;
     const workspace = this.resolveWorkspace(hello);
     const state = { ...hello.state, cwd: hello.state?.cwd ?? hello.cwd };
+    if (isPiTuiTaskRecordBridgeState(state)) {
+      throw new BridgeRegistrationError(
+        "Pi subagent task records are not openable mirror sessions because no trace file was reported",
+        "pi_tui_task_record_not_openable",
+        { sessionName: state.sessionName },
+      );
+    }
     const session = this.resolveOrCreateSession(workspace, state);
     const active = this.ensureActive(session);
+
+    const existingSameBridge = this.bridges.get(bridgeId);
+    if (existingSameBridge && existingSameBridge.sessionId !== session.id) {
+      existingSameBridge.ws.close(4000, "Mirror bridge id reused by a newer terminal session");
+      this.detachBridge(existingSameBridge, "replaced");
+      this.clearBridgeAliases(bridgeId, session.id, "replaced");
+    }
 
     const existingBridgeId = this.bridgeBySession.get(session.id);
     if (existingBridgeId) {
@@ -961,6 +985,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       existing?.ws.close(4000, "Mirror bridge replaced by a newer terminal connection");
       if (existing) this.detachBridge(existing, "replaced");
     }
+    this.clearBridgeAliases(bridgeId, session.id, "replaced");
 
     const connection: BridgeConnection = {
       bridgeId,
@@ -1263,6 +1288,32 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
   }
 
+  private clearBridgeAliases(bridgeId: string, keepSessionId: string, reason: string): void {
+    for (const [sessionId, mappedBridgeId] of [...this.bridgeBySession.entries()]) {
+      if (mappedBridgeId !== bridgeId || sessionId === keepSessionId) continue;
+      this.bridgeBySession.delete(sessionId);
+
+      const active = this.active.get(sessionId);
+      if (!active) continue;
+
+      const disconnectedAt = Date.now();
+      active.session.mirror = {
+        ...(active.session.mirror ?? { status: "disconnected" }),
+        status: "disconnected",
+        terminal: {
+          ...(active.session.mirror?.terminal ?? {}),
+          bridgeId,
+          disconnectedAt,
+          disconnectReason: reason,
+          lastSeenAt: disconnectedAt,
+        },
+      };
+      this.storage.saveSession(active.session);
+      this.broadcast(sessionId, { type: "state", session: active.session });
+      this.broadcastSessionSummaryIfChanged(active, `mirror_${reason}`);
+    }
+  }
+
   private resolveWorkspace(hello: PiBridgeHelloMessage): Workspace {
     const cwd = hello.cwd ?? hello.state?.cwd;
     if (hello.workspaceId) {
@@ -1560,6 +1611,13 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): Promise<unknown> {
     const bridgeId = this.bridgeBySession.get(sessionId);
     const connection = bridgeId ? this.bridges.get(bridgeId) : undefined;
+    if (connection && connection.sessionId !== sessionId) {
+      return Promise.reject(
+        new Error(
+          `pi-tui bridge session mismatch: requested ${sessionId}, bridge owns ${connection.sessionId}`,
+        ),
+      );
+    }
     return this.bridgeCommandDriver.dispatch(connection, command);
   }
 

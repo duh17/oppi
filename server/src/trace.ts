@@ -94,9 +94,10 @@ interface SessionEntry {
   provider?: string;
   modelId?: string;
   // branch_summary entries
-  // custom_message entries
+  // custom/custom_message entries
   customType?: string;
   content?: unknown;
+  data?: unknown;
   display?: boolean;
   details?: unknown;
   // session_info entries
@@ -230,6 +231,22 @@ export function buildSessionContext(
     visibleEntries = path;
   }
 
+  const visibleEntryIds = new Set(visibleEntries.map((entry) => entry.id));
+  const visibleEntryIndexes = new Map(entries.map((entry, index) => [entry.id, index]));
+  const supplementalCustomEntries = entries.filter(
+    (entry) =>
+      entry.type === "custom" &&
+      entry.customType === "subagents:record" &&
+      !visibleEntryIds.has(entry.id) &&
+      (entry.parentId === null || entry.parentId === undefined) &&
+      entry.display !== false,
+  );
+  if (supplementalCustomEntries.length > 0) {
+    visibleEntries = [...visibleEntries, ...supplementalCustomEntries].sort(
+      (a, b) => (visibleEntryIndexes.get(a.id) ?? 0) - (visibleEntryIndexes.get(b.id) ?? 0),
+    );
+  }
+
   // Convert visible entries to TraceEvents
   const events: TraceEvent[] = [];
 
@@ -297,6 +314,12 @@ export function buildSessionContext(
         }
         break;
 
+      case "custom": {
+        const event = formatCustomEntryEvent(entry, timestamp);
+        if (event) events.push(event);
+        break;
+      }
+
       // Skip non-renderable types (session, label, etc.)
       default:
         break;
@@ -315,6 +338,32 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
     type: "compaction",
     timestamp: entry.timestamp || new Date().toISOString(),
     text: `Context compacted${tokenInfo}: ${summaryText}`,
+  };
+}
+
+function formatCustomEntryEvent(entry: SessionEntry, timestamp: string): TraceEvent | undefined {
+  if (entry.display === false) return undefined;
+  if (entry.customType !== "subagents:record") return undefined;
+
+  const record = asRecord(entry.data);
+  if (!record) return undefined;
+
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  const type = typeof record.type === "string" ? record.type.trim() : "Agent";
+  const description = typeof record.description === "string" ? record.description.trim() : "";
+  const status = typeof record.status === "string" ? record.status.trim() : "recorded";
+  const result = typeof record.result === "string" ? record.result.trim() : "";
+
+  const titleParts = [type, id].filter((part) => part.length > 0).join(" ");
+  const lines = [`Subagent ${titleParts || "task"}: ${status}`];
+  if (description) lines.push(description);
+  if (result) lines.push("", result);
+
+  return {
+    id: entry.id,
+    type: "system",
+    timestamp,
+    text: lines.join("\n"),
   };
 }
 

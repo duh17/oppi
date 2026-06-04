@@ -318,6 +318,69 @@ describe("buildSessionContext", () => {
     expect(events.find((e) => e.text?.includes("hidden"))).toBeUndefined();
   });
 
+  it("renders Pi Agent subagent records as parent trace system events", () => {
+    const entries = [
+      msg("1", null, "user", "group these changes"),
+      entry("custom", "2", null, {
+        customType: "subagents:record",
+        data: {
+          id: "738f21e6-13e8-415",
+          type: "general-purpose",
+          description: "Review Apple diffs",
+          status: "completed",
+          result: "Proposed Apple commit groups",
+        },
+      }),
+      msg("3", "1", "assistant", "done"),
+    ];
+
+    const events = buildSessionContext(entries);
+    const custom = events.find((event) => event.id === "2");
+    expect(custom).toMatchObject({
+      type: "system",
+      text: expect.stringContaining("Subagent general-purpose 738f21e6-13e8-415: completed"),
+    });
+    expect(custom?.text).toContain("Review Apple diffs");
+    expect(custom?.text).toContain("Proposed Apple commit groups");
+  });
+
+  it("does not leak subagent records from an inactive branch", () => {
+    const entries = [
+      msg("1", null, "user", "review these changes"),
+      msg("2", "1", "assistant", "starting review"),
+      entry("custom", "custom-active", "2", {
+        customType: "subagents:record",
+        data: {
+          id: "active-agent",
+          type: "general-purpose",
+          description: "Active review",
+          status: "completed",
+          result: "Relevant result",
+        },
+      }),
+      msg("3", "custom-active", "assistant", "active branch done"),
+      msg("side-user", "1", "user", "try a different review"),
+      entry("custom", "custom-side", "side-user", {
+        customType: "subagents:record",
+        data: {
+          id: "side-agent",
+          type: "general-purpose",
+          description: "Inactive review",
+          status: "completed",
+          result: "Stale result",
+        },
+      }),
+      msg("side-assistant", "custom-side", "assistant", "inactive branch done"),
+    ];
+
+    const events = buildSessionContext(entries, { leafId: "3" });
+    expect(events.find((event) => event.id === "custom-active")).toBeDefined();
+    expect(events.find((event) => event.id === "custom-side")).toBeUndefined();
+    expect(events.map((event) => event.text ?? event.output ?? "").join("\n")).not.toContain(
+      "Stale result",
+    );
+  });
+
   it("handles toolResult with isError flag", () => {
     const entries = [
       msg("1", null, "user", "run broken"),
