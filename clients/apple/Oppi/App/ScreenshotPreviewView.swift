@@ -23,6 +23,8 @@ struct ScreenshotPreviewView: View {
             WorkspaceEditPreview()
         case "session-timeline":
             SessionTimelinePreview()
+        case "extension-widget":
+            ExtensionSurfacePreview()
         case "context-bar-overlap":
             ContextBarOverlapPreview()
         case "voice-message-expanded":
@@ -60,6 +62,57 @@ struct ScreenshotPreviewView: View {
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }
+    }
+}
+
+// MARK: - Extension Surface Preview
+
+private struct ExtensionSurfacePreview: View {
+    // This fixture exercises generic terminal fallback rendering for extension widgets.
+    // Keep the sample content generic so the screenshot does not imply bespoke native UI for one extension.
+    private static let surface = ExtensionSurfaceState(
+        title: "Pi extension UI",
+        statuses: ["tasks": "2 active tasks"],
+        widgets: [
+            "tasks": ExtensionWidgetState(
+                key: "tasks",
+                lines: [
+                    "● Tasks",
+                    "├─ ⠹ Audit native UI contract · ↻5≤30 · 5 tool uses · 33.8k tokens (62%) · 12.3s",
+                    "│    ⎿  reviewing Apple UI guardrails…",
+                    "├─ ✓ Validate terminal fallback · ↻3 · 3 tool uses · 12.4k tokens (100%) · 4.1s",
+                    "│    ⎿  screenshot captured",
+                    "└─ ◦ 1 queued",
+                ],
+                placement: "aboveEditor"
+            ),
+        ]
+    )
+
+    var body: some View {
+        ZStack {
+            Color.themeBg
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Extension surface")
+                        .font(.headline)
+                        .foregroundStyle(.themeFg)
+                    Text("Terminal snapshot rendered through Oppi's generic extension surface.")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                ExtensionSurfacePanel(surface: Self.surface)
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
+        }
+        .accessibilityIdentifier("screenshot.ready")
     }
 }
 

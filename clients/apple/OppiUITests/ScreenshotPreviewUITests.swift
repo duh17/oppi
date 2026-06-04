@@ -35,6 +35,17 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
+    func testExtensionWidgetPreview() throws {
+        launchPreview(screen: "extension-widget")
+
+        let title = app.staticTexts["Extension surface"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Extension surface title not found")
+        let tasksHeader = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Tasks")).firstMatch
+        XCTAssertTrue(tasksHeader.waitForExistence(timeout: 5), "Extension widget task header not visible")
+
+        saveScreenshot(name: "extension-widget")
+    }
+
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 
@@ -196,10 +207,17 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
     private func saveScreenshot(name: String) {
         let screenshot = app.screenshot()
+        let variant = ProcessInfo.processInfo.environment["SCREENSHOT_VARIANT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = if let variant, !variant.isEmpty {
+            "\(name)-\(variant)"
+        } else {
+            name
+        }
 
         // Attach to test results (visible in Xcode).
         let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = name
+        attachment.name = resolvedName
         attachment.lifetime = .keepAlways
         add(attachment)
 
@@ -209,7 +227,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
             atPath: dir,
             withIntermediateDirectories: true
         )
-        let path = "\(dir)/\(name).png"
+        let path = "\(dir)/\(resolvedName).png"
         try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: path))
     }
 }
