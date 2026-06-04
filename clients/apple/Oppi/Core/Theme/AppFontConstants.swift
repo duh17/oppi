@@ -16,15 +16,15 @@ enum AppFont {
     // (rebuild()) and read from @MainActor UI code. UIFont is immutable once
     // created, so a stale read during a font-preference transition is harmless.
 
-    /// 10pt — line numbers, counters, secondary labels
+    /// Code-small — line numbers, counters, secondary labels
     nonisolated(unsafe) static private(set) var monoSmall = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
     nonisolated(unsafe) static private(set) var monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
 
-    /// 11pt — code content, output text, ANSI terminal, language labels
+    /// Code-regular — code content, output text, ANSI terminal, language labels
     nonisolated(unsafe) static private(set) var mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     nonisolated(unsafe) static private(set) var monoBold = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
 
-    /// 12pt — code blocks, diff content, file paths, section headers
+    /// Code-medium — code blocks, diff content, file paths, section headers
     nonisolated(unsafe) static private(set) var monoMedium = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     nonisolated(unsafe) static private(set) var monoMediumBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
     nonisolated(unsafe) static private(set) var monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
@@ -59,15 +59,15 @@ enum AppFont {
     static func rebuild() {
         let family = FontPreferences.codeFont
 
-        monoSmall = family.font(size: 10, weight: .regular)
-        monoSmallSemibold = family.font(size: 10, weight: .semibold)
+        monoSmall = family.font(size: FontPreferences.codePointSize(baseSize: 10), weight: .regular)
+        monoSmallSemibold = family.font(size: FontPreferences.codePointSize(baseSize: 10), weight: .semibold)
 
-        mono = family.font(size: 11, weight: .regular)
-        monoBold = family.font(size: 11, weight: .bold)
+        mono = family.font(size: FontPreferences.codePointSize(baseSize: 11), weight: .regular)
+        monoBold = family.font(size: FontPreferences.codePointSize(baseSize: 11), weight: .bold)
 
-        monoMedium = family.font(size: 12, weight: .regular)
-        monoMediumBold = family.font(size: 12, weight: .bold)
-        monoMediumSemibold = family.font(size: 12, weight: .semibold)
+        monoMedium = family.font(size: FontPreferences.codePointSize(baseSize: 12), weight: .regular)
+        monoMediumBold = family.font(size: FontPreferences.codePointSize(baseSize: 12), weight: .bold)
+        monoMediumSemibold = family.font(size: FontPreferences.codePointSize(baseSize: 12), weight: .semibold)
 
         monoLarge = family.font(size: 15, weight: .regular)
         monoLargeSemibold = family.font(size: 15, weight: .semibold)
@@ -123,8 +123,10 @@ extension Font {
     /// 11pt regular — secondary captions
     static let appCaptionLight = Font.system(size: 11)
 
-    /// 11pt monospaced — raw/code content in SwiftUI views
-    static let appCaptionMono = Font.system(size: 11, design: .monospaced)
+    /// Configured monospaced — raw/code content in SwiftUI views
+    static var appCaptionMono: Font {
+        Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
+    }
 
     /// 12pt regular — workspace names, context labels
     static let appLabel = Font.system(size: 12)
@@ -140,8 +142,10 @@ extension Font {
     /// 15pt bold — primary send buttons
     static let appButton = Font.system(size: 15, weight: .bold)
 
-    /// 15pt bold monospaced — workspace home session list
-    static let appButtonMono = Font.system(size: 15, weight: .bold)
+    /// Configured bold monospaced — workspace home session list
+    static var appButtonMono: Font {
+        Font.system(size: FontPreferences.codePointSize(baseSize: 15), weight: .bold)
+    }
 
     // -- Settings / section headers --
 

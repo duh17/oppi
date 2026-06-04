@@ -278,6 +278,10 @@ enum ToolPresentationBuilder {
                 } else if let stats = ToolCallFormatting.editDiffStats(from: args) {
                     result.editAdded = stats.added
                     result.editRemoved = stats.removed
+                } else if let lines = ToolCallFormatting.editResultDiffLines(from: details) {
+                    let stats = DiffEngine.stats(lines)
+                    result.editAdded = stats.added
+                    result.editRemoved = stats.removed
                 } else {
                     result.editTrailingFallback = "modified"
                 }
@@ -413,22 +417,24 @@ enum ToolPresentationBuilder {
             }
 
         case "edit":
-            if !isError,
-               let editText = ToolCallFormatting.editOldAndNewText(from: args) {
+            if !isError {
+                let editText = ToolCallFormatting.editOldAndNewText(from: args)
                 if isDone {
                     let changes = ToolCallFormatting.editTextChanges(from: args)
                     let lines = ToolCallFormatting.editResultDiffLines(from: details) ?? changes.flatMap { change in
                         DiffEngine.compute(old: change.oldText, new: change.newText)
                     }
-                    // Use the raw file path (not displayFilePath) so downstream consumers
-                    // can fetch the file via API. Display views apply shortenedPath as needed.
-                    let diffPath = fileMetadata.filePath
-                        ?? ToolCallFormatting.displayFilePath(
-                            tool: normalizedTool, args: args, argsSummary: argsSummary
-                        )
-                    content = .diff(lines: lines, path: diffPath)
-                    copyOutput = DiffEngine.formatUnified(lines)
-                } else {
+                    if !lines.isEmpty {
+                        // Use the raw file path (not displayFilePath) so downstream consumers
+                        // can fetch the file via API. Display views apply shortenedPath as needed.
+                        let diffPath = fileMetadata.filePath
+                            ?? ToolCallFormatting.displayFilePath(
+                                tool: normalizedTool, args: args, argsSummary: argsSummary
+                            )
+                        content = .diff(lines: lines, path: diffPath)
+                        copyOutput = DiffEngine.formatUnified(lines)
+                    }
+                } else if let editText {
                     let streamingText = streamingEditText(from: editText)
                     if !streamingText.isEmpty {
                         copyOutput = streamingText
@@ -440,7 +446,8 @@ enum ToolPresentationBuilder {
                         )
                     }
                 }
-            } else if !outputTrimmed.isEmpty {
+            }
+            if content == nil, !outputTrimmed.isEmpty {
                 content = isDone
                     ? expandedFileCodeFallback(
                         text: outputTrimmed,

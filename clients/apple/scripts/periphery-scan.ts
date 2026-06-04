@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_SCHEMES = ["OppiUnitTests", "OppiMac"];
 const DEFAULT_REPORT_INCLUDES = ["Oppi/**/*.swift", "Shared/**/*.swift", "OppiMac/**/*.swift"];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 type Options = {
   json: boolean;
@@ -187,7 +189,7 @@ function main(): void {
   const cwd = process.cwd();
   const startedAt = new Date().toISOString();
   const timestamp = startedAt.replace(/[:.]/g, "-");
-  const defaultReportDir = resolve(cwd, ".pi/reports/periphery", timestamp);
+  const defaultReportDir = resolve(repoRoot, ".internal/reports/periphery", timestamp);
   mkdirSync(defaultReportDir, { recursive: true });
   const resultPath = options.writeResults
     ? resolve(cwd, options.writeResults)

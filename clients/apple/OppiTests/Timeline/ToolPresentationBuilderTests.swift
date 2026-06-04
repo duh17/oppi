@@ -38,6 +38,37 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.title == "ls -la")
         #expect(config.toolNamePrefix == "$")
+        #expect(config.preview == nil)
+        #expect(!config.isExpanded)
+    }
+
+    @Test("bash collapsed hides short output preview")
+    func bashCollapsedHidesShortOutputPreview() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: echo hello",
+            outputPreview: "hello\nworld",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string("echo hello")])
+        )
+
+        #expect(config.title == "echo hello")
+        #expect(config.preview == nil)
+        #expect(!config.isExpanded)
+    }
+
+    @Test("bash collapsed hides long output preview")
+    func bashCollapsedHidesLongOutputPreview() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: seq 1 10",
+            outputPreview: "1\n2\n3\n4",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string("seq 1 10")])
+        )
+
+        #expect(config.title == "seq 1 10")
+        #expect(config.preview == nil)
         #expect(!config.isExpanded)
     }
 
@@ -526,6 +557,66 @@ struct ToolPresentationBuilderTests {
             return
         }
         #expect(!lines.isEmpty)
+    }
+
+    @Test("patch-only edit collapsed shows result diff stats")
+    func patchOnlyEditCollapsedWithResultDiff() {
+        let details: JSONValue = .object([
+            "diff": .string("""
+            File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift
+            - 126     static let appCaptionMono = Font.system(size: 11, design: .monospaced)
+            + 126     static var appCaptionMono: Font {
+            + 127         Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
+            + 128     }
+            """),
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "edit",
+            argsSummary: "patch: *** Begin Patch",
+            outputPreview: "Applied patch with 1 operation(s).",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["patch": .string("*** Begin Patch\n*** Update File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift\n*** End Patch")],
+                details: details
+            )
+        )
+
+        #expect(config.editAdded == 3)
+        #expect(config.editRemoved == 1)
+    }
+
+    @Test("patch-only edit expanded shows result diff lines")
+    func patchOnlyEditExpandedWithResultDiff() {
+        let details: JSONValue = .object([
+            "diff": .string("""
+            File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift
+            - 126     static let appCaptionMono = Font.system(size: 11, design: .monospaced)
+            + 126     static var appCaptionMono: Font {
+            + 127         Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
+            + 128     }
+            """),
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "edit",
+            argsSummary: "patch: *** Begin Patch",
+            outputPreview: "Applied patch with 1 operation(s).",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["patch": .string("*** Begin Patch\n*** Update File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift\n*** End Patch")],
+                details: details,
+                expanded: ["t1"]
+            )
+        )
+
+        #expect(config.isExpanded)
+        guard case .diff(let lines, _) = config.expandedContent else {
+            Issue.record("Expected .diff content")
+            return
+        }
+        #expect(lines.filter { $0.kind == .added }.count == 3)
+        #expect(lines.filter { $0.kind == .removed }.count == 1)
     }
 
     // MARK: - Write

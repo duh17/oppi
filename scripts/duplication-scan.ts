@@ -81,7 +81,7 @@ const argv = process.argv.slice(2);
 const argSet = new Set(argv);
 
 function usage(): string {
-  return `Usage: bun scripts/duplication-scan.ts [options]\n\nSingle duplication and Apple UI guardrail check for Oppi. Generates a generic\ncopy/paste report with jscpd, then runs the bespoke Apple architecture guardrails\nin the same command.\n\nOptions:\n  --include-tests     Also scan Apple and server test targets with looser thresholds\n  --fail-on-clones    Exit 1 when any configured jscpd scan reports clones\n  --output <path>     Report directory, relative to repo root by default\n                     (default: .pi/reports/duplication-scan)\n  --verbose           Print jscpd stdout/stderr for each pass\n  --help              Show this help\n`;
+  return `Usage: bun scripts/duplication-scan.ts [options]\n\nSingle duplication and Apple UI guardrail check for Oppi. Generates a generic\ncopy/paste report with jscpd, then runs the bespoke Apple architecture guardrails\nin the same command.\n\nOptions:\n  --include-tests     Also scan Apple and server test targets with looser thresholds\n  --fail-on-clones    Exit 1 when any configured jscpd scan reports clones\n  --output <path>     Report directory, relative to repo root by default\n                     (default: .internal/reports/duplication-scan)\n  --verbose           Print jscpd stdout/stderr for each pass\n  --help              Show this help\n`;
 }
 
 function argValue(name: string, fallback: string): string {
@@ -104,16 +104,16 @@ if (argSet.has("--help") || argSet.has("-h")) {
 const includeTests = argSet.has("--include-tests");
 const failOnClones = argSet.has("--fail-on-clones");
 const verbose = argSet.has("--verbose");
-const outputArg = argValue("--output", ".pi/reports/duplication-scan");
+const outputArg = argValue("--output", ".internal/reports/duplication-scan");
 const outputRoot = isAbsolute(outputArg) ? outputArg : join(repoRoot, outputArg);
-const reportsRoot = join(repoRoot, ".pi/reports");
+const reportsRoot = join(repoRoot, ".internal/reports");
 const relativeOutputRoot = relative(resolve(reportsRoot), resolve(outputRoot));
 if (
   relativeOutputRoot === "" ||
   relativeOutputRoot.startsWith("..") ||
   isAbsolute(relativeOutputRoot)
 ) {
-  throw new Error("--output must be a child directory of .pi/reports");
+  throw new Error("--output must be a child directory of .internal/reports");
 }
 const markdownPath = join(dirname(outputRoot), "duplication-scan.md");
 

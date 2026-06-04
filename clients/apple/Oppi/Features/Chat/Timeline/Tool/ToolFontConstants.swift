@@ -3,17 +3,16 @@ import UIKit
 /// Shared monospaced font constants for tool timeline rows.
 ///
 /// Uses computed properties so values update when font preferences change.
-/// iPad gets one extra point for dense tool output: Apple HIG typography
-/// guidance recommends default iOS/iPadOS body text at 17pt, minimum text at
-/// 11pt, and larger sizes when testing shows small text is hard to read.
+/// iPad gets one extra point for dense tool output, and the user can choose
+/// compact/standard/comfortable/large code sizes in Settings.
 enum ToolFont {
-    /// Small: line numbers, counters, secondary labels (10pt; 11pt on iPad)
+    /// Small: line numbers, counters, secondary labels
     static var small: UIFont { font(baseSize: 10, weight: .regular) }
     static var smallBold: UIFont { font(baseSize: 10, weight: .semibold) }
-    /// Regular: code content, output text, expanded labels (11pt; 12pt on iPad)
+    /// Regular: code content, output text, expanded labels
     static var regular: UIFont { font(baseSize: 11, weight: .regular) }
     static var regularBold: UIFont { font(baseSize: 11, weight: .bold) }
-    /// Title: section headers, tool names (12pt; 13pt on iPad)
+    /// Title: section headers, tool names
     static var title: UIFont { font(baseSize: 12, weight: .semibold) }
     static var titleRegular: UIFont { font(baseSize: 12, weight: .regular) }
 
@@ -33,6 +32,6 @@ enum ToolFont {
     }
 
     static func pointSize(baseSize: CGFloat, idiom: UIUserInterfaceIdiom = currentIdiom) -> CGFloat {
-        idiom == .pad ? baseSize + 1 : baseSize
+        FontPreferences.codePointSize(baseSize: baseSize, idiom: idiom)
     }
 }

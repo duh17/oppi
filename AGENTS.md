@@ -70,7 +70,7 @@ After code changes, run the relevant checks and fix all errors before finishing.
 - Server and Apple protocol updates are one change. Do not land one side without the other.
 - Do not reintroduce workspace-scoped WebSocket list fanout for normal navigation without proving it beats the current HTTP snapshot path.
 - Do not read `~/.pi/agent/sessions/*.jsonl` on workspace navigation hot paths; use the local-session catalog and SQLite projections.
-- Keep repo-private working artifacts in `.pi/` (`reports/`, `research/`, `diagrams/`). Reserve `docs/` for curated public docs.
+- Keep durable repo-private working artifacts in `.internal/` (`reports/`, `research/`, `diagrams/`). Keep `.pi/` for runtime/session state and reusable local agent inputs such as todos, attachments, prompts, worktrees, and temporary caches. Reserve `docs/` for curated public docs.
 
 ## Complexity Guardrails
 

@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var cacheSizeText: String?
     @State private var telemetryEnabled = AppPreferences.Telemetry.isEnabled
     @State private var selectedCodeFont = FontPreferences.codeFont
+    @State private var selectedCodeFontSize = FontPreferences.codeFontSize
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
     @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
@@ -110,6 +111,20 @@ struct SettingsView: View {
                 .onChange(of: selectedCodeFont) { _, newValue in
                     FontPreferences.setCodeFont(newValue)
                 }
+
+                Picker("Code Text Size", selection: $selectedCodeFontSize) {
+                    ForEach(FontPreferences.CodeFontSize.allCases) { size in
+                        Text(size.displayName)
+                            .tag(size)
+                    }
+                }
+                .onChange(of: selectedCodeFontSize) { _, newValue in
+                    FontPreferences.setCodeFontSize(newValue)
+                }
+
+                Text(selectedCodeFontSize.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
 
                 Toggle("Monospaced messages", isOn: $useMonoMessages)
                     .onChange(of: useMonoMessages) { _, newValue in

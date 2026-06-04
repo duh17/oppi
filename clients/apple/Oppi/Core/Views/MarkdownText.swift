@@ -1118,8 +1118,7 @@ enum FlatSegment: Sendable {
             switch block {
             case .codeBlock(_, let code):
                 let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
-                let codeSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
-                let codeFont = FontPreferences.codeFont.font(size: codeSize, weight: .regular)
+                let codeFont = Self.monospacedFont(forTextStyle: .subheadline, baseSize: 12)
                 result.append(NSAttributedString(string: trimmed, attributes: [
                     .font: codeFont,
                     .foregroundColor: UIColor(palette.mdCode),
@@ -1133,8 +1132,7 @@ enum FlatSegment: Sendable {
                 ]))
 
             case .table(let headers, let rows):
-                let codeSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
-                let codeFont = FontPreferences.codeFont.font(size: codeSize, weight: .regular)
+                let codeFont = Self.monospacedFont(forTextStyle: .subheadline, baseSize: 12)
                 var lines: [String] = []
                 let headerTexts = headers.map { plainText(from: $0) }
                 lines.append(headerTexts.joined(separator: " | "))
@@ -1543,8 +1541,11 @@ enum FlatSegment: Sendable {
     }
 
     private static func monospacedFont(forTextStyle style: UIFont.TextStyle) -> UIFont {
-        let size = UIFont.preferredFont(forTextStyle: style).pointSize
-        return FontPreferences.codeFont.font(size: size, weight: .regular)
+        monospacedFont(forTextStyle: style, baseSize: style == .caption1 ? 11 : 12)
+    }
+
+    private static func monospacedFont(forTextStyle style: UIFont.TextStyle, baseSize: CGFloat) -> UIFont {
+        FontPreferences.scaledCodeFont(baseSize: baseSize, textStyle: style)
     }
 
     /// Body font bumped one point for list items (Dynamic Type aware).

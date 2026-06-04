@@ -211,6 +211,75 @@ struct FontPreferencesTests {
         #expect(FontPreferences.useMonoForMessages == false)
     }
 
+    @Test func setCodeFontSizePersists() {
+        let original = FontPreferences.codeFontSize
+        defer { FontPreferences.setCodeFontSize(original) }
+
+        FontPreferences.setCodeFontSize(.compact)
+        #expect(FontPreferences.codeFontSize == .compact)
+
+        FontPreferences.setCodeFontSize(.comfortable)
+        #expect(FontPreferences.codeFontSize == .comfortable)
+    }
+
+    @Test func codePointSizeRespectsPlatformAndPreference() {
+        let original = FontPreferences.codeFontSize
+        defer { FontPreferences.setCodeFontSize(original) }
+
+        FontPreferences.setCodeFontSize(.compact)
+        #expect(FontPreferences.codePointSize(baseSize: 10, idiom: .phone) == 11)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 11)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .pad) == 12)
+
+        FontPreferences.setCodeFontSize(.standard)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 12)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .pad) == 13)
+
+        FontPreferences.setCodeFontSize(.large)
+        #expect(FontPreferences.codePointSize(baseSize: 11, idiom: .phone) == 16)
+        #expect(FontPreferences.codePointSize(baseSize: 12, idiom: .pad) == 18)
+    }
+
+    @Test func scaledCodeFontKeepsPreferenceAndDynamicType() {
+        let originalFamily = FontPreferences.codeFont
+        let originalSize = FontPreferences.codeFontSize
+        defer {
+            FontPreferences.setCodeFont(originalFamily)
+            FontPreferences.setCodeFontSize(originalSize)
+        }
+
+        let defaultTrait = UITraitCollection(preferredContentSizeCategory: .large)
+        let accessibilityTrait = UITraitCollection(
+            preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge
+        )
+
+        FontPreferences.setCodeFont(.system)
+        FontPreferences.setCodeFontSize(.compact)
+        let compactDefault = FontPreferences.scaledCodeFont(
+            baseSize: 11,
+            textStyle: .subheadline,
+            idiom: .phone,
+            compatibleWith: defaultTrait
+        )
+
+        FontPreferences.setCodeFontSize(.large)
+        let largeDefault = FontPreferences.scaledCodeFont(
+            baseSize: 11,
+            textStyle: .subheadline,
+            idiom: .phone,
+            compatibleWith: defaultTrait
+        )
+        let largeAccessibility = FontPreferences.scaledCodeFont(
+            baseSize: 11,
+            textStyle: .subheadline,
+            idiom: .phone,
+            compatibleWith: accessibilityTrait
+        )
+
+        #expect(largeDefault.pointSize > compactDefault.pointSize)
+        #expect(largeAccessibility.pointSize > largeDefault.pointSize)
+    }
+
     // MARK: - Notification
 
     @Test func setCodeFontPostsNotification() async {
@@ -249,6 +318,24 @@ struct FontPreferencesTests {
         }
         #expect(received)
     }
+
+    @Test func setCodeFontSizePostsNotification() async {
+        let original = FontPreferences.codeFontSize
+        defer { FontPreferences.setCodeFontSize(original) }
+
+        let expectation = NotificationCenter.default.notifications(
+            named: FontPreferences.didChangeNotification
+        )
+
+        FontPreferences.setCodeFontSize(.large)
+
+        var received = false
+        for await _ in expectation {
+            received = true
+            break
+        }
+        #expect(received)
+    }
 }
 
 // MARK: - AppFont rebuild
@@ -259,19 +346,23 @@ struct AppFontRebuildTests {
 
     @Test func rebuildSetsMonoFonts() {
         let originalFamily = FontPreferences.codeFont
-        defer { FontPreferences.setCodeFont(originalFamily) }
+        let originalSize = FontPreferences.codeFontSize
+        defer {
+            FontPreferences.setCodeFont(originalFamily)
+            FontPreferences.setCodeFontSize(originalSize)
+        }
 
         // Switch to system and rebuild
         FontPreferences.setCodeFont(.system)
+        FontPreferences.setCodeFontSize(.standard)
 
-        // After rebuild, all mono constants should be 11pt (mono) or their designated sizes.
-        #expect(AppFont.mono.pointSize == 11)
-        #expect(AppFont.monoBold.pointSize == 11)
-        #expect(AppFont.monoSmall.pointSize == 10)
-        #expect(AppFont.monoSmallSemibold.pointSize == 10)
-        #expect(AppFont.monoMedium.pointSize == 12)
-        #expect(AppFont.monoMediumBold.pointSize == 12)
-        #expect(AppFont.monoMediumSemibold.pointSize == 12)
+        #expect(AppFont.mono.pointSize >= 12)
+        #expect(AppFont.monoBold.pointSize == AppFont.mono.pointSize)
+        #expect(AppFont.monoSmall.pointSize >= 11)
+        #expect(AppFont.monoSmallSemibold.pointSize == AppFont.monoSmall.pointSize)
+        #expect(AppFont.monoMedium.pointSize == AppFont.mono.pointSize + 1)
+        #expect(AppFont.monoMediumBold.pointSize == AppFont.monoMedium.pointSize)
+        #expect(AppFont.monoMediumSemibold.pointSize == AppFont.monoMedium.pointSize)
         #expect(AppFont.monoLarge.pointSize == 15)
         #expect(AppFont.monoLargeSemibold.pointSize == 15)
         #expect(AppFont.monoXL.pointSize == 17)
@@ -279,14 +370,19 @@ struct AppFontRebuildTests {
 
     @Test func rebuildWithBundledFontChangesMonoConstants() {
         let originalFamily = FontPreferences.codeFont
-        defer { FontPreferences.setCodeFont(originalFamily) }
+        let originalSize = FontPreferences.codeFontSize
+        defer {
+            FontPreferences.setCodeFont(originalFamily)
+            FontPreferences.setCodeFontSize(originalSize)
+        }
 
         // Switch to a bundled font
         FontPreferences.setCodeFont(.firaCode)
+        FontPreferences.setCodeFontSize(.standard)
 
-        // Point sizes should remain the same regardless of family
-        #expect(AppFont.mono.pointSize == 11)
-        #expect(AppFont.monoMedium.pointSize == 12)
+        // Point sizes should follow the selected size regardless of family.
+        #expect(AppFont.mono.pointSize >= 12)
+        #expect(AppFont.monoMedium.pointSize == AppFont.mono.pointSize + 1)
         #expect(AppFont.monoLarge.pointSize == 15)
     }
 
@@ -336,25 +432,38 @@ struct AppFontRebuildTests {
 @MainActor
 struct ToolFontPlatformSizingTests {
     @Test func phoneKeepsCompactToolFontSizes() {
-        #expect(ToolFont.pointSize(baseSize: 10, idiom: .phone) == 10)
+        let originalSize = FontPreferences.codeFontSize
+        defer { FontPreferences.setCodeFontSize(originalSize) }
+
+        FontPreferences.setCodeFontSize(.compact)
+        #expect(ToolFont.pointSize(baseSize: 10, idiom: .phone) == 11)
         #expect(ToolFont.pointSize(baseSize: 11, idiom: .phone) == 11)
         #expect(ToolFont.pointSize(baseSize: 12, idiom: .phone) == 12)
     }
 
     @Test func padIncreasesToolFontSizesByOnePoint() {
+        let originalSize = FontPreferences.codeFontSize
+        defer { FontPreferences.setCodeFontSize(originalSize) }
+
+        FontPreferences.setCodeFontSize(.compact)
         #expect(ToolFont.pointSize(baseSize: 10, idiom: .pad) == 11)
         #expect(ToolFont.pointSize(baseSize: 11, idiom: .pad) == 12)
         #expect(ToolFont.pointSize(baseSize: 12, idiom: .pad) == 13)
     }
 
-    @Test func padRegularToolOutputFontUsesTwelvePoints() {
+    @Test func padRegularToolOutputFontUsesConfiguredStandardSize() {
         let originalFamily = FontPreferences.codeFont
-        defer { FontPreferences.setCodeFont(originalFamily) }
+        let originalSize = FontPreferences.codeFontSize
+        defer {
+            FontPreferences.setCodeFont(originalFamily)
+            FontPreferences.setCodeFontSize(originalSize)
+        }
 
         FontPreferences.setCodeFont(.system)
+        FontPreferences.setCodeFontSize(.standard)
 
         let font = ToolFont.font(baseSize: 11, weight: .regular, idiom: .pad)
 
-        #expect(font.pointSize == 12)
+        #expect(font.pointSize == 13)
     }
 }

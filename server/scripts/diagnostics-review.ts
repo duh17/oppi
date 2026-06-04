@@ -110,7 +110,7 @@ function defaultReportPath(): string {
     .toISOString()
     .replaceAll(":", "")
     .replace(/\.\d{3}Z$/, "Z");
-  return join(repoRoot, ".pi", "reports", `diagnostics-${stamp}.md`);
+  return join(repoRoot, ".internal", "reports", `diagnostics-${stamp}.md`);
 }
 
 function externalCommands(
@@ -184,13 +184,13 @@ function printHelp(): void {
 
   bun server/scripts/diagnostics-review.ts
   bun server/scripts/diagnostics-review.ts --days 3 --external
-  bun server/scripts/diagnostics-review.ts --out .pi/reports/diagnostics.md
+  bun server/scripts/diagnostics-review.ts --out .internal/reports/diagnostics.md
 
 Options:
   --data-dir <path>       Oppi data dir (default: ~/.config/oppi)
   --days <n>              Days to include (default: 1)
   --limit <n>             Top/recent rows for subreports (default: 20)
-  --out <path>            Markdown report path (default: .pi/reports/diagnostics-*.md)
+  --out <path>            Markdown report path (default: .internal/reports/diagnostics-*.md)
   --external              Include Sentry and App Store Connect if configured
   --json                  Print command result metadata as JSON
   --help                  Show this help

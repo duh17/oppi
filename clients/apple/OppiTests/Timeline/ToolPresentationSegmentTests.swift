@@ -102,13 +102,30 @@ struct ToolPresentationSegmentTests {
     @Test func errorResultSegmentsShowErrorStyle() {
         let config = buildConfig(
             tool: "bash",
+            argsSummary: "sudo -n true",
             isError: true,
             resultSegments: [
-                StyledSegment(text: "exit 127", style: .error),
+                StyledSegment(text: "Block sudo: Privilege escalation is blocked.", style: .error),
             ]
         )
+        #expect(config.title.contains("sudo -n true"))
+        #expect(config.preview == nil)
         #expect(config.segmentAttributedTrailing != nil)
-        #expect(config.segmentAttributedTrailing!.string == "exit 127")
+        #expect(config.segmentAttributedTrailing!.string == "Block sudo: Privilege escalation is blocked.")
+    }
+
+    @Test func multiLineBashResultSegmentsStayTrailingOnly() {
+        let config = buildConfig(
+            tool: "bash",
+            argsSummary: "printf lines",
+            resultSegments: [
+                StyledSegment(text: "line 1\nline 2", style: .muted),
+            ]
+        )
+
+        #expect(config.preview == nil)
+        #expect(config.segmentAttributedTrailing != nil)
+        #expect(config.segmentAttributedTrailing!.string == "line 1\nline 2")
     }
 
     // MARK: - Extension Tool (unknown to hardcoded renderer)
