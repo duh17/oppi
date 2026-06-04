@@ -823,6 +823,39 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
       status: "ready",
     });
   });
+
+  it("resumes ready disconnected mirror sessions as oppi imported sessions", async () => {
+    const mock = createMockContext();
+    const mirrorSession = makeSession({
+      id: "sess-1",
+      workspaceId: "ws-1",
+      runtime: "pi-tui",
+      mirror: { status: "disconnected" },
+      status: "ready",
+      piSessionFile: "/tmp/ready-mirror.jsonl",
+    });
+    mock.storage.getSession.mockReturnValue(mirrorSession);
+    mock.piTuiRuntime.isSessionConnected.mockReturnValue(false);
+    mock.sessions.startSession.mockResolvedValue(
+      makeSession({ id: "sess-1", workspaceId: "ws-1", runtime: "oppi", status: "ready" }),
+    );
+
+    await dispatchResume(mock);
+
+    expect(mock.storage.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sess-1", runtime: "oppi", mirror: undefined }),
+    );
+    expect(mock.sessions.startSession).toHaveBeenCalledWith(
+      "sess-1",
+      expect.objectContaining({ id: "ws-1" }),
+    );
+    expect(mock.responses).toHaveLength(1);
+    expect((mock.responses[0]!.data as { session: Session }).session).toMatchObject({
+      id: "sess-1",
+      runtime: "oppi",
+      status: "ready",
+    });
+  });
 });
 
 describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {

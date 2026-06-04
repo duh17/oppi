@@ -323,6 +323,34 @@ describe("BoundSessionStreamMux", () => {
     expect(sessionMap.get("sess-stopped-mirror")?.mirror).toBeUndefined();
   });
 
+  it("resumes a ready disconnected mirror session as an oppi imported session", async () => {
+    const session = {
+      ...makeSession("sess-ready-mirror", "w1"),
+      status: "ready" as const,
+      runtime: "pi-tui" as const,
+      mirror: { status: "disconnected" as const },
+      piSessionFile: "/tmp/ready-session.jsonl",
+    };
+    const { ctx, sessionMap, runtimeOverrides } = createMockContext([session]);
+    const mirrorSubscribe = vi.fn(() => () => {});
+    runtimeOverrides.set("sess-ready-mirror", {
+      getActiveSession: () => session,
+      getCurrentSeq: () => 7,
+      isSessionConnected: () => false,
+      subscribe: mirrorSubscribe,
+    });
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-ready-mirror", ws as unknown as WebSocket);
+    await drain();
+
+    expect(ctx.sessions.startSession).toHaveBeenCalledWith("sess-ready-mirror", undefined);
+    expect(mirrorSubscribe).not.toHaveBeenCalled();
+    expect(sessionMap.get("sess-ready-mirror")?.runtime).toBe("oppi");
+    expect(sessionMap.get("sess-ready-mirror")?.mirror).toBeUndefined();
+  });
+
   it("keeps a mirror-bound stream open when the live bridge disconnects", async () => {
     const session = { ...makeSession("sess-live-mirror", "w1"), runtime: "pi-tui" as const };
     const { ctx, runtimeOverrides } = createMockContext([session]);

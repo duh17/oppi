@@ -7,7 +7,8 @@ export function mirrorSessionResumeFile(session: Session): string | undefined {
 export function canResumeStoppedMirrorAsOppi(session: Session, mirrorConnected: boolean): boolean {
   return (
     session.runtime === "pi-tui" &&
-    session.status === "stopped" &&
+    (session.status === "stopped" || session.status === "ready") &&
+    session.mirror?.status === "disconnected" &&
     !mirrorConnected &&
     mirrorSessionResumeFile(session) !== undefined
   );
