@@ -577,13 +577,7 @@ struct WorkspaceDetailView: View {
         .task(id: workspace.id) {
             // Start git status immediately so the context bar does not wait for
             // the workspace session-list refresh.
-            if let api = apiClient {
-                gitStatusStore.loadInitial(
-                    workspaceId: workspace.id,
-                    apiClient: api,
-                    gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
-                )
-            }
+            refreshGitStatusContextBar()
 
             await refreshWorkspaceData()
             await autoCreateE2ESessionIfRequested()
@@ -1129,10 +1123,23 @@ struct WorkspaceDetailView: View {
         let path = hasPresentedWorkspaceOnce ? "return_from_chat" : "open"
         beginWorkspaceLoadIfNeeded(path: path)
         hasPresentedWorkspaceOnce = true
+        refreshGitStatusContextBar()
 
         if workspaceLoad?.hadImmediateContent == true {
             scheduleWorkspaceLoadCompletionCheck()
         }
+    }
+
+    @MainActor
+    private func refreshGitStatusContextBar() {
+        // GitStatusStore is connection-scoped, so returning from a chat can leave
+        // the workspace list showing the last pushed status until REST refreshes it.
+        guard let api = apiClient else { return }
+        gitStatusStore.loadInitial(
+            workspaceId: workspace.id,
+            apiClient: api,
+            gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
+        )
     }
 
     @MainActor
