@@ -24,6 +24,7 @@ import {
   renderToolTuiResultSnapshot,
   shouldAttachToolTuiRenderSnapshot,
 } from "./tool-tui-renderer.js";
+import { normalizeMutationToolName } from "./tool-mutations.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState
@@ -243,7 +244,7 @@ export class SessionAgentEventCoordinator {
       return false;
     }
 
-    const toolName = typeof event.toolName === "string" ? event.toolName.toLowerCase() : "";
+    const toolName = normalizeMutationToolName(event.toolName);
     return SessionAgentEventCoordinator.CHANGE_SUMMARY_TOOL_NAMES.has(toolName);
   }
 
