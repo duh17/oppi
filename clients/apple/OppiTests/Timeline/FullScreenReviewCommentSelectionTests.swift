@@ -23,6 +23,43 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {
+        let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
+        let body = NativeFullScreenCodeBody(
+            content: longLine + "\nlet done = true",
+            language: "swift",
+            startLine: 10,
+            palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderPreferences(wrapsText: true),
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 180, height: 300))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let codeView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("wrap-me-")
+        })
+        let gutterView = try #require(timelineAllTextViews(in: body).first {
+            $0 !== codeView && timelineRenderedText(of: $0).contains("10")
+        })
+        let gutterRows = timelineRenderedText(of: gutterView).components(separatedBy: "\n")
+
+        #expect(codeView.textContainer.lineBreakMode == .byCharWrapping)
+        #expect(gutterRows.first == "10")
+        #expect(gutterRows.contains(""))
+        #expect(gutterRows.last == "11")
+        #expect((gutterRows.firstIndex(of: "11") ?? 0) > 1)
+    }
+
     @Test func diffBodyKeepsSelectableTextWhileRichRenderBuilds() throws {
         let controller = makeController(
             content: .diff(

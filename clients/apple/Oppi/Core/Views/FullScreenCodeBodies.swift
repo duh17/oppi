@@ -23,7 +23,15 @@ final class NativeFullScreenCodeBody: UIView {
     private var gutterWidthConstraint: NSLayoutConstraint?
     private var contentContainerWidthConstraint: NSLayoutConstraint?
     private var highlightedSourceText: NSAttributedString?
+    private var lastGutterLayoutSignature: GutterLayoutSignature?
     private var highlightTask: Task<Void, Never>?
+
+    private struct GutterLayoutSignature: Equatable {
+        let wrapsText: Bool
+        let codeTextWidth: Int
+        let fontPointSize: CGFloat
+        let contentLength: Int
+    }
 
     init(
         content: String,
@@ -56,6 +64,9 @@ final class NativeFullScreenCodeBody: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        scrollView.layoutIfNeeded()
+        contentContainer.layoutIfNeeded()
+        updateGutterForCurrentLayout()
     }
 
     private func setup() {
@@ -200,6 +211,7 @@ final class NativeFullScreenCodeBody: UIView {
                 font: font
             )
         }
+        invalidateGutterLayout()
     }
 
     private func applyWrapMode() {
@@ -215,6 +227,119 @@ final class NativeFullScreenCodeBody: UIView {
         if wraps {
             scrollView.contentOffset.x = -scrollView.adjustedContentInset.left
         }
+        invalidateGutterLayout()
+    }
+
+    private func invalidateGutterLayout() {
+        lastGutterLayoutSignature = nil
+        setNeedsLayout()
+    }
+
+    private func updateGutterForCurrentLayout() {
+        let signature = GutterLayoutSignature(
+            wrapsText: readerPreferences.wrapsText,
+            codeTextWidth: Int(codeTextView.bounds.width.rounded(.toNearestOrAwayFromZero)),
+            fontPointSize: codeFont.pointSize,
+            contentLength: (content as NSString).length
+        )
+        guard signature != lastGutterLayoutSignature else { return }
+        lastGutterLayoutSignature = signature
+
+        let gutterText = readerPreferences.wrapsText
+            ? wrappedLineNumberText()
+            : lineNumberInfo(lineCount: lineCount, startLine: startLine, font: codeFont).numbers
+        if gutterView.text != gutterText {
+            gutterView.text = gutterText
+        }
+    }
+
+    private func wrappedLineNumberText() -> String {
+        // Wrapped source lines can occupy multiple visual rows. Keep the
+        // logical line number on the first row and leave continuation rows blank.
+        guard codeTextView.bounds.width > 0 else {
+            return lineNumberInfo(lineCount: lineCount, startLine: startLine, font: codeFont).numbers
+        }
+
+        let insets = codeTextView.textContainerInset
+        let textContainerWidth = max(0, codeTextView.bounds.width - insets.left - insets.right)
+        if textContainerWidth > 0 {
+            codeTextView.textContainer.size = CGSize(
+                width: textContainerWidth,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        }
+
+        let layoutManager = codeTextView.layoutManager
+        layoutManager.ensureLayout(for: codeTextView.textContainer)
+
+        let source = content as NSString
+        let lineRanges = logicalLineContentRanges(in: source)
+        var gutterRows: [String] = []
+        gutterRows.reserveCapacity(max(lineRanges.count, lineCount))
+
+        for (offset, range) in lineRanges.enumerated() {
+            gutterRows.append(String(startLine + offset))
+            let continuationRows = max(
+                0,
+                visualFragmentCount(for: range, layoutManager: layoutManager) - 1
+            )
+            if continuationRows > 0 {
+                gutterRows.append(contentsOf: repeatElement("", count: continuationRows))
+            }
+        }
+
+        return gutterRows.joined(separator: "\n")
+    }
+
+    private func logicalLineContentRanges(in source: NSString) -> [NSRange] {
+        guard source.length > 0 else { return [NSRange(location: 0, length: 0)] }
+
+        var ranges: [NSRange] = []
+        var location = 0
+        while location < source.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            source.getLineStart(
+                nil,
+                end: &lineEnd,
+                contentsEnd: &contentsEnd,
+                for: NSRange(location: location, length: 0)
+            )
+            ranges.append(NSRange(location: location, length: max(0, contentsEnd - location)))
+            guard lineEnd > location else { break }
+            location = lineEnd
+        }
+
+        if source.length > 0, Self.isNewline(source.character(at: source.length - 1)) {
+            ranges.append(NSRange(location: source.length, length: 0))
+        }
+
+        return ranges
+    }
+
+    private func visualFragmentCount(for characterRange: NSRange, layoutManager: NSLayoutManager) -> Int {
+        guard characterRange.length > 0 else { return 1 }
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return 1 }
+
+        var fragmentCount = 0
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, _, _, fragmentGlyphRange, _ in
+            if NSIntersectionRange(fragmentGlyphRange, glyphRange).length > 0 {
+                fragmentCount += 1
+            }
+        }
+
+        let boundingHeight = layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: codeTextView.textContainer
+        ).height
+        let lineHeight = max(1, codeFont.lineHeight)
+        let measuredCount = Int(ceil(boundingHeight / lineHeight))
+        return max(1, max(fragmentCount, measuredCount))
+    }
+
+    private static func isNewline(_ value: unichar) -> Bool {
+        value == 10 || value == 13
     }
 
 
