@@ -150,6 +150,7 @@ Requirements: macOS 15+, [pi](https://github.com/badlogic/pi-mono) CLI.
 - [Dictation / ASR](server/docs/asr.md) — server dictation setup
 - [Voice replies / TTS](server/docs/tts.md) — voice extension setup
 - [Extensions](docs/extensions.md) — Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
+- [Document viewers](docs/document-viewers.md) — full-screen reading controls for markdown, code, diffs, terminal output, and rendered documents
 - [Oppi Mirror mode](docs/oppi-mirror.md) — live terminal Pi sessions in Oppi and the separate `oppi-mirror` package
 - [Sandbox workspaces](docs/sandbox.md) — Gondolin VM isolation, network boundaries, tools, and safe defaults
 - [Custom themes](server/docs/themes.md) — creating color themes for the iOS app

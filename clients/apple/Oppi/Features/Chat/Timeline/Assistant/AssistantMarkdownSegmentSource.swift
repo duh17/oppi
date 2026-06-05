@@ -32,7 +32,7 @@ final class AssistantMarkdownSegmentSource {
            content.count > plainTextFallbackThreshold {
             var plain = AttributedString(content)
             plain.uiKit.foregroundColor = UIColor(config.themeID.palette.fg)
-            return [.text(plain)]
+            return Self.applyReaderPreferences(to: [.text(plain)], config: config)
         }
 
         if !config.isStreaming,
@@ -44,11 +44,11 @@ final class AssistantMarkdownSegmentSource {
                serverBaseURL: config.serverBaseURL,
                sourceDirectory: config.sourceDirectory
            ) {
-            return cached
+            return Self.applyReaderPreferences(to: cached, config: config)
         }
 
         if config.isStreaming {
-            return buildSegmentsIncremental(config)
+            return Self.applyReaderPreferences(to: buildSegmentsIncremental(config), config: config)
         }
 
         let parseStart = MarkdownStreamingPerf.timestampNs()
@@ -81,7 +81,7 @@ final class AssistantMarkdownSegmentSource {
             sourceDirectory: config.sourceDirectory,
             segments: segments
         )
-        return segments
+        return Self.applyReaderPreferences(to: segments, config: config)
     }
 
     static func hasUnclosedCodeFence(_ content: String) -> Bool {
@@ -314,6 +314,52 @@ final class AssistantMarkdownSegmentSource {
         }
 
         return prefix + tail
+    }
+
+    private static func applyReaderPreferences(
+        to segments: [FlatSegment],
+        config: AssistantMarkdownContentView.Configuration
+    ) -> [FlatSegment] {
+        guard let preferences = config.readerPreferences,
+              preferences != FullScreenReaderContentFamily.markdown.defaultPreferences
+        else { return segments }
+
+        return segments.map { segment in
+            guard case .text(let text) = segment else { return segment }
+            return .text(applyReaderPreferences(to: text, preferences: preferences))
+        }
+    }
+
+    private static func applyReaderPreferences(
+        to text: AttributedString,
+        preferences: FullScreenReaderPreferences
+    ) -> AttributedString {
+        var result = text
+        let scale = preferences.textScale
+        let lineSpacing = preferences.spacing.markdownLineSpacing
+
+        for run in result.runs {
+            if let font = run.uiKit.font {
+                result[run.range].uiKit.font = FullScreenCodeTypography.scaledFont(font, scale: scale)
+            } else {
+                result[run.range].uiKit.font = FullScreenCodeTypography.scaledFont(
+                    AppFont.messageBody,
+                    scale: scale
+                )
+            }
+
+            let paragraph: NSMutableParagraphStyle
+            if let existing = run.uiKit.paragraphStyle as? NSParagraphStyle,
+               let mutable = existing.mutableCopy() as? NSMutableParagraphStyle {
+                paragraph = mutable
+            } else {
+                paragraph = NSMutableParagraphStyle()
+            }
+            paragraph.lineSpacing = lineSpacing
+            result[run.range].uiKit.paragraphStyle = paragraph
+        }
+
+        return result
     }
 
     // MARK: - Helpers

@@ -30,12 +30,30 @@ enum FullScreenViewerChrome {
 
 enum FullScreenCodeTypography {
     static let codeFont = AppFont.monoMedium
+
+    static func codeFont(for preferences: FullScreenReaderPreferences) -> UIFont {
+        scaledFont(codeFont, scale: preferences.textScale)
+    }
+
+    static func scaledFont(_ font: UIFont, scale: CGFloat) -> UIFont {
+        guard scale != 1 else { return font }
+        let pointSize = min(40, max(8, font.pointSize * scale))
+        return font.withSize(pointSize)
+    }
 }
 
-func fullScreenAttributedCodeText(from attributed: NSAttributedString) -> NSAttributedString {
+@MainActor
+protocol FullScreenReaderConfigurable: AnyObject {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences)
+}
+
+func fullScreenAttributedCodeText(
+    from attributed: NSAttributedString,
+    font: UIFont = FullScreenCodeTypography.codeFont
+) -> NSAttributedString {
     let mutable = NSMutableAttributedString(attributedString: attributed)
     let fullRange = NSRange(location: 0, length: mutable.length)
-    mutable.addAttribute(.font, value: FullScreenCodeTypography.codeFont, range: fullRange)
+    mutable.addAttribute(.font, value: font, range: fullRange)
     return mutable
 }
 

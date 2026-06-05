@@ -80,9 +80,9 @@ enum ReviewCommentSurfaceKind: Equatable {
 
     var usesInlineCommentWidget: Bool {
         switch self {
-        case .fullScreenCode, .fullScreenDiff, .fullScreenSource, .fullScreenTerminal, .fullScreenMarkdown, .fullScreenThinking:
+        case .toolExpandedText, .fullScreenCode, .fullScreenDiff, .fullScreenSource, .fullScreenTerminal, .fullScreenMarkdown, .fullScreenThinking:
             true
-        case .assistantProse, .userMessage, .assistantCodeBlock, .assistantTable, .thinking, .toolCommand, .toolOutput, .toolExpandedText:
+        case .assistantProse, .userMessage, .assistantCodeBlock, .assistantTable, .thinking, .toolCommand, .toolOutput:
             false
         }
     }
@@ -144,9 +144,45 @@ struct ReviewCommentSelectionContext {
         languageHint: String? = nil,
         timelineItemId: String? = nil
     ) -> ReviewCommentSourceContext {
+        makeSourceContext(
+            surface: sourceSurfaceOverride ?? surface,
+            sourceLabel: sourceLabel,
+            filePath: filePath,
+            lineRange: lineRange,
+            languageHint: languageHint,
+            timelineItemId: timelineItemId
+        )
+    }
+
+    func sourceContextIgnoringSurfaceOverride(
+        surface: ReviewCommentSurfaceKind,
+        sourceLabel: String? = nil,
+        filePath: String? = nil,
+        lineRange: ClosedRange<Int>? = nil,
+        languageHint: String? = nil,
+        timelineItemId: String? = nil
+    ) -> ReviewCommentSourceContext {
+        makeSourceContext(
+            surface: surface,
+            sourceLabel: sourceLabel,
+            filePath: filePath,
+            lineRange: lineRange,
+            languageHint: languageHint,
+            timelineItemId: timelineItemId
+        )
+    }
+
+    private func makeSourceContext(
+        surface: ReviewCommentSurfaceKind,
+        sourceLabel: String?,
+        filePath: String?,
+        lineRange: ClosedRange<Int>?,
+        languageHint: String?,
+        timelineItemId: String?
+    ) -> ReviewCommentSourceContext {
         ReviewCommentSourceContext(
             sessionId: sessionId,
-            surface: sourceSurfaceOverride ?? surface,
+            surface: surface,
             sourceLabel: sourceLabel ?? self.sourceLabel,
             filePath: filePath ?? self.filePath,
             lineRange: lineRange,

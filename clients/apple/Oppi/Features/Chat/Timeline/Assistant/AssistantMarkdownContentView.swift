@@ -58,6 +58,9 @@ final class AssistantMarkdownContentView: UIView {
         }
         /// Surface tag for streaming markdown perf instrumentation.
         let perfSurface: MarkdownStreamingPerf.Surface?
+        /// Optional full-screen reader styling. Inline/timeline markdown leaves
+        /// this nil so chat rendering keeps its compact default metrics.
+        let readerPreferences: FullScreenReaderPreferences?
         /// Controls whether async work (mermaid rendering, syntax highlighting,
         /// image loading) runs on background threads or the current thread.
         ///
@@ -78,6 +81,7 @@ final class AssistantMarkdownContentView: UIView {
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
+            readerPreferences: FullScreenReaderPreferences? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live
         ) {
@@ -93,6 +97,7 @@ final class AssistantMarkdownContentView: UIView {
             self.sessionID = sessionID
             self.serverBaseURL = serverBaseURL
             self.sourceFilePath = sourceFilePath
+            self.readerPreferences = readerPreferences
             self.perfSurface = perfSurface
             self.renderingMode = renderingMode
         }
@@ -110,6 +115,7 @@ final class AssistantMarkdownContentView: UIView {
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
+            readerPreferences: FullScreenReaderPreferences? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live
         ) -> Self {
@@ -126,6 +132,7 @@ final class AssistantMarkdownContentView: UIView {
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
                 sourceFilePath: sourceFilePath,
+                readerPreferences: readerPreferences,
                 perfSurface: perfSurface,
                 renderingMode: renderingMode
             )
@@ -144,6 +151,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.sessionID == rhs.sessionID
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.sourceFilePath == rhs.sourceFilePath
+                && lhs.readerPreferences == rhs.readerPreferences
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode
         }
@@ -208,6 +216,7 @@ final class AssistantMarkdownContentView: UIView {
     func apply(configuration config: Configuration) {
         guard config != currentConfig else { return }
         currentConfig = config
+        stackView.spacing = config.readerPreferences?.spacing.markdownStackSpacing ?? 8
 
         let cycleStart = MarkdownStreamingPerf.timestampNs()
         let segments = segmentSource.buildSegments(config)

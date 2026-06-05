@@ -7,17 +7,23 @@ import WebKit
 
 final class NativeFullScreenCodeBody: UIView {
     private let scrollView = UIScrollView()
+    private let contentContainer = UIView()
     private let gutterView = UITextView()
     private let separatorView = UIView()
     private let codeTextView = UITextView()
     private let content: String
     private let language: String?
     private let startLine: Int
+    private let lineCount: Int
     private let palette: ThemePalette
     private let alwaysBounceVertical: Bool
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
+    private var readerPreferences: FullScreenReaderPreferences
+    private var gutterWidthConstraint: NSLayoutConstraint?
+    private var contentContainerWidthConstraint: NSLayoutConstraint?
+    private var highlightedSourceText: NSAttributedString?
     private var highlightTask: Task<Void, Never>?
 
     init(
@@ -26,6 +32,7 @@ final class NativeFullScreenCodeBody: UIView {
         startLine: Int,
         palette: ThemePalette,
         alwaysBounceVertical: Bool = true,
+        readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.code.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
@@ -33,8 +40,10 @@ final class NativeFullScreenCodeBody: UIView {
         self.content = content
         self.language = language
         self.startLine = startLine
+        self.lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
         self.palette = palette
         self.alwaysBounceVertical = alwaysBounceVertical
+        self.readerPreferences = readerPreferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
@@ -63,13 +72,12 @@ final class NativeFullScreenCodeBody: UIView {
         scrollView.showsVerticalScrollIndicator = true
         addSubview(scrollView)
 
-        let contentContainer = UIView()
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentContainer)
 
         // Gutter — uses UITextView (not UILabel) so line heights match codeTextView exactly.
         gutterView.translatesAutoresizingMaskIntoConstraints = false
-        gutterView.font = FullScreenCodeTypography.codeFont
+        gutterView.font = codeFont
         gutterView.textColor = UIColor(palette.comment)
         gutterView.textAlignment = .right
         gutterView.isEditable = false
@@ -81,11 +89,10 @@ final class NativeFullScreenCodeBody: UIView {
         gutterView.textContainer.lineBreakMode = .byClipping
         contentContainer.addSubview(gutterView)
 
-        let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
         let (numbers, gutterWidth) = lineNumberInfo(
             lineCount: lineCount,
             startLine: startLine,
-            font: FullScreenCodeTypography.codeFont
+            font: codeFont
         )
         gutterView.text = numbers
 
@@ -96,7 +103,7 @@ final class NativeFullScreenCodeBody: UIView {
 
         // Code text
         codeTextView.translatesAutoresizingMaskIntoConstraints = false
-        codeTextView.font = FullScreenCodeTypography.codeFont
+        codeTextView.font = codeFont
         codeTextView.textColor = UIColor(palette.fg)
         codeTextView.backgroundColor = .clear
         codeTextView.isEditable = false
@@ -104,13 +111,19 @@ final class NativeFullScreenCodeBody: UIView {
         codeTextView.isScrollEnabled = false
         codeTextView.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 8)
         codeTextView.textContainer.lineFragmentPadding = 0
-        codeTextView.textContainer.lineBreakMode = .byClipping
-        codeTextView.textContainer.widthTracksTextView = false
-        codeTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        applyWrapMode()
         codeTextView.text = content
         codeTextView.delegate = self
         contentContainer.addSubview(codeTextView)
         applyReviewCommentAnnotations()
+
+        let gutterWidthConstraint = gutterView.widthAnchor.constraint(equalToConstant: gutterWidth)
+        self.gutterWidthConstraint = gutterWidthConstraint
+
+        let contentContainerWidthConstraint = contentContainer.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+        contentContainerWidthConstraint.priority = .required
+        contentContainerWidthConstraint.isActive = readerPreferences.wrapsText
+        self.contentContainerWidthConstraint = contentContainerWidthConstraint
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -125,7 +138,7 @@ final class NativeFullScreenCodeBody: UIView {
 
             gutterView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 6),
             gutterView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            gutterView.widthAnchor.constraint(equalToConstant: gutterWidth),
+            gutterWidthConstraint,
 
             separatorView.leadingAnchor.constraint(equalTo: gutterView.trailingAnchor, constant: 6),
             separatorView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
@@ -141,6 +154,10 @@ final class NativeFullScreenCodeBody: UIView {
             gutterView.bottomAnchor.constraint(lessThanOrEqualTo: contentContainer.bottomAnchor),
             codeTextView.bottomAnchor.constraint(greaterThanOrEqualTo: gutterView.bottomAnchor),
         ])
+    }
+
+    private var codeFont: UIFont {
+        FullScreenCodeTypography.codeFont(for: readerPreferences)
     }
 
     private func loadHighlighting() {
@@ -160,11 +177,49 @@ final class NativeFullScreenCodeBody: UIView {
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                self?.highlightedSourceText = wrapper.value
                 self?.codeTextView.attributedText = fullScreenAttributedCodeText(
-                    from: wrapper.value
+                    from: wrapper.value,
+                    font: self?.codeFont ?? FullScreenCodeTypography.codeFont
                 )
                 self?.applyReviewCommentAnnotations()
             }
+        }
+    }
+
+    private func applyTextSize() {
+        let font = codeFont
+        gutterView.font = font
+        codeTextView.font = font
+
+        let (_, gutterWidth) = lineNumberInfo(
+            lineCount: lineCount,
+            startLine: startLine,
+            font: font
+        )
+        gutterWidthConstraint?.constant = gutterWidth
+
+        if let attributedText = highlightedSourceText ?? codeTextView.attributedText,
+           attributedText.length > 0 {
+            codeTextView.attributedText = fullScreenAttributedCodeText(
+                from: attributedText,
+                font: font
+            )
+        }
+    }
+
+    private func applyWrapMode() {
+        let wraps = readerPreferences.wrapsText
+        codeTextView.textContainer.lineBreakMode = wraps ? .byCharWrapping : .byClipping
+        codeTextView.textContainer.widthTracksTextView = wraps
+        codeTextView.textContainer.size = wraps
+            ? .zero
+            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        scrollView.alwaysBounceHorizontal = !wraps
+        scrollView.showsHorizontalScrollIndicator = !wraps
+        contentContainerWidthConstraint?.isActive = wraps
+        if wraps {
+            scrollView.contentOffset.x = -scrollView.adjustedContentInset.left
         }
     }
 
@@ -174,6 +229,17 @@ final class NativeFullScreenCodeBody: UIView {
             annotations: reviewCommentAnnotations,
             sourceContext: reviewCommentSourceContext
         )
+    }
+}
+
+extension NativeFullScreenCodeBody: FullScreenReaderConfigurable {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        applyTextSize()
+        applyWrapMode()
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 }
 
@@ -206,7 +272,10 @@ final class NativeFullScreenDiffBody: UIView {
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
+    private var readerPreferences: FullScreenReaderPreferences
     private var widthConstraint: NSLayoutConstraint?
+    private var unwrappedContentWidth: CGFloat = 1
+    private var builtDiffText: NSAttributedString?
     private var buildTask: Task<Void, Never>?
 
     private struct BuiltDiff: @unchecked Sendable {
@@ -222,6 +291,7 @@ final class NativeFullScreenDiffBody: UIView {
         filePath: String?,
         precomputedLines: [DiffLine]?,
         palette: ThemePalette,
+        readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.diff.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
@@ -229,6 +299,7 @@ final class NativeFullScreenDiffBody: UIView {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
+        self.readerPreferences = readerPreferences
 
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
@@ -282,7 +353,7 @@ final class NativeFullScreenDiffBody: UIView {
         addSubview(scrollView)
 
         diffTextView.translatesAutoresizingMaskIntoConstraints = false
-        diffTextView.font = FullScreenCodeTypography.codeFont
+        diffTextView.font = codeFont
         diffTextView.textColor = UIColor(palette.fg)
         diffTextView.backgroundColor = .clear
         diffTextView.isEditable = false
@@ -290,7 +361,7 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.isScrollEnabled = false
         diffTextView.textContainerInset = UIEdgeInsets(top: 6, left: 12, bottom: 16, right: 12)
         diffTextView.textContainer.lineFragmentPadding = 0
-        diffTextView.textContainer.lineBreakMode = .byClipping
+        diffTextView.textContainer.lineBreakMode = readerPreferences.wrapsText ? .byCharWrapping : .byClipping
         diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         diffTextView.delegate = self
@@ -333,6 +404,7 @@ final class NativeFullScreenDiffBody: UIView {
             newText: newText,
             precomputedLines: precomputedLines
         )
+        applyWrapMode()
         applyReviewCommentAnnotations()
         let displayPath = filePath ?? "diff.txt"
         buildTask = Task { [weak self] in
@@ -355,7 +427,12 @@ final class NativeFullScreenDiffBody: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        applyWrapMode()
         ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: diffTextView)
+    }
+
+    private var codeFont: UIFont {
+        FullScreenCodeTypography.codeFont(for: readerPreferences)
     }
 
     private static func initialSelectableText(
@@ -393,9 +470,12 @@ final class NativeFullScreenDiffBody: UIView {
     }
 
     private func applyBuiltDiff(_ result: BuiltDiff) {
-        diffTextView.attributedText = result.text
+        builtDiffText = result.text
+        let styledText = styledDiffText(result.text)
+        diffTextView.attributedText = styledText
         applyReviewCommentAnnotations()
-        widthConstraint?.constant = result.width
+        unwrappedContentWidth = max(result.width, measuredWidth(of: styledText))
+        applyWrapMode()
         statsLabel.text = "\(result.added > 0 ? "+\(result.added)" : "0")  \(result.removed > 0 ? "-\(result.removed)" : "0")"
         progressView.stopAnimating()
         progressView.removeFromSuperview()
@@ -410,8 +490,66 @@ final class NativeFullScreenDiffBody: UIView {
         )
     }
 
+    private func applyTextSize() {
+        diffTextView.font = codeFont
+        if let attributedText = builtDiffText ?? diffTextView.attributedText,
+           attributedText.length > 0 {
+            let styledText = styledDiffText(attributedText)
+            diffTextView.attributedText = styledText
+            unwrappedContentWidth = measuredWidth(of: styledText)
+        }
+        applyWrapMode()
+    }
+
+    private func applyWrapMode() {
+        let wraps = readerPreferences.wrapsText
+        diffTextView.textContainer.lineBreakMode = wraps ? .byCharWrapping : .byClipping
+        diffTextView.textContainer.widthTracksTextView = wraps
+        diffTextView.textContainer.size = wraps
+            ? .zero
+            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        scrollView.alwaysBounceHorizontal = !wraps
+        scrollView.showsHorizontalScrollIndicator = !wraps
+        widthConstraint?.constant = wraps ? max(1, scrollView.bounds.width) : max(1, unwrappedContentWidth)
+        if wraps {
+            scrollView.contentOffset.x = -scrollView.adjustedContentInset.left
+        }
+    }
+
+    private func styledDiffText(_ attributedText: NSAttributedString) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributedText)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        attributedText.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+            let font = (value as? UIFont) ?? FullScreenCodeTypography.codeFont
+            mutable.addAttribute(
+                .font,
+                value: FullScreenCodeTypography.scaledFont(font, scale: readerPreferences.textScale),
+                range: range
+            )
+        }
+        return mutable
+    }
+
+    private func measuredWidth(of attributedText: NSAttributedString) -> CGFloat {
+        let measured = attributedText.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        )
+        return ceil(measured.width) + 24
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+}
+
+extension NativeFullScreenDiffBody: FullScreenReaderConfigurable {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        applyTextSize()
+        setNeedsLayout()
+    }
 }
 
 extension NativeFullScreenDiffBody: UITextViewDelegate {
@@ -446,11 +584,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
+    private var readerPreferences: FullScreenReaderPreferences
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
     private var renderedSnapshot: TerminalTraceStream.Snapshot?
-    private var outputWrapped: Bool
     private var renderedOutputText = ""
+    private var renderedOutputAttributedBase: NSAttributedString?
     private var stackWidthConstraint: NSLayoutConstraint?
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
@@ -469,14 +608,19 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         command: String?,
         stream: TerminalTraceStream?,
         palette: ThemePalette,
-        outputWrapped: Bool = false,
+        outputWrapped: Bool? = nil,
+        readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.terminal.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
     ) {
         self.palette = palette
         self.stream = stream
-        self.outputWrapped = outputWrapped
+        var preferences = readerPreferences
+        if let outputWrapped {
+            preferences.wrapsText = outputWrapped
+        }
+        self.readerPreferences = preferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
@@ -547,7 +691,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         outputView.backgroundColor = .clear
         outputView.textContainerInset = UIEdgeInsets(top: 4, left: 6, bottom: 14, right: 6)
         outputView.textContainer.lineFragmentPadding = 0
-        outputView.font = FullScreenCodeTypography.codeFont
+        outputView.font = codeFont
         outputView.textColor = UIColor(palette.fg)
         outputView.delegate = self
         applyOutputWrapMode()
@@ -611,9 +755,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         renderTask = nil
 
         if content.utf8.count <= Self.maxSynchronousANSIBytes {
-            outputView.attributedText = ANSIParser.attributedString(
+            let attributedOutput = ANSIParser.attributedString(
                 from: content, baseForeground: .themeFg
             )
+            renderedOutputAttributedBase = attributedOutput
+            outputView.attributedText = attributedOutput
+            applyOutputFont()
             renderedOutputText = outputView.attributedText?.string ?? ""
             applyReviewCommentAnnotations(to: outputView)
             updateWrappingLayout()
@@ -621,6 +768,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         }
 
         outputView.attributedText = nil
+        renderedOutputAttributedBase = nil
+        outputView.font = codeFont
         let stripped = ANSIParser.strip(content)
         outputView.text = stripped
         renderedOutputText = stripped
@@ -643,7 +792,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                self?.renderedOutputAttributedBase = wrapper.value
                 self?.outputView.attributedText = wrapper.value
+                self?.applyOutputFont()
                 self?.renderedOutputText = wrapper.value.string
                 self?.applyReviewCommentAnnotations(to: self?.outputView)
                 self?.updateWrappingLayout()
@@ -653,27 +804,42 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     }
 
     func setOutputWrapped(_ wrapped: Bool) {
-        guard outputWrapped != wrapped else { return }
-        outputWrapped = wrapped
+        guard readerPreferences.wrapsText != wrapped else { return }
+        readerPreferences.wrapsText = wrapped
         applyOutputWrapMode()
         setNeedsLayout()
         layoutIfNeeded()
     }
 
+    private var codeFont: UIFont {
+        FullScreenCodeTypography.codeFont(for: readerPreferences)
+    }
+
     private func applyOutputWrapMode() {
-        outputView.textContainer.lineBreakMode = outputWrapped ? .byCharWrapping : .byClipping
-        scrollView.alwaysBounceHorizontal = !outputWrapped
-        scrollView.showsHorizontalScrollIndicator = !outputWrapped
-        if outputWrapped {
+        let wraps = readerPreferences.wrapsText
+        outputView.textContainer.lineBreakMode = wraps ? .byCharWrapping : .byClipping
+        scrollView.alwaysBounceHorizontal = !wraps
+        scrollView.showsHorizontalScrollIndicator = !wraps
+        if wraps {
             scrollView.contentOffset.x = -scrollView.adjustedContentInset.left
         }
         updateWrappingLayout()
     }
 
+    private func applyOutputFont() {
+        outputView.font = codeFont
+        guard let attributedText = renderedOutputAttributedBase ?? outputView.attributedText,
+              attributedText.length > 0 else { return }
+        outputView.attributedText = fullScreenAttributedCodeText(
+            from: attributedText,
+            font: codeFont
+        )
+    }
+
     private func updateWrappingLayout() {
         let viewportWidth = max(1, scrollView.bounds.width)
         let minimumWidth = max(0, viewportWidth - 20)
-        let targetWidth = outputWrapped
+        let targetWidth = readerPreferences.wrapsText
             ? minimumWidth
             : max(minimumWidth, estimatedUnwrappedOutputWidth())
         stackWidthConstraint?.constant = targetWidth - viewportWidth
@@ -682,7 +848,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private func estimatedUnwrappedOutputWidth() -> CGFloat {
         let columns = Self.widestLineColumnCount(in: renderedOutputText)
         let sampleWidth = ("M" as NSString).size(
-            withAttributes: [.font: FullScreenCodeTypography.codeFont]
+            withAttributes: [.font: codeFont]
         ).width
         let textWidth = CGFloat(columns) * max(1, sampleWidth)
         let insetWidth = outputView.textContainerInset.left + outputView.textContainerInset.right + 12
@@ -737,6 +903,19 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     }
 }
 
+extension NativeFullScreenTerminalBody: FullScreenReaderConfigurable {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        let textSizeChanged = preferences.textSize != readerPreferences.textSize
+        readerPreferences = preferences
+        if textSizeChanged {
+            applyOutputFont()
+        }
+        applyOutputWrapMode()
+        setNeedsLayout()
+    }
+}
+
 extension NativeFullScreenTerminalBody: UITextViewDelegate {
     func textView(
         _ textView: UITextView,
@@ -766,6 +945,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let sessionID: String?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
+    private var readerPreferences: FullScreenReaderPreferences
 
     private let perfSurface: MarkdownStreamingPerf.Surface?
 
@@ -794,6 +974,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
+        readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
@@ -808,6 +989,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
+        self.readerPreferences = readerPreferences
         let initialSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         latestSnapshot = initialSnapshot
@@ -906,6 +1088,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
+            readerPreferences: readerPreferences,
             perfSurface: perfSurface
         ))
 
@@ -935,6 +1118,16 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 }
 
+extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        renderedSnapshot = nil
+        render(snapshot: latestSnapshot)
+        setNeedsLayout()
+    }
+}
+
 // MARK: - Source Body
 
 final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
@@ -942,6 +1135,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
+    private var readerPreferences: FullScreenReaderPreferences
     private var isStreaming: Bool
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
@@ -956,6 +1150,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         content: String,
         isStreaming: Bool,
         palette: ThemePalette,
+        readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.source.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
@@ -963,13 +1158,14 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.reviewCommentAnnotations = reviewCommentAnnotations
+        self.readerPreferences = readerPreferences
         self.isStreaming = isStreaming
         super.init(frame: .zero)
 
         backgroundColor = UIColor(palette.bgDark)
 
         textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.font = FullScreenCodeTypography.codeFont
+        textView.font = codeFont
         textView.textColor = UIColor(palette.fg)
         textView.backgroundColor = .clear
         textView.isEditable = false
@@ -979,6 +1175,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
         textView.delegate = self
         textView.text = content
+        applyWrapMode()
         addSubview(textView)
         applyReviewCommentAnnotations()
 
@@ -995,8 +1192,13 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        applyWrapMode()
         tailFollowCoordinator.onLayoutPass()
         ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: textView)
+    }
+
+    private var codeFont: UIFont {
+        FullScreenCodeTypography.codeFont(for: readerPreferences)
     }
 
     func update(content: String, isStreaming: Bool) {
@@ -1047,6 +1249,24 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         )
     }
 
+    private func applyTextSize() {
+        textView.font = codeFont
+    }
+
+    private func applyWrapMode() {
+        let wraps = readerPreferences.wrapsText
+        textView.textContainer.lineBreakMode = wraps ? .byWordWrapping : .byClipping
+        textView.textContainer.widthTracksTextView = wraps
+        textView.textContainer.size = wraps
+            ? CGSize(width: max(1, textView.bounds.width), height: CGFloat.greatestFiniteMagnitude)
+            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.alwaysBounceHorizontal = !wraps
+        textView.showsHorizontalScrollIndicator = !wraps
+        if wraps {
+            textView.contentOffset.x = -textView.adjustedContentInset.left
+        }
+    }
+
     func textView(
         _ textView: UITextView,
         editMenuForTextIn range: NSRange,
@@ -1059,6 +1279,17 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
             router: reviewCommentSelectionRouter,
             sourceContext: reviewCommentSourceContext
         )
+    }
+}
+
+extension NativeFullScreenSourceBody: FullScreenReaderConfigurable {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        applyTextSize()
+        applyWrapMode()
+        textView.invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 }
 
@@ -1076,13 +1307,16 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
     }
 
     private let scrollView = UIScrollView()
+    private let readerPreferences: FullScreenReaderPreferences
 
     init(
         content: DocumentContent,
         palette: ThemePalette,
+        readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.renderedDocument.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
+        self.readerPreferences = readerPreferences
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
@@ -1091,7 +1325,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
             // ZoomableGraphicalView has its own scroll + zoom — embed directly
             let zoomable = makeZoomableGraphicalView(
                 parser: MermaidParser(), renderer: MermaidFlowchartRenderer(),
-                text: text, fontSize: 14
+                text: text, fontSize: 14 * readerPreferences.textScale
             )
             zoomable.translatesAutoresizingMaskIntoConstraints = false
             addSubview(zoomable)
@@ -1149,7 +1383,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
 
     private func makeLatexView(text: String) -> UIView {
         let config = RenderConfiguration(
-            fontSize: 20,
+            fontSize: 20 * readerPreferences.textScale,
             maxWidth: 800,
             theme: ThemeRuntimeState.currentRenderTheme(),
             displayMode: .document
@@ -1183,7 +1417,8 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
             isStreaming: false,
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: true,
-            plainTextFallbackThreshold: nil
+            plainTextFallbackThreshold: nil,
+            readerPreferences: readerPreferences
         ))
         return mdView
     }

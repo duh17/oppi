@@ -318,6 +318,58 @@ describe("buildSessionContext", () => {
     expect(events.find((e) => e.text?.includes("hidden"))).toBeUndefined();
   });
 
+  it("formats structured custom messages instead of rendering raw XML", () => {
+    const entries = [
+      msg("1", null, "user", "run a subagent"),
+      entry("custom_message", "2", "1", {
+        content: `<task-notification>
+<task-id>agent-1</task-id>
+<status>Wrapped up (turn limit)</status>
+<summary>Agent "Test subagent launch" steered</summary>
+<result>/path/to/subagents-extension.test.ts tests the subagents extension.</result>
+<usage><total_tokens>19775</total_tokens><tool_uses>4</tool_uses></usage>
+</task-notification>`,
+        display: true,
+      }),
+    ];
+
+    const events = buildSessionContext(entries);
+    const custom = events.find((event) => event.id === "2");
+    expect(custom?.text).toContain("Task Notification");
+    expect(custom?.text).toContain("Status: Wrapped up (turn limit)");
+    expect(custom?.text).toContain('Summary: Agent "Test subagent launch" steered');
+    expect(custom?.text).toContain(
+      "Result: /path/to/subagents-extension.test.ts tests the subagents extension.",
+    );
+    expect(custom?.text).not.toContain("<task-notification>");
+  });
+
+  it("suppresses structured custom messages when a parent custom event is visible", () => {
+    const entries = [
+      msg("1", null, "user", "run a subagent"),
+      entry("custom", "record-1", "1", {
+        customType: "subagents:record",
+        data: {
+          id: "agent-1",
+          type: "Explore",
+          description: "Test subagent launch",
+          status: "steered",
+          result: "Readable result",
+        },
+      }),
+      entry("custom_message", "raw-xml", "record-1", {
+        content: `<task-notification><task-id>agent-1</task-id><status>Wrapped up</status><result>Raw result</result></task-notification>`,
+        display: true,
+      }),
+      msg("3", "raw-xml", "assistant", "done"),
+    ];
+
+    const events = buildSessionContext(entries);
+    expect(events.find((event) => event.id === "record-1")).toBeDefined();
+    expect(events.find((event) => event.id === "raw-xml")).toBeUndefined();
+    expect(events.map((event) => event.text ?? "").join("\n")).not.toContain("<task-notification>");
+  });
+
   it("renders Pi Agent subagent records as parent trace system events", () => {
     const entries = [
       msg("1", null, "user", "group these changes"),

@@ -247,6 +247,8 @@ export function buildSessionContext(
     );
   }
 
+  const visibleEntryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
+
   // Convert visible entries to TraceEvents
   const events: TraceEvent[] = [];
 
@@ -304,11 +306,16 @@ export function buildSessionContext(
         if (entry.content && entry.display !== false) {
           const text = extractText(entry.content);
           if (text) {
+            const structured = formatStructuredCustomMessage(text);
+            const parent = entry.parentId ? visibleEntryById.get(entry.parentId) : undefined;
+            if (structured && parent?.type === "custom") {
+              break;
+            }
             events.push({
               id: entry.id,
               type: "system",
               timestamp,
-              text,
+              text: structured ?? text,
             });
           }
         }
@@ -339,6 +346,58 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
     timestamp: entry.timestamp || new Date().toISOString(),
     text: `Context compacted${tokenInfo}: ${summaryText}`,
   };
+}
+
+function formatStructuredCustomMessage(text: string): string | undefined {
+  const trimmed = text.trim();
+  const rootMatch = trimmed.match(/^<([A-Za-z][\w:-]*)[\s>]/);
+  if (!rootMatch) return undefined;
+
+  const rootName = rootMatch[1] ?? "custom-message";
+  const rootBodyMatch = trimmed.match(
+    new RegExp(`^<${rootName}[^>]*>([\\s\\S]*)</${rootName}>$`, "i"),
+  );
+  const body = rootBodyMatch?.[1] ?? trimmed;
+  const fields: Array<{ label: string; value: string }> = [];
+  const tagRegex = /<([A-Za-z][\w:-]*)>([\s\S]*?)<\/\1>/g;
+  let match: RegExpExecArray | null;
+  while ((match = tagRegex.exec(body))) {
+    const name = match[1] ?? "";
+    const value = (match[2] ?? "").trim();
+    if (!name || !value || value.includes("<")) continue;
+    fields.push({ label: titleFromIdentifier(name), value: collapseWhitespace(value) });
+  }
+
+  if (fields.length === 0) return undefined;
+
+  const priority = new Map([
+    ["Status", 0],
+    ["Summary", 1],
+    ["Result", 2],
+  ]);
+  fields.sort((a, b) => (priority.get(a.label) ?? 10) - (priority.get(b.label) ?? 10));
+
+  const lines = [titleFromIdentifier(rootName)];
+  for (const field of fields.slice(0, 6)) {
+    lines.push(`${field.label}: ${truncateCustomField(field.value)}`);
+  }
+  return lines.join("\n");
+}
+
+function titleFromIdentifier(value: string): string {
+  return value
+    .replace(/[_:-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateCustomField(value: string): string {
+  return value.length <= 500 ? value : `${value.slice(0, 497)}…`;
 }
 
 function formatCustomEntryEvent(entry: SessionEntry, timestamp: string): TraceEvent | undefined {

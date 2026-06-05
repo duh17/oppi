@@ -117,7 +117,7 @@ enum HTMLContentSecurity {
 /// Defers `loadHTMLString` until the view has a window AND a non-zero frame.
 /// Checks both `didMoveToWindow` and `layoutSubviews` — whichever fires last
 /// with all conditions met triggers the load.
-final class HTMLRenderView: UIView, WKNavigationDelegate {
+final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfigurable {
     private let webView: ReviewCommentWKWebView
     private let contentTracker = HTMLContentTracker()
 
@@ -134,6 +134,30 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
 
         super.init(frame: .zero)
 
+        configureWebView(htmlString: htmlString)
+    }
+
+    init(
+        htmlString: String,
+        reviewCommentRouter: ReviewCommentSelectionRouter?,
+        sourceContext: ReviewCommentSourceContext?
+    ) {
+        let wv = ReviewCommentWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
+        wv.isInspectable = false
+        wv.allowsBackForwardNavigationGestures = false
+        wv.scrollView.contentInsetAdjustmentBehavior = .always
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.backgroundColor = .clear
+        wv.configureReviewCommentRouter(reviewCommentRouter, sourceContext: sourceContext)
+        self.webView = wv
+
+        super.init(frame: .zero)
+
+        configureWebView(htmlString: htmlString)
+    }
+
+    private func configureWebView(htmlString: String) {
         webView.navigationDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(webView)
@@ -175,6 +199,10 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
         if let html = contentTracker.setContent(HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString)) {
             webView.loadHTMLString(html, baseURL: nil)
         }
+    }
+
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        webView.pageZoom = preferences.textScale
     }
 
     /// Update the review comment handler (e.g., when SwiftUI re-renders).

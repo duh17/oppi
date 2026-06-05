@@ -1947,56 +1947,56 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         switch content {
         case .code(_, let language, let filePath, _):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenCode,
                 filePath: filePath,
                 languageHint: language
             )
 
         case .plainText(_, let filePath):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenSource,
                 filePath: filePath
             )
 
         case .diff(_, _, let filePath, _):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenDiff,
                 filePath: filePath
             )
 
         case .markdown(_, let filePath, _):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             )
 
         case .terminal(_, let command, _):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenTerminal,
                 sourceLabel: command ?? currentConfiguration.title
             )
 
         case .liveSource(let snapshot, _):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
             )
 
         case .html(_, let filePath):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenSource,
                 filePath: filePath
             )
 
         case .thinking:
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenThinking,
                 sourceLabel: "Thinking"
             )
 
         case .latex(_, let filePath), .orgMode(_, let filePath), .mermaid(_, let filePath), .graphviz(_, let filePath):
-            return reviewCommentSelectionContext.sourceContext(
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenCode,
                 filePath: filePath
             )

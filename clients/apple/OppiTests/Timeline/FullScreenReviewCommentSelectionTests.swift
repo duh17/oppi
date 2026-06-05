@@ -209,27 +209,27 @@ struct FullScreenReviewCommentSelectionTests {
     }
 
     @Test func terminalFullScreenWrapButtonTogglesOutputMode() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .terminal)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .terminal) }
         let longLine = String(repeating: "0123456789", count: 40)
         let controller = makeController(
             content: .terminal(content: longLine, command: "printf", stream: nil)
         )
-        let navigationController = try #require(controller.children.first as? UINavigationController)
-        let contentController = try #require(navigationController.topViewController)
-        let wrapButton = try #require(contentController.navigationItem.rightBarButtonItems?.first {
-            $0.title == "Wrap"
-        })
+        let menu = try #require(controller.viewingOptionsMenuForTesting)
+        let wrapAction = try #require(firstAction(titled: "Wrap Text", in: menu))
         let outputView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0) == longLine
         })
 
+        #expect(wrapAction.state == .off)
         #expect(outputView.textContainer.lineBreakMode == .byClipping)
 
-        let action = try #require(wrapButton.action)
-        let target = try #require(wrapButton.target)
-        #expect(UIApplication.shared.sendAction(action, to: target, from: wrapButton, for: nil))
+        controller.setReaderWrappingForTesting(true)
         controller.view.layoutIfNeeded()
 
-        #expect(wrapButton.title == "Unwrap")
+        let updatedMenu = try #require(controller.viewingOptionsMenuForTesting)
+        let unwrapAction = try #require(firstAction(titled: "Unwrap Text", in: updatedMenu))
+        #expect(unwrapAction.state == .on)
         #expect(outputView.textContainer.lineBreakMode == .byCharWrapping)
     }
 
@@ -315,6 +315,29 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(forwardedPresenter === presenter)
     }
 
+    @Test func expandedToolTextUsesInlineComposerButCollapsedToolOutputUsesChatComposer() {
+        #expect(ReviewCommentSurfaceKind.toolExpandedText.usesInlineCommentWidget)
+        #expect(!ReviewCommentSurfaceKind.toolOutput.usesInlineCommentWidget)
+        #expect(!ReviewCommentSurfaceKind.toolCommand.usesInlineCommentWidget)
+    }
+
+    @Test func fullScreenSourceContextIgnoresTimelineSurfaceOverride() {
+        let context = ReviewCommentSelectionContext(
+            dispatcher: ReviewCommentSelectionRouter { _ in },
+            sessionId: "session-1",
+            sourceLabel: "Tool output",
+            filePath: "output.log",
+            sourceSurfaceOverride: .toolExpandedText
+        )
+
+        let expanded = context.sourceContext(surface: .fullScreenSource)
+        let fullScreen = context.sourceContextIgnoringSurfaceOverride(surface: .fullScreenSource)
+
+        #expect(expanded.surface == .toolExpandedText)
+        #expect(fullScreen.surface == .fullScreenSource)
+        #expect(fullScreen.filePath == "output.log")
+    }
+
     @Test func nonChatFullScreenCodeStillAllowsSystemTextSelection() throws {
         let controller = FullScreenCodeViewController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
@@ -349,5 +372,18 @@ struct FullScreenReviewCommentSelectionTests {
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
         return controller
+    }
+
+    private func firstAction(titled title: String, in menu: UIMenu) -> UIAction? {
+        for child in menu.children {
+            if let action = child as? UIAction, action.title == title {
+                return action
+            }
+            if let submenu = child as? UIMenu,
+               let action = firstAction(titled: title, in: submenu) {
+                return action
+            }
+        }
+        return nil
     }
 }

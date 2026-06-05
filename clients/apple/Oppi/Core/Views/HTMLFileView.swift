@@ -23,21 +23,14 @@ struct HTMLFileView: View {
             fullScreenContent: .html(content: content, filePath: filePath),
             renderedViewFactory: { [content, filePath, reviewCommentSelectionScope] in
                 let selectionContext = reviewCommentSelectionScope?.makeContext(filePath: filePath)
-                let handler: ((String, UIViewController?) -> Void)? = selectionContext.map { context in
-                    { text, presentingViewController in
-                        context.dispatcher.dispatch(
-                            ReviewCommentSelectionRequest(
-                                selectedText: text,
-                                source: context.sourceContext(
-                                    surface: .fullScreenSource,
-                                    filePath: filePath
-                                )
-                            ),
-                            presentingViewController: presentingViewController
-                        )
-                    }
-                }
-                return HTMLRenderView(htmlString: content, reviewCommentHandler: handler)
+                return HTMLRenderView(
+                    htmlString: content,
+                    reviewCommentRouter: selectionContext?.dispatcher,
+                    sourceContext: selectionContext?.sourceContextIgnoringSurfaceOverride(
+                        surface: .fullScreenSource,
+                        filePath: filePath
+                    )
+                )
             }
         )
     }

@@ -27,16 +27,19 @@ final class FullScreenCodeViewController: UIViewController {
         let bodyContent: FullScreenCodeContent
         let copyText: String
         let sourceToggleTitle: String?
-        let terminalWrapToggleTitle: String?
+        let readerFamily: FullScreenReaderContentFamily?
+        let readerPreferences: FullScreenReaderPreferences?
     }
 
     private struct NavigationPresentation: Equatable {
         let sourceToggleTitle: String?
-        let showsTerminalWrapToggle: Bool
+        let readerFamily: FullScreenReaderContentFamily?
+        let readerPreferences: FullScreenReaderPreferences?
 
         init(_ presentation: Presentation) {
             sourceToggleTitle = presentation.sourceToggleTitle
-            showsTerminalWrapToggle = presentation.terminalWrapToggleTitle != nil
+            readerFamily = presentation.readerFamily
+            readerPreferences = presentation.readerPreferences
         }
     }
 
@@ -59,9 +62,8 @@ final class FullScreenCodeViewController: UIViewController {
     private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var showSource = false
-    private var terminalOutputWrapped = false
     private var copyButton: UIBarButtonItem?
-    private var terminalWrapButton: UIBarButtonItem?
+    private var viewingOptionsButton: UIBarButtonItem?
     private weak var contentHostController: UIViewController?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
@@ -246,7 +248,7 @@ final class FullScreenCodeViewController: UIViewController {
         // See FullScreenViewerChrome.
 
         var rightItems: [UIBarButtonItem] = []
-        terminalWrapButton = nil
+        viewingOptionsButton = nil
 
         let copy = UIBarButtonItem(
             image: UIImage(systemName: "doc.on.doc"),
@@ -267,17 +269,22 @@ final class FullScreenCodeViewController: UIViewController {
             )
         }
 
-        if let toggleTitle = presentation.terminalWrapToggleTitle {
-            let toggle = UIBarButtonItem(
-                title: toggleTitle,
+        if let readerFamily = presentation.readerFamily,
+           let readerPreferences = presentation.readerPreferences {
+            let options = UIBarButtonItem(
+                image: UIImage(systemName: "textformat"),
                 style: .plain,
-                target: self,
-                action: #selector(toggleTerminalOutputWrap)
+                target: nil,
+                action: nil
             )
-            toggle.tintColor = UIColor(palette.blue)
-            terminalWrapButton = toggle
-            updateTerminalWrapButton()
-            rightItems.append(toggle)
+            options.tintColor = UIColor(palette.fgDim)
+            options.accessibilityLabel = String(localized: "Viewing Options")
+            options.menu = makeViewingOptionsMenu(
+                family: readerFamily,
+                preferences: readerPreferences
+            )
+            viewingOptionsButton = options
+            rightItems.append(options)
         }
 
         if let toggleTitle = presentation.sourceToggleTitle {
@@ -296,11 +303,14 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func makePresentation() -> Presentation {
         let semanticContent = currentSemanticContent()
+        let bodyContent = bodyContent(for: semanticContent)
+        let readerFamily = readerFamily(for: bodyContent)
         return Presentation(
-            bodyContent: bodyContent(for: semanticContent),
+            bodyContent: bodyContent,
             copyText: copyText(for: semanticContent),
             sourceToggleTitle: sourceToggleTitle(for: semanticContent),
-            terminalWrapToggleTitle: terminalWrapToggleTitle(for: semanticContent)
+            readerFamily: readerFamily,
+            readerPreferences: readerFamily.map { FullScreenReaderPreferencesStore.shared.preferences(for: $0) }
         )
     }
 
@@ -314,6 +324,7 @@ final class FullScreenCodeViewController: UIViewController {
                 language: language,
                 startLine: startLine,
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
@@ -327,6 +338,7 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 isStreaming: false,
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenSource,
@@ -341,6 +353,7 @@ final class FullScreenCodeViewController: UIViewController {
                 filePath: filePath,
                 precomputedLines: precomputedLines,
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenDiff,
@@ -364,18 +377,20 @@ final class FullScreenCodeViewController: UIViewController {
                 sessionID: wsContext?.sessionID,
                 serverBaseURL: wsContext?.serverBaseURL,
                 sourceFilePath: filePath,
+                readerPreferences: readerPreferences(for: content),
                 perfSurface: .fullScreenMarkdown,
                 fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
                 fetchSessionFile: wsContext?.fetchSessionFile
             )
             return body
         case .html(let text, let filePath):
-            let handler = makeHTMLReviewCommentHandler(
-                router: reviewCommentSelectionContext?.dispatcher,
+            let view = HTMLRenderView(
+                htmlString: text,
+                reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
                 sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
             )
-            let view = HTMLRenderView(htmlString: text, reviewCommentHandler: handler)
             view.backgroundColor = UIColor(palette.bgDark)
+            view.applyReaderPreferences(readerPreferences(for: content))
             return view
         case .thinking(let text, let stream):
             return NativeFullScreenMarkdownBody(
@@ -388,6 +403,7 @@ final class FullScreenCodeViewController: UIViewController {
                     fallbackSourceLabel: String(localized: "Thinking")
                 ),
                 reviewCommentAnnotations: reviewCommentAnnotations,
+                readerPreferences: readerPreferences(for: content),
                 perfSurface: .fullScreenThinking
             )
         case .terminal(let text, let command, let stream):
@@ -396,7 +412,7 @@ final class FullScreenCodeViewController: UIViewController {
                 command: command,
                 stream: stream,
                 palette: palette,
-                outputWrapped: terminalOutputWrapped,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
@@ -412,6 +428,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .latex(text),
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
@@ -423,6 +440,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .orgMode(text),
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
@@ -434,6 +452,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .mermaid(text),
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
@@ -447,6 +466,7 @@ final class FullScreenCodeViewController: UIViewController {
                 language: "dot",
                 startLine: 1,
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
@@ -466,6 +486,7 @@ final class FullScreenCodeViewController: UIViewController {
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
             palette: palette,
+            readerPreferences: readerPreferences(for: .plainText(content: snapshot.text, filePath: snapshot.filePath)),
             reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
             reviewCommentSourceContext: makeSourceContext(
                 surface: .fullScreenSource,
@@ -500,6 +521,7 @@ final class FullScreenCodeViewController: UIViewController {
             sessionID: workspaceContext?.sessionID,
             serverBaseURL: workspaceContext?.serverBaseURL,
             sourceFilePath: filePath,
+            readerPreferences: readerPreferences(for: .markdown(content: text, filePath: filePath, workspaceContext: workspaceContext)),
             perfSurface: .fullScreenMarkdown,
             fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
             fetchSessionFile: workspaceContext?.fetchSessionFile
@@ -511,12 +533,13 @@ final class FullScreenCodeViewController: UIViewController {
         filePath: String?,
         palette: ThemePalette
     ) -> HTMLRenderView {
-        let handler = makeHTMLReviewCommentHandler(
-            router: reviewCommentSelectionContext?.dispatcher,
+        let view = HTMLRenderView(
+            htmlString: text,
+            reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
             sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
         )
-        let view = HTMLRenderView(htmlString: text, reviewCommentHandler: handler)
         view.backgroundColor = UIColor(palette.bgDark)
+        view.applyReaderPreferences(readerPreferences(for: .html(content: text, filePath: filePath)))
         return view
     }
 
@@ -681,9 +704,112 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
-    private func terminalWrapToggleTitle(for content: FullScreenCodeContent) -> String? {
-        guard case .terminal = content else { return nil }
-        return terminalOutputWrapped ? String(localized: "Unwrap") : String(localized: "Wrap")
+    private func readerFamily(for content: FullScreenCodeContent) -> FullScreenReaderContentFamily? {
+        switch content {
+        case .markdown, .thinking:
+            return .markdown
+        case .code, .graphviz:
+            return .code
+        case .plainText:
+            return .source
+        case .diff:
+            return .diff
+        case .terminal:
+            return .terminal
+        case .html:
+            return .html
+        case .latex, .orgMode, .mermaid:
+            return .renderedDocument
+        case .liveSource(let snapshot, _):
+            return readerFamily(for: bodyContent(for: snapshot))
+        }
+    }
+
+    private func readerPreferences(for content: FullScreenCodeContent) -> FullScreenReaderPreferences {
+        guard let family = readerFamily(for: content) else {
+            return FullScreenReaderPreferences()
+        }
+        return FullScreenReaderPreferencesStore.shared.preferences(for: family)
+    }
+
+    private func makeViewingOptionsMenu(
+        family: FullScreenReaderContentFamily,
+        preferences: FullScreenReaderPreferences
+    ) -> UIMenu {
+        var children: [UIMenuElement] = []
+
+        let smaller = UIAction(
+            title: String(localized: "Smaller Text"),
+            image: UIImage(systemName: "textformat.size.smaller")
+        ) { [weak self] _ in
+            self?.adjustReaderTextSize(by: -1)
+        }
+        if !preferences.textSize.canDecrease {
+            smaller.attributes = [.disabled]
+        }
+
+        let larger = UIAction(
+            title: String(localized: "Larger Text"),
+            image: UIImage(systemName: "textformat.size.larger")
+        ) { [weak self] _ in
+            self?.adjustReaderTextSize(by: 1)
+        }
+        if !preferences.textSize.canIncrease {
+            larger.attributes = [.disabled]
+        }
+
+        children.append(UIMenu(
+            title: "",
+            options: .displayInline,
+            children: [smaller, larger]
+        ))
+
+        if family.supportsWrapping {
+            let wrap = UIAction(
+                title: preferences.wrapsText
+                    ? String(localized: "Unwrap Text")
+                    : String(localized: "Wrap Text"),
+                image: UIImage(systemName: "text.alignleft"),
+                state: preferences.wrapsText ? .on : .off
+            ) { [weak self] _ in
+                self?.setReaderWrapping(!preferences.wrapsText)
+            }
+            children.append(UIMenu(
+                title: "",
+                options: .displayInline,
+                children: [wrap]
+            ))
+        }
+
+        if family.supportsSpacing {
+            let spacingActions = FullScreenReaderSpacing.allCases.map { spacing in
+                UIAction(
+                    title: spacing.displayName,
+                    state: preferences.spacing == spacing ? .on : .off
+                ) { [weak self] _ in
+                    self?.setReaderSpacing(spacing)
+                }
+            }
+            children.append(UIMenu(
+                title: String(localized: "Spacing"),
+                image: UIImage(systemName: "line.3.horizontal.decrease"),
+                children: spacingActions
+            ))
+        }
+
+        let reset = UIAction(
+            title: String(localized: "Reset View"),
+            image: UIImage(systemName: "arrow.counterclockwise")
+        ) { [weak self] _ in
+            self?.resetReaderPreferences()
+        }
+        children.append(UIMenu(
+            title: "",
+            options: .displayInline,
+            children: [reset]
+        ))
+
+        return UIMenu(title: String(localized: "Viewing Options"), children: children)
     }
 
     // MARK: - HTML Diff Helpers
@@ -713,27 +839,58 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
-    @objc private func toggleTerminalOutputWrap() {
-        guard case .terminal = currentSemanticContent() else { return }
-        terminalOutputWrapped.toggle()
-        updateTerminalWrapButton()
-
-        if let terminalBody = installedBodyView as? NativeFullScreenTerminalBody {
-            terminalBody.setOutputWrapped(terminalOutputWrapped)
-        } else if let viewController = contentHostController {
-            let palette = ThemeRuntimeState.currentThemeID().palette
-            let presentation = makePresentation()
-            installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+    private func adjustReaderTextSize(by delta: Int) {
+        updateReaderPreferences { preferences in
+            preferences.textSize = preferences.textSize.adjusted(by: delta)
         }
     }
 
-    private func updateTerminalWrapButton() {
-        guard let terminalWrapButton else { return }
-        let title = terminalOutputWrapped ? String(localized: "Unwrap") : String(localized: "Wrap")
-        terminalWrapButton.title = title
-        terminalWrapButton.accessibilityLabel = terminalOutputWrapped
-            ? String(localized: "Unwrap output")
-            : String(localized: "Wrap output")
+    private func setReaderWrapping(_ wraps: Bool) {
+        updateReaderPreferences { preferences in
+            preferences.wrapsText = wraps
+        }
+    }
+
+    private func setReaderSpacing(_ spacing: FullScreenReaderSpacing) {
+        updateReaderPreferences { preferences in
+            preferences.spacing = spacing
+        }
+    }
+
+    private func resetReaderPreferences() {
+        let presentation = makePresentation()
+        guard let family = presentation.readerFamily else { return }
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: family)
+        applyReaderPreferences(
+            family.defaultPreferences,
+            bodyContent: presentation.bodyContent
+        )
+    }
+
+    private func updateReaderPreferences(_ mutate: (inout FullScreenReaderPreferences) -> Void) {
+        let presentation = makePresentation()
+        guard let family = presentation.readerFamily,
+              var preferences = presentation.readerPreferences else { return }
+
+        mutate(&preferences)
+        FullScreenReaderPreferencesStore.shared.setPreferences(preferences, for: family)
+        applyReaderPreferences(preferences, bodyContent: presentation.bodyContent)
+    }
+
+    private func applyReaderPreferences(
+        _ preferences: FullScreenReaderPreferences,
+        bodyContent: FullScreenCodeContent
+    ) {
+        if let configurable = installedBodyView as? FullScreenReaderConfigurable {
+            configurable.applyReaderPreferences(preferences)
+        } else if let viewController = contentHostController {
+            let palette = ThemeRuntimeState.currentThemeID().palette
+            installBodyView(makeBodyView(for: bodyContent, palette: palette), on: viewController)
+        }
+
+        guard let viewController = contentHostController else { return }
+        let palette = ThemeRuntimeState.currentThemeID().palette
+        configureNavigation(on: viewController, palette: palette)
     }
 
     private func copyText(for content: FullScreenCodeContent) -> String {
@@ -767,7 +924,7 @@ final class FullScreenCodeViewController: UIViewController {
         fallbackSourceLabel: String? = nil
     ) -> ReviewCommentSourceContext? {
         guard let selectionContext = reviewCommentSelectionContext else { return nil }
-        return selectionContext.sourceContext(
+        return selectionContext.sourceContextIgnoringSurfaceOverride(
             surface: surface,
             sourceLabel: selectionContext.sourceLabel ?? fallbackSourceLabel,
             filePath: filePath,
@@ -837,3 +994,15 @@ final class FullScreenCodeViewController: UIViewController {
         configureNavigation(on: viewController, palette: palette)
     }
 }
+
+#if DEBUG
+extension FullScreenCodeViewController {
+    var viewingOptionsMenuForTesting: UIMenu? {
+        viewingOptionsButton?.menu
+    }
+
+    func setReaderWrappingForTesting(_ wraps: Bool) {
+        setReaderWrapping(wraps)
+    }
+}
+#endif
