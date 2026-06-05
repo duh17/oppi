@@ -27,6 +27,10 @@ import {
   type RuntimeCommandExecutionContext,
 } from "./runtime-command-coordinator.js";
 import type { SessionBackendEvent } from "./pi-events.js";
+import {
+  isPiTuiMirrorRemoteCommand,
+  piTuiMirrorUnsupportedRemoteCommandReason,
+} from "./pi-tui-mirror-contract.js";
 import { SessionAgentEventCoordinator } from "./session-agent-events.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import { isPiTuiTaskRecordBridgeState } from "./pi-tui-session-classification.js";
@@ -54,6 +58,7 @@ import {
   requireQueueState,
 } from "./session-queue-utils.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
+import { readSessionTreeFilterMode, serializeRawSessionTreePayload } from "./session-tree.js";
 import {
   updateSearchIndexForSessionEvent,
   type SessionSearchIndex,
@@ -89,40 +94,6 @@ class BridgeRegistrationError extends Error {
     super(message);
   }
 }
-
-const SUPPORTED_REMOTE_COMMANDS = new Set([
-  "get_state",
-  "get_messages",
-  "get_fork_messages",
-  "get_session_tree",
-  "navigate_tree",
-  "get_session_stats",
-  "get_commands",
-  "set_model",
-  "cycle_model",
-  "get_available_models",
-  "set_thinking_level",
-  "cycle_thinking_level",
-  "set_session_name",
-  "compact",
-  "set_auto_compaction",
-  "set_steering_mode",
-  "set_follow_up_mode",
-  "set_auto_retry",
-  "abort_retry",
-  "abort_bash",
-  "abort",
-  "reload",
-  "get_queue",
-  "set_queue",
-]);
-
-const UNSUPPORTED_REMOTE_COMMAND_REASONS = new Map([
-  ["share_session", "sharing needs a server-owned AgentSession export path"],
-  ["new_session", "session replacement is terminal-owned; start it from the terminal"],
-  ["fork", "session-file replacement is terminal-owned; fork from the terminal"],
-  ["switch_session", "session-file replacement is terminal-owned; switch from the terminal"],
-]);
 
 export interface PiBridgeStateSnapshot {
   sessionFile?: string;
@@ -508,8 +479,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
       runtimeName: "pi-tui runtime",
-      isCommandSupported: (commandType) => SUPPORTED_REMOTE_COMMANDS.has(commandType),
-      unsupportedReason: (commandType) => UNSUPPORTED_REMOTE_COMMAND_REASONS.get(commandType),
+      isCommandSupported: isPiTuiMirrorRemoteCommand,
+      unsupportedReason: piTuiMirrorUnsupportedRemoteCommandReason,
       normalizeError: normalizeCommandError,
       broadcast: (sessionId, message) => this.broadcast(sessionId, message),
       onCommandSuccess: (sessionId, context) =>
@@ -947,12 +918,30 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     sessionId: string,
     context: RuntimeCommandExecutionContext,
   ): void {
+    context.data = this.normalizeCommandResult(context.commandType, context.request, context.data);
     this.applyQueueFromCommandData(
       sessionId,
       context.data,
       `command_result:${context.commandType}`,
     );
     this.applyCommandResult(sessionId, context.commandType, context.request, context.data);
+  }
+
+  private normalizeCommandResult(
+    commandType: string,
+    request: Record<string, unknown>,
+    data: unknown,
+  ): unknown {
+    if (commandType !== "get_session_tree") {
+      return data;
+    }
+
+    const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+    if (Array.isArray(record.nodes)) {
+      return data;
+    }
+
+    return serializeRawSessionTreePayload(data, readSessionTreeFilterMode(request.filterMode));
   }
 
   private registerBridge(ws: WebSocket, hello: PiBridgeHelloMessage): BridgeConnection {

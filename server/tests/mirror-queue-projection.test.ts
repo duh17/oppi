@@ -4,12 +4,12 @@ import {
   createMirrorWidgetForwardingComponent,
   createMirrorWidgetForwardingTui,
   MirrorQueueProjection,
-  serializeSessionTree,
   normalizeMirrorAskAnswers,
   snapshotMirrorWidgetLines,
   snapshotMirrorWidgetNativeSurface,
   type MessageQueueState,
 } from "../../pi-extensions/oppi-mirror.ts";
+import { serializeSessionTree } from "../src/session-tree.js";
 
 function queue(
   version: number,

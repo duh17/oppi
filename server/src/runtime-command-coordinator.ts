@@ -59,13 +59,14 @@ export class RuntimeCommandCoordinator {
 
     try {
       const data = await executeCommand({ ...message });
-      await this.deps.onCommandSuccess?.(sessionId, {
+      const context: RuntimeCommandExecutionContext = {
         commandType,
         request: message,
         data,
         executeCommand,
-      });
-      this.deps.broadcast(sessionId, runtimeCommandSuccess(commandType, requestId, data));
+      };
+      await this.deps.onCommandSuccess?.(sessionId, context);
+      this.deps.broadcast(sessionId, runtimeCommandSuccess(commandType, requestId, context.data));
     } catch (error) {
       this.broadcastFailure(sessionId, commandType, requestId, error);
     }

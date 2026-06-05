@@ -831,7 +831,21 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       type: "command_result",
       id: command.id,
       success: true,
-      data: { leafId: "entry-1", nodes: [] },
+      data: {
+        leafId: "user-1",
+        tree: [
+          {
+            entry: {
+              id: "user-1",
+              parentId: null,
+              type: "message",
+              timestamp: "2026-01-01T00:00:00.000Z",
+              message: { role: "user", content: "Start here" },
+            },
+            children: [],
+          },
+        ],
+      },
     });
 
     await expect(commandPromise).resolves.toBeUndefined();
@@ -840,7 +854,20 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       command: "get_session_tree",
       requestId: "req-tree",
       success: true,
-      data: { leafId: "entry-1", nodes: [] },
+      data: {
+        leafId: "user-1",
+        nodes: [
+          expect.objectContaining({
+            id: "user-1",
+            parentId: null,
+            type: "message",
+            depth: 0,
+            isLeafPath: true,
+            role: "user",
+            textPreview: "Start here",
+          }),
+        ],
+      },
     });
   });
 
