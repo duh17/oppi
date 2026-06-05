@@ -34,7 +34,7 @@ struct ModelPickerSheet: View {
 
     /// All models grouped by provider, excluding any in the recent section.
     /// When searching, uses FuzzyMatch across name/id/provider and sorts by score.
-    private var groupedModels: [(provider: String, models: [ModelInfo])] {
+    private var groupedModels: [(provider: String, models: [ModelInfo], modelCount: Int)] {
         let recentSet = Set(recentIds)
         let filtered: [ModelInfo]
         if searchText.isEmpty {
@@ -55,12 +55,21 @@ struct ModelPickerSheet: View {
         }
 
         let grouped = Dictionary(grouping: filtered) { $0.provider }
+        let providerCounts = Dictionary(grouping: models) { $0.provider }
+            .mapValues(\.count)
+        let providers = searchText.isEmpty
+            ? Array(providerCounts.keys)
+            : Array(grouped.keys)
         let orderedProviders = ModelPickerProviderOrdering.sortProviders(
-            Array(grouped.keys),
+            providers,
             recentModels: recentModels
         )
         return orderedProviders.map { provider in
-            (provider: provider, models: grouped[provider] ?? [])
+            (
+                provider: provider,
+                models: grouped[provider] ?? [],
+                modelCount: providerCounts[provider] ?? grouped[provider]?.count ?? 0
+            )
         }
     }
 
@@ -117,6 +126,7 @@ struct ModelPickerSheet: View {
 
             ForEach(groupedModels, id: \.provider) { group in
                 let isCollapsed = isProviderCollapsed(group.provider)
+                let hasVisibleModels = !group.models.isEmpty
 
                 Section {
                     if !isCollapsed {
@@ -128,7 +138,8 @@ struct ModelPickerSheet: View {
                     providerHeader(
                         provider: group.provider,
                         isCollapsed: isCollapsed,
-                        modelCount: group.models.count
+                        modelCount: group.modelCount,
+                        hasVisibleModels: hasVisibleModels
                     )
                 }
             }
@@ -173,12 +184,17 @@ struct ModelPickerSheet: View {
         }
     }
 
-    private func providerHeader(provider: String, isCollapsed: Bool, modelCount: Int) -> some View {
+    private func providerHeader(
+        provider: String,
+        isCollapsed: Bool,
+        modelCount: Int,
+        hasVisibleModels: Bool
+    ) -> some View {
         let isSearchActive = !searchText.isEmpty
         let name = providerDisplayName(provider)
 
         return Button {
-            guard !isSearchActive else { return }
+            guard !isSearchActive && hasVisibleModels else { return }
             withAnimation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion)) {
                 toggleProviderCollapse(provider)
             }
@@ -210,9 +226,11 @@ struct ModelPickerSheet: View {
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.themeComment)
 
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeComment)
+                    if hasVisibleModels {
+                        Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                    }
                 }
             }
             .contentShape(Rectangle())
@@ -221,7 +239,7 @@ struct ModelPickerSheet: View {
         .font(.caption.bold())
         .foregroundStyle(.themeFgDim)
         .accessibilityLabel(
-            isSearchActive
+            isSearchActive || !hasVisibleModels
                 ? name
                 : (isCollapsed ? "Expand \(name) models" : "Collapse \(name) models")
         )
