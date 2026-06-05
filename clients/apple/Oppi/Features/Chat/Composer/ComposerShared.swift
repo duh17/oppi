@@ -11,6 +11,10 @@ import UniformTypeIdentifiers
 /// static functions instead of maintaining their own copies.
 @MainActor
 enum ComposerShared {
+    static let inlineVoiceInputSource = "inline_mic_tap"
+    static let expandedVoiceInputSource = "expanded_mic_tap"
+    static let askCardVoiceInputSource = "ask_card_mic_tap"
+    static let reviewCommentInlineVoiceInputSource = "review_comment_inline_mic_tap"
 
     // MARK: - Voice UI Helpers
 
@@ -326,6 +330,11 @@ enum ComposerShared {
                 keyboardLanguage: keyboardLanguage,
                 source: source
             )
+            guard manager.isActiveRecordingSource(source), manager.isRecording || manager.isPreparing else {
+                textBeforeRecording?.wrappedValue = nil
+                suppressKeyboard.wrappedValue = false
+                throw CancellationError()
+            }
             return prefix
         } catch {
             textBeforeRecording?.wrappedValue = nil
@@ -360,11 +369,14 @@ enum ComposerShared {
     static func handleKeyboardRestore(
         suppressKeyboard: Binding<Bool>,
         textBeforeRecording: Binding<String?>,
-        voiceInputManager: VoiceInputManager?
+        voiceInputManager: VoiceInputManager?,
+        expectedSource: String? = nil
     ) {
         suppressKeyboard.wrappedValue = false
         textBeforeRecording.wrappedValue = nil
-        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
+        if let manager = voiceInputManager,
+           expectedSource.map(manager.isActiveRecordingSource) ?? true,
+           manager.isRecording || manager.isPreparing {
             Task {
                 if manager.isRecording {
                     await manager.stopRecording()

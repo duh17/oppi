@@ -449,6 +449,15 @@ final class VoiceInputManager {
     /// Set at start of recording (including preparing) and cleared on teardown.
     private(set) var activeEngine: TranscriptionEngine?
 
+    /// Source UI that owns the active recording session.
+    /// Dictation uses one shared manager, so consumers must check this before
+    /// applying transcript revisions to their own text binding.
+    private(set) var activeRecordingSource: String?
+
+    func isActiveRecordingSource(_ source: String) -> Bool {
+        activeRecordingSource == source
+    }
+
     var currentTranscript: String {
         let base: String
         if typewriterAnimator.isAnimating {
@@ -780,6 +789,7 @@ final class VoiceInputManager {
         recordingStart = nil
         resultUpdateCount = 0
         replaceTranscriptState.reset()
+        activeRecordingSource = source
 
         state = .preparingModel
         let startTime = ContinuousClock.now
@@ -798,6 +808,7 @@ final class VoiceInputManager {
             guard await systemAccess.requestMicPermission() else {
                 endPlaybackCaptureInterruptionIfNeeded()
                 activeEngine = nil
+                activeRecordingSource = nil
                 state = .error("Microphone permission denied")
                 scheduleErrorReset()
                 return
@@ -1206,6 +1217,7 @@ final class VoiceInputManager {
         audioLevel = 0
         activeLanguageLabel = nil
         activeEngine = nil
+        activeRecordingSource = nil
         activeMetricAnnotation = nil
         activeDictationMetricTags = [:]
         dictationSessionStart = nil

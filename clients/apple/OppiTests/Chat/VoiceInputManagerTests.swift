@@ -556,6 +556,36 @@ struct VoiceInputManagerTests {
         #expect(session.startCallCount == 1)
     }
 
+    @Test func activeRecordingSourceTracksCurrentOwner() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        #expect(manager.activeRecordingSource == nil)
+        #expect(!manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource))
+
+        try await manager.startRecording(
+            keyboardLanguage: "en-US",
+            source: ComposerShared.reviewCommentInlineVoiceInputSource
+        )
+
+        #expect(manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource))
+        #expect(!manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource))
+
+        _ = await manager.stopRecording()
+
+        #expect(manager.activeRecordingSource == nil)
+        #expect(!manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource))
+    }
+
     @Test func capturePlaybackSuppressionCoversRecordingAndStopsOnTeardown() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

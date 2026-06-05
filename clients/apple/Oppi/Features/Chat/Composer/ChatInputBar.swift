@@ -103,9 +103,13 @@ struct ChatInputBar<ActionRow: View>: View {
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(
             storedText: text,
-            textBeforeRecording: textBeforeRecording,
-            liveTranscript: voiceInputManager?.currentTranscript
+            textBeforeRecording: ownsVoiceInput ? textBeforeRecording : nil,
+            liveTranscript: ownsVoiceInput ? voiceInputManager?.currentTranscript : nil
         )
+    }
+
+    private var ownsVoiceInput: Bool {
+        voiceInputManager?.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource) ?? false
     }
 
     private var canSend: Bool {
@@ -222,7 +226,8 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var correctionRangesForDisplay: [NSRange] {
-        ComposerShared.correctionRanges(
+        guard ownsVoiceInput else { return [] }
+        return ComposerShared.correctionRanges(
             manager: voiceInputManager,
             textBeforeRecording: textBeforeRecording
         )
@@ -297,6 +302,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
+            guard manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource) else { return }
             text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
@@ -383,7 +389,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         font: composerInputFont,
                         textColor: UIColor(Color.themeFg),
                         tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
-                        volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
+                        volatileSuffixLength: ownsVoiceInput ? voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0 : 0,
                         correctionRanges: correctionRangesForDisplay,
                         maxLines: effectiveMaxLines,
                         autocorrectionEnabled: composerAutocorrectionEnabled,
@@ -403,7 +409,8 @@ struct ChatInputBar<ActionRow: View>: View {
                             ComposerShared.handleKeyboardRestore(
                                 suppressKeyboard: $suppressKeyboard,
                                 textBeforeRecording: $textBeforeRecording,
-                                voiceInputManager: voiceInputManager
+                                voiceInputManager: voiceInputManager,
+                                expectedSource: ComposerShared.inlineVoiceInputSource
                             )
                         },
                         accessibilityIdentifier: "chat.input",
@@ -639,13 +646,16 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Tap to start recording, tap again to stop. Works in any state
     /// (idle or busy) so you can mix typing and dictation freely.
     private func inlineMicButton(manager: VoiceInputManager) -> some View {
-        let isRecording = manager.isRecording
-        let isPreparing = manager.isPreparing
-        let isProcessing = manager.isProcessing
+        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource)
+        let isRecording = manager.isRecording && ownsVoiceInput
+        let isPreparing = manager.isPreparing && ownsVoiceInput
+        let isProcessing = manager.isProcessing && ownsVoiceInput
+        let isOwnedOrIdle = ownsVoiceInput || manager.state == .idle
         let engineBadge = ComposerShared.micEngineBadge(for: manager)
 
         return Button {
             Task {
+                guard ownsVoiceInput || manager.state == .idle else { return }
                 switch manager.state {
                 case .recording:
                     await ComposerShared.stopVoiceInput(
@@ -666,7 +676,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,
-                            source: "inline_mic_tap",
+                            source: ComposerShared.inlineVoiceInputSource,
                             baseText: text,
                             textBeforeRecording: $textBeforeRecording,
                             suppressKeyboard: $suppressKeyboard,
@@ -693,7 +703,7 @@ struct ChatInputBar<ActionRow: View>: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isProcessing)
+        .disabled(isProcessing || !isOwnedOrIdle)
         .accessibilityIdentifier("chat.voiceInput")
         .accessibilityLabel(ComposerShared.accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
         .accessibilityValue(ComposerShared.voiceRouteAccessibilityValue(for: manager))
@@ -945,7 +955,9 @@ struct ChatInputBar<ActionRow: View>: View {
         // Stop voice recording before sending. We await the stop so the final
         // transcript (including any last active tail from dictation_final)
         // updates the text field before onSend() captures it.
-        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
+        if let manager = voiceInputManager,
+           manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource),
+           manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
             suppressKeyboard = Self.suppressKeyboardAfterSend(
                 voiceState: manager.state,

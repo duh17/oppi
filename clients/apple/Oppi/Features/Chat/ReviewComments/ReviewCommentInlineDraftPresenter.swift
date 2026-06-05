@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 import UIKit
 
@@ -147,6 +148,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private let saveButton = UIButton(type: .system)
     private var textBeforeRecording: String?
     private var suppressKeyboard = false
+    private var isObservingVoiceInput = false
 
     init(
         request: ReviewCommentSelectionRequest,
@@ -168,6 +170,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     required init?(coder: NSCoder) { nil }
 
     deinit {
+        isObservingVoiceInput = false
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -179,6 +182,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         updateFrame(animated: false)
         hostView.bringSubviewToFront(self)
         observeKeyboard()
+        observeVoiceInput()
 
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
             self.alpha = 1
@@ -192,7 +196,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     }
 
     func dismiss(animated: Bool = true) {
+        isObservingVoiceInput = false
         inputTextView.resignFirstResponder()
+        cancelVoiceInputIfOwned()
         if isObservingKeyboard {
             NotificationCenter.default.removeObserver(
                 self,
@@ -381,15 +387,63 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func updateMicButton() {
         guard let manager = router.voiceInputManager else { return }
         let palette = ThemeRuntimeState.currentPalette()
+        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource)
+        let isRecording = manager.isRecording && ownsVoiceInput
         var config = UIButton.Configuration.filled()
-        config.image = UIImage(systemName: manager.isRecording ? "stop.fill" : "mic.fill")
-        config.baseForegroundColor = UIColor(manager.isRecording ? palette.bgDark : palette.fg)
-        config.baseBackgroundColor = UIColor(manager.isRecording ? palette.red : palette.bgHighlight).withAlphaComponent(manager.isRecording ? 1 : 0.86)
+        config.image = UIImage(systemName: isRecording ? "stop.fill" : "mic.fill")
+        config.baseForegroundColor = UIColor(isRecording ? palette.bgDark : palette.fg)
+        config.baseBackgroundColor = UIColor(isRecording ? palette.red : palette.bgHighlight).withAlphaComponent(isRecording ? 1 : 0.86)
         config.cornerStyle = .capsule
         config.contentInsets = NSDirectionalEdgeInsets(top: 9, leading: 9, bottom: 9, trailing: 9)
         micButton.configuration = config
-        micButton.isEnabled = !isSaving && !manager.isProcessing
-        micButton.accessibilityLabel = manager.isRecording ? "Stop dictation" : "Dictate comment"
+        micButton.isEnabled = !isSaving && !manager.isProcessing && (ownsVoiceInput || manager.state == .idle)
+        micButton.accessibilityLabel = isRecording ? "Stop dictation" : "Dictate comment"
+    }
+
+    private func observeVoiceInput() {
+        guard router.voiceInputManager != nil, !isObservingVoiceInput else { return }
+        isObservingVoiceInput = true
+        trackVoiceInputChanges()
+    }
+
+    private func trackVoiceInputChanges() {
+        guard isObservingVoiceInput, let manager = router.voiceInputManager else { return }
+        withObservationTracking {
+            _ = manager.transcriptPresentationRevision
+            _ = manager.state
+            _ = manager.activeRecordingSource
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.handleVoiceInputChange()
+            }
+        }
+    }
+
+    private func handleVoiceInputChange() {
+        guard isObservingVoiceInput else { return }
+        applyOwnedDictationTranscript()
+        updateMicButton()
+        trackVoiceInputChanges()
+    }
+
+    private func applyOwnedDictationTranscript() {
+        guard let manager = router.voiceInputManager,
+              manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource),
+              let prefix = textBeforeRecording else { return }
+        inputTextView.text = prefix + manager.currentTranscript
+        inputTextView.refreshPlaceholder()
+        updateSaveButton()
+    }
+
+    private func cancelVoiceInputIfOwned() {
+        guard let manager = router.voiceInputManager,
+              manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource),
+              manager.isRecording || manager.isPreparing else { return }
+        textBeforeRecording = nil
+        suppressKeyboard = false
+        Task { @MainActor in
+            await manager.cancelRecording()
+        }
     }
 
     private func configureSaveButton(palette: ThemePalette) {
@@ -565,6 +619,11 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
     private func handleMicTap() async {
         guard let manager = router.voiceInputManager else { return }
+        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource)
+        guard ownsVoiceInput || manager.state == .idle else {
+            updateMicButton()
+            return
+        }
         switch manager.state {
         case .recording:
             await ComposerShared.stopVoiceInput(
@@ -583,7 +642,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 try await ComposerShared.startVoiceInput(
                     manager: manager,
                     keyboardLanguage: nil,
-                    source: "review_comment_inline_mic_tap",
+                    source: ComposerShared.reviewCommentInlineVoiceInputSource,
                     baseText: inputTextView.text ?? "",
                     textBeforeRecording: recordingPrefixBinding(),
                     suppressKeyboard: suppressKeyboardBinding(),

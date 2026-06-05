@@ -65,9 +65,13 @@ struct ExpandedComposerView: View {
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(
             storedText: text,
-            textBeforeRecording: textBeforeRecording,
-            liveTranscript: voiceInputManager?.currentTranscript
+            textBeforeRecording: ownsVoiceInput ? textBeforeRecording : nil,
+            liveTranscript: ownsVoiceInput ? voiceInputManager?.currentTranscript : nil
         )
+    }
+
+    private var ownsVoiceInput: Bool {
+        voiceInputManager?.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource) ?? false
     }
 
     private var canSend: Bool {
@@ -98,7 +102,8 @@ struct ExpandedComposerView: View {
     }
 
     private var correctionRangesForDisplay: [NSRange] {
-        ComposerShared.correctionRanges(
+        guard ownsVoiceInput else { return [] }
+        return ComposerShared.correctionRanges(
             manager: voiceInputManager,
             textBeforeRecording: textBeforeRecording
         )
@@ -129,7 +134,7 @@ struct ExpandedComposerView: View {
                     font: composerInputFont,
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
-                    volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
+                    volatileSuffixLength: ownsVoiceInput ? voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0 : 0,
                     correctionRanges: correctionRangesForDisplay,
                     autocorrectionEnabled: composerAutocorrectionEnabled,
                     onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingAttachments) },
@@ -143,7 +148,8 @@ struct ExpandedComposerView: View {
                         ComposerShared.handleKeyboardRestore(
                             suppressKeyboard: $suppressKeyboard,
                             textBeforeRecording: $textBeforeRecording,
-                            voiceInputManager: voiceInputManager
+                            voiceInputManager: voiceInputManager,
+                            expectedSource: ComposerShared.expandedVoiceInputSource
                         )
                     }
                 )
@@ -206,6 +212,7 @@ struct ExpandedComposerView: View {
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
+            guard manager.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource) else { return }
             text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
@@ -335,13 +342,16 @@ struct ExpandedComposerView: View {
     // MARK: - Mic Button
 
     private func micButton(manager: VoiceInputManager) -> some View {
-        let isRecording = manager.isRecording
-        let isPreparing = manager.isPreparing
-        let isProcessing = manager.isProcessing
+        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource)
+        let isRecording = manager.isRecording && ownsVoiceInput
+        let isPreparing = manager.isPreparing && ownsVoiceInput
+        let isProcessing = manager.isProcessing && ownsVoiceInput
+        let isOwnedOrIdle = ownsVoiceInput || manager.state == .idle
         let engineBadge = ComposerShared.micEngineBadge(for: manager)
 
         return Button {
             Task {
+                guard ownsVoiceInput || manager.state == .idle else { return }
                 switch manager.state {
                 case .recording:
                     await ComposerShared.stopVoiceInput(
@@ -360,7 +370,7 @@ struct ExpandedComposerView: View {
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,
-                            source: "expanded_mic_tap",
+                            source: ComposerShared.expandedVoiceInputSource,
                             baseText: text,
                             textBeforeRecording: $textBeforeRecording,
                             suppressKeyboard: $suppressKeyboard,
@@ -387,7 +397,7 @@ struct ExpandedComposerView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isProcessing)
+        .disabled(isProcessing || !isOwnedOrIdle)
         .accessibilityIdentifier("expanded.voiceInput")
         .accessibilityLabel(ComposerShared.accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
         .accessibilityValue(ComposerShared.voiceRouteAccessibilityValue(for: manager))
@@ -397,7 +407,9 @@ struct ExpandedComposerView: View {
 
     private func handleSend() {
         // Stop voice recording setup/session before sending
-        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
+        if let manager = voiceInputManager,
+           manager.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource),
+           manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
             Task {
                 if manager.isRecording {
