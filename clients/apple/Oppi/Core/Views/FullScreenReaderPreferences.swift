@@ -12,9 +12,9 @@ enum FullScreenReaderContentFamily: String, Codable, CaseIterable, Equatable {
 
     var supportsWrapping: Bool {
         switch self {
-        case .code, .source, .diff, .terminal:
+        case .code, .source, .terminal:
             return true
-        case .markdown, .html, .renderedDocument:
+        case .markdown, .diff, .html, .renderedDocument:
             return false
         }
     }
@@ -38,6 +38,8 @@ enum FullScreenReaderContentFamily: String, Codable, CaseIterable, Equatable {
     }
 }
 
+/// Persisted stepped text-size values. Current UI stores a continuous text scale,
+/// but decoding this enum preserves saved reader preferences.
 enum FullScreenReaderTextSize: Int, Codable, CaseIterable, Equatable {
     case small = 0
     case standard = 1
@@ -105,22 +107,53 @@ enum FullScreenReaderSpacing: String, Codable, CaseIterable, Equatable {
 }
 
 struct FullScreenReaderPreferences: Codable, Equatable {
-    var textSize: FullScreenReaderTextSize
+    static let minimumTextScale: CGFloat = 0.85
+    static let standardTextScale: CGFloat = 1.0
+    static let maximumTextScale: CGFloat = 1.35
+
+    var textScale: CGFloat
     var spacing: FullScreenReaderSpacing
     var wrapsText: Bool
 
     init(
-        textSize: FullScreenReaderTextSize = .standard,
+        textScale: CGFloat = Self.standardTextScale,
         spacing: FullScreenReaderSpacing = .standard,
         wrapsText: Bool = false
     ) {
-        self.textSize = textSize
+        self.textScale = Self.clampedTextScale(textScale)
         self.spacing = spacing
         self.wrapsText = wrapsText
     }
 
-    var textScale: CGFloat {
-        textSize.scale
+    static func clampedTextScale(_ scale: CGFloat) -> CGFloat {
+        min(maximumTextScale, max(minimumTextScale, scale))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case textScale
+        case textSize
+        case spacing
+        case wrapsText
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let scale = try container.decodeIfPresent(CGFloat.self, forKey: .textScale) {
+            textScale = Self.clampedTextScale(scale)
+        } else if let storedTextSize = try container.decodeIfPresent(FullScreenReaderTextSize.self, forKey: .textSize) {
+            textScale = Self.clampedTextScale(storedTextSize.scale)
+        } else {
+            textScale = Self.standardTextScale
+        }
+        spacing = try container.decodeIfPresent(FullScreenReaderSpacing.self, forKey: .spacing) ?? .standard
+        wrapsText = try container.decodeIfPresent(Bool.self, forKey: .wrapsText) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(textScale, forKey: .textScale)
+        try container.encode(spacing, forKey: .spacing)
+        try container.encode(wrapsText, forKey: .wrapsText)
     }
 }
 
@@ -142,19 +175,20 @@ final class FullScreenReaderPreferencesStore {
         else {
             return family.defaultPreferences
         }
-        return decoded
+        return normalized(decoded, for: family)
     }
 
     func setPreferences(
         _ preferences: FullScreenReaderPreferences,
         for family: FullScreenReaderContentFamily
     ) {
-        if preferences == family.defaultPreferences {
+        let normalized = normalized(preferences, for: family)
+        if normalized == family.defaultPreferences {
             defaults.removeObject(forKey: key(for: family))
             return
         }
 
-        guard let data = try? JSONEncoder().encode(preferences) else { return }
+        guard let data = try? JSONEncoder().encode(normalized) else { return }
         defaults.set(data, forKey: key(for: family))
     }
 
@@ -164,5 +198,19 @@ final class FullScreenReaderPreferencesStore {
 
     private func key(for family: FullScreenReaderContentFamily) -> String {
         "\(keyPrefix).\(family.rawValue)"
+    }
+
+    private func normalized(
+        _ preferences: FullScreenReaderPreferences,
+        for family: FullScreenReaderContentFamily
+    ) -> FullScreenReaderPreferences {
+        var normalized = preferences
+        if !family.supportsWrapping {
+            normalized.wrapsText = family.defaultPreferences.wrapsText
+        }
+        if !family.supportsSpacing {
+            normalized.spacing = family.defaultPreferences.spacing
+        }
+        return normalized
     }
 }

@@ -519,6 +519,7 @@ final class NativeFullScreenDiffBody: UIView {
     private func styledDiffText(_ attributedText: NSAttributedString) -> NSAttributedString {
         let mutable = NSMutableAttributedString(attributedString: attributedText)
         let fullRange = NSRange(location: 0, length: mutable.length)
+        let lineBreakMode: NSLineBreakMode = readerPreferences.wrapsText ? .byCharWrapping : .byClipping
         attributedText.enumerateAttribute(.font, in: fullRange) { value, range, _ in
             let font = (value as? UIFont) ?? FullScreenCodeTypography.codeFont
             mutable.addAttribute(
@@ -526,6 +527,12 @@ final class NativeFullScreenDiffBody: UIView {
                 value: FullScreenCodeTypography.scaledFont(font, scale: readerPreferences.textScale),
                 range: range
             )
+        }
+        attributedText.enumerateAttribute(.paragraphStyle, in: fullRange) { value, range, _ in
+            let style = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+                ?? NSMutableParagraphStyle()
+            style.lineBreakMode = lineBreakMode
+            mutable.addAttribute(.paragraphStyle, value: style, range: range)
         }
         return mutable
     }
@@ -906,7 +913,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 extension NativeFullScreenTerminalBody: FullScreenReaderConfigurable {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
-        let textSizeChanged = preferences.textSize != readerPreferences.textSize
+        let textSizeChanged = preferences.textScale != readerPreferences.textScale
         readerPreferences = preferences
         if textSizeChanged {
             applyOutputFont()

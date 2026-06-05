@@ -4,15 +4,26 @@ import UIKit
 ///
 /// Two independent axes:
 /// - `codeFont`: monospaced font for code blocks, tool output, diffs, inline code
-/// - `codeFontSize`: content size for dense monospaced/code surfaces
+/// - `codeTextScale`: local text scale for dense monospaced/code surfaces
+/// - `messageTextScale`: local text scale for chat message body text
 /// - `useMonoForMessages`: when true, applies the code font to message body text too
 ///
 /// Changes post a notification so observers (AppFont, caches) can rebuild.
 enum FontPreferences {
     static let didChangeNotification = Notification.Name("FontPreferencesDidChange")
+    static let minimumCodeTextScale: CGFloat = 0.85
+    static let standardCodeTextScale: CGFloat = 1.0
+    static let maximumCodeTextScale: CGFloat = 1.45
+    static let minimumMessageTextScale: CGFloat = 0.90
+    static let standardMessageTextScale: CGFloat = 1.0
+    static let maximumMessageTextScale: CGFloat = 1.35
+    private static let defaultEffectiveCodeTextScale: CGFloat = 1.10
 
     private static let codeFontKey = "codeFontFamily"
-    private static let codeFontSizeKey = "codeFontSize"
+    private static let codeTextScaleKey = "codeTextRelativeScale"
+    private static let storedEffectiveCodeTextScaleKey = "codeTextScale"
+    private static let codeFontSizePresetKey = "codeFontSize"
+    private static let messageTextScaleKey = "messageTextScale"
     private static let monoMessagesKey = "useMonoForMessages"
 
     // MARK: - Code Font
@@ -76,70 +87,97 @@ enum FontPreferences {
         }
     }
 
-    // MARK: - Code Font Size
+    // MARK: - Code Text Scale
 
-    enum CodeFontSize: String, CaseIterable, Identifiable, Sendable {
-        case compact
-        case standard
-        case comfortable
-        case large
-
-        var id: String { rawValue }
-
-        var displayName: String {
-            switch self {
-            case .compact: return "Compact"
-            case .standard: return "Standard"
-            case .comfortable: return "Comfortable"
-            case .large: return "Large"
-            }
+    /// Current user-facing code text scale. Defaults to 100%, where 100% maps
+    /// to the app's readable code baseline. iPhone and iPad use the same scale;
+    /// each device persists its own local value through UserDefaults.
+    static var codeTextScale: CGFloat {
+        if UserDefaults.standard.object(forKey: codeTextScaleKey) != nil {
+            return clampedCodeTextScale(UserDefaults.standard.double(forKey: codeTextScaleKey))
         }
 
-        var detail: String {
-            switch self {
-            case .compact: return "11 pt iPhone, 12 pt iPad"
-            case .standard: return "12 pt iPhone, 13 pt iPad"
-            case .comfortable: return "14 pt iPhone, 15 pt iPad"
-            case .large: return "16 pt iPhone, 17 pt iPad"
-            }
+        if UserDefaults.standard.object(forKey: storedEffectiveCodeTextScaleKey) != nil {
+            return clampedCodeTextScale(
+                UserDefaults.standard.double(forKey: storedEffectiveCodeTextScaleKey) / defaultEffectiveCodeTextScale
+            )
         }
 
-        fileprivate var phoneRegularPointSize: CGFloat {
-            switch self {
-            case .compact: return 11
-            case .standard: return 12
-            case .comfortable: return 14
-            case .large: return 16
-            }
+        if let presetRaw = UserDefaults.standard.string(forKey: codeFontSizePresetKey) {
+            return scaleForStoredCodeFontSizePreset(rawValue: presetRaw)
         }
+
+        return standardCodeTextScale
     }
 
-    /// Current code font size. Defaults to Compact to preserve the existing
-    /// chat timeline density unless the user explicitly opts into larger code.
-    static var codeFontSize: CodeFontSize {
-        guard let raw = UserDefaults.standard.string(forKey: codeFontSizeKey),
-              let size = CodeFontSize(rawValue: raw) else {
-            return .compact
-        }
-        return size
-    }
-
-    /// Set the code font size and rebuild all font constants.
+    /// Set the code text scale and rebuild all font constants.
     @MainActor
-    static func setCodeFontSize(_ size: CodeFontSize) {
-        UserDefaults.standard.set(size.rawValue, forKey: codeFontSizeKey)
+    static func setCodeTextScale(_ scale: CGFloat) {
+        UserDefaults.standard.set(clampedCodeTextScale(scale), forKey: codeTextScaleKey)
+        UserDefaults.standard.removeObject(forKey: storedEffectiveCodeTextScaleKey)
+        UserDefaults.standard.removeObject(forKey: codeFontSizePresetKey)
         AppFont.rebuild()
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+
+    static func clampedCodeTextScale(_ scale: CGFloat) -> CGFloat {
+        min(maximumCodeTextScale, max(minimumCodeTextScale, scale))
+    }
+
+    private static func scaleForStoredCodeFontSizePreset(rawValue: String) -> CGFloat {
+        switch rawValue {
+        case "compact": return 1.0
+        case "standard": return 12 / 11
+        case "comfortable": return 14 / 11
+        case "large": return maximumCodeTextScale
+        default: return standardCodeTextScale
+        }
     }
 
     static func codePointSize(
         baseSize: CGFloat,
         idiom: UIUserInterfaceIdiom = currentIdiom
     ) -> CGFloat {
-        let selectedRegularSize = codeFontSize.phoneRegularPointSize
-        let baseRegularSize: CGFloat = 11
-        let platformDelta: CGFloat = idiom == .pad ? 1 : 0
-        return max(11, baseSize + (selectedRegularSize - baseRegularSize) + platformDelta)
+        _ = idiom
+        return codePointSize(baseSize: baseSize, codeTextScale: codeTextScale)
+    }
+
+    static func codePointSize(baseSize: CGFloat, codeTextScale: CGFloat) -> CGFloat {
+        (baseSize * effectiveCodeTextScale(codeTextScale)).rounded()
+    }
+
+    static func effectiveCodeTextScale(_ codeTextScale: CGFloat) -> CGFloat {
+        clampedCodeTextScale(codeTextScale) * defaultEffectiveCodeTextScale
+    }
+
+    // MARK: - Message Text Scale
+
+    /// Current chat message body scale. Defaults to 100%.
+    static var messageTextScale: CGFloat {
+        if UserDefaults.standard.object(forKey: messageTextScaleKey) != nil {
+            return clampedMessageTextScale(UserDefaults.standard.double(forKey: messageTextScaleKey))
+        }
+        return standardMessageTextScale
+    }
+
+    /// Set the chat message body scale and rebuild all font constants.
+    @MainActor
+    static func setMessageTextScale(_ scale: CGFloat) {
+        UserDefaults.standard.set(clampedMessageTextScale(scale), forKey: messageTextScaleKey)
+        AppFont.rebuild()
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+
+    static func clampedMessageTextScale(_ scale: CGFloat) -> CGFloat {
+        min(maximumMessageTextScale, max(minimumMessageTextScale, scale))
+    }
+
+    static func messagePointSize(baseSize: CGFloat) -> CGFloat {
+        baseSize * messageTextScale
+    }
+
+    static func messagePointSize(baseSize: CGFloat, messageTextScale: CGFloat) -> CGFloat {
+        baseSize * clampedMessageTextScale(messageTextScale)
     }
 
     static func scaledCodeFont(

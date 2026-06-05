@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(ThemeStore.self) private var themeStore
@@ -12,7 +13,8 @@ struct SettingsView: View {
     @State private var cacheSizeText: String?
     @State private var telemetryEnabled = AppPreferences.Telemetry.isEnabled
     @State private var selectedCodeFont = FontPreferences.codeFont
-    @State private var selectedCodeFontSize = FontPreferences.codeFontSize
+    @State private var selectedCodeTextScale = FontPreferences.codeTextScale
+    @State private var selectedMessageTextScale = FontPreferences.messageTextScale
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
     @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
@@ -112,31 +114,81 @@ struct SettingsView: View {
                     FontPreferences.setCodeFont(newValue)
                 }
 
-                Picker("Code Text Size", selection: $selectedCodeFontSize) {
-                    ForEach(FontPreferences.CodeFontSize.allCases) { size in
-                        Text(size.displayName)
-                            .tag(size)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Code Text Size")
+                        Spacer()
+                        Text("\(Int(round(selectedCodeTextScale * 100)))%")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.themeComment)
                     }
+
+                    Slider(
+                        value: $selectedCodeTextScale,
+                        in: FontPreferences.minimumCodeTextScale...FontPreferences.maximumCodeTextScale,
+                        step: 0.05
+                    ) {
+                        Text("Code Text Size")
+                    } minimumValueLabel: {
+                        Image(systemName: "textformat.size.smaller")
+                    } maximumValueLabel: {
+                        Image(systemName: "textformat.size.larger")
+                    }
+                    .accessibilityValue("\(Int(round(selectedCodeTextScale * 100))) percent")
+
+                    Text("Code blocks, diffs, terminals, and tool output.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
                 }
-                .onChange(of: selectedCodeFontSize) { _, newValue in
-                    FontPreferences.setCodeFontSize(newValue)
+                .onChange(of: selectedCodeTextScale) { _, newValue in
+                    FontPreferences.setCodeTextScale(CGFloat(newValue))
                 }
 
-                Text(selectedCodeFontSize.detail)
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Message Text Size")
+                        Spacer()
+                        Text("\(Int(round(selectedMessageTextScale * 100)))%")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.themeComment)
+                    }
+
+                    Slider(
+                        value: $selectedMessageTextScale,
+                        in: FontPreferences.minimumMessageTextScale...FontPreferences.maximumMessageTextScale,
+                        step: 0.05
+                    ) {
+                        Text("Message Text Size")
+                    } minimumValueLabel: {
+                        Image(systemName: "textformat.size.smaller")
+                    } maximumValueLabel: {
+                        Image(systemName: "textformat.size.larger")
+                    }
+                    .accessibilityValue("\(Int(round(selectedMessageTextScale * 100))) percent")
+
+                    Text("Assistant and user chat messages.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                }
+                .onChange(of: selectedMessageTextScale) { _, newValue in
+                    FontPreferences.setMessageTextScale(CGFloat(newValue))
+                }
 
                 Toggle("Monospaced messages", isOn: $useMonoMessages)
                     .onChange(of: useMonoMessages) { _, newValue in
                         FontPreferences.setUseMonoForMessages(newValue)
                     }
+
+                TypographyPreviewCard(
+                    codeFont: selectedCodeFont,
+                    codeTextScale: selectedCodeTextScale,
+                    messageTextScale: selectedMessageTextScale,
+                    useMonoMessages: useMonoMessages
+                )
             } header: {
                 Text("Typography")
             } footer: {
-                Text(
-                    "Code Font applies to code blocks, tool output, and diffs. "
-                        + "Monospaced messages uses the selected code font for all message text."
-                )
+                Text("Typography settings are saved on this device.")
             }
 
             Section {
@@ -260,6 +312,8 @@ struct SettingsView: View {
         .onAppear {
             // Refresh provider label when returning from AutoTitleSettingsView
             autoTitleProvider = AppPreferences.Session.autoTitleProvider
+            selectedCodeTextScale = FontPreferences.codeTextScale
+            selectedMessageTextScale = FontPreferences.messageTextScale
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
         .themedListSurface()
@@ -402,5 +456,70 @@ struct SettingsView: View {
     private static func formattedCacheSize() async -> String {
         let bytes = await TimelineCache.shared.diskSize()
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+private struct TypographyPreviewCard: View {
+    let codeFont: FontPreferences.CodeFontFamily
+    let codeTextScale: CGFloat
+    let messageTextScale: CGFloat
+    let useMonoMessages: Bool
+
+    private var codePreviewPointSize: CGFloat {
+        FontPreferences.codePointSize(baseSize: 11, codeTextScale: codeTextScale)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Preview", systemImage: "text.magnifyingglass")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.themeFgDim)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Code and tool output")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+
+                Text("let files = try await workspace.changedFiles()\nprint(files.count)")
+                    .font(previewFont(size: codePreviewPointSize, uiWeight: .regular))
+                    .foregroundStyle(.themeFg)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Assistant message")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+
+                Text("I found the settings path and kept the global preference device-local.")
+                    .font(messagePreviewFont)
+                    .foregroundStyle(.themeFg)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color.themeBgHighlight.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var messagePreviewFont: Font {
+        let pointSize = FontPreferences.messagePointSize(
+            baseSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
+            messageTextScale: messageTextScale
+        )
+        guard useMonoMessages else { return .system(size: pointSize) }
+        return previewFont(size: pointSize, uiWeight: .regular)
+    }
+
+    private func previewFont(size: CGFloat, uiWeight: UIFont.Weight) -> Font {
+        if let postScriptName = codeFont.postScriptName(weight: uiWeight) {
+            return .custom(postScriptName, size: size)
+        }
+        return .system(size: size, design: .monospaced)
     }
 }

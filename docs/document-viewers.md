@@ -6,28 +6,23 @@ This page covers full-screen viewers for markdown, code, source text, diffs, ter
 
 ## Viewing Options
 
-Full-screen document viewers show a **Viewing Options** button in the top-right toolbar. The menu adapts to the content type.
+Full-screen document viewers show a **Viewing Options** button near the bottom-right corner of the screen. The panel adapts to the content type.
 
 | Content | Available options |
 | --- | --- |
-| Markdown and thinking text | Smaller Text, Larger Text, Spacing, Reset View |
-| Code and Graphviz source | Smaller Text, Larger Text, Wrap Text, Reset View |
-| Plain source text | Smaller Text, Larger Text, Wrap Text, Reset View |
-| Diffs | Smaller Text, Larger Text, Wrap Text, Reset View |
-| Terminal output | Smaller Text, Larger Text, Wrap Text, Reset View |
-| HTML | Smaller Text, Larger Text, Reset View |
-| Org, LaTeX, and Mermaid rendered documents | Smaller Text, Larger Text, Spacing where text-based, Reset View |
+| Markdown and thinking text | Text Size slider, Spacing, Reset View |
+| Code and Graphviz source | Text Size slider, Wrap Text, Reset View |
+| Plain source text | Text Size slider, Wrap Text, Reset View |
+| Diffs | Text Size slider, Reset View |
+| Terminal output | Text Size slider, Wrap Text, Reset View |
+| HTML | Text Size slider, Reset View |
+| Org, LaTeX, and Mermaid rendered documents | Text Size slider, Spacing where text-based, Reset View |
 
 The options affect only the current viewer family. For example, changing terminal wrapping does not change markdown spacing, and changing markdown text size does not change code text size.
 
 ## Text size
 
-**Smaller Text** and **Larger Text** step through four reader sizes:
-
-- Small
-- Standard
-- Large
-- Extra Large
+The **Text Size** slider scales the current viewer from 85% to 135% of its standard reader size.
 
 The scale applies on top of Oppi's existing font choices and Dynamic Type behavior. Code-like content keeps monospaced fonts. Markdown keeps native text styling for headings, links, inline code, lists, and quotes.
 
@@ -37,12 +32,11 @@ The scale applies on top of Oppi's existing font choices and Dynamic Type behavi
 
 - code
 - source text
-- diffs
 - terminal output
 
 When wrapping is off, the viewer keeps horizontal scrolling so indentation, terminal columns, and diff line structure stay intact. When wrapping is on, long lines fit the viewport and horizontal scrolling is hidden.
 
-Plain source text defaults to wrapped. Code, diffs, and terminal output default to unwrapped.
+Plain source text defaults to wrapped. Code and terminal output default to unwrapped. Diffs stay unwrapped so line numbers, additions, removals, and word-level highlights keep their alignment.
 
 ## Markdown spacing
 
@@ -95,7 +89,7 @@ HTML is useful for content that is already HTML and for export-oriented renderin
 
 ## Export and renderer presets
 
-The Viewing Options menu controls the on-screen reading experience. Export and share actions live in the toolbar next to copy/share controls.
+The Viewing Options panel controls the on-screen reading experience. Export and share actions live in the toolbar next to copy/share controls.
 
 Use explicit renderer configurations for custom export themes or renderer presets. A renderer preset can define export-facing choices such as document theme, heading scale, margins, code-block style, and page width. The native reader can preview compatible parts of those choices, but the source document remains unchanged unless the user exports or saves a generated artifact.
 

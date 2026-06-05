@@ -34,12 +34,10 @@ final class FullScreenCodeViewController: UIViewController {
     private struct NavigationPresentation: Equatable {
         let sourceToggleTitle: String?
         let readerFamily: FullScreenReaderContentFamily?
-        let readerPreferences: FullScreenReaderPreferences?
 
         init(_ presentation: Presentation) {
             sourceToggleTitle = presentation.sourceToggleTitle
             readerFamily = presentation.readerFamily
-            readerPreferences = presentation.readerPreferences
         }
     }
 
@@ -63,7 +61,8 @@ final class FullScreenCodeViewController: UIViewController {
     private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var showSource = false
     private var copyButton: UIBarButtonItem?
-    private var viewingOptionsButton: UIBarButtonItem?
+    private var floatingViewingOptionsButton: UIButton?
+    private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private weak var contentHostController: UIViewController?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
@@ -234,12 +233,20 @@ final class FullScreenCodeViewController: UIViewController {
             bodyView.topAnchor.constraint(equalTo: viewController.view.topAnchor),
             bodyView.bottomAnchor.constraint(equalTo: viewController.view.bottomAnchor),
         ])
+        if let floatingViewingOptionsButton {
+            viewController.view.bringSubviewToFront(floatingViewingOptionsButton)
+        }
     }
 
     private func configureNavigation(on viewController: UIViewController, palette: ThemePalette) {
         let presentation = makePresentation()
         let navigationPresentation = NavigationPresentation(presentation)
-        guard navigationPresentation != lastNavigationPresentation else {
+        if navigationPresentation == lastNavigationPresentation {
+            configureFloatingViewingOptionsButton(
+                on: viewController,
+                presentation: presentation,
+                palette: palette
+            )
             return
         }
 
@@ -248,7 +255,6 @@ final class FullScreenCodeViewController: UIViewController {
         // See FullScreenViewerChrome.
 
         var rightItems: [UIBarButtonItem] = []
-        viewingOptionsButton = nil
 
         let copy = UIBarButtonItem(
             image: UIImage(systemName: "doc.on.doc"),
@@ -269,24 +275,6 @@ final class FullScreenCodeViewController: UIViewController {
             )
         }
 
-        if let readerFamily = presentation.readerFamily,
-           let readerPreferences = presentation.readerPreferences {
-            let options = UIBarButtonItem(
-                image: UIImage(systemName: "textformat"),
-                style: .plain,
-                target: nil,
-                action: nil
-            )
-            options.tintColor = UIColor(palette.fgDim)
-            options.accessibilityLabel = String(localized: "Viewing Options")
-            options.menu = makeViewingOptionsMenu(
-                family: readerFamily,
-                preferences: readerPreferences
-            )
-            viewingOptionsButton = options
-            rightItems.append(options)
-        }
-
         if let toggleTitle = presentation.sourceToggleTitle {
             let toggle = UIBarButtonItem(
                 title: toggleTitle,
@@ -299,6 +287,83 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         viewController.navigationItem.rightBarButtonItems = rightItems
+        configureFloatingViewingOptionsButton(
+            on: viewController,
+            presentation: presentation,
+            palette: palette
+        )
+    }
+
+    private func configureFloatingViewingOptionsButton(
+        on viewController: UIViewController,
+        presentation: Presentation,
+        palette: ThemePalette
+    ) {
+        guard let readerFamily = presentation.readerFamily,
+              let readerPreferences = presentation.readerPreferences else {
+            floatingViewingOptionsButton?.removeFromSuperview()
+            floatingViewingOptionsButton = nil
+            viewingOptionsController?.dismiss(animated: true)
+            return
+        }
+
+        let button: UIButton
+        if let existing = floatingViewingOptionsButton {
+            button = existing
+        } else {
+            button = makeFloatingViewingOptionsButton(palette: palette)
+            floatingViewingOptionsButton = button
+            viewController.view.addSubview(button)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.trailingAnchor.constraint(
+                    equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor,
+                    constant: -16
+                ),
+                button.bottomAnchor.constraint(
+                    equalTo: viewController.view.safeAreaLayoutGuide.bottomAnchor,
+                    constant: -16
+                ),
+                button.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
+                button.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            ])
+        }
+
+        updateFloatingViewingOptionsButton(button, palette: palette, preferences: readerPreferences)
+        viewController.view.bringSubviewToFront(button)
+        viewingOptionsController?.apply(family: readerFamily, preferences: readerPreferences)
+    }
+
+    private func makeFloatingViewingOptionsButton(palette: ThemePalette) -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
+        config.preferredSymbolConfigurationForImage = .init(pointSize: 20, weight: .semibold)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)
+        config.background.visualEffect = UIBlurEffect(style: .systemThinMaterial)
+        config.background.strokeColor = UIColor(palette.comment).withAlphaComponent(0.35)
+        config.background.strokeWidth = 1
+        config.cornerStyle = .capsule
+        config.baseForegroundColor = UIColor(palette.fg)
+
+        let button = UIButton(configuration: config)
+        button.accessibilityLabel = String(localized: "Viewing Options")
+        button.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
+        button.addTarget(self, action: #selector(showViewingOptions), for: .touchUpInside)
+        return button
+    }
+
+    private func updateFloatingViewingOptionsButton(
+        _ button: UIButton,
+        palette: ThemePalette,
+        preferences: FullScreenReaderPreferences
+    ) {
+        var config = button.configuration ?? .plain()
+        config.baseForegroundColor = UIColor(palette.fg)
+        config.background.strokeColor = UIColor(palette.comment).withAlphaComponent(0.35)
+        button.configuration = config
+        button.accessibilityValue = String(
+            localized: "Text size \(Int(round(preferences.textScale * 100))) percent"
+        )
     }
 
     private func makePresentation() -> Presentation {
@@ -732,86 +797,6 @@ final class FullScreenCodeViewController: UIViewController {
         return FullScreenReaderPreferencesStore.shared.preferences(for: family)
     }
 
-    private func makeViewingOptionsMenu(
-        family: FullScreenReaderContentFamily,
-        preferences: FullScreenReaderPreferences
-    ) -> UIMenu {
-        var children: [UIMenuElement] = []
-
-        let smaller = UIAction(
-            title: String(localized: "Smaller Text"),
-            image: UIImage(systemName: "textformat.size.smaller")
-        ) { [weak self] _ in
-            self?.adjustReaderTextSize(by: -1)
-        }
-        if !preferences.textSize.canDecrease {
-            smaller.attributes = [.disabled]
-        }
-
-        let larger = UIAction(
-            title: String(localized: "Larger Text"),
-            image: UIImage(systemName: "textformat.size.larger")
-        ) { [weak self] _ in
-            self?.adjustReaderTextSize(by: 1)
-        }
-        if !preferences.textSize.canIncrease {
-            larger.attributes = [.disabled]
-        }
-
-        children.append(UIMenu(
-            title: "",
-            options: .displayInline,
-            children: [smaller, larger]
-        ))
-
-        if family.supportsWrapping {
-            let wrap = UIAction(
-                title: preferences.wrapsText
-                    ? String(localized: "Unwrap Text")
-                    : String(localized: "Wrap Text"),
-                image: UIImage(systemName: "text.alignleft"),
-                state: preferences.wrapsText ? .on : .off
-            ) { [weak self] _ in
-                self?.setReaderWrapping(!preferences.wrapsText)
-            }
-            children.append(UIMenu(
-                title: "",
-                options: .displayInline,
-                children: [wrap]
-            ))
-        }
-
-        if family.supportsSpacing {
-            let spacingActions = FullScreenReaderSpacing.allCases.map { spacing in
-                UIAction(
-                    title: spacing.displayName,
-                    state: preferences.spacing == spacing ? .on : .off
-                ) { [weak self] _ in
-                    self?.setReaderSpacing(spacing)
-                }
-            }
-            children.append(UIMenu(
-                title: String(localized: "Spacing"),
-                image: UIImage(systemName: "line.3.horizontal.decrease"),
-                children: spacingActions
-            ))
-        }
-
-        let reset = UIAction(
-            title: String(localized: "Reset View"),
-            image: UIImage(systemName: "arrow.counterclockwise")
-        ) { [weak self] _ in
-            self?.resetReaderPreferences()
-        }
-        children.append(UIMenu(
-            title: "",
-            options: .displayInline,
-            children: [reset]
-        ))
-
-        return UIMenu(title: String(localized: "Viewing Options"), children: children)
-    }
-
     // MARK: - HTML Diff Helpers
 
     private static func isHTMLFilePath(_ filePath: String?) -> Bool {
@@ -839,9 +824,68 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
-    private func adjustReaderTextSize(by delta: Int) {
+    @objc private func showViewingOptions() {
+        let presentation = makePresentation()
+        guard let family = presentation.readerFamily,
+              let preferences = presentation.readerPreferences,
+              let sourceButton = floatingViewingOptionsButton else { return }
+
+        if let existing = viewingOptionsController {
+            existing.dismiss(animated: true)
+            viewingOptionsController = nil
+            return
+        }
+
+        let options = FullScreenViewingOptionsController(
+            family: family,
+            preferences: preferences,
+            onTextScaleChanged: { [weak self] scale in
+                self?.setReaderTextScale(scale)
+            },
+            onWrappingChanged: { [weak self] wraps in
+                self?.setReaderWrapping(wraps)
+            },
+            onSpacingChanged: { [weak self] spacing in
+                self?.setReaderSpacing(spacing)
+            },
+            onReset: { [weak self] in
+                self?.resetReaderPreferences()
+            }
+        )
+        options.onDismiss = { [weak self] dismissed in
+            if self?.viewingOptionsController === dismissed {
+                self?.viewingOptionsController = nil
+            }
+        }
+        viewingOptionsController = options
+
+        if traitCollection.horizontalSizeClass == .regular {
+            options.modalPresentationStyle = .popover
+            options.popoverPresentationController?.sourceView = sourceButton
+            options.popoverPresentationController?.sourceRect = sourceButton.bounds
+            options.popoverPresentationController?.permittedArrowDirections = [.down, .right]
+        } else {
+            options.modalPresentationStyle = .pageSheet
+        }
+
+        if let sheet = options.sheetPresentationController {
+            let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
+            sheet.detents = [
+                .custom(identifier: detentIdentifier) { [weak options] _ in
+                    options?.preferredSheetHeight ?? 280
+                }
+            ]
+            sheet.selectedDetentIdentifier = detentIdentifier
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 24
+        }
+
+        present(options, animated: true)
+    }
+
+    private func setReaderTextScale(_ scale: CGFloat) {
         updateReaderPreferences { preferences in
-            preferences.textSize = preferences.textSize.adjusted(by: delta)
+            preferences.textScale = FullScreenReaderPreferences.clampedTextScale(scale)
         }
     }
 
@@ -874,7 +918,8 @@ final class FullScreenCodeViewController: UIViewController {
 
         mutate(&preferences)
         FullScreenReaderPreferencesStore.shared.setPreferences(preferences, for: family)
-        applyReaderPreferences(preferences, bodyContent: presentation.bodyContent)
+        let normalized = FullScreenReaderPreferencesStore.shared.preferences(for: family)
+        applyReaderPreferences(normalized, bodyContent: presentation.bodyContent)
     }
 
     private func applyReaderPreferences(
@@ -891,6 +936,12 @@ final class FullScreenCodeViewController: UIViewController {
         guard let viewController = contentHostController else { return }
         let palette = ThemeRuntimeState.currentThemeID().palette
         configureNavigation(on: viewController, palette: palette)
+
+        let presentation = makePresentation()
+        if let family = presentation.readerFamily,
+           let latestPreferences = presentation.readerPreferences {
+            viewingOptionsController?.apply(family: family, preferences: latestPreferences)
+        }
     }
 
     private func copyText(for content: FullScreenCodeContent) -> String {
@@ -995,14 +1046,275 @@ final class FullScreenCodeViewController: UIViewController {
     }
 }
 
+private final class FullScreenViewingOptionsController: UIHostingController<FullScreenViewingOptionsPanel> {
+    private var family: FullScreenReaderContentFamily
+    private var preferences: FullScreenReaderPreferences
+    private let onTextScaleChanged: (CGFloat) -> Void
+    private let onWrappingChanged: (Bool) -> Void
+    private let onSpacingChanged: (FullScreenReaderSpacing) -> Void
+    private let onReset: () -> Void
+
+    var onDismiss: ((FullScreenViewingOptionsController) -> Void)?
+
+    var preferredSheetHeight: CGFloat {
+        var height: CGFloat = 238
+        if family.supportsWrapping { height += 60 }
+        if family.supportsSpacing { height += 82 }
+        return height
+    }
+
+    init(
+        family: FullScreenReaderContentFamily,
+        preferences: FullScreenReaderPreferences,
+        onTextScaleChanged: @escaping (CGFloat) -> Void,
+        onWrappingChanged: @escaping (Bool) -> Void,
+        onSpacingChanged: @escaping (FullScreenReaderSpacing) -> Void,
+        onReset: @escaping () -> Void
+    ) {
+        self.family = family
+        self.preferences = preferences
+        self.onTextScaleChanged = onTextScaleChanged
+        self.onWrappingChanged = onWrappingChanged
+        self.onSpacingChanged = onSpacingChanged
+        self.onReset = onReset
+        super.init(rootView: FullScreenViewingOptionsPanel(
+            family: family,
+            preferences: preferences,
+            onTextScaleChanged: onTextScaleChanged,
+            onWrappingChanged: onWrappingChanged,
+            onSpacingChanged: onSpacingChanged,
+            onReset: onReset
+        ))
+        preferredContentSize = CGSize(width: 340, height: preferredSheetHeight)
+        sizingOptions = [.preferredContentSize]
+    }
+
+    @available(*, unavailable)
+    @MainActor @preconcurrency
+    required dynamic init?(coder aDecoder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.isOpaque = false
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || presentingViewController == nil {
+            onDismiss?(self)
+        }
+    }
+
+    func apply(family: FullScreenReaderContentFamily, preferences: FullScreenReaderPreferences) {
+        guard self.family != family || self.preferences != preferences else { return }
+        self.family = family
+        self.preferences = preferences
+        preferredContentSize = CGSize(width: 340, height: preferredSheetHeight)
+        rootView = makePanel()
+    }
+
+    private func makePanel() -> FullScreenViewingOptionsPanel {
+        FullScreenViewingOptionsPanel(
+            family: family,
+            preferences: preferences,
+            onTextScaleChanged: onTextScaleChanged,
+            onWrappingChanged: onWrappingChanged,
+            onSpacingChanged: onSpacingChanged,
+            onReset: onReset
+        )
+    }
+}
+
+private struct FullScreenViewingOptionsPanel: View {
+    let family: FullScreenReaderContentFamily
+    let preferences: FullScreenReaderPreferences
+    let onTextScaleChanged: (CGFloat) -> Void
+    let onWrappingChanged: (Bool) -> Void
+    let onSpacingChanged: (FullScreenReaderSpacing) -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            textSizeControl
+
+            if family.supportsWrapping {
+                Divider().opacity(0.35)
+                wrapControl
+            }
+
+            if family.supportsSpacing {
+                Divider().opacity(0.35)
+                spacingControl
+            }
+
+            resetButton
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(16)
+        .tint(.themeCyan)
+        .presentationBackground(.clear)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .frame(width: 34, height: 34)
+                .glassEffect(.regular, in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Viewing Options")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("Reader controls")
+                    .font(.caption)
+                    .foregroundStyle(.themeFgDim)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var textSizeControl: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("Text Size", systemImage: "textformat.size")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                Spacer()
+                Text("\(Int(round(preferences.textScale * 100)))%")
+                    .font(.subheadline.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.themeFgDim)
+                    .accessibilityHidden(true)
+            }
+
+            Slider(
+                value: textScaleBinding,
+                in: Double(FullScreenReaderPreferences.minimumTextScale)...Double(FullScreenReaderPreferences.maximumTextScale),
+                step: 0.05
+            ) {
+                Text("Text Size")
+            } minimumValueLabel: {
+                Image(systemName: "textformat.size.smaller")
+            } maximumValueLabel: {
+                Image(systemName: "textformat.size.larger")
+            }
+            .accessibilityValue("\(Int(round(preferences.textScale * 100))) percent")
+        }
+    }
+
+    private var wrapControl: some View {
+        Toggle(isOn: wrapBinding) {
+            Label("Wrap Text", systemImage: "text.alignleft")
+                .font(.subheadline)
+                .foregroundStyle(.themeFg)
+        }
+        .toggleStyle(.switch)
+    }
+
+    private var spacingControl: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Spacing", systemImage: "line.3.horizontal.decrease")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.themeFg)
+
+            Picker("Spacing", selection: spacingBinding) {
+                ForEach(FullScreenReaderSpacing.allCases, id: \.self) { spacing in
+                    Text(spacing.displayName).tag(spacing)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var resetButton: some View {
+        Button(action: onReset) {
+            Label("Reset View", systemImage: "arrow.counterclockwise")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
+    }
+
+    private var textScaleBinding: Binding<Double> {
+        Binding(
+            get: { Double(preferences.textScale) },
+            set: { onTextScaleChanged(CGFloat($0)) }
+        )
+    }
+
+    private var wrapBinding: Binding<Bool> {
+        Binding(
+            get: { preferences.wrapsText },
+            set: { onWrappingChanged($0) }
+        )
+    }
+
+    private var spacingBinding: Binding<FullScreenReaderSpacing> {
+        Binding(
+            get: { preferences.spacing },
+            set: { onSpacingChanged($0) }
+        )
+    }
+}
+
+private enum FullScreenViewingOptionsSymbols {
+    static var readerModeIconName: String {
+        if UIImage(systemName: "text.page") != nil {
+            return "text.page"
+        }
+        return "doc.text"
+    }
+}
+
 #if DEBUG
 extension FullScreenCodeViewController {
-    var viewingOptionsMenuForTesting: UIMenu? {
-        viewingOptionsButton?.menu
+    var hasFloatingViewingOptionsButtonForTesting: Bool {
+        floatingViewingOptionsButton != nil
+    }
+
+    var floatingViewingOptionsButtonFrameForTesting: CGRect? {
+        guard let button = floatingViewingOptionsButton,
+              let superview = button.superview else { return nil }
+        superview.layoutIfNeeded()
+        return view.convert(button.frame, from: superview)
+    }
+
+    func makeViewingOptionsControllerForTesting() -> UIViewController? {
+        let presentation = makePresentation()
+        guard let family = presentation.readerFamily,
+              let preferences = presentation.readerPreferences else { return nil }
+        let controller = FullScreenViewingOptionsController(
+            family: family,
+            preferences: preferences,
+            onTextScaleChanged: { [weak self] scale in
+                self?.setReaderTextScale(scale)
+            },
+            onWrappingChanged: { [weak self] wraps in
+                self?.setReaderWrapping(wraps)
+            },
+            onSpacingChanged: { [weak self] spacing in
+                self?.setReaderSpacing(spacing)
+            },
+            onReset: { [weak self] in
+                self?.resetReaderPreferences()
+            }
+        )
+        controller.loadViewIfNeeded()
+        return controller
     }
 
     func setReaderWrappingForTesting(_ wraps: Bool) {
         setReaderWrapping(wraps)
+    }
+
+    func setReaderTextScaleForTesting(_ scale: CGFloat) {
+        setReaderTextScale(scale)
     }
 }
 #endif

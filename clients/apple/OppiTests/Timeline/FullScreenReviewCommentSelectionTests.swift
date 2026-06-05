@@ -215,22 +215,69 @@ struct FullScreenReviewCommentSelectionTests {
         let controller = makeController(
             content: .terminal(content: longLine, command: "printf", stream: nil)
         )
-        let menu = try #require(controller.viewingOptionsMenuForTesting)
-        let wrapAction = try #require(firstAction(titled: "Wrap Text", in: menu))
         let outputView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0) == longLine
         })
 
-        #expect(wrapAction.state == .off)
+        #expect(controller.hasFloatingViewingOptionsButtonForTesting)
         #expect(outputView.textContainer.lineBreakMode == .byClipping)
 
         controller.setReaderWrappingForTesting(true)
         controller.view.layoutIfNeeded()
 
-        let updatedMenu = try #require(controller.viewingOptionsMenuForTesting)
-        let unwrapAction = try #require(firstAction(titled: "Unwrap Text", in: updatedMenu))
-        #expect(unwrapAction.state == .on)
         #expect(outputView.textContainer.lineBreakMode == .byCharWrapping)
+    }
+
+    @Test func diffFullScreenDoesNotSupportWrapText() async throws {
+        FullScreenReaderPreferencesStore.shared.setPreferences(
+            FullScreenReaderPreferences(wrapsText: true),
+            for: .diff
+        )
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+        let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 24) + "\""
+        let controller = makeController(
+            content: .diff(
+                oldText: "",
+                newText: longLine,
+                filePath: "LongLine.swift",
+                precomputedLines: [DiffLine(kind: .added, text: longLine)]
+            )
+        )
+        let diffView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("wrap-me-")
+        })
+
+        #expect(!FullScreenReaderContentFamily.diff.supportsWrapping)
+        #expect(FullScreenReaderPreferencesStore.shared.preferences(for: .diff).wrapsText == false)
+        let stayedUnwrapped = await waitForMainActorCondition {
+            diffView.textContainer.lineBreakMode == .byClipping
+                && firstParagraphLineBreakMode(in: diffView) == .byClipping
+        }
+        #expect(stayedUnwrapped)
+    }
+
+    @Test func viewingOptionsUsesBottomRightReaderButtonAndContinuousTextScale() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
+        let controller = makeController(
+            content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
+        )
+
+        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
+        #expect(buttonFrame.midX > controller.view.bounds.midX)
+        #expect(buttonFrame.midY > controller.view.bounds.midY)
+
+        let options = try #require(controller.makeViewingOptionsControllerForTesting())
+        #expect(options.preferredContentSize.width == 340)
+
+        let codeView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("let answer = 42")
+        })
+        let initialPointSize = try #require(codeView.font?.pointSize)
+        controller.setReaderTextScaleForTesting(1.25)
+        controller.view.layoutIfNeeded()
+        let scaledPointSize = try #require(codeView.font?.pointSize)
+        #expect(scaledPointSize > initialPointSize)
     }
 
     @Test func sourceBodyPrependsCommentAction() throws {
@@ -374,16 +421,20 @@ struct FullScreenReviewCommentSelectionTests {
         return controller
     }
 
-    private func firstAction(titled title: String, in menu: UIMenu) -> UIAction? {
-        for child in menu.children {
-            if let action = child as? UIAction, action.title == title {
-                return action
-            }
-            if let submenu = child as? UIMenu,
-               let action = firstAction(titled: title, in: submenu) {
-                return action
+    private func firstParagraphLineBreakMode(in textView: UITextView) -> NSLineBreakMode? {
+        let attributedText = textView.attributedText ?? NSAttributedString()
+        guard attributedText.length > 0 else { return nil }
+        var result: NSLineBreakMode?
+        attributedText.enumerateAttribute(
+            .paragraphStyle,
+            in: NSRange(location: 0, length: attributedText.length)
+        ) { value, _, stop in
+            if let style = value as? NSParagraphStyle {
+                result = style.lineBreakMode
+                stop.pointee = true
             }
         }
-        return nil
+        return result
     }
+
 }

@@ -75,13 +75,12 @@ enum AppFont {
         monoXL = family.font(size: 17, weight: .semibold)
 
         // Message body
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let messagePointSize = FontPreferences.messagePointSize(baseSize: bodyFont.pointSize)
         if FontPreferences.useMonoForMessages {
-            messageBody = family.font(
-                size: UIFont.preferredFont(forTextStyle: .body).pointSize,
-                weight: .regular
-            )
+            messageBody = family.font(size: messagePointSize, weight: .regular)
         } else {
-            messageBody = .preferredFont(forTextStyle: .body)
+            messageBody = bodyFont.withSize(messagePointSize)
         }
     }
 }
