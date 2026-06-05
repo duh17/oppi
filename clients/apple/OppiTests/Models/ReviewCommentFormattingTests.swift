@@ -83,6 +83,41 @@ struct ReviewCommentFormattingTests {
         #expect(!block.contains("Context:"))
     }
 
+    @Test func reviewBlockCleansPatchHeaderLocation() {
+        let comment = ReviewComment(
+            id: "c1",
+            workspaceId: "w1",
+            sessionId: "s1",
+            turnId: nil,
+            author: .human,
+            status: .staged,
+            severity: nil,
+            body: "Great.",
+            attachments: nil,
+            reference: ReviewCommentReference(
+                source: .gitDiff,
+                label: nil,
+                path: "patch: *** Begin Patch\n*** Update File: /Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
+                side: nil,
+                startLine: 612,
+                endLine: 616,
+                selectedText: "ForEach(QuickCommentTemplate.quickCommentTemplates)",
+                toolCallId: nil,
+                timelineItemId: nil,
+                url: nil
+            ),
+            createdAt: 1,
+            updatedAt: 1,
+            sentAt: nil
+        )
+
+        let block = ReviewCommentStore.reviewBlock(for: [comment])
+
+        #expect(block.contains("**Where:** `clients/apple/Oppi/Features/Chat/ChatView.swift`:612-616 (git diff)"))
+        #expect(!block.contains("*** Begin Patch"))
+        #expect(!block.contains("*** Update File"))
+    }
+
     @Test func reviewBlockIgnoresAlreadySentComments() {
         let sent = ReviewComment(
             id: "c1",

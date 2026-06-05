@@ -137,7 +137,6 @@ final class AssistantMarkdownSegmentApplier {
             let textView = makeTextView(palette: palette)
             textView.isSelectable = config.textSelectionEnabled
             textView.attributedText = NSAttributedString(attributed)
-            applyInlineReviewAnnotations(to: textView, sourceContext: config.reviewCommentSourceContext, config: config)
             stackView.addArrangedSubview(textView)
             textViews[index] = textView
 
@@ -146,8 +145,7 @@ final class AssistantMarkdownSegmentApplier {
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
             codeView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
-                reviewCommentAnnotations: config.reviewCommentAnnotations
+                sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
             )
             codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
             stackView.addArrangedSubview(codeView)
@@ -160,8 +158,7 @@ final class AssistantMarkdownSegmentApplier {
             let tableView = NativeTableBlockView()
             tableView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantTableSourceContext(config: config),
-                reviewCommentAnnotations: config.reviewCommentAnnotations
+                sourceContext: assistantTableSourceContext(config: config)
             )
             tableView.apply(headers: headers, rows: rows, palette: palette)
             stackView.addArrangedSubview(tableView)
@@ -187,8 +184,7 @@ final class AssistantMarkdownSegmentApplier {
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
             mermaidView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
-                reviewCommentAnnotations: config.reviewCommentAnnotations
+                sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
             )
             if isOpen {
                 mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -203,8 +199,7 @@ final class AssistantMarkdownSegmentApplier {
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
             latexView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
-                reviewCommentAnnotations: config.reviewCommentAnnotations
+                sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
             )
             if isOpen {
                 latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -395,8 +390,7 @@ final class AssistantMarkdownSegmentApplier {
                             }
                             let attrText = NSAttributedString(attributed)
                             textView.attributedText = attrText
-                            applyInlineReviewAnnotations(to: textView, sourceContext: config.reviewCommentSourceContext, config: config)
-                            refreshTextViewLayoutAfterContentChange(textView)
+                                            refreshTextViewLayoutAfterContentChange(textView)
                         }
                     }
                 }
@@ -409,8 +403,7 @@ final class AssistantMarkdownSegmentApplier {
                     if !config.isStreaming || isOpen {
                         codeView.configureReviewCommentSelection(
                             router: config.reviewCommentSelectionRouter,
-                            sourceContext: assistantCodeBlockSourceContext(language: language, config: config),
-                            reviewCommentAnnotations: config.reviewCommentAnnotations
+                            sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
                         )
                         codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
                         if isOpen {
@@ -426,8 +419,7 @@ final class AssistantMarkdownSegmentApplier {
                 if let tableView = tableViews[index] {
                     tableView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
-                        sourceContext: assistantTableSourceContext(config: config),
-                        reviewCommentAnnotations: config.reviewCommentAnnotations
+                        sourceContext: assistantTableSourceContext(config: config)
                     )
                     tableView.apply(headers: headers, rows: rows, palette: palette)
                 }
@@ -454,8 +446,7 @@ final class AssistantMarkdownSegmentApplier {
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     mermaidView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config),
-                        reviewCommentAnnotations: config.reviewCommentAnnotations
+                        sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
                     )
                     if isOpen {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -472,8 +463,7 @@ final class AssistantMarkdownSegmentApplier {
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     latexView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config),
-                        reviewCommentAnnotations: config.reviewCommentAnnotations
+                        sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
                     )
                     if isOpen {
                         latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -550,18 +540,6 @@ final class AssistantMarkdownSegmentApplier {
         )
     }
 
-    private func applyInlineReviewAnnotations(
-        to textView: UITextView,
-        sourceContext: ReviewCommentSourceContext?,
-        config: AssistantMarkdownContentView.Configuration
-    ) {
-        guard !config.isStreaming else { return }
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: textView,
-            annotations: config.reviewCommentAnnotations,
-            sourceContext: sourceContext
-        )
-    }
 
     private func makeThematicBreak(palette: ThemePalette) -> UIView {
         let hr = UIView()

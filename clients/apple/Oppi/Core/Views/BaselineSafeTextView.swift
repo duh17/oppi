@@ -32,7 +32,6 @@ final class BaselineSafeTextView: UITextView {
             }
         }
 
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: self)
     }
 
     // MARK: - Baseline safety

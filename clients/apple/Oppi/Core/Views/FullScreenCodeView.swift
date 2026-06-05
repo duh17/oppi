@@ -292,8 +292,7 @@ extension View {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         sessionId: String? = nil,
-        sourceLabel: String? = nil,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        sourceLabel: String? = nil
     ) -> some View {
         sheet(isPresented: isPresented) {
             FullScreenCodeView(
@@ -301,8 +300,7 @@ extension View {
                 reviewCommentSelectionContext: reviewCommentSelectionContext,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSessionId: sessionId,
-                reviewCommentSourceLabel: sourceLabel,
-                reviewCommentAnnotations: reviewCommentAnnotations
+                reviewCommentSourceLabel: sourceLabel
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -318,7 +316,6 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let reviewCommentSessionId: String?
     let reviewCommentSourceLabel: String?
-    let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
 
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
@@ -337,22 +334,19 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceLabel: String? = nil
     ) {
         self.content = content
         self.reviewCommentSelectionContext = reviewCommentSelectionContext
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSessionId = reviewCommentSessionId
         self.reviewCommentSourceLabel = reviewCommentSourceLabel
-        self.reviewCommentAnnotations = reviewCommentAnnotations
     }
 
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
-            reviewCommentAnnotations: reviewCommentAnnotations
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext
         )
     }
 

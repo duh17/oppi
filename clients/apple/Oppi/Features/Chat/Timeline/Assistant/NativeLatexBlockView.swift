@@ -169,15 +169,13 @@ final class NativeLatexBlockView: UIView {
     /// Configure review-comment selection forwarding on the inner code block.
     func configureReviewCommentSelection(
         router: ReviewCommentSelectionRouter?,
-        sourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        sourceContext: ReviewCommentSourceContext?
     ) {
         reviewCommentSelectionRouter = router
         reviewCommentSourceContext = sourceContext
         codeBlockView.configureReviewCommentSelection(
             router: router,
-            sourceContext: sourceContext,
-            reviewCommentAnnotations: reviewCommentAnnotations
+            sourceContext: sourceContext
         )
     }
 

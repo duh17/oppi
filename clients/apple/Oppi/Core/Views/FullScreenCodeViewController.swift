@@ -58,7 +58,6 @@ final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
     private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
-    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var showSource = false
     private var copyButton: UIBarButtonItem?
     private var floatingViewingOptionsButton: UIButton?
@@ -78,8 +77,7 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceLabel: String? = nil
     ) {
         self.content = content
         self.presentationMode = presentationMode
@@ -89,7 +87,6 @@ final class FullScreenCodeViewController: UIViewController {
                 sessionId: reviewCommentSessionId,
                 sourceLabel: reviewCommentSourceLabel
             )
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -104,8 +101,7 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceLabel: String? = nil
     ) {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first,
@@ -125,8 +121,7 @@ final class FullScreenCodeViewController: UIViewController {
                     router: reviewCommentSelectionRouter,
                     sessionId: reviewCommentSessionId,
                     sourceLabel: reviewCommentSourceLabel
-                ),
-            reviewCommentAnnotations: reviewCommentAnnotations
+                )
         )
         controller.modalPresentationStyle = .pageSheet
         if let sheet = controller.sheetPresentationController {
@@ -141,6 +136,7 @@ final class FullScreenCodeViewController: UIViewController {
     deinit {
         liveSourceObserverCleanup?.cancel()
     }
+
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -395,8 +391,7 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: language
-                ),
-                reviewCommentAnnotations: reviewCommentAnnotations
+                )
             )
         case .plainText(let text, let filePath):
             return NativeFullScreenSourceBody(
@@ -408,8 +403,7 @@ final class FullScreenCodeViewController: UIViewController {
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenSource,
                     filePath: filePath
-                ),
-                reviewCommentAnnotations: reviewCommentAnnotations
+                )
             )
         case .diff(let oldText, let newText, let filePath, let precomputedLines):
             return NativeFullScreenDiffBody(
@@ -423,8 +417,7 @@ final class FullScreenCodeViewController: UIViewController {
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenDiff,
                     filePath: filePath
-                ),
-                reviewCommentAnnotations: reviewCommentAnnotations
+                )
             )
         case .markdown(let text, let filePath, let wsContext):
             let body = NativeFullScreenMarkdownBody(
@@ -437,7 +430,6 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenMarkdown,
                     filePath: filePath
                 ),
-                reviewCommentAnnotations: reviewCommentAnnotations,
                 workspaceID: wsContext?.workspaceID,
                 sessionID: wsContext?.sessionID,
                 serverBaseURL: wsContext?.serverBaseURL,
@@ -467,7 +459,6 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenThinking,
                     fallbackSourceLabel: String(localized: "Thinking")
                 ),
-                reviewCommentAnnotations: reviewCommentAnnotations,
                 readerPreferences: readerPreferences(for: content),
                 perfSurface: .fullScreenThinking
             )
@@ -482,8 +473,7 @@ final class FullScreenCodeViewController: UIViewController {
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
                     fallbackSourceLabel: command
-                ),
-                reviewCommentAnnotations: reviewCommentAnnotations
+                )
             )
         case .liveSource(let snapshot, _):
             return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
@@ -537,8 +527,7 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "dot"
-                ),
-                reviewCommentAnnotations: reviewCommentAnnotations
+                )
             )
         }
     }
@@ -556,8 +545,7 @@ final class FullScreenCodeViewController: UIViewController {
             reviewCommentSourceContext: makeSourceContext(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
-            ),
-            reviewCommentAnnotations: reviewCommentAnnotations
+            )
         )
         liveSourceBodyView = body
         return body
@@ -581,7 +569,6 @@ final class FullScreenCodeViewController: UIViewController {
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             ),
-            reviewCommentAnnotations: reviewCommentAnnotations,
             workspaceID: workspaceContext?.workspaceID,
             sessionID: workspaceContext?.sessionID,
             serverBaseURL: workspaceContext?.serverBaseURL,

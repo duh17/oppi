@@ -6,6 +6,7 @@ final class ChatReviewCommentsController {
     private let store = ReviewCommentStore()
 
     var comments: [ReviewComment] { store.comments }
+    var stagedComments: [ReviewComment] { store.stagedComments }
     var stagedCount: Int { store.stagedCount }
     var activeCount: Int { store.activeCount }
     var stagedCommentIds: [String] { store.stagedComments.map(\.id) }

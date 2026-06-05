@@ -22,8 +22,6 @@ private final class VerticalPanPassthroughTextView: UITextView {
                 contentOffset = desiredOffset
             }
         }
-
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: self)
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -282,21 +280,11 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         )
         if displayText.text.isEmpty {
             messageTextView.attributedText = nil
-            ReviewCommentInlineAnnotationRenderer.apply(
-                to: messageTextView,
-                annotations: [],
-                sourceContext: reviewCommentSourceContext
-            )
         } else {
             messageTextView.attributedText = FlatSegment.renderMarkdownInline(
                 displayText.text,
                 defaultTextColor: UIColor(palette.userMessageText),
                 palette: palette
-            )
-            ReviewCommentInlineAnnotationRenderer.apply(
-                to: messageTextView,
-                annotations: configuration.interactionContext?.inlineReviewAnnotations(for: reviewCommentSourceContext) ?? [],
-                sourceContext: reviewCommentSourceContext
             )
         }
         let inlineImagePathPills = parsed.pathPills.filter { pill in

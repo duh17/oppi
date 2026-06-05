@@ -246,7 +246,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             themeID: ThemeRuntimeState.currentThemeID(),
             reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            reviewCommentAnnotations: configuration.interactionContext?.inlineReviewAnnotations(for: reviewCommentSourceContext) ?? [],
             workspaceID: configuration.workspaceID,
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,

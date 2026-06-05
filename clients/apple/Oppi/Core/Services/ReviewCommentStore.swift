@@ -193,7 +193,7 @@ final class ReviewCommentStore {
 
     private static func referenceTitle(_ reference: ReviewCommentReference) -> String {
         let source = sourceDisplayName(reference.source)
-        if let path = reference.path, !path.isEmpty {
+        if let path = reference.displayPath, !path.isEmpty {
             var title = "`\(path)`"
             if let start = reference.startLine {
                 if let end = reference.endLine, end != start {

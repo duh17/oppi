@@ -221,7 +221,6 @@ extension ChatTimelineCollectionHost.Controller {
         )
         return configuration
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
-            .withReviewComments(interactionCtx.reviewComments)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
             .withSessionFileDataFetcher(sessionFileDataFetcher)

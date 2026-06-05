@@ -167,8 +167,7 @@ struct ReadySessionScrollToBottomTests {
                 onFork: { _ in },
                 reviewCommentSelectionRouter: nil,
                 topOverlap: 0,
-                bottomOverlap: 0,
-                reviewComments: []
+                bottomOverlap: 0
             )
             .environment(reducer)
             .environment(audioPlayer)

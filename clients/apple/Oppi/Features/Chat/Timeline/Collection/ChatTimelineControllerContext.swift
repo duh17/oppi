@@ -16,7 +16,6 @@ final class ChatTimelineControllerContext {
     var currentModel: String?
     var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
-    var reviewComments: [ReviewComment] = []
 
     func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
         sessionId != configuration.sessionId || workspaceId != configuration.workspaceId
@@ -38,7 +37,5 @@ final class ChatTimelineControllerContext {
         audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
         interactionContext.reviewCommentSelectionRouter = configuration.reviewCommentSelectionRouter
         interactionContext.sessionId = configuration.sessionId
-        interactionContext.reviewComments = configuration.reviewComments
-        reviewComments = configuration.reviewComments
     }
 }

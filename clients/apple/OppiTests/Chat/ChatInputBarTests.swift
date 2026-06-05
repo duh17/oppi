@@ -190,6 +190,31 @@ struct ChatInputBarTests {
         #expect(placeholder == "Choose an option…")
     }
 
+    @Test("Review comment placeholder includes staged count")
+    func reviewCommentPlaceholderIncludesStagedCount() {
+        let singular = ChatInputBar<EmptyView>.composerPlaceholder(
+            askRequest: nil,
+            pendingReviewCommentCount: 1,
+            isBusy: false,
+            busyStreamingBehavior: .steer
+        )
+        let plural = ChatInputBar<EmptyView>.composerPlaceholder(
+            askRequest: nil,
+            pendingReviewCommentCount: 3,
+            isBusy: false,
+            busyStreamingBehavior: .steer
+        )
+
+        #expect(singular == "Send 1 review comment…")
+        #expect(plural == "Send 3 review comments…")
+    }
+
+    @Test("Review comment stash title includes staged count")
+    func reviewCommentStashTitleIncludesStagedCount() {
+        #expect(ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 1) == "1 review comment staged")
+        #expect(ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 2) == "2 review comments staged")
+    }
+
     @Test("Busy ask with no custom answer uses ignore instead of stop")
     func busyAskWithoutAnswerUsesIgnoreInsteadOfStop() {
         let action = ChatInputBar<EmptyView>.primaryActionKind(

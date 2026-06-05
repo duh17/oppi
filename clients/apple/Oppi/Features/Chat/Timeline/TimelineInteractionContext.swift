@@ -10,7 +10,6 @@ import Foundation
 final class TimelineInteractionContext {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var sessionId: String = ""
-    var reviewComments: [ReviewComment] = []
 
     /// Context object for renderer plumbing.
     var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
@@ -39,10 +38,4 @@ final class TimelineInteractionContext {
         )
     }
 
-    func inlineReviewAnnotations(for sourceContext: ReviewCommentSourceContext?) -> [ReviewCommentInlineAnnotation] {
-        ReviewCommentInlineAnnotationMatcher.annotations(
-            from: reviewComments,
-            for: sourceContext
-        )
-    }
 }

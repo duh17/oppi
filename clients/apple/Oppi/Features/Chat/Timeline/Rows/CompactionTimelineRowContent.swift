@@ -211,8 +211,6 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             sourceLabel: style.title,
             timelineItemId: configuration.itemID
         )
-        let reviewCommentAnnotations = configuration.interactionContext?
-            .inlineReviewAnnotations(for: reviewCommentSourceContext) ?? []
 
         let hasDetail: Bool
         if let trimmedDetail, !trimmedDetail.isEmpty {
@@ -236,8 +234,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                         isStreaming: false,
                         themeID: ThemeRuntimeState.currentThemeID(),
                         reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
-                        reviewCommentSourceContext: reviewCommentSourceContext,
-                        reviewCommentAnnotations: reviewCommentAnnotations
+                        reviewCommentSourceContext: reviewCommentSourceContext
                     )
                 )
             } else {

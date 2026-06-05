@@ -166,7 +166,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         super.layoutSubviews()
         updateBubbleHeight(forWidth: bounds.width)
         syncFadeMaskFrame()
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: textLabel)
     }
 
     // MARK: - Setup
@@ -298,8 +297,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             if text.isEmpty {
                 textLabel.attributedText = nil
-                applyReviewCommentAnnotations()
-                renderSignature = signature
+                        renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -315,8 +313,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     text,
                     color: UIColor(palette.fg).withAlphaComponent(0.94)
                 )
-                applyReviewCommentAnnotations()
-                renderSignature = signature
+                        renderSignature = signature
             }
 
             // Done state starts at top of clipped preview.
@@ -332,8 +329,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             if text.isEmpty {
                 textLabel.attributedText = nil
-                applyReviewCommentAnnotations()
-                renderSignature = signature
+                        renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -347,8 +343,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     textLabel.text = text
                     textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
                     textLabel.font = .preferredFont(forTextStyle: .callout)
-                    applyReviewCommentAnnotations()
-                    renderSignature = signature
+                                renderSignature = signature
                 }
                 updateBubbleHeight(forWidth: bounds.width)
                 if needsTextUpdate, contentIsTruncated {
@@ -360,7 +355,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             }
         }
 
-        applyReviewCommentAnnotations()
         updateReviewCommentSelectionPolicy()
     }
 
@@ -372,18 +366,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         bubblePinchGesture.isEnabled = interaction.enablesPinchActivation
     }
 
-    private func applyReviewCommentAnnotations() {
-        let sourceContext = currentConfiguration.interactionContext?.sourceContext(
-            surface: .thinking,
-            sourceLabel: "Thinking",
-            timelineItemId: currentConfiguration.itemID
-        )
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: textLabel,
-            annotations: currentConfiguration.interactionContext?.inlineReviewAnnotations(for: sourceContext) ?? [],
-            sourceContext: sourceContext
-        )
-    }
 
     /// Cheap render signature to skip redundant text updates.
     private static func textSignature(text: String, isDone: Bool) -> Int {
@@ -566,16 +548,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 sourceLabel: "Thinking",
                 timelineItemId: currentConfiguration.itemID
             )
-        let sourceContext = reviewCommentSelectionContext?.sourceContext(
-            surface: .fullScreenThinking,
-            sourceLabel: "Thinking"
-        )
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            reviewCommentSelectionContext: reviewCommentSelectionContext,
-            reviewCommentAnnotations: currentConfiguration.interactionContext?
-                .inlineReviewAnnotations(for: sourceContext) ?? []
+            reviewCommentSelectionContext: reviewCommentSelectionContext
         )
     }
 

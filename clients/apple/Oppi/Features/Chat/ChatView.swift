@@ -73,6 +73,8 @@ struct ChatView: View {
     @State private var contextBarExpanded = false
     @State private var reviewComments = ChatReviewCommentsController()
     @State private var activeReviewCommentRequest: ReviewCommentSelectionRequest?
+    @State private var showReviewCommentStash = false
+    @State private var focusedReviewCommentId: String?
 
     init(sessionId: String, initialInputText: String = "", initialPendingFiles: [PendingFileReference] = []) {
         self.sessionId = sessionId
@@ -229,8 +231,7 @@ struct ChatView: View {
             onFork: forkFromMessage,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: headerHeight,
-            bottomOverlap: footerHeight,
-            reviewComments: reviewComments.comments
+            bottomOverlap: footerHeight
         )
     }
 
@@ -299,6 +300,7 @@ struct ChatView: View {
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
             .sheet(isPresented: $showShareRedactionSheet) { shareRedactionSheet }
+            .sheet(isPresented: $showReviewCommentStash) { reviewCommentStashSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
             .alert("Compact Context", isPresented: $showCompactConfirmation) {
@@ -396,9 +398,6 @@ struct ChatView: View {
             .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { notification in
                 handleAudioPlayerStateChange(notification)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .reviewCommentInlineAnnotationTapped)) { notification in
-                handleInlineReviewCommentTap(notification)
-            }
             .onChange(of: sessionId) { oldId, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
                 // structural position with a different session ID (e.g.
@@ -420,6 +419,8 @@ struct ChatView: View {
                 scrollController = ChatScrollController()
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
+                showReviewCommentStash = false
+                focusedReviewCommentId = nil
                 inputText = ""
                 pendingAttachments = []
                 pendingRepoPointers = []
@@ -556,6 +557,7 @@ struct ChatView: View {
                     busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: isPreparingAttachments || actionHandler.isSending,
                     pendingReviewCommentCount: activeReviewCommentRequest == nil ? reviewComments.stagedCount : 0,
+                    onReviewCommentsTap: { showReviewCommentStash = true },
                     placeholderOverride: activeReviewCommentRequest == nil ? nil : "Comment…",
                     sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
@@ -601,22 +603,26 @@ struct ChatView: View {
     private var composerActionRow: some View {
         if let request = activeReviewCommentRequest {
             HStack(spacing: 8) {
-                ForEach(QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates)) { template in
-                    Button {
-                        applyQuickCommentTemplate(template)
-                    } label: {
-                        Label(template.title, systemImage: template.systemImage)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color.themeBgHighlight.opacity(0.85), in: Capsule())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates)) { template in
+                            Button {
+                                applyQuickCommentTemplate(template)
+                            } label: {
+                                Label(template.title, systemImage: template.systemImage)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Color.themeBgHighlight.opacity(0.85), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.themeFg)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.themeFg)
                 }
-
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
                     cancelReviewCommentInput()
@@ -784,17 +790,6 @@ struct ChatView: View {
         }
     }
 
-    @MainActor
-    private func handleInlineReviewCommentTap(_ notification: Notification) {
-        if let notificationSessionId = notification.userInfo?["sessionId"] as? String,
-           !notificationSessionId.isEmpty,
-           notificationSessionId != sessionId {
-            return
-        }
-
-        // The old comment detail/list UI is gone. Tapping an existing inline
-        // marker should not fall through to the generic Extension toast sheet.
-    }
 
     @MainActor
     private func handleReviewCommentSelection(
@@ -1541,6 +1536,24 @@ struct ChatView: View {
             }
         )
         .presentationDetents([.medium, .large])
+    }
+
+    private var reviewCommentStashSheet: some View {
+        ReviewCommentStashSheet(
+            comments: reviewComments.stagedComments,
+            focusedCommentId: focusedReviewCommentId,
+            onDelete: { comment in
+                Task { await deleteReviewComment(comment) }
+            },
+            onClose: {
+                showReviewCommentStash = false
+                focusedReviewCommentId = nil
+            }
+        )
+        .presentationDetents([.medium, .large])
+        .onDisappear {
+            focusedReviewCommentId = nil
+        }
     }
 
     private var shareRedactionSheet: some View {

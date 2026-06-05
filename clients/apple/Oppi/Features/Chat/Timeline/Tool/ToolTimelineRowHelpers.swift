@@ -34,8 +34,7 @@ enum ToolTimelineRowPresentationHelpers {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceLabel: String? = nil
     ) {
         guard let presenter = nearestViewController(from: sourceView) else {
             return
@@ -51,8 +50,7 @@ enum ToolTimelineRowPresentationHelpers {
                     router: reviewCommentSelectionRouter,
                     sessionId: reviewCommentSessionId,
                     sourceLabel: reviewCommentSourceLabel
-                ),
-            reviewCommentAnnotations: reviewCommentAnnotations
+                )
         )
         // .pageSheet keeps the presenting VC in the window hierarchy (unlike
         // .fullScreen which removes it, triggering SwiftUI onDisappear).

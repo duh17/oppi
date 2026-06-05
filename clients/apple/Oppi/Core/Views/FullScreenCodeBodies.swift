@@ -19,7 +19,6 @@ final class NativeFullScreenCodeBody: UIView {
     private let alwaysBounceVertical: Bool
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
-    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var readerPreferences: FullScreenReaderPreferences
     private var gutterWidthConstraint: NSLayoutConstraint?
     private var contentContainerWidthConstraint: NSLayoutConstraint?
@@ -34,8 +33,7 @@ final class NativeFullScreenCodeBody: UIView {
         alwaysBounceVertical: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.code.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
         self.content = content
         self.language = language
@@ -46,7 +44,6 @@ final class NativeFullScreenCodeBody: UIView {
         self.readerPreferences = readerPreferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         super.init(frame: .zero)
         setup()
         loadHighlighting()
@@ -59,7 +56,6 @@ final class NativeFullScreenCodeBody: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: codeTextView)
     }
 
     private func setup() {
@@ -115,7 +111,6 @@ final class NativeFullScreenCodeBody: UIView {
         codeTextView.text = content
         codeTextView.delegate = self
         contentContainer.addSubview(codeTextView)
-        applyReviewCommentAnnotations()
 
         let gutterWidthConstraint = gutterView.widthAnchor.constraint(equalToConstant: gutterWidth)
         self.gutterWidthConstraint = gutterWidthConstraint
@@ -182,7 +177,6 @@ final class NativeFullScreenCodeBody: UIView {
                     from: wrapper.value,
                     font: self?.codeFont ?? FullScreenCodeTypography.codeFont
                 )
-                self?.applyReviewCommentAnnotations()
             }
         }
     }
@@ -223,13 +217,7 @@ final class NativeFullScreenCodeBody: UIView {
         }
     }
 
-    private func applyReviewCommentAnnotations() {
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: codeTextView,
-            annotations: reviewCommentAnnotations,
-            sourceContext: reviewCommentSourceContext
-        )
-    }
+
 }
 
 extension NativeFullScreenCodeBody: FullScreenReaderConfigurable {
@@ -271,7 +259,6 @@ final class NativeFullScreenDiffBody: UIView {
     private let progressView = UIActivityIndicatorView(style: .medium)
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
-    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var readerPreferences: FullScreenReaderPreferences
     private var widthConstraint: NSLayoutConstraint?
     private var unwrappedContentWidth: CGFloat = 1
@@ -293,12 +280,10 @@ final class NativeFullScreenDiffBody: UIView {
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.diff.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         self.readerPreferences = readerPreferences
 
         super.init(frame: .zero)
@@ -405,7 +390,6 @@ final class NativeFullScreenDiffBody: UIView {
             precomputedLines: precomputedLines
         )
         applyWrapMode()
-        applyReviewCommentAnnotations()
         let displayPath = filePath ?? "diff.txt"
         buildTask = Task { [weak self] in
             let oldText = oldText
@@ -428,7 +412,6 @@ final class NativeFullScreenDiffBody: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         applyWrapMode()
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: diffTextView)
     }
 
     private var codeFont: UIFont {
@@ -473,7 +456,6 @@ final class NativeFullScreenDiffBody: UIView {
         builtDiffText = result.text
         let styledText = styledDiffText(result.text)
         diffTextView.attributedText = styledText
-        applyReviewCommentAnnotations()
         unwrappedContentWidth = max(result.width, measuredWidth(of: styledText))
         applyWrapMode()
         statsLabel.text = "\(result.added > 0 ? "+\(result.added)" : "0")  \(result.removed > 0 ? "-\(result.removed)" : "0")"
@@ -482,13 +464,7 @@ final class NativeFullScreenDiffBody: UIView {
         setNeedsLayout()
     }
 
-    private func applyReviewCommentAnnotations() {
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: diffTextView,
-            annotations: reviewCommentAnnotations,
-            sourceContext: reviewCommentSourceContext
-        )
-    }
+
 
     private func applyTextSize() {
         diffTextView.font = codeFont
@@ -590,7 +566,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private let stream: TerminalTraceStream?
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
-    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var readerPreferences: FullScreenReaderPreferences
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
@@ -618,8 +593,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         outputWrapped: Bool? = nil,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.terminal.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
         self.palette = palette
         self.stream = stream
@@ -630,7 +604,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         self.readerPreferences = preferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
 
         let initialSnapshot = stream?.snapshot
             ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
@@ -663,8 +636,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         super.layoutSubviews()
         updateWrappingLayout()
         tailFollowCoordinator.onLayoutPass()
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: commandView)
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: outputView)
     }
 
     private func setup() {
@@ -746,7 +717,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
            !command.isEmpty {
             commandView.isHidden = false
             commandView.attributedText = ToolRowTextRenderer.bashCommandHighlighted(command)
-            applyReviewCommentAnnotations(to: commandView)
         } else {
             commandView.isHidden = true
             commandView.attributedText = nil
@@ -769,7 +739,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             outputView.attributedText = attributedOutput
             applyOutputFont()
             renderedOutputText = outputView.attributedText?.string ?? ""
-            applyReviewCommentAnnotations(to: outputView)
             updateWrappingLayout()
             return
         }
@@ -780,7 +749,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         let stripped = ANSIParser.strip(content)
         outputView.text = stripped
         renderedOutputText = stripped
-        applyReviewCommentAnnotations(to: outputView)
         updateWrappingLayout()
 
         // Large streaming payloads stay in plain mode while streaming to avoid
@@ -803,7 +771,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
                 self?.outputView.attributedText = wrapper.value
                 self?.applyOutputFont()
                 self?.renderedOutputText = wrapper.value.string
-                self?.applyReviewCommentAnnotations(to: self?.outputView)
                 self?.updateWrappingLayout()
                 self?.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             }
@@ -878,14 +845,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         return max(widest, current)
     }
 
-    private func applyReviewCommentAnnotations(to textView: UITextView?) {
-        guard let textView else { return }
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: textView,
-            annotations: reviewCommentAnnotations,
-            sourceContext: reviewCommentSourceContext
-        )
-    }
+
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleWillBeginDragging()
@@ -947,7 +907,6 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let plainTextFallbackThreshold: Int?
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
-    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private let workspaceID: String?
     private let sessionID: String?
     private let serverBaseURL: URL?
@@ -976,7 +935,6 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = [],
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -991,7 +949,6 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.plainTextFallbackThreshold = plainTextFallbackThreshold
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         self.workspaceID = workspaceID
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
@@ -1090,7 +1047,6 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             plainTextFallbackThreshold: plainTextFallbackThreshold,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
-            reviewCommentAnnotations: reviewCommentAnnotations,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -1141,7 +1097,6 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     private let textView = UITextView()
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
-    private let reviewCommentAnnotations: [ReviewCommentInlineAnnotation]
     private var readerPreferences: FullScreenReaderPreferences
     private var isStreaming: Bool
 
@@ -1159,12 +1114,10 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.source.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         self.readerPreferences = readerPreferences
         self.isStreaming = isStreaming
         super.init(frame: .zero)
@@ -1184,7 +1137,6 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         textView.text = content
         applyWrapMode()
         addSubview(textView)
-        applyReviewCommentAnnotations()
 
         NSLayoutConstraint.activate([
             textView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1201,7 +1153,6 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         super.layoutSubviews()
         applyWrapMode()
         tailFollowCoordinator.onLayoutPass()
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: textView)
     }
 
     private var codeFont: UIFont {
@@ -1219,7 +1170,6 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
 
         self.isStreaming = isStreaming
         textView.text = content
-        applyReviewCommentAnnotations()
         if !isStreaming {
             tailFollowCoordinator.shouldAutoFollowTail = false
         }
@@ -1248,13 +1198,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         tailFollowCoordinator.handleDidEndDecelerating(isStreaming: isStreaming)
     }
 
-    private func applyReviewCommentAnnotations() {
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: textView,
-            annotations: reviewCommentAnnotations,
-            sourceContext: reviewCommentSourceContext
-        )
-    }
+
 
     private func applyTextSize() {
         textView.font = codeFont

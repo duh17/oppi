@@ -8,7 +8,6 @@ import UIKit
 final class NativeCodeBlockView: UIView {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
-    private var reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
 
     private let headerStack: UIStackView = {
         let sv = UIStackView()
@@ -134,16 +133,13 @@ final class NativeCodeBlockView: UIView {
 
     func configureReviewCommentSelection(
         router: ReviewCommentSelectionRouter?,
-        sourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        sourceContext: ReviewCommentSourceContext?
     ) {
         reviewCommentSelectionRouter = router
         reviewCommentSourceContext = sourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         let selectionEnabled = router != nil && sourceContext != nil
         codeLabel.isSelectable = selectionEnabled
         longPressCopyGesture.isEnabled = !selectionEnabled
-        applyInlineReviewAnnotations()
     }
 
     // periphery:ignore:parameters isOpen
@@ -160,8 +156,7 @@ final class NativeCodeBlockView: UIView {
 
         if code == currentCode, let highlighted = highlightedText {
             codeLabel.attributedText = highlighted
-            applyInlineReviewAnnotations()
-            return
+                return
         }
 
         currentCode = code
@@ -176,7 +171,6 @@ final class NativeCodeBlockView: UIView {
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
         codeLabelWidthConstraint?.constant = ceil(boundingRect.width)
-        applyInlineReviewAnnotations()
     }
 
     func applyHighlightedCode(_ highlighted: NSAttributedString) {
@@ -190,16 +184,8 @@ final class NativeCodeBlockView: UIView {
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = mutable.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
         codeLabelWidthConstraint?.constant = ceil(boundingRect.width)
-        applyInlineReviewAnnotations()
     }
 
-    private func applyInlineReviewAnnotations() {
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: codeLabel,
-            annotations: reviewCommentAnnotations,
-            sourceContext: reviewCommentSourceContext
-        )
-    }
 
     @objc private func copyTapped() {
         copyCodeAndShowFeedback()
@@ -251,7 +237,6 @@ extension NativeCodeBlockView: UITextViewDelegate {
 final class NativeTableBlockView: UIView {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
-    private var reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
 
     /// Inner card that wraps the scroll view. Carries the background, border,
     /// and corner radius so it shrink-wraps to content width while the outer
@@ -388,16 +373,13 @@ final class NativeTableBlockView: UIView {
 
     func configureReviewCommentSelection(
         router: ReviewCommentSelectionRouter?,
-        sourceContext: ReviewCommentSourceContext?,
-        reviewCommentAnnotations: [ReviewCommentInlineAnnotation] = []
+        sourceContext: ReviewCommentSourceContext?
     ) {
         reviewCommentSelectionRouter = router
         reviewCommentSourceContext = sourceContext
-        self.reviewCommentAnnotations = reviewCommentAnnotations
         let selectionEnabled = router != nil && sourceContext != nil
         tableLabel.isSelectable = selectionEnabled
         longPressCopyGesture.isEnabled = !selectionEnabled
-        applyInlineReviewAnnotations()
     }
 
     func apply(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], palette: ThemePalette) {
@@ -423,18 +405,10 @@ final class NativeTableBlockView: UIView {
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
         tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
-        applyInlineReviewAnnotations()
         setNeedsLayout()
         layoutIfNeeded()
     }
 
-    private func applyInlineReviewAnnotations() {
-        ReviewCommentInlineAnnotationRenderer.apply(
-            to: tableLabel,
-            annotations: reviewCommentAnnotations,
-            sourceContext: reviewCommentSourceContext
-        )
-    }
 
     private static func containsLink(_ cells: [[MarkdownInline]]) -> Bool {
         cells.contains { cell in

@@ -154,6 +154,66 @@ struct ReviewCommentReference: Codable, Sendable, Equatable {
     var url: String?
 }
 
+extension ReviewCommentReference {
+    var displayPath: String? {
+        Self.displayPath(from: path)
+    }
+
+    static func displayPath(from rawPath: String?) -> String? {
+        guard let rawPath else { return nil }
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let patchPath = pathFromPatchHeader(trimmed) {
+            return normalizedDisplayPath(patchPath)
+        }
+
+        if trimmed.contains("\n") {
+            return nil
+        }
+
+        if let patchLabel = trimmed.removingPrefix("patch:") {
+            let normalized = normalizedDisplayPath(patchLabel)
+            return normalized.isEmpty ? nil : normalized
+        }
+
+        return normalizedDisplayPath(trimmed)
+    }
+
+    private static func pathFromPatchHeader(_ text: String) -> String? {
+        let markers = ["*** Update File:", "*** Add File:", "*** Delete File:"]
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            for marker in markers where trimmedLine.hasPrefix(marker) {
+                let value = trimmedLine.dropFirst(marker.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty { return value }
+            }
+        }
+        return nil
+    }
+
+    private static func normalizedDisplayPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if let workspaceRange = trimmed.range(of: "/workspace/") {
+            let tail = trimmed[workspaceRange.upperBound...]
+            if let slash = tail.firstIndex(of: "/") {
+                return String(tail[tail.index(after: slash)...])
+            }
+        }
+
+        return trimmed
+    }
+}
+
+private extension String {
+    func removingPrefix(_ prefix: String) -> String? {
+        guard hasPrefix(prefix) else { return nil }
+        return String(dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct ReviewCommentAttachment: Codable, Sendable, Equatable, Identifiable {
     let id: String
     let kind: String

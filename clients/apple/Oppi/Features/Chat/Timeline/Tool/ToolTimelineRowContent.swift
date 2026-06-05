@@ -42,7 +42,6 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var sessionFileDataFetcher: ((String) async throws -> Data)? = nil
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
-    var reviewComments: [ReviewComment] = []
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -59,11 +58,6 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         return copy
     }
 
-    func withReviewComments(_ comments: [ReviewComment]) -> Self {
-        var copy = self
-        copy.reviewComments = comments
-        return copy
-    }
 
     func withAudioPlayer(_ audioPlayer: AudioPlayerService?) -> Self {
         var copy = self
@@ -127,7 +121,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let titleLabel = UILabel()
     private let trailingStack = UIStackView()
     private let languageBadgeIconView = UIImageView()
-    private let reviewCommentIndicatorButton = UIButton(type: .system)
     private let audioPlaybackButton = UIButton(type: .system)
     private let addedLabel = UILabel()
     private let removedLabel = UILabel()
@@ -301,9 +294,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateViewportHeightsIfNeeded()
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: commandLabel)
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: outputLabel)
-        ReviewCommentInlineAnnotationRenderer.repositionBubbleButtons(in: expandedLabel)
 
         // Deferred follow-tail: settle the inner scroll view's content size,
         // then scroll to the bottom. A plain scrollToBottom() here can lag one
@@ -870,9 +860,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
-        configureReviewCommentIndicatorButton()
         audioPlaybackButton.translatesAutoresizingMaskIntoConstraints = false
-        trailingStack.addArrangedSubview(reviewCommentIndicatorButton)
         trailingStack.addArrangedSubview(audioPlaybackButton)
         trailingStack.addArrangedSubview(elapsedLabel)
         trailingStack.addArrangedSubview(addedLabel)
@@ -887,8 +875,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints(
                 languageBadgeIconView: languageBadgeIconView
             ) + [
-                reviewCommentIndicatorButton.widthAnchor.constraint(equalToConstant: 44),
-                reviewCommentIndicatorButton.heightAnchor.constraint(equalToConstant: 44),
                 audioPlaybackButton.widthAnchor.constraint(equalToConstant: 32),
                 audioPlaybackButton.heightAnchor.constraint(equalToConstant: 32),
                 compactHostedSurfaceHostView.leadingAnchor.constraint(equalTo: expandedContainer.leadingAnchor),
@@ -1121,7 +1107,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             elapsedLabel: elapsedLabel
         )
         collapsedAudioController.apply(configuration: configuration)
-        applyReviewCommentIndicator(configuration: configuration)
         ToolTimelineRowDisplayState.updateTrailingVisibility(
             trailingStack: trailingStack,
             languageBadgeIconView: languageBadgeIconView,
@@ -1130,7 +1115,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             trailingLabel: trailingLabel,
             elapsedLabel: elapsedLabel
         )
-        if !audioPlaybackButton.isHidden || !reviewCommentIndicatorButton.isHidden {
+        if !audioPlaybackButton.isHidden {
             trailingStack.isHidden = false
         }
 
@@ -1140,54 +1125,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func configureReviewCommentIndicatorButton() {
-        reviewCommentIndicatorButton.translatesAutoresizingMaskIntoConstraints = false
-        reviewCommentIndicatorButton.isHidden = true
-        reviewCommentIndicatorButton.tintColor = UIColor(Color.themePurple)
-        reviewCommentIndicatorButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        reviewCommentIndicatorButton.setContentHuggingPriority(.required, for: .horizontal)
-        reviewCommentIndicatorButton.addTarget(self, action: #selector(handleReviewCommentIndicatorTap), for: .touchUpInside)
-    }
 
-    private func applyReviewCommentIndicator(configuration: ToolTimelineRowConfiguration) {
-        let annotations = collapsedReviewCommentAnnotations(configuration: configuration)
-        guard !annotations.isEmpty else {
-            reviewCommentIndicatorButton.isHidden = true
-            reviewCommentIndicatorButton.configuration = nil
-            reviewCommentIndicatorButton.accessibilityLabel = nil
-            return
-        }
 
-        var buttonConfiguration = UIButton.Configuration.filled()
-        buttonConfiguration.image = UIImage(systemName: "text.bubble")
-        buttonConfiguration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-        buttonConfiguration.imagePadding = annotations.count > 1 ? 3 : 0
-        buttonConfiguration.title = annotations.count > 1 ? "\(annotations.count)" : nil
-        buttonConfiguration.baseBackgroundColor = UIColor(Color.themePurple).withAlphaComponent(0.16)
-        buttonConfiguration.baseForegroundColor = UIColor(Color.themePurple)
-        buttonConfiguration.cornerStyle = .capsule
-        buttonConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
-        reviewCommentIndicatorButton.configuration = buttonConfiguration
-        reviewCommentIndicatorButton.isHidden = false
-        reviewCommentIndicatorButton.accessibilityLabel = annotations.count == 1
-            ? "One review comment in hidden tool output"
-            : "\(annotations.count) review comments in hidden tool output"
-        reviewCommentIndicatorButton.accessibilityHint = "Shows the review comments for this tool output."
-    }
-
-    @objc private func handleReviewCommentIndicatorTap() {
-        let annotations = collapsedReviewCommentAnnotations(configuration: currentConfiguration)
-        guard let first = annotations.first else { return }
-        NotificationCenter.default.post(
-            name: .reviewCommentInlineAnnotationTapped,
-            object: nil,
-            userInfo: [
-                "commentId": first.id,
-                "commentIds": annotations.map(\.id),
-                "sessionId": reviewCommentSessionId ?? "",
-            ]
-        )
-    }
 
     private func shouldRenderExpandedContent(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Bool {
         switch content {
@@ -1292,11 +1231,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             showOutputContainer: showOutput,
             showExpandedContainer: showExpanded,
             expandedContent: expandedContent
-        )
-        applyReviewCommentAnnotationsToTextViews(
-            showCommand: showCommand,
-            showOutput: showOutput,
-            showExpanded: showExpanded
         )
 
         let showImagePreview = !imagePreviewContainer.isHidden
@@ -1406,7 +1340,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isUsingMarkdownLayout: expandedUsesMarkdownLayout,
                 reviewCommentSelectionRouter: markdownSelectionEnabled ? reviewCommentSelectionRouter : nil,
                 reviewCommentSourceContext: markdownSelectionEnabled ? reviewCommentSourceContext : nil,
-                reviewCommentAnnotations: reviewAnnotations(for: reviewCommentSourceContext),
                 textSelectionEnabled: markdownSelectionEnabled
             )
 
@@ -1603,44 +1536,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func applyReviewCommentAnnotationsToTextViews(
-        showCommand: Bool,
-        showOutput: Bool,
-        showExpanded: Bool
-    ) {
-        if showCommand {
-            let context = resolveReviewCommentSourceContext(for: commandLabel)
-            ReviewCommentInlineAnnotationRenderer.apply(
-                to: commandLabel,
-                annotations: reviewAnnotations(for: context),
-                sourceContext: context
-            )
-        } else {
-            ReviewCommentInlineAnnotationRenderer.apply(to: commandLabel, annotations: [], sourceContext: nil)
-        }
-
-        if showOutput {
-            let context = resolveReviewCommentSourceContext(for: outputLabel)
-            ReviewCommentInlineAnnotationRenderer.apply(
-                to: outputLabel,
-                annotations: reviewAnnotations(for: context),
-                sourceContext: context
-            )
-        } else {
-            ReviewCommentInlineAnnotationRenderer.apply(to: outputLabel, annotations: [], sourceContext: nil)
-        }
-
-        if showExpanded, !expandedUsesMarkdownLayout, !expandedUsesReadMediaLayout {
-            let context = resolveReviewCommentSourceContext(for: expandedLabel)
-            ReviewCommentInlineAnnotationRenderer.apply(
-                to: expandedLabel,
-                annotations: reviewAnnotations(for: context),
-                sourceContext: context
-            )
-        } else {
-            ReviewCommentInlineAnnotationRenderer.apply(to: expandedLabel, annotations: [], sourceContext: nil)
-        }
-    }
 
     private func resolveReviewCommentSourceContext(for textView: UITextView) -> ReviewCommentSourceContext? {
         guard let sessionId = reviewCommentSessionId,
@@ -1673,67 +1568,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func reviewAnnotations(for sourceContext: ReviewCommentSourceContext?) -> [ReviewCommentInlineAnnotation] {
-        ReviewCommentInlineAnnotationMatcher.annotations(
-            from: currentConfiguration.reviewComments,
-            for: sourceContext
-        )
-    }
 
-    private func collapsedReviewCommentAnnotations(
-        configuration: ToolTimelineRowConfiguration
-    ) -> [ReviewCommentInlineAnnotation] {
-        guard !configuration.isExpanded,
-              let sessionId = configuration.reviewCommentSessionId else {
-            return []
-        }
-
-        let expandedLabelText = expandedLabel.text ?? expandedLabel.attributedText?.string
-        let candidateContexts: [ReviewCommentSourceContext?] = [
-            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
-                surface: .command,
-                expandedContent: configuration.expandedContent,
-                sessionId: sessionId,
-                sourceLabel: configuration.title,
-                timelineItemId: configuration.itemID,
-                expandedLabelText: nil
-            ),
-            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
-                surface: .output,
-                expandedContent: configuration.expandedContent,
-                sessionId: sessionId,
-                sourceLabel: configuration.title,
-                timelineItemId: configuration.itemID,
-                expandedLabelText: nil
-            ),
-            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
-                surface: .expandedLabel,
-                expandedContent: configuration.expandedContent,
-                sessionId: sessionId,
-                sourceLabel: configuration.title,
-                timelineItemId: configuration.itemID,
-                expandedLabelText: expandedLabelText
-            ),
-            ToolTimelineRowReviewCommentSelectionSupport.sourceContext(
-                surface: .expandedMarkdown,
-                expandedContent: configuration.expandedContent,
-                sessionId: sessionId,
-                sourceLabel: configuration.title,
-                timelineItemId: configuration.itemID,
-                expandedLabelText: nil
-            ),
-        ]
-
-        var seen = Set<String>()
-        var annotations: [ReviewCommentInlineAnnotation] = []
-        for sourceContext in candidateContexts {
-            for annotation in ReviewCommentInlineAnnotationMatcher.annotations(from: configuration.reviewComments, for: sourceContext) {
-                guard seen.insert(annotation.id).inserted else { continue }
-                annotations.append(annotation)
-            }
-        }
-        return annotations
-    }
 
     private func applyInteractionPolicy(
         _ policy: ToolTimelineRowInteractionPolicy,
@@ -1937,8 +1772,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            reviewCommentSelectionContext: reviewCommentSelectionContext,
-            reviewCommentAnnotations: reviewAnnotations(for: fullScreenSourceContext(for: content))
+            reviewCommentSelectionContext: reviewCommentSelectionContext
         )
     }
 
