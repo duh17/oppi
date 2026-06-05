@@ -64,11 +64,13 @@ function firstLine(s: string, max = 80): string {
   return line.length > max ? line.slice(0, max - 1) + "…" : line;
 }
 
+const bashCommandSummaryMaxCharacters = 200;
+
 // ─── Built-in Renderers ───
 
 const bash: MobileToolRenderer = {
   renderCall(args) {
-    const cmd = firstLine(str(args.command));
+    const cmd = firstLine(str(args.command), bashCommandSummaryMaxCharacters);
     return [
       { text: "$ ", style: "bold" },
       { text: cmd, style: "accent" },

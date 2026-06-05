@@ -143,7 +143,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
                 "id": "snap-command-path-confirm",
                 "method": "confirm",
                 "title": "rpc-editor",
-                "message": "View source path?\n/Users/chenda/.pi/agent/extensions/rpc-demo.ts",
+                "message": "View source path?\n/Users/testuser/.pi/agent/extensions/rpc-demo.ts",
             ]
         )
         try capturePlanModeSurface(sessionId: sessionId)

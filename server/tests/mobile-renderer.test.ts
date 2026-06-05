@@ -121,6 +121,18 @@ describe("bash renderer", () => {
     expect(styleOf(segs, 1)).toBe("accent");
   });
 
+  it("renderCall keeps enough command text for wide tablet rows", () => {
+    const command = "cd /Users/testuser/workspace/oppi && bun scripts/duplication-scan.ts && git diff -- clients/apple/Oppi/Features/Chat";
+    const segs = reg.renderCall("bash", { command });
+    expect(textOf(segs)).toBe(`$ ${command}`);
+  });
+
+  it("renderCall caps very long commands", () => {
+    const command = "x".repeat(240);
+    const segs = reg.renderCall("bash", { command });
+    expect(textOf(segs)).toBe(`$ ${"x".repeat(199)}…`);
+  });
+
   it("renderCall handles missing command", () => {
     const segs = reg.renderCall("bash", {});
     expect(textOf(segs)).toBe("$ ");
