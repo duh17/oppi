@@ -37,6 +37,10 @@ struct MermaidParser: DocumentParser, Sendable {
             let body = Array(stripped[(firstIndex + 1)...])
             let diagram = MermaidMindmapParser.parse(lines: body)
             return .mindmap(diagram)
+        case .state:
+            let body = Array(stripped[(firstIndex + 1)...])
+            let diagram = MermaidStateParser.parse(lines: body)
+            return .state(diagram)
         case .unknown(let name):
             return .unsupported(type: name)
         }
@@ -49,6 +53,7 @@ struct MermaidParser: DocumentParser, Sendable {
         case sequence
         case gantt
         case mindmap
+        case state
         case unknown(String)
     }
 
@@ -76,6 +81,8 @@ struct MermaidParser: DocumentParser, Sendable {
             return Header(type: .gantt, direction: nil)
         case "mindmap":
             return Header(type: .mindmap, direction: nil)
+        case "statediagram", "statediagram-v2":
+            return Header(type: .state, direction: nil)
         default:
             return Header(type: .unknown(tokens.first ?? keyword), direction: nil)
         }
@@ -246,6 +253,7 @@ struct MermaidParser: DocumentParser, Sendable {
                 title: title,
                 direction: direction,
                 nodeIds: Array(nodeIds.sorted()),
+                regionCount: 0,
                 subgraphs: subgraphs
             )
         }

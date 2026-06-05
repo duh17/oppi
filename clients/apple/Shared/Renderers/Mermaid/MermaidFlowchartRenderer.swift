@@ -52,12 +52,94 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             return MermaidGanttRenderer.layout(diagram, configuration: configuration)
         case .mindmap(let diagram):
             return MermaidMindmapRenderer.layout(diagram, configuration: configuration)
+        case .state(let diagram):
+            return layoutFlowchart(flowchart(from: diagram), configuration: configuration)
         case .unsupported(let type):
             return placeholderLayout(
                 text: "Unsupported diagram type: \(type)",
                 configuration: configuration
             )
         }
+    }
+
+    private nonisolated func flowchart(from diagram: StateDiagram) -> FlowchartDiagram {
+        var nodes = diagram.states.map { state in
+            FlowNode(id: state.id, label: state.label, shape: flowShape(for: state.kind))
+        }
+        var edges: [FlowEdge] = []
+        var styleDirectives: [FlowStyleDirective] = []
+        var terminalIndex = 0
+
+        for state in diagram.states {
+            var merged: [String: String] = [:]
+            for className in state.classes {
+                for (key, value) in diagram.classDefs[className] ?? [:] {
+                    merged[key] = value
+                }
+            }
+            if !merged.isEmpty {
+                styleDirectives.append(FlowStyleDirective(nodeId: state.id, properties: merged))
+            }
+        }
+
+        func nodeId(for endpoint: StateEndpoint, isSource: Bool) -> String {
+            switch endpoint {
+            case .state(let id):
+                return id
+            case .terminal:
+                terminalIndex += 1
+                let id = isSource ? "__state_start_\(terminalIndex)" : "__state_end_\(terminalIndex)"
+                nodes.append(FlowNode(id: id, label: "", shape: isSource ? .circle : .doubleCircle))
+                return id
+            }
+        }
+
+        for transition in diagram.transitions {
+            edges.append(FlowEdge(
+                from: nodeId(for: transition.from, isSource: true),
+                to: nodeId(for: transition.to, isSource: false),
+                label: transition.label,
+                style: .arrow
+            ))
+        }
+
+        for (index, note) in diagram.notes.enumerated() {
+            let noteId = "__state_note_\(index)"
+            nodes.append(FlowNode(id: noteId, label: note.text, shape: .rectangle))
+            edges.append(FlowEdge(from: note.stateId, to: noteId, label: nil, style: .dotted))
+            styleDirectives.append(FlowStyleDirective(
+                nodeId: noteId,
+                properties: ["fill": "theme.accentYellow", "stroke": "theme.accentOrange"]
+            ))
+        }
+
+        return FlowchartDiagram(
+            direction: diagram.direction,
+            nodes: nodes,
+            edges: edges,
+            subgraphs: diagram.composites.map(flowSubgraph(from:)),
+            classDefs: diagram.classDefs,
+            styleDirectives: styleDirectives
+        )
+    }
+
+    private nonisolated func flowShape(for kind: StateNodeKind) -> FlowNodeShape {
+        switch kind {
+        case .normal: return .rounded
+        case .choice: return .diamond
+        case .fork, .join: return .rectangle
+        }
+    }
+
+    private nonisolated func flowSubgraph(from composite: StateComposite) -> FlowSubgraph {
+        FlowSubgraph(
+            id: composite.id,
+            title: composite.label,
+            direction: composite.direction,
+            nodeIds: composite.stateIds,
+            regionCount: composite.regions.count,
+            subgraphs: composite.children.map(flowSubgraph(from:))
+        )
     }
 
     nonisolated func draw(
@@ -261,6 +343,11 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let padding: CGFloat = 20
         let offset = CGPoint(x: origin.x + padding, y: origin.y + padding)
 
+        // Draw subgraph/composite-state containers behind the graph content.
+        for subgraph in layout.flowchart.subgraphs {
+            drawSubgraph(subgraph, layout: layout, in: ctx, offset: offset)
+        }
+
         // Draw edges first (behind nodes).
         for edgePath in layout.graphResult.edgePaths {
             let key = "\(edgePath.from)->\(edgePath.to)"
@@ -281,8 +368,91 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
             let styleProps = layout.styleDirectives[id] ?? [:]
             drawNodeShape(shape, rect: offsetRect, style: styleProps, layout: layout, in: ctx)
-            drawNodeLabel(label, in: offsetRect, layout: layout, ctx: ctx)
+            drawNodeLabel(label, in: offsetRect, style: styleProps, layout: layout, ctx: ctx)
         }
+    }
+
+    private func drawSubgraph(
+        _ subgraph: FlowSubgraph,
+        layout: FlowchartLayout,
+        in ctx: CGContext,
+        offset: CGPoint
+    ) {
+        for child in subgraph.subgraphs {
+            drawSubgraph(child, layout: layout, in: ctx, offset: offset)
+        }
+
+        guard let rect = subgraphRect(subgraph, layout: layout)?.insetBy(dx: -20, dy: -28) else { return }
+        let offsetRect = rect.offsetBy(dx: offset.x, dy: offset.y)
+
+        ctx.saveGState()
+        ctx.setFillColor(layout.theme.background.copy(alpha: 0.35) ?? layout.theme.background)
+        ctx.setStrokeColor(layout.theme.foregroundDim)
+        ctx.setLineWidth(1)
+        ctx.setLineDash(phase: 0, lengths: [6, 4])
+        let path = CGPath(roundedRect: offsetRect, cornerWidth: 10, cornerHeight: 10, transform: nil)
+        ctx.addPath(path)
+        ctx.drawPath(using: .fillStroke)
+        ctx.restoreGState()
+
+        if subgraph.regionCount > 0 {
+            drawSubgraphRegions(count: subgraph.regionCount, in: offsetRect, layout: layout, ctx: ctx)
+        }
+
+        let title = subgraph.title ?? subgraph.id
+        if !title.isEmpty {
+            let font = CTFontCreateWithName("Helvetica-Bold" as CFString, layout.fontSize * 0.85, nil)
+            let titleRect = CGRect(
+                x: offsetRect.minX + 10,
+                y: offsetRect.minY + 4,
+                width: max(1, offsetRect.width - 20),
+                height: layout.fontSize * 1.4
+            )
+            MermaidTextUtils.drawText(
+                title,
+                centeredIn: titleRect,
+                font: font,
+                fontSize: layout.fontSize * 0.85,
+                foregroundColor: layout.theme.foregroundDim,
+                in: ctx
+            )
+        }
+    }
+
+    private func drawSubgraphRegions(
+        count: Int,
+        in rect: CGRect,
+        layout: FlowchartLayout,
+        ctx: CGContext
+    ) {
+        guard count > 0 else { return }
+        ctx.saveGState()
+        ctx.setStrokeColor(layout.theme.foregroundDim)
+        ctx.setLineWidth(1)
+        ctx.setLineDash(phase: 0, lengths: [4, 4])
+
+        let contentTop = rect.minY + layout.fontSize * 2
+        let availableHeight = max(1, rect.maxY - contentTop)
+        for index in 1 ... count {
+            let y = contentTop + availableHeight * CGFloat(index) / CGFloat(count + 1)
+            ctx.move(to: CGPoint(x: rect.minX + 8, y: y))
+            ctx.addLine(to: CGPoint(x: rect.maxX - 8, y: y))
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    private func subgraphRect(_ subgraph: FlowSubgraph, layout: FlowchartLayout) -> CGRect? {
+        var rect: CGRect?
+        for nodeId in subgraph.nodeIds {
+            guard let nodeRect = layout.graphResult.nodePositions[nodeId] else { continue }
+            rect = rect.map { $0.union(nodeRect) } ?? nodeRect
+        }
+        for child in subgraph.subgraphs {
+            guard let childRect = subgraphRect(child, layout: layout) else { continue }
+            rect = rect.map { $0.union(childRect) } ?? childRect
+        }
+        return rect
     }
 
     // MARK: - Node shapes
@@ -294,8 +464,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         layout: FlowchartLayout,
         in ctx: CGContext
     ) {
-        let fillColor = parseCSSColor(style["fill"]) ?? layout.theme.background
-        let strokeColor = parseCSSColor(style["stroke"]) ?? layout.theme.foreground
+        let fillColor = parseStyleColor(style["fill"], theme: layout.theme) ?? layout.theme.background
+        let strokeColor = parseStyleColor(style["stroke"], theme: layout.theme) ?? layout.theme.foreground
         let lineWidth: CGFloat = parseLineWidth(style["stroke-width"]) ?? 1.5
 
         ctx.saveGState()
@@ -441,16 +611,19 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     private func drawNodeLabel(
         _ text: String,
         in rect: CGRect,
+        style: [String: String],
         layout: FlowchartLayout,
         ctx: CGContext
     ) {
         let font = CTFontCreateWithName("Helvetica" as CFString, layout.fontSize, nil)
+        let fillColor = parseStyleColor(style["fill"], theme: layout.theme) ?? layout.theme.background
+        let foreground = contrastingTextColor(on: fillColor, theme: layout.theme)
         MermaidTextUtils.drawText(
             text,
             centeredIn: rect,
             font: font,
             fontSize: layout.fontSize,
-            foregroundColor: layout.theme.foreground,
+            foregroundColor: foreground,
             in: ctx
         )
     }
@@ -594,9 +767,27 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
     // MARK: - CSS parsing helpers
 
-    /// Parse a CSS hex color like `#f9f` or `#ff99ff` to CGColor.
-    private func parseCSSColor(_ value: String?) -> CGColor? {
-        guard let value, value.hasPrefix("#") else { return nil }
+    /// Parse Mermaid style colors. Hex colors are supported for Mermaid
+    /// conformance; `theme.*` values are used by Oppi-owned synthetic nodes so
+    /// generated diagram chrome stays aligned with the active app theme.
+    private func parseStyleColor(_ value: String?, theme: RenderTheme) -> CGColor? {
+        guard let value else { return nil }
+        switch value {
+        case "theme.foreground": return theme.foreground
+        case "theme.foregroundDim": return theme.foregroundDim
+        case "theme.background": return theme.background
+        case "theme.backgroundDark": return theme.backgroundDark
+        case "theme.accentBlue": return theme.accentBlue
+        case "theme.accentCyan": return theme.accentCyan
+        case "theme.accentGreen": return theme.accentGreen
+        case "theme.accentOrange": return theme.accentOrange
+        case "theme.accentPurple": return theme.accentPurple
+        case "theme.accentRed": return theme.accentRed
+        case "theme.accentYellow": return theme.accentYellow
+        default: break
+        }
+
+        guard value.hasPrefix("#") else { return nil }
         let hex = String(value.dropFirst())
         let expanded: String
         if hex.count == 3 {
@@ -612,6 +803,45 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let g = CGFloat((val >> 8) & 0xFF) / 255.0
         let b = CGFloat(val & 0xFF) / 255.0
         return CGColor(red: r, green: g, blue: b, alpha: 1.0)
+    }
+
+    private func contrastingTextColor(on fill: CGColor, theme: RenderTheme) -> CGColor {
+        let candidates = [theme.foreground, theme.background, theme.backgroundDark]
+        return candidates.max { lhs, rhs in
+            contrastRatio(foreground: lhs, background: fill) < contrastRatio(foreground: rhs, background: fill)
+        } ?? theme.foreground
+    }
+
+    private func contrastRatio(foreground: CGColor, background: CGColor) -> CGFloat {
+        guard let fg = sRGBComponents(foreground), let bg = sRGBComponents(background) else { return 1 }
+        let fgLuminance = relativeLuminance(red: fg.red, green: fg.green, blue: fg.blue)
+        let bgLuminance = relativeLuminance(red: bg.red, green: bg.green, blue: bg.blue)
+        let lighter = max(fgLuminance, bgLuminance)
+        let darker = min(fgLuminance, bgLuminance)
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private func relativeLuminance(red: CGFloat, green: CGFloat, blue: CGFloat) -> CGFloat {
+        func linearized(_ component: CGFloat) -> CGFloat {
+            component <= 0.03928 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearized(red) + 0.7152 * linearized(green) + 0.0722 * linearized(blue)
+    }
+
+    private func sRGBComponents(_ color: CGColor) -> (red: CGFloat, green: CGFloat, blue: CGFloat)? {
+        let converted = color.converted(
+            to: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            intent: .defaultIntent,
+            options: nil
+        ) ?? color
+        guard let components = converted.components else { return nil }
+        if components.count >= 3 {
+            return (components[0], components[1], components[2])
+        }
+        if components.count >= 1 {
+            return (components[0], components[0], components[0])
+        }
+        return nil
     }
 
     /// Parse stroke-width like "2px" or "2" to CGFloat.

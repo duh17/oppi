@@ -8,7 +8,73 @@ enum MermaidDiagram: Equatable, Sendable {
     case sequence(SequenceDiagram)
     case gantt(GanttDiagram)
     case mindmap(MindmapDiagram)
+    case state(StateDiagram)
     case unsupported(type: String)
+}
+
+// MARK: - State diagram types
+
+struct StateDiagram: Equatable, Sendable {
+    let direction: FlowDirection
+    let states: [StateNode]
+    let transitions: [StateTransition]
+    let notes: [StateDiagramNote]
+    let composites: [StateComposite]
+    let classDefs: [String: [String: String]]
+
+    static let empty = Self(
+        direction: .TB,
+        states: [],
+        transitions: [],
+        notes: [],
+        composites: [],
+        classDefs: [:]
+    )
+}
+
+struct StateNode: Equatable, Sendable {
+    let id: String
+    let label: String
+    let kind: StateNodeKind
+    let classes: [String]
+}
+
+enum StateNodeKind: Equatable, Sendable {
+    case normal
+    case choice
+    case fork
+    case join
+}
+
+struct StateTransition: Equatable, Sendable {
+    let from: StateEndpoint
+    let to: StateEndpoint
+    let label: String?
+}
+
+enum StateEndpoint: Equatable, Sendable {
+    case terminal
+    case state(String)
+}
+
+struct StateDiagramNote: Equatable, Sendable {
+    let stateId: String
+    let position: StateNotePosition
+    let text: String
+}
+
+enum StateNotePosition: Equatable, Sendable {
+    case leftOf
+    case rightOf
+}
+
+struct StateComposite: Equatable, Sendable {
+    let id: String
+    let label: String?
+    let direction: FlowDirection?
+    let stateIds: [String]
+    let regions: [Int]
+    let children: [StateComposite]
 }
 
 // MARK: - Gantt chart types
@@ -174,6 +240,7 @@ struct FlowSubgraph: Equatable, Sendable {
     let title: String?
     let direction: FlowDirection?
     let nodeIds: [String]
+    let regionCount: Int
     let subgraphs: [Self]
 }
 
