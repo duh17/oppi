@@ -5,10 +5,65 @@ import WebKit
 
 // MARK: - Code Body
 
+private final class CodeLineNumberGutterView: UIView {
+    struct Row: Equatable {
+        let text: String
+        let y: CGFloat
+        let height: CGFloat
+    }
+
+    var font: UIFont = FullScreenCodeTypography.codeFont {
+        didSet { setNeedsDisplay() }
+    }
+
+    var textColor: UIColor = .secondaryLabel {
+        didSet { setNeedsDisplay() }
+    }
+
+    var rows: [Row] = [] {
+        didSet { setNeedsDisplay() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        isUserInteractionEnabled = false
+        contentMode = .redraw
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ rect: CGRect) {
+        guard !rows.isEmpty else { return }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .right
+        paragraph.lineBreakMode = .byClipping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor,
+            .paragraphStyle: paragraph,
+        ]
+
+        for row in rows {
+            let rowRect = CGRect(x: 0, y: row.y, width: bounds.width, height: row.height)
+            guard rowRect.intersects(rect) else { continue }
+            (row.text as NSString).draw(
+                with: rowRect,
+                options: [.usesLineFragmentOrigin],
+                attributes: attributes,
+                context: nil
+            )
+        }
+    }
+}
+
 final class NativeFullScreenCodeBody: UIView {
     private let scrollView = UIScrollView()
     private let contentContainer = UIView()
-    private let gutterView = UITextView()
+    private let gutterView = CodeLineNumberGutterView()
     private let separatorView = UIView()
     private let codeTextView = UITextView()
     private let content: String
@@ -82,26 +137,18 @@ final class NativeFullScreenCodeBody: UIView {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentContainer)
 
-        // Gutter — uses UITextView (not UILabel) so line heights match codeTextView exactly.
+        // Gutter — draws line numbers at the exact TextKit fragment Y for each
+        // logical source line, so soft-wrapped continuations stay unnumbered.
         gutterView.translatesAutoresizingMaskIntoConstraints = false
         gutterView.font = codeFont
         gutterView.textColor = UIColor(palette.comment)
-        gutterView.textAlignment = .right
-        gutterView.isEditable = false
-        gutterView.isSelectable = false
-        gutterView.isScrollEnabled = false
-        gutterView.backgroundColor = .clear
-        gutterView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
-        gutterView.textContainer.lineFragmentPadding = 0
-        gutterView.textContainer.lineBreakMode = .byClipping
         contentContainer.addSubview(gutterView)
 
-        let (numbers, gutterWidth) = lineNumberInfo(
+        let (_, gutterWidth) = lineNumberInfo(
             lineCount: lineCount,
             startLine: startLine,
             font: codeFont
         )
-        gutterView.text = numbers
 
         // Separator
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -144,6 +191,7 @@ final class NativeFullScreenCodeBody: UIView {
 
             gutterView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 6),
             gutterView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            gutterView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             gutterWidthConstraint,
 
             separatorView.leadingAnchor.constraint(equalTo: gutterView.trailingAnchor, constant: 6),
@@ -155,10 +203,6 @@ final class NativeFullScreenCodeBody: UIView {
             codeTextView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             codeTextView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             codeTextView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-
-            // Ensure gutter matches code height
-            gutterView.bottomAnchor.constraint(lessThanOrEqualTo: contentContainer.bottomAnchor),
-            codeTextView.bottomAnchor.constraint(greaterThanOrEqualTo: gutterView.bottomAnchor),
         ])
     }
 
@@ -188,6 +232,7 @@ final class NativeFullScreenCodeBody: UIView {
                     from: wrapper.value,
                     font: self?.codeFont ?? FullScreenCodeTypography.codeFont
                 )
+                self?.invalidateGutterLayout()
             }
         }
     }
@@ -236,6 +281,8 @@ final class NativeFullScreenCodeBody: UIView {
     }
 
     private func updateGutterForCurrentLayout() {
+        guard codeTextView.bounds.width > 0 else { return }
+
         let signature = GutterLayoutSignature(
             wrapsText: readerPreferences.wrapsText,
             codeTextWidth: Int(codeTextView.bounds.width.rounded(.toNearestOrAwayFromZero)),
@@ -245,50 +292,81 @@ final class NativeFullScreenCodeBody: UIView {
         guard signature != lastGutterLayoutSignature else { return }
         lastGutterLayoutSignature = signature
 
-        let gutterText = readerPreferences.wrapsText
-            ? wrappedLineNumberText()
-            : lineNumberInfo(lineCount: lineCount, startLine: startLine, font: codeFont).numbers
-        if gutterView.text != gutterText {
-            gutterView.text = gutterText
-        }
+        gutterView.font = codeFont
+        gutterView.textColor = UIColor(palette.comment)
+        gutterView.rows = lineNumberRowsForCurrentLayout()
     }
 
-    private func wrappedLineNumberText() -> String {
-        // Wrapped source lines can occupy multiple visual rows. Keep the
-        // logical line number on the first row and leave continuation rows blank.
-        guard codeTextView.bounds.width > 0 else {
-            return lineNumberInfo(lineCount: lineCount, startLine: startLine, font: codeFont).numbers
-        }
-
+    private func prepareCodeTextContainerForCurrentWidth() {
         let insets = codeTextView.textContainerInset
-        let textContainerWidth = max(0, codeTextView.bounds.width - insets.left - insets.right)
-        if textContainerWidth > 0 {
-            codeTextView.textContainer.size = CGSize(
-                width: textContainerWidth,
-                height: CGFloat.greatestFiniteMagnitude
-            )
-        }
+        let textContainerWidth = max(1, codeTextView.bounds.width - insets.left - insets.right)
+        codeTextView.textContainer.size = readerPreferences.wrapsText
+            ? CGSize(width: textContainerWidth, height: CGFloat.greatestFiniteMagnitude)
+            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+    }
+
+    private func lineNumberRowsForCurrentLayout() -> [CodeLineNumberGutterView.Row] {
+        prepareCodeTextContainerForCurrentWidth()
 
         let layoutManager = codeTextView.layoutManager
         layoutManager.ensureLayout(for: codeTextView.textContainer)
 
         let source = content as NSString
         let lineRanges = logicalLineContentRanges(in: source)
-        var gutterRows: [String] = []
-        gutterRows.reserveCapacity(max(lineRanges.count, lineCount))
+        var rows: [CodeLineNumberGutterView.Row] = []
+        rows.reserveCapacity(lineRanges.count)
 
+        var fallbackY: CGFloat = 0
         for (offset, range) in lineRanges.enumerated() {
-            gutterRows.append(String(startLine + offset))
-            let continuationRows = max(
-                0,
-                visualFragmentCount(for: range, layoutManager: layoutManager) - 1
+            let fragmentRect = firstLineFragmentRect(
+                for: range,
+                layoutManager: layoutManager,
+                fallbackY: fallbackY
             )
-            if continuationRows > 0 {
-                gutterRows.append(contentsOf: repeatElement("", count: continuationRows))
+            fallbackY = fragmentRect.maxY
+
+            rows.append(CodeLineNumberGutterView.Row(
+                text: String(startLine + offset),
+                y: codeTextView.textContainerInset.top + fragmentRect.minY,
+                height: max(codeFont.lineHeight, fragmentRect.height)
+            ))
+        }
+
+        return rows
+    }
+
+    private func firstLineFragmentRect(
+        for characterRange: NSRange,
+        layoutManager: NSLayoutManager,
+        fallbackY: CGFloat
+    ) -> CGRect {
+        if characterRange.length > 0 {
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: characterRange,
+                actualCharacterRange: nil
+            )
+            if glyphRange.length > 0 {
+                return layoutManager.lineFragmentRect(
+                    forGlyphAt: glyphRange.location,
+                    effectiveRange: nil
+                )
             }
         }
 
-        return gutterRows.joined(separator: "\n")
+        let textLength = codeTextView.textStorage.length
+        if textLength > 0, characterRange.location < textLength {
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: characterRange.location)
+            if glyphIndex < layoutManager.numberOfGlyphs {
+                return layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            }
+        }
+
+        return CGRect(
+            x: 0,
+            y: fallbackY,
+            width: codeTextView.textContainer.size.width,
+            height: codeFont.lineHeight
+        )
     }
 
     private func logicalLineContentRanges(in source: NSString) -> [NSRange] {
@@ -317,31 +395,42 @@ final class NativeFullScreenCodeBody: UIView {
         return ranges
     }
 
-    private func visualFragmentCount(for characterRange: NSRange, layoutManager: NSLayoutManager) -> Int {
-        guard characterRange.length > 0 else { return 1 }
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
-        guard glyphRange.length > 0 else { return 1 }
-
-        var fragmentCount = 0
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, _, _, fragmentGlyphRange, _ in
-            if NSIntersectionRange(fragmentGlyphRange, glyphRange).length > 0 {
-                fragmentCount += 1
-            }
-        }
-
-        let boundingHeight = layoutManager.boundingRect(
-            forGlyphRange: glyphRange,
-            in: codeTextView.textContainer
-        ).height
-        let lineHeight = max(1, codeFont.lineHeight)
-        let measuredCount = Int(ceil(boundingHeight / lineHeight))
-        return max(1, max(fragmentCount, measuredCount))
-    }
-
     private static func isNewline(_ value: unichar) -> Bool {
         value == 10 || value == 13
     }
 
+#if DEBUG
+    struct CodeGutterAlignmentDiagnostics: Equatable {
+        let rowCount: Int
+        let maxRowDelta: CGFloat
+        let firstLogicalLineGap: CGFloat
+        let lineHeight: CGFloat
+    }
+
+    func codeGutterAlignmentDiagnosticsForTesting() -> CodeGutterAlignmentDiagnostics {
+        layoutIfNeeded()
+        updateGutterForCurrentLayout()
+
+        let drawnRows = gutterView.rows
+        let expectedRows = lineNumberRowsForCurrentLayout()
+        let maxRowDelta = zip(drawnRows, expectedRows)
+            .map { abs($0.y - $1.y) }
+            .max() ?? 0
+        let firstLogicalLineGap: CGFloat
+        if drawnRows.count >= 2 {
+            firstLogicalLineGap = drawnRows[1].y - drawnRows[0].y
+        } else {
+            firstLogicalLineGap = 0
+        }
+
+        return CodeGutterAlignmentDiagnostics(
+            rowCount: drawnRows.count,
+            maxRowDelta: maxRowDelta,
+            firstLogicalLineGap: firstLogicalLineGap,
+            lineHeight: codeFont.lineHeight
+        )
+    }
+#endif
 
 }
 

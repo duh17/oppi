@@ -142,7 +142,10 @@ struct OppiApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if NavigationChromeProfileConfig.isEnabled {
+            if CodeGutterAlignmentHarnessConfig.isEnabled {
+                CodeGutterAlignmentHarnessView()
+                    .ignoresSafeArea()
+            } else if NavigationChromeProfileConfig.isEnabled {
                 NavigationChromeProfileHarnessView()
             } else if UIHangHarnessConfig.isEnabled {
                 UIHangHarnessView()

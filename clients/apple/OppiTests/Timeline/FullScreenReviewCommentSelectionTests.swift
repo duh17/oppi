@@ -48,16 +48,12 @@ struct FullScreenReviewCommentSelectionTests {
         let codeView = try #require(timelineAllTextViews(in: body).first {
             timelineRenderedText(of: $0).contains("wrap-me-")
         })
-        let gutterView = try #require(timelineAllTextViews(in: body).first {
-            $0 !== codeView && timelineRenderedText(of: $0).contains("10")
-        })
-        let gutterRows = timelineRenderedText(of: gutterView).components(separatedBy: "\n")
+        let diagnostics = body.codeGutterAlignmentDiagnosticsForTesting()
 
         #expect(codeView.textContainer.lineBreakMode == .byCharWrapping)
-        #expect(gutterRows.first == "10")
-        #expect(gutterRows.contains(""))
-        #expect(gutterRows.last == "11")
-        #expect((gutterRows.firstIndex(of: "11") ?? 0) > 1)
+        #expect(diagnostics.rowCount == 2)
+        #expect(diagnostics.maxRowDelta <= 0.5)
+        #expect(diagnostics.firstLogicalLineGap > diagnostics.lineHeight * 2)
     }
 
     @Test func diffBodyKeepsSelectableTextWhileRichRenderBuilds() throws {
