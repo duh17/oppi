@@ -1,5 +1,6 @@
 import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("ChatInputBar")
@@ -16,6 +17,30 @@ struct ChatInputBarTests {
     func tapToTypeRemainsEnabledOutsideVoiceStates() {
         #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .idle))
         #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .error("boom")))
+    }
+
+    @Test("Suppressed dictation focus does not expand composer action row")
+    func suppressedDictationFocusDoesNotExpandActionRow() {
+        #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+            alwaysShowActionRow: false,
+            isBusy: false,
+            isInputFocused: true,
+            isKeyboardSuppressed: true,
+            hasAttachments: false,
+            hasRepoPointers: false
+        ))
+    }
+
+    @Test("Visible keyboard focus expands composer action row")
+    func visibleKeyboardFocusExpandsActionRow() {
+        #expect(ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+            alwaysShowActionRow: false,
+            isBusy: false,
+            isInputFocused: true,
+            isKeyboardSuppressed: false,
+            hasAttachments: false,
+            hasRepoPointers: false
+        ))
     }
 
     @Test("Send while recording keeps keyboard suppressed")
@@ -72,7 +97,7 @@ struct ChatInputBarTests {
             _ = try await ComposerShared.startVoiceInput(
                 manager: manager,
                 keyboardLanguage: nil,
-                source: "test",
+                owner: .inlineComposer,
                 baseText: "hello",
                 textBeforeRecording: Binding(
                     get: { textBeforeRecording },
@@ -136,6 +161,28 @@ struct ChatInputBarTests {
         )
 
         #expect(displayText == "existing typed text")
+    }
+
+    @Test("Shared input growth caps at configured max lines")
+    func sharedInputGrowthCapsAtConfiguredMaxLines() {
+        let textView = UITextView()
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
+        textView.text = (0..<20).map { "line \($0)" }.joined(separator: "\n")
+
+        let growth = ComposerInputMetrics.textViewGrowth(
+            for: textView,
+            fittingWidth: 220,
+            maxLines: ComposerInputMetrics.inlineMaxLines
+        )
+        let expectedMax = ComposerInputMetrics.maxTextHeight(
+            font: textView.font ?? .preferredFont(forTextStyle: .body),
+            textContainerInset: textView.textContainerInset,
+            maxLines: ComposerInputMetrics.inlineMaxLines
+        )
+
+        #expect(growth.height == expectedMax)
+        #expect(growth.isScrollEnabled)
     }
 
     @Test("Expand affordance reserves only a tight trailing gutter")

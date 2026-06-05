@@ -84,13 +84,13 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Tracks text view focus to reveal composer controls on demand.
     @State private var isInputFocused = false
 
-    private let inlineMaxLines = 8
-    private let inlineMaxLinesWithImages = 4
+    private let inlineMaxLines = ComposerInputMetrics.inlineMaxLines
+    private let inlineMaxLinesWithImages = ComposerInputMetrics.inlineMaxLinesWithAttachments
     private let expandVisibilityLineThreshold = 5
     /// Apple HIG uses 44×44 pt as the practical minimum touch target.
     /// Keep visible controls at that floor so composer actions are easier to hit.
-    private let actionVisualDiameter: CGFloat = 44
-    private let expandVisualDiameter: CGFloat = 44
+    private let actionVisualDiameter = ComposerInputMetrics.controlDiameter
+    private let expandVisualDiameter = ComposerInputMetrics.controlDiameter
     private let composerHorizontalPadding: CGFloat = 12
 
     private var composerInputFont: UIFont {
@@ -103,13 +103,14 @@ struct ChatInputBar<ActionRow: View>: View {
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(
             storedText: text,
-            textBeforeRecording: ownsVoiceInput ? textBeforeRecording : nil,
-            liveTranscript: ownsVoiceInput ? voiceInputManager?.currentTranscript : nil
+            textBeforeRecording: textBeforeRecording,
+            manager: voiceInputManager,
+            owner: .inlineComposer
         )
     }
 
     private var ownsVoiceInput: Bool {
-        voiceInputManager?.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource) ?? false
+        ComposerShared.ownsVoiceInput(voiceInputManager, owner: .inlineComposer)
     }
 
     private var canSend: Bool {
@@ -206,7 +207,14 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
-        alwaysShowActionRow || isBusy || isInputFocused || !pendingAttachments.isEmpty || !pendingRepoPointers.isEmpty
+        Self.shouldShowComposerActionRow(
+            alwaysShowActionRow: alwaysShowActionRow,
+            isBusy: isBusy,
+            isInputFocused: isInputFocused,
+            isKeyboardSuppressed: suppressKeyboard,
+            hasAttachments: !pendingAttachments.isEmpty,
+            hasRepoPointers: !pendingRepoPointers.isEmpty
+        )
     }
 
     private var showsBusyModeSelector: Bool {
@@ -226,10 +234,10 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var correctionRangesForDisplay: [NSRange] {
-        guard ownsVoiceInput else { return [] }
         return ComposerShared.correctionRanges(
             manager: voiceInputManager,
-            textBeforeRecording: textBeforeRecording
+            textBeforeRecording: textBeforeRecording,
+            owner: .inlineComposer
         )
     }
 
@@ -302,7 +310,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
-            guard manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource) else { return }
+            guard ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer) else { return }
             text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
@@ -389,7 +397,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         font: composerInputFont,
                         textColor: UIColor(Color.themeFg),
                         tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
-                        volatileSuffixLength: ownsVoiceInput ? voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0 : 0,
+                        volatileSuffixLength: ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .inlineComposer),
                         correctionRanges: correctionRangesForDisplay,
                         maxLines: effectiveMaxLines,
                         autocorrectionEnabled: composerAutocorrectionEnabled,
@@ -410,7 +418,7 @@ struct ChatInputBar<ActionRow: View>: View {
                                 suppressKeyboard: $suppressKeyboard,
                                 textBeforeRecording: $textBeforeRecording,
                                 voiceInputManager: voiceInputManager,
-                                expectedSource: ComposerShared.inlineVoiceInputSource
+                                expectedOwner: .inlineComposer
                             )
                         },
                         accessibilityIdentifier: "chat.input",
@@ -646,16 +654,11 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Tap to start recording, tap again to stop. Works in any state
     /// (idle or busy) so you can mix typing and dictation freely.
     private func inlineMicButton(manager: VoiceInputManager) -> some View {
-        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource)
-        let isRecording = manager.isRecording && ownsVoiceInput
-        let isPreparing = manager.isPreparing && ownsVoiceInput
-        let isProcessing = manager.isProcessing && ownsVoiceInput
-        let isOwnedOrIdle = ownsVoiceInput || manager.state == .idle
-        let engineBadge = ComposerShared.micEngineBadge(for: manager)
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
 
         return Button {
             Task {
-                guard ownsVoiceInput || manager.state == .idle else { return }
+                guard ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer) else { return }
                 switch manager.state {
                 case .recording:
                     await ComposerShared.stopVoiceInput(
@@ -676,7 +679,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,
-                            source: ComposerShared.inlineVoiceInputSource,
+                            owner: .inlineComposer,
                             baseText: text,
                             textBeforeRecording: $textBeforeRecording,
                             suppressKeyboard: $suppressKeyboard,
@@ -693,20 +696,16 @@ struct ChatInputBar<ActionRow: View>: View {
             }
         } label: {
             MicButtonLabel(
-                isRecording: isRecording,
-                isProcessing: isPreparing || isProcessing,
-                audioLevel: manager.audioLevel,
-                languageLabel: manager.activeLanguageLabel,
+                presentation: presentation,
                 accentColor: accentColor,
-                engineBadge: engineBadge,
                 diameter: actionVisualDiameter
             )
         }
         .buttonStyle(.plain)
-        .disabled(isProcessing || !isOwnedOrIdle)
+        .disabled(!presentation.isEnabled)
         .accessibilityIdentifier("chat.voiceInput")
-        .accessibilityLabel(ComposerShared.accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
-        .accessibilityValue(ComposerShared.voiceRouteAccessibilityValue(for: manager))
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .accessibilityValue(presentation.accessibilityValue)
     }
 
     private var stopActionButton: some View {
@@ -772,6 +771,21 @@ struct ChatInputBar<ActionRow: View>: View {
 
     static func allowKeyboardRestoreOnTap(voiceState _: VoiceInputManager.State) -> Bool {
         true
+    }
+
+    static func shouldShowComposerActionRow(
+        alwaysShowActionRow: Bool,
+        isBusy: Bool,
+        isInputFocused: Bool,
+        isKeyboardSuppressed: Bool,
+        hasAttachments: Bool,
+        hasRepoPointers: Bool
+    ) -> Bool {
+        alwaysShowActionRow
+            || isBusy
+            || (isInputFocused && !isKeyboardSuppressed)
+            || hasAttachments
+            || hasRepoPointers
     }
 
     static func suppressKeyboardAfterSend(
@@ -956,7 +970,7 @@ struct ChatInputBar<ActionRow: View>: View {
         // transcript (including any last active tail from dictation_final)
         // updates the text field before onSend() captures it.
         if let manager = voiceInputManager,
-           manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource),
+           ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer),
            manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
             suppressKeyboard = Self.suppressKeyboardAfterSend(

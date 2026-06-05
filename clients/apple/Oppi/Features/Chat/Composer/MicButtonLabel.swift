@@ -19,6 +19,40 @@ struct MicButtonLabel: View {
     let engineBadge: EngineBadge
     let diameter: CGFloat
 
+    init(
+        isRecording: Bool,
+        isProcessing: Bool,
+        audioLevel: Float,
+        languageLabel: String?,
+        accentColor: Color,
+        engineBadge: EngineBadge,
+        diameter: CGFloat
+    ) {
+        self.isRecording = isRecording
+        self.isProcessing = isProcessing
+        self.audioLevel = audioLevel
+        self.languageLabel = languageLabel
+        self.accentColor = accentColor
+        self.engineBadge = engineBadge
+        self.diameter = diameter
+    }
+
+    init(
+        presentation: ComposerShared.MicButtonPresentation,
+        accentColor: Color,
+        diameter: CGFloat
+    ) {
+        self.init(
+            isRecording: presentation.isRecording,
+            isProcessing: presentation.isBusy,
+            audioLevel: presentation.audioLevel,
+            languageLabel: presentation.languageLabel,
+            accentColor: accentColor,
+            engineBadge: presentation.engineBadge,
+            diameter: diameter
+        )
+    }
+
     private var indicatorColor: Color {
         if !isRecording && !isProcessing {
             return .themeComment

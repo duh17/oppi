@@ -91,7 +91,7 @@ struct AskCardExpanded: View {
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let questionId = dictationQuestionId else { return }
-            guard voiceInputManager?.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource) == true else { return }
+            guard ComposerShared.ownsVoiceInput(voiceInputManager, owner: .askCard) else { return }
             applyDictationTranscript(voiceInputManager?.currentTranscript ?? "", for: questionId)
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
@@ -294,8 +294,7 @@ struct AskCardExpanded: View {
                         textColor: UIColor(Color.themeFg),
                         tintColor: UIColor(Color.themeBlue),
                         volatileSuffixLength: dictationQuestionId == question.id
-                            && voiceInputManager?.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource) == true
-                            ? (voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0)
+                            ? ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .askCard)
                             : 0,
                         correctionRanges: correctionRangesForDisplay(questionId: question.id),
                         maxLines: 5,
@@ -348,13 +347,10 @@ struct AskCardExpanded: View {
     @ViewBuilder
     private func dictationButton(for question: AskQuestion) -> some View {
         if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
-            let ownsActiveDictation = dictationQuestionId == question.id
-                && manager.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource)
-            let isRecording = manager.isRecording && ownsActiveDictation
-            let isPreparing = manager.isPreparing && ownsActiveDictation
-            let isProcessing = manager.isProcessing && ownsActiveDictation
-            let isBlockedByOtherInput = (manager.isRecording || manager.isPreparing) && !ownsActiveDictation
-            let engineBadge = ComposerShared.micEngineBadge(for: manager)
+            let ownsActiveQuestion = dictationQuestionId == question.id
+            let presentation = ownsActiveQuestion
+                ? ComposerShared.micButtonPresentation(for: manager, owner: .askCard)
+                : ComposerShared.blockedMicButtonPresentation(for: manager)
 
             Button {
                 Task {
@@ -362,20 +358,16 @@ struct AskCardExpanded: View {
                 }
             } label: {
                 MicButtonLabel(
-                    isRecording: isRecording,
-                    isProcessing: isPreparing || isProcessing,
-                    audioLevel: manager.audioLevel,
-                    languageLabel: manager.activeLanguageLabel,
+                    presentation: presentation,
                     accentColor: .themeBlue,
-                    engineBadge: engineBadge,
                     diameter: 32
                 )
             }
             .buttonStyle(.plain)
-            .disabled(manager.isProcessing || isBlockedByOtherInput)
+            .disabled(!presentation.isEnabled)
             .accessibilityIdentifier("ask.voiceInput")
-            .accessibilityLabel(ComposerShared.accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
-            .accessibilityValue(ComposerShared.voiceRouteAccessibilityValue(for: manager))
+            .accessibilityLabel(presentation.accessibilityLabel)
+            .accessibilityValue(presentation.accessibilityValue)
         }
     }
 
@@ -584,7 +576,7 @@ struct AskCardExpanded: View {
     private func correctionRangesForDisplay(questionId: String) -> [NSRange] {
         guard dictationQuestionId == questionId,
               let manager = voiceInputManager,
-              manager.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource) else { return [] }
+              ComposerShared.ownsVoiceInput(manager, owner: .askCard) else { return [] }
         let offset = (dictationPrefixText as NSString).length
         return manager.currentTranscriptCorrectionRanges.map { range in
             NSRange(location: range.location + offset, length: range.length)
@@ -594,7 +586,7 @@ struct AskCardExpanded: View {
     // MARK: - Dictation
 
     private func handleDictationTap(for question: AskQuestion, manager: VoiceInputManager) async {
-        guard manager.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource) || manager.state == .idle else { return }
+        guard ComposerShared.canControlVoiceInput(manager, owner: .askCard) else { return }
         switch manager.state {
         case .recording:
             guard dictationQuestionId == question.id else { return }
@@ -619,7 +611,7 @@ struct AskCardExpanded: View {
             dictationPrefixText = try await ComposerShared.startVoiceInput(
                 manager: manager,
                 keyboardLanguage: keyboardLanguage,
-                source: ComposerShared.askCardVoiceInputSource,
+                owner: .askCard,
                 baseText: base,
                 suppressKeyboard: $suppressKeyboard,
                 focusRequestID: $focusRequestID
@@ -647,7 +639,7 @@ struct AskCardExpanded: View {
 
     private func finalizeDictationIfNeeded() async {
         guard let manager = voiceInputManager, let questionId = dictationQuestionId else { return }
-        guard manager.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource) else { return }
+        guard ComposerShared.ownsVoiceInput(manager, owner: .askCard) else { return }
         defer { clearDictationState() }
 
         if manager.isRecording {
@@ -668,7 +660,7 @@ struct AskCardExpanded: View {
         clearDictationState()
 
         Task {
-            if manager.isActiveRecordingSource(ComposerShared.askCardVoiceInputSource),
+            if ComposerShared.ownsVoiceInput(manager, owner: .askCard),
                manager.isRecording || manager.isPreparing {
                 await manager.cancelRecording()
             }

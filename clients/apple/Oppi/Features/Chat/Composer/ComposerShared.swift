@@ -11,10 +11,31 @@ import UniformTypeIdentifiers
 /// static functions instead of maintaining their own copies.
 @MainActor
 enum ComposerShared {
-    static let inlineVoiceInputSource = "inline_mic_tap"
-    static let expandedVoiceInputSource = "expanded_mic_tap"
-    static let askCardVoiceInputSource = "ask_card_mic_tap"
-    static let reviewCommentInlineVoiceInputSource = "review_comment_inline_mic_tap"
+    enum VoiceInputOwner: String, Sendable {
+        case inlineComposer = "inline_mic_tap"
+        case expandedComposer = "expanded_mic_tap"
+        case askCard = "ask_card_mic_tap"
+        case reviewCommentInline = "review_comment_inline_mic_tap"
+    }
+
+    struct MicButtonPresentation: Equatable {
+        let isRecording: Bool
+        let isPreparing: Bool
+        let isProcessing: Bool
+        let isBlockedByOtherOwner: Bool
+        let audioLevel: Float
+        let languageLabel: String?
+        let engineBadge: MicButtonLabel.EngineBadge
+        let accessibilityValue: String
+
+        var isBusy: Bool { isPreparing || isProcessing }
+        var isEnabled: Bool { !isProcessing && !isBlockedByOtherOwner }
+        var accessibilityLabel: String {
+            if isRecording { return "Stop recording" }
+            if isPreparing { return "Cancel voice input" }
+            return "Start voice input"
+        }
+    }
 
     // MARK: - Voice UI Helpers
 
@@ -34,6 +55,48 @@ enum ComposerShared {
         if isRecording { return "Stop recording" }
         if isPreparing { return "Cancel voice input" }
         return "Start voice input"
+    }
+
+    static func ownsVoiceInput(_ manager: VoiceInputManager?, owner: VoiceInputOwner) -> Bool {
+        manager?.isActiveRecordingSource(owner.rawValue) ?? false
+    }
+
+    static func canControlVoiceInput(_ manager: VoiceInputManager, owner: VoiceInputOwner) -> Bool {
+        ownsVoiceInput(manager, owner: owner) || manager.state == .idle
+    }
+
+    static func micButtonPresentation(
+        for manager: VoiceInputManager,
+        owner: VoiceInputOwner
+    ) -> MicButtonPresentation {
+        let ownsInput = ownsVoiceInput(manager, owner: owner)
+        let isRecording = manager.isRecording && ownsInput
+        let isPreparing = manager.isPreparing && ownsInput
+        let isProcessing = manager.isProcessing && ownsInput
+        let isBlocked = manager.state != .idle && !ownsInput
+        return MicButtonPresentation(
+            isRecording: isRecording,
+            isPreparing: isPreparing,
+            isProcessing: isProcessing,
+            isBlockedByOtherOwner: isBlocked,
+            audioLevel: manager.audioLevel,
+            languageLabel: manager.activeLanguageLabel,
+            engineBadge: micEngineBadge(for: manager),
+            accessibilityValue: voiceRouteAccessibilityValue(for: manager)
+        )
+    }
+
+    static func blockedMicButtonPresentation(for manager: VoiceInputManager) -> MicButtonPresentation {
+        MicButtonPresentation(
+            isRecording: false,
+            isPreparing: false,
+            isProcessing: false,
+            isBlockedByOtherOwner: manager.state != .idle,
+            audioLevel: 0,
+            languageLabel: nil,
+            engineBadge: micEngineBadge(for: manager),
+            accessibilityValue: voiceRouteAccessibilityValue(for: manager)
+        )
     }
 
     // MARK: - Image Handling
@@ -265,6 +328,19 @@ enum ComposerShared {
         return prefix + liveTranscript
     }
 
+    static func currentComposerText(
+        storedText: String,
+        textBeforeRecording: String?,
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner
+    ) -> String {
+        currentComposerText(
+            storedText: storedText,
+            textBeforeRecording: ownsVoiceInput(manager, owner: owner) ? textBeforeRecording : nil,
+            liveTranscript: ownsVoiceInput(manager, owner: owner) ? manager?.currentTranscript : nil
+        )
+    }
+
     static func visibleComposerText(_ text: String) -> String {
         if text.hasPrefix("$ ") {
             return String(text.dropFirst(2))
@@ -302,6 +378,20 @@ enum ComposerShared {
         }
     }
 
+    static func correctionRanges(
+        manager: VoiceInputManager?,
+        textBeforeRecording: String?,
+        owner: VoiceInputOwner
+    ) -> [NSRange] {
+        guard ownsVoiceInput(manager, owner: owner) else { return [] }
+        return correctionRanges(manager: manager, textBeforeRecording: textBeforeRecording)
+    }
+
+    static func volatileSuffixLength(manager: VoiceInputManager?, owner: VoiceInputOwner) -> Int {
+        guard ownsVoiceInput(manager, owner: owner) else { return 0 }
+        return manager?.currentTranscriptVolatileSuffixLength ?? 0
+    }
+
     static func dictationPrefix(for base: String) -> String {
         if base.isEmpty || base.last?.isWhitespace == true {
             return base
@@ -312,7 +402,7 @@ enum ComposerShared {
     static func startVoiceInput(
         manager: VoiceInputManager,
         keyboardLanguage: String?,
-        source: String,
+        owner: VoiceInputOwner,
         baseText: String,
         textBeforeRecording: Binding<String?>? = nil,
         suppressKeyboard: Binding<Bool>,
@@ -328,9 +418,9 @@ enum ComposerShared {
             try await prepare?()
             try await manager.startRecording(
                 keyboardLanguage: keyboardLanguage,
-                source: source
+                source: owner.rawValue
             )
-            guard manager.isActiveRecordingSource(source), manager.isRecording || manager.isPreparing else {
+            guard manager.isActiveRecordingSource(owner.rawValue), manager.isRecording || manager.isPreparing else {
                 textBeforeRecording?.wrappedValue = nil
                 suppressKeyboard.wrappedValue = false
                 throw CancellationError()
@@ -370,12 +460,12 @@ enum ComposerShared {
         suppressKeyboard: Binding<Bool>,
         textBeforeRecording: Binding<String?>,
         voiceInputManager: VoiceInputManager?,
-        expectedSource: String? = nil
+        expectedOwner: VoiceInputOwner? = nil
     ) {
         suppressKeyboard.wrappedValue = false
         textBeforeRecording.wrappedValue = nil
         if let manager = voiceInputManager,
-           expectedSource.map(manager.isActiveRecordingSource) ?? true,
+           expectedOwner.map({ manager.isActiveRecordingSource($0.rawValue) }) ?? true,
            manager.isRecording || manager.isPreparing {
             Task {
                 if manager.isRecording {

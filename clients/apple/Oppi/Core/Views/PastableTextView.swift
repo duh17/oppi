@@ -51,7 +51,7 @@ private func requestSystemDictation(for textView: UITextView) {
     textView.reloadInputViews()
 }
 
-private func volatileTranscriptBackgroundColor() -> UIColor {
+func composerVolatileTranscriptBackgroundColor() -> UIColor {
     // Needs to read clearly against the darker glass composer background
     // without looking like a full text selection.
     UIColor(Color.themeBlue.opacity(0.20))
@@ -205,7 +205,7 @@ struct PastableTextView: UIViewRepresentable {
             baseColor: textColor,
             volatileSuffixLength: volatileSuffixLength,
             volatileColor: UIColor(Color.themeBlue),
-            volatileBackgroundColor: volatileTranscriptBackgroundColor(),
+            volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
             correctionRanges: correctionRanges,
             correctionUnderlineColor: UIColor(Color.themeOrange)
         )
@@ -573,7 +573,7 @@ struct FullSizeTextView: UIViewRepresentable {
             baseColor: textColor,
             volatileSuffixLength: volatileSuffixLength,
             volatileColor: UIColor(Color.themeBlue),
-            volatileBackgroundColor: volatileTranscriptBackgroundColor(),
+            volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
             correctionRanges: correctionRanges,
             correctionUnderlineColor: UIColor(Color.themeOrange)
         )
@@ -675,7 +675,7 @@ struct FullSizeTextView: UIViewRepresentable {
 // MARK: - Custom UITextView
 
 /// UITextView subclass that intercepts paste to extract images.
-final class PastableUITextView: UITextView {
+class PastableUITextView: UITextView {
     var onPasteImages: (([UIImage]) -> Void)?
     var onCommandEnter: (() -> Void)?
     var onAlternateEnter: (() -> Void)?

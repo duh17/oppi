@@ -570,20 +570,35 @@ struct VoiceInputManagerTests {
         )
 
         #expect(manager.activeRecordingSource == nil)
-        #expect(!manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource))
+        #expect(!manager.isActiveRecordingSource(ComposerShared.VoiceInputOwner.reviewCommentInline.rawValue))
 
         try await manager.startRecording(
             keyboardLanguage: "en-US",
-            source: ComposerShared.reviewCommentInlineVoiceInputSource
+            source: ComposerShared.VoiceInputOwner.reviewCommentInline.rawValue
         )
 
-        #expect(manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource))
-        #expect(!manager.isActiveRecordingSource(ComposerShared.inlineVoiceInputSource))
+        #expect(manager.isActiveRecordingSource(ComposerShared.VoiceInputOwner.reviewCommentInline.rawValue))
+        #expect(!manager.isActiveRecordingSource(ComposerShared.VoiceInputOwner.inlineComposer.rawValue))
 
         _ = await manager.stopRecording()
 
         #expect(manager.activeRecordingSource == nil)
-        #expect(!manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource))
+        #expect(!manager.isActiveRecordingSource(ComposerShared.VoiceInputOwner.reviewCommentInline.rawValue))
+    }
+
+    @Test func micPresentationBlocksNonOwningInputs() {
+        let manager = VoiceInputManager()
+        manager._testState = .recording
+        manager._testActiveRecordingSource = ComposerShared.VoiceInputOwner.reviewCommentInline.rawValue
+
+        let ownerPresentation = ComposerShared.micButtonPresentation(for: manager, owner: .reviewCommentInline)
+        let otherPresentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+
+        #expect(ownerPresentation.isRecording)
+        #expect(ownerPresentation.isEnabled)
+        #expect(!otherPresentation.isRecording)
+        #expect(!otherPresentation.isEnabled)
+        #expect(otherPresentation.isBlockedByOtherOwner)
     }
 
     @Test func capturePlaybackSuppressionCoversRecordingAndStopsOnTeardown() async throws {

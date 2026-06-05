@@ -140,15 +140,22 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
     private let stackView = UIStackView()
     private let inputRow = UIStackView()
-    private let micButton = UIButton(type: .system)
+    private let micButton = MicButtonChromeView()
     private let inputTextView = ReviewCommentInlineInputTextView()
     private let quickScrollView = UIScrollView()
     private let quickStack = UIStackView()
     private let closeButton = UIButton(type: .system)
     private let saveButton = UIButton(type: .system)
+    private var inputTextHeightConstraint: NSLayoutConstraint?
     private var textBeforeRecording: String?
     private var suppressKeyboard = false
     private var isObservingVoiceInput = false
+    private var isTornDown = false
+    private var lastAppliedDictationText: String?
+    private var lastAppliedDictationRevision = -1
+
+    private let inputMinHeight = ComposerInputMetrics.inlineTextMinHeight
+    private let controlDiameter = ComposerInputMetrics.controlDiameter
 
     init(
         request: ReviewCommentSelectionRequest,
@@ -170,8 +177,14 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        isObservingVoiceInput = false
-        NotificationCenter.default.removeObserver(self)
+        teardown(cancelOwnedVoiceInput: true)
+    }
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        if newWindow == nil {
+            teardown(cancelOwnedVoiceInput: true)
+        }
     }
 
     func present(in hostView: UIView) {
@@ -196,17 +209,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     }
 
     func dismiss(animated: Bool = true) {
-        isObservingVoiceInput = false
-        inputTextView.resignFirstResponder()
-        cancelVoiceInputIfOwned()
-        if isObservingKeyboard {
-            NotificationCenter.default.removeObserver(
-                self,
-                name: UIResponder.keyboardWillChangeFrameNotification,
-                object: nil
-            )
-            isObservingKeyboard = false
-        }
+        teardown(cancelOwnedVoiceInput: true)
 
         let removal = {
             self.alpha = 0
@@ -228,6 +231,25 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             removal()
             completion(true)
         }
+    }
+
+    private func teardown(cancelOwnedVoiceInput: Bool) {
+        guard !isTornDown else { return }
+        isTornDown = true
+        isObservingVoiceInput = false
+        inputTextView.resignFirstResponder()
+        if cancelOwnedVoiceInput {
+            cancelVoiceInputIfOwned()
+        }
+        if isObservingKeyboard {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil
+            )
+            isObservingKeyboard = false
+        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func setup() {
@@ -331,7 +353,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
     private func configureInput(palette: ThemePalette) {
         inputRow.axis = .horizontal
-        inputRow.alignment = .center
+        inputRow.alignment = .bottom
         inputRow.spacing = 8
         inputRow.isLayoutMarginsRelativeArrangement = true
         inputRow.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
@@ -352,15 +374,24 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         inputTextView.textColor = UIColor(palette.fg)
         inputTextView.tintColor = UIColor(palette.cyan)
         inputTextView.backgroundColor = .clear
+        inputTextView.isScrollEnabled = false
         inputTextView.layer.cornerRadius = 0
         inputTextView.layer.borderWidth = 0
         inputTextView.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
+        inputTextView.textContainer.lineBreakMode = .byWordWrapping
         inputTextView.delegate = self
         inputTextView.accessibilityIdentifier = "review-comment.inline-input"
+        inputTextView.onKeyboardRestoreRequest = { [weak self] in
+            self?.handleKeyboardRestoreRequest()
+        }
+        inputTextView.setAllowKeyboardRestoreOnTap(true)
+        inputTextView.installKeyboardRestoreGesture()
         inputTextView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         inputTextView.setContentCompressionResistancePriority(.required, for: .vertical)
         inputRow.addArrangedSubview(inputTextView)
-        inputTextView.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        let heightConstraint = inputTextView.heightAnchor.constraint(equalToConstant: inputMinHeight)
+        inputTextHeightConstraint = heightConstraint
+        heightConstraint.isActive = true
 
         configureSaveButton(palette: palette)
         inputRow.addArrangedSubview(saveButton)
@@ -377,27 +408,24 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             }
         }, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            micButton.widthAnchor.constraint(equalToConstant: 40),
-            micButton.heightAnchor.constraint(equalToConstant: 40),
+            micButton.widthAnchor.constraint(equalToConstant: controlDiameter),
+            micButton.heightAnchor.constraint(equalToConstant: controlDiameter),
         ])
-        micButton.tintColor = UIColor(palette.cyan)
         updateMicButton()
     }
 
     private func updateMicButton() {
         guard let manager = router.voiceInputManager else { return }
         let palette = ThemeRuntimeState.currentPalette()
-        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource)
-        let isRecording = manager.isRecording && ownsVoiceInput
-        var config = UIButton.Configuration.filled()
-        config.image = UIImage(systemName: isRecording ? "stop.fill" : "mic.fill")
-        config.baseForegroundColor = UIColor(isRecording ? palette.bgDark : palette.fg)
-        config.baseBackgroundColor = UIColor(isRecording ? palette.red : palette.bgHighlight).withAlphaComponent(isRecording ? 1 : 0.86)
-        config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 9, leading: 9, bottom: 9, trailing: 9)
-        micButton.configuration = config
-        micButton.isEnabled = !isSaving && !manager.isProcessing && (ownsVoiceInput || manager.state == .idle)
-        micButton.accessibilityLabel = isRecording ? "Stop dictation" : "Dictate comment"
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .reviewCommentInline)
+        micButton.apply(
+            presentation: presentation,
+            accentColor: UIColor(palette.cyan),
+            diameter: controlDiameter
+        )
+        micButton.isEnabled = !isSaving && presentation.isEnabled
+        micButton.accessibilityLabel = presentation.accessibilityLabel
+        micButton.accessibilityValue = presentation.accessibilityValue
     }
 
     private func observeVoiceInput() {
@@ -412,6 +440,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             _ = manager.transcriptPresentationRevision
             _ = manager.state
             _ = manager.activeRecordingSource
+            _ = manager.audioLevel
+            _ = manager.activeLanguageLabel
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.handleVoiceInputChange()
@@ -421,26 +451,60 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
     private func handleVoiceInputChange() {
         guard isObservingVoiceInput else { return }
-        applyOwnedDictationTranscript()
+        let didChangeTextHeight = applyOwnedDictationTranscript()
         updateMicButton()
+        if didChangeTextHeight {
+            updateFrame(animated: true)
+        }
         trackVoiceInputChanges()
     }
 
-    private func applyOwnedDictationTranscript() {
+    @discardableResult
+    private func applyOwnedDictationTranscript() -> Bool {
         guard let manager = router.voiceInputManager,
-              manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource),
-              let prefix = textBeforeRecording else { return }
-        inputTextView.text = prefix + manager.currentTranscript
-        inputTextView.refreshPlaceholder()
+              ComposerShared.ownsVoiceInput(manager, owner: .reviewCommentInline),
+              let prefix = textBeforeRecording else { return false }
+        let nextText = prefix + manager.currentTranscript
+        let didChangeText = nextText != inputTextView.text
+        let didChangePresentation = nextText != lastAppliedDictationText
+            || manager.transcriptPresentationRevision != lastAppliedDictationRevision
+        guard didChangeText || didChangePresentation else { return false }
+        lastAppliedDictationText = nextText
+        lastAppliedDictationRevision = manager.transcriptPresentationRevision
+        applyInputTextPresentation(text: nextText)
         updateSaveButton()
+        return didChangeText ? updateInputTextHeight(animated: true) : false
+    }
+
+    private func applyInputTextPresentation(text: String? = nil) {
+        let currentText = text ?? inputTextView.text ?? ""
+        inputTextView.applyStyledText(
+            currentText,
+            font: inputTextView.font ?? UIFont.preferredFont(forTextStyle: .body),
+            baseColor: UIColor(ThemeRuntimeState.currentPalette().fg),
+            volatileSuffixLength: ComposerShared.volatileSuffixLength(
+                manager: router.voiceInputManager,
+                owner: .reviewCommentInline
+            ),
+            volatileColor: UIColor(Color.themeBlue),
+            volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
+            correctionRanges: ComposerShared.correctionRanges(
+                manager: router.voiceInputManager,
+                textBeforeRecording: textBeforeRecording,
+                owner: .reviewCommentInline
+            ),
+            correctionUnderlineColor: UIColor(Color.themeOrange)
+        )
+        inputTextView.refreshPlaceholder()
     }
 
     private func cancelVoiceInputIfOwned() {
         guard let manager = router.voiceInputManager,
-              manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource),
+              ComposerShared.ownsVoiceInput(manager, owner: .reviewCommentInline),
               manager.isRecording || manager.isPreparing else { return }
         textBeforeRecording = nil
         suppressKeyboard = false
+        inputTextView.setKeyboardSuppressed(false)
         Task { @MainActor in
             await manager.cancelRecording()
         }
@@ -462,8 +526,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             self?.save()
         }, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            saveButton.widthAnchor.constraint(equalToConstant: 40),
-            saveButton.heightAnchor.constraint(equalToConstant: 40),
+            saveButton.widthAnchor.constraint(equalToConstant: controlDiameter),
+            saveButton.heightAnchor.constraint(equalToConstant: controlDiameter),
         ])
     }
 
@@ -479,6 +543,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     }
 
     @objc private func handleKeyboardNotification(_ notification: Notification) {
+        guard !suppressKeyboard else {
+            keyboardFrameInHost = nil
+            updateFrame(animated: false)
+            return
+        }
+
         guard let hostView,
               let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
             keyboardFrameInHost = nil
@@ -490,15 +560,16 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.22
         let curveValue = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
         let options = UIView.AnimationOptions(rawValue: curveValue << 16)
+            .union([.allowUserInteraction, .beginFromCurrentState])
         updateFrame(animated: true, duration: duration, options: options)
     }
 
     private func updateFrame(
         animated: Bool,
         duration: TimeInterval = 0.18,
-        options: UIView.AnimationOptions = [.curveEaseInOut, .allowUserInteraction]
+        options: UIView.AnimationOptions = [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState]
     ) {
-        guard let hostView else { return }
+        guard !isTornDown, let hostView else { return }
         hostView.layoutIfNeeded()
         layoutIfNeeded()
 
@@ -511,8 +582,11 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
         let availableWidth = max(240, safeFrame.width)
         let width = min(520, availableWidth)
-        bounds.size = CGSize(width: width, height: 1)
+        let measurementHeight = max(bounds.height, 64)
+        bounds.size = CGSize(width: width, height: measurementHeight)
         setNeedsLayout()
+        layoutIfNeeded()
+        updateInputTextHeight(animated: false)
         layoutIfNeeded()
 
         let targetSize = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -523,10 +597,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         ).height
         let fallbackHeight: CGFloat = quickComments.isEmpty ? 68 : 108
         let measuredHeight = fittingHeight.isFinite && fittingHeight > 0 ? ceil(fittingHeight) : fallbackHeight
-        let preferredHeight = quickComments.isEmpty ? CGFloat(84) : CGFloat(124)
         let compactMaxHeight = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-            ? min(safeFrame.height, 180)
-            : min(safeFrame.height, preferredHeight)
+            ? min(safeFrame.height, 260)
+            : min(safeFrame.height, quickComments.isEmpty ? 180 : 220)
         let height = min(max(64, measuredHeight), compactMaxHeight)
 
         let anchor = currentAnchorRect(in: hostView, fallbackFrame: safeFrame)
@@ -548,6 +621,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         if !y.isFinite { y = safeFrame.minY }
 
         let newFrame = CGRect(x: x, y: y, width: width, height: height).integral
+        guard !frame.isNearlyEqual(to: newFrame) else { return }
+
         let changes = {
             self.frame = newFrame
             self.layoutIfNeeded()
@@ -559,6 +634,47 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         }
     }
 
+    @discardableResult
+    private func updateInputTextHeight(animated: Bool) -> Bool {
+        guard let inputTextHeightConstraint else { return false }
+        let fallbackWidth = max(120, bounds.width - 160)
+        let fittingWidth = inputTextView.bounds.width > 0 ? inputTextView.bounds.width : fallbackWidth
+        let growth = ComposerInputMetrics.textViewGrowth(
+            for: inputTextView,
+            fittingWidth: fittingWidth,
+            minHeight: inputMinHeight,
+            maxLines: traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+                ? ComposerInputMetrics.inlineMaxLinesWithAttachments
+                : ComposerInputMetrics.inlineMaxLines
+        )
+        let targetHeight = growth.height
+        let shouldScroll = growth.isScrollEnabled
+
+        guard abs(inputTextHeightConstraint.constant - targetHeight) > 0.5
+            || inputTextView.isScrollEnabled != shouldScroll else {
+            return false
+        }
+
+        inputTextHeightConstraint.constant = targetHeight
+        inputTextView.isScrollEnabled = shouldScroll
+
+        let changes = {
+            self.inputTextView.superview?.layoutIfNeeded()
+            self.layoutIfNeeded()
+        }
+        if animated {
+            UIView.animate(
+                withDuration: 0.16,
+                delay: 0,
+                options: [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState],
+                animations: changes
+            )
+        } else {
+            changes()
+        }
+        return true
+    }
+
     private func currentAnchorRect(in hostView: UIView, fallbackFrame: CGRect) -> CGRect {
         guard let sourceView,
               sourceView.window != nil else {
@@ -567,21 +683,51 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         return sourceView.convert(anchorRect, to: hostView)
     }
 
+    private func handleKeyboardRestoreRequest() {
+        guard suppressKeyboard else { return }
+        suppressKeyboard = false
+        inputTextView.becomeFirstResponder()
+        guard let manager = router.voiceInputManager,
+              ComposerShared.ownsVoiceInput(manager, owner: .reviewCommentInline),
+              manager.isRecording || manager.isPreparing else { return }
+        Task { @MainActor in
+            if manager.isRecording {
+                await ComposerShared.stopVoiceInput(
+                    manager: manager,
+                    text: textBinding(),
+                    textBeforeRecording: recordingPrefixBinding()
+                )
+            } else {
+                await ComposerShared.cancelVoiceInput(
+                    manager: manager,
+                    textBeforeRecording: recordingPrefixBinding(),
+                    suppressKeyboard: suppressKeyboardBinding()
+                )
+            }
+        }
+    }
+
     private func applyQuickComment(_ template: QuickCommentTemplate) {
         let text = template.quickCommentText
         guard !text.isEmpty else { return }
 
         let currentText = inputTextView.text ?? ""
         let trimmedBody = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextText: String
         if trimmedBody.isEmpty {
-            inputTextView.text = text
+            nextText = text
         } else if currentText.hasSuffix("\n") {
-            inputTextView.text = currentText + text
+            nextText = currentText + text
         } else {
-            inputTextView.text = currentText + "\n" + text
+            nextText = currentText + "\n" + text
         }
-        inputTextView.refreshPlaceholder()
+        applyInputTextPresentation(text: nextText)
         updateSaveButton()
+        lastAppliedDictationText = nil
+        lastAppliedDictationRevision = -1
+        if updateInputTextHeight(animated: true) {
+            updateFrame(animated: true)
+        }
         inputTextView.becomeFirstResponder()
     }
 
@@ -589,9 +735,13 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         Binding(
             get: { self.inputTextView.text ?? "" },
             set: { newValue in
-                self.inputTextView.text = newValue
-                self.inputTextView.refreshPlaceholder()
+                self.applyInputTextPresentation(text: newValue)
                 self.updateSaveButton()
+                self.lastAppliedDictationText = nil
+                self.lastAppliedDictationRevision = -1
+                if self.updateInputTextHeight(animated: true) {
+                    self.updateFrame(animated: true)
+                }
             }
         )
     }
@@ -599,14 +749,26 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func recordingPrefixBinding() -> Binding<String?> {
         Binding(
             get: { self.textBeforeRecording },
-            set: { self.textBeforeRecording = $0 }
+            set: { prefix in
+                self.textBeforeRecording = prefix
+                self.lastAppliedDictationText = nil
+                self.lastAppliedDictationRevision = -1
+            }
         )
     }
 
     private func suppressKeyboardBinding() -> Binding<Bool> {
         Binding(
             get: { self.suppressKeyboard },
-            set: { self.suppressKeyboard = $0 }
+            set: { suppressed in
+                self.suppressKeyboard = suppressed
+                self.inputTextView.setKeyboardSuppressed(suppressed)
+                if suppressed {
+                    self.keyboardFrameInHost = nil
+                    self.inputTextView.becomeFirstResponder()
+                    self.updateFrame(animated: false)
+                }
+            }
         )
     }
 
@@ -619,8 +781,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
     private func handleMicTap() async {
         guard let manager = router.voiceInputManager else { return }
-        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.reviewCommentInlineVoiceInputSource)
-        guard ownsVoiceInput || manager.state == .idle else {
+        guard ComposerShared.canControlVoiceInput(manager, owner: .reviewCommentInline) else {
             updateMicButton()
             return
         }
@@ -641,14 +802,13 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             do {
                 try await ComposerShared.startVoiceInput(
                     manager: manager,
-                    keyboardLanguage: nil,
-                    source: ComposerShared.reviewCommentInlineVoiceInputSource,
+                    keyboardLanguage: inputTextView.textInputMode?.primaryLanguage,
+                    owner: .reviewCommentInline,
                     baseText: inputTextView.text ?? "",
                     textBeforeRecording: recordingPrefixBinding(),
                     suppressKeyboard: suppressKeyboardBinding(),
                     focusRequestID: focusRequestBinding()
                 )
-                inputTextView.resignFirstResponder()
             } catch {
             }
         case .processing, .error:
@@ -658,8 +818,45 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     }
 
     private func save() {
+        guard !isSaving else { return }
+
+        if let manager = router.voiceInputManager,
+           ComposerShared.ownsVoiceInput(manager, owner: .reviewCommentInline),
+           manager.isRecording || manager.isPreparing {
+            isSaving = true
+            updateSaveButton()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if manager.isRecording {
+                    await ComposerShared.stopVoiceInput(
+                        manager: manager,
+                        text: textBinding(),
+                        textBeforeRecording: recordingPrefixBinding()
+                    )
+                } else {
+                    await ComposerShared.cancelVoiceInput(
+                        manager: manager,
+                        textBeforeRecording: recordingPrefixBinding(),
+                        suppressKeyboard: suppressKeyboardBinding()
+                    )
+                }
+                suppressKeyboard = false
+                inputTextView.setKeyboardSuppressed(false)
+                saveCurrentBody()
+            }
+            return
+        }
+
+        saveCurrentBody()
+    }
+
+    private func saveCurrentBody() {
         let body = (inputTextView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, !isSaving else { return }
+        guard !body.isEmpty else {
+            isSaving = false
+            updateSaveButton()
+            return
+        }
 
         isSaving = true
         updateSaveButton()
@@ -690,6 +887,11 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         inputTextView.refreshPlaceholder()
         updateSaveButton()
+        lastAppliedDictationText = nil
+        lastAppliedDictationRevision = -1
+        if updateInputTextHeight(animated: true) {
+            updateFrame(animated: true)
+        }
     }
 
     private static func locationText(for source: ReviewCommentSourceContext) -> String {
@@ -723,7 +925,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     }
 }
 
-private final class ReviewCommentInlineInputTextView: UITextView {
+private final class ReviewCommentInlineInputTextView: PastableUITextView {
     private let placeholderLabel = UILabel()
 
     var placeholder: String = "" {
@@ -778,5 +980,14 @@ private final class ReviewCommentInlineInputTextView: UITextView {
 
     @objc private func textDidChange() {
         refreshPlaceholder()
+    }
+}
+
+private extension CGRect {
+    func isNearlyEqual(to other: CGRect, tolerance: CGFloat = 0.5) -> Bool {
+        abs(origin.x - other.origin.x) <= tolerance
+            && abs(origin.y - other.origin.y) <= tolerance
+            && abs(size.width - other.size.width) <= tolerance
+            && abs(size.height - other.size.height) <= tolerance
     }
 }

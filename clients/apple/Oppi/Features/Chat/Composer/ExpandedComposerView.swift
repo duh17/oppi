@@ -65,13 +65,14 @@ struct ExpandedComposerView: View {
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(
             storedText: text,
-            textBeforeRecording: ownsVoiceInput ? textBeforeRecording : nil,
-            liveTranscript: ownsVoiceInput ? voiceInputManager?.currentTranscript : nil
+            textBeforeRecording: textBeforeRecording,
+            manager: voiceInputManager,
+            owner: .expandedComposer
         )
     }
 
     private var ownsVoiceInput: Bool {
-        voiceInputManager?.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource) ?? false
+        ComposerShared.ownsVoiceInput(voiceInputManager, owner: .expandedComposer)
     }
 
     private var canSend: Bool {
@@ -102,10 +103,10 @@ struct ExpandedComposerView: View {
     }
 
     private var correctionRangesForDisplay: [NSRange] {
-        guard ownsVoiceInput else { return [] }
         return ComposerShared.correctionRanges(
             manager: voiceInputManager,
-            textBeforeRecording: textBeforeRecording
+            textBeforeRecording: textBeforeRecording,
+            owner: .expandedComposer
         )
     }
 
@@ -134,7 +135,7 @@ struct ExpandedComposerView: View {
                     font: composerInputFont,
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
-                    volatileSuffixLength: ownsVoiceInput ? voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0 : 0,
+                    volatileSuffixLength: ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .expandedComposer),
                     correctionRanges: correctionRangesForDisplay,
                     autocorrectionEnabled: composerAutocorrectionEnabled,
                     onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingAttachments) },
@@ -149,7 +150,7 @@ struct ExpandedComposerView: View {
                             suppressKeyboard: $suppressKeyboard,
                             textBeforeRecording: $textBeforeRecording,
                             voiceInputManager: voiceInputManager,
-                            expectedSource: ComposerShared.expandedVoiceInputSource
+                            expectedOwner: .expandedComposer
                         )
                     }
                 )
@@ -212,7 +213,7 @@ struct ExpandedComposerView: View {
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
-            guard manager.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource) else { return }
+            guard ComposerShared.ownsVoiceInput(manager, owner: .expandedComposer) else { return }
             text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
@@ -342,16 +343,11 @@ struct ExpandedComposerView: View {
     // MARK: - Mic Button
 
     private func micButton(manager: VoiceInputManager) -> some View {
-        let ownsVoiceInput = manager.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource)
-        let isRecording = manager.isRecording && ownsVoiceInput
-        let isPreparing = manager.isPreparing && ownsVoiceInput
-        let isProcessing = manager.isProcessing && ownsVoiceInput
-        let isOwnedOrIdle = ownsVoiceInput || manager.state == .idle
-        let engineBadge = ComposerShared.micEngineBadge(for: manager)
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .expandedComposer)
 
         return Button {
             Task {
-                guard ownsVoiceInput || manager.state == .idle else { return }
+                guard ComposerShared.canControlVoiceInput(manager, owner: .expandedComposer) else { return }
                 switch manager.state {
                 case .recording:
                     await ComposerShared.stopVoiceInput(
@@ -370,7 +366,7 @@ struct ExpandedComposerView: View {
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
                             keyboardLanguage: keyboardLanguage,
-                            source: ComposerShared.expandedVoiceInputSource,
+                            owner: .expandedComposer,
                             baseText: text,
                             textBeforeRecording: $textBeforeRecording,
                             suppressKeyboard: $suppressKeyboard,
@@ -387,20 +383,16 @@ struct ExpandedComposerView: View {
             }
         } label: {
             MicButtonLabel(
-                isRecording: isRecording,
-                isProcessing: isPreparing || isProcessing,
-                audioLevel: manager.audioLevel,
-                languageLabel: manager.activeLanguageLabel,
+                presentation: presentation,
                 accentColor: accentColor,
-                engineBadge: engineBadge,
                 diameter: 32
             )
         }
         .buttonStyle(.plain)
-        .disabled(isProcessing || !isOwnedOrIdle)
+        .disabled(!presentation.isEnabled)
         .accessibilityIdentifier("expanded.voiceInput")
-        .accessibilityLabel(ComposerShared.accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
-        .accessibilityValue(ComposerShared.voiceRouteAccessibilityValue(for: manager))
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .accessibilityValue(presentation.accessibilityValue)
     }
 
     // MARK: - Actions
@@ -408,7 +400,7 @@ struct ExpandedComposerView: View {
     private func handleSend() {
         // Stop voice recording setup/session before sending
         if let manager = voiceInputManager,
-           manager.isActiveRecordingSource(ComposerShared.expandedVoiceInputSource),
+           ComposerShared.ownsVoiceInput(manager, owner: .expandedComposer),
            manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
             Task {

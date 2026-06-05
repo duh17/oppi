@@ -1612,6 +1612,11 @@ extension VoiceInputManager {
         set { operationInFlight = newValue }
     }
 
+    var _testActiveRecordingSource: String? {
+        get { activeRecordingSource }
+        set { activeRecordingSource = newValue }
+    }
+
     // periphery:ignore - used by VoiceInputManagerTests via @testable import
     var _testModelReady: Bool {
         get {
