@@ -118,6 +118,38 @@ enum WorkspaceDeepLink {
     }
 }
 
+enum FileLinkOpenPolicy {
+    struct ResolvedLink: Equatable {
+        let serverId: String
+        let workspace: Workspace
+        let relativePath: String
+
+        var fileName: String {
+            (relativePath as NSString).lastPathComponent
+        }
+    }
+
+    static func resolve(
+        payload: FileLinkPayload,
+        workspacesByServer: [String: [Workspace]]
+    ) -> ResolvedLink? {
+        for (serverId, workspaces) in workspacesByServer {
+            guard let workspace = workspaces.first(where: { $0.id == payload.workspaceID }) else {
+                continue
+            }
+            guard let relativePath = payload.filePath.workspaceRelativePath(hostMount: workspace.hostMount) else {
+                return nil
+            }
+            return ResolvedLink(
+                serverId: serverId,
+                workspace: workspace,
+                relativePath: relativePath
+            )
+        }
+        return nil
+    }
+}
+
 @main
 struct OppiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -133,7 +165,6 @@ struct OppiApp: App {
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
 #endif
-    @State private var inAppBrowserDestination: InAppBrowserDestination?
     @State private var inviteBootstrapInFlight = false
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
@@ -205,15 +236,18 @@ struct OppiApp: App {
                 }
                 switch AppPreferences.Browser.linkOpeningMode {
                 case .inApp:
-                    inAppBrowserDestination = InAppBrowserDestination(url: url)
+                    InAppBrowserPresenter.present(url: url)
                 case .external:
                     UIApplication.shared.open(url)
                 }
             }
-            .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
-            .sheet(item: $inAppBrowserDestination) { destination in
-                InAppBrowserView(url: destination.url)
+            .onReceive(NotificationCenter.default.publisher(for: .fileLinkTapped)) { notification in
+                guard let payload = notification.object as? FileLinkPayload else { return }
+                Task { @MainActor in
+                    _ = handleIncomingFileLink(payload)
+                }
             }
+            .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
             .task {
                 AppFont.rebuild()
                 MetricKitService.shared.configure()
@@ -225,6 +259,9 @@ struct OppiApp: App {
                 coordinator.startLANDiscovery()
                 coordinator.startNetworkPathMonitor()
                 await setupNotifications()
+#if DEBUG
+                scheduleE2EInAppBrowserIfRequested()
+#endif
 #if DEBUG
                 // E2E test support: process invite URL from launch environment.
                 // Must run BEFORE reconnectOnLaunch to prevent stale simulator
@@ -260,11 +297,35 @@ struct OppiApp: App {
             }
     }
 
-    private struct InAppBrowserDestination: Identifiable {
-        let url: URL
+#if DEBUG
+    @MainActor
+    private func scheduleE2EInAppBrowserIfRequested() {
+        guard let url = Self.e2eInAppBrowserURL() else {
+            return
+        }
 
-        var id: String { url.absoluteString }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            InAppBrowserPresenter.present(url: url)
+        }
     }
+
+    private static func e2eInAppBrowserURL() -> URL? {
+        let rawURL = ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_IN_APP_BROWSER_URL"]
+            ?? ProcessInfo.processInfo.arguments
+                .first(where: { $0.hasPrefix("--e2e-open-in-app-browser=") })?
+                .dropFirst("--e2e-open-in-app-browser=".count)
+                .description
+
+        guard let rawURL,
+              let url = URL(string: rawURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+        return url
+    }
+#endif
 
     @MainActor
     private func handleIncomingURL(_ url: URL) async {
@@ -282,6 +343,46 @@ struct OppiApp: App {
             return
         }
         await handleIncomingInviteURL(url)
+    }
+
+    @MainActor
+    private func handleIncomingFileLink(_ payload: FileLinkPayload) -> Bool {
+        guard let resolution = resolveFileLink(payload) else {
+            connection.extensionToast = "Could not open this file link"
+            return false
+        }
+        guard coordinator.switchToServer(resolution.target.serverId) else {
+            connection.extensionToast = "Could not open the server for this file link"
+            return false
+        }
+
+        navigation.openWorkspaceLinkedFile(
+            resolution.target,
+            workspace: WorkspaceNavTarget(serverId: resolution.target.serverId, workspace: resolution.workspace)
+        )
+        return true
+    }
+
+    private func resolveFileLink(_ payload: FileLinkPayload) -> (target: WorkspaceLinkedFileNavTarget, workspace: Workspace)? {
+        let workspacesByServer = Dictionary(
+            uniqueKeysWithValues: coordinator.connections.map { serverId, connection in
+                (serverId, connection.workspaceStore.workspaces)
+            }
+        )
+        guard let resolution = FileLinkOpenPolicy.resolve(
+            payload: payload,
+            workspacesByServer: workspacesByServer
+        ) else {
+            return nil
+        }
+        return (
+            target: WorkspaceLinkedFileNavTarget(
+                serverId: resolution.serverId,
+                workspaceId: payload.workspaceID,
+                kind: .workspaceFile(path: resolution.relativePath, fileName: resolution.fileName)
+            ),
+            workspace: resolution.workspace
+        )
     }
 
     /// Handle `oppi://session/<sessionId>` deep links from Live Activity taps.

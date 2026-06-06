@@ -12,6 +12,16 @@ struct WorkspaceSessionNavTarget: Hashable {
     let sessionId: String
 }
 
+enum WorkspaceLinkedFileKind: Hashable {
+    case workspaceFile(path: String, fileName: String)
+}
+
+struct WorkspaceLinkedFileNavTarget: Hashable {
+    let serverId: String
+    let workspaceId: String
+    let kind: WorkspaceLinkedFileKind
+}
+
 /// Utility destinations that live under the Workspaces navigation stack.
 /// These are intentionally not bottom-tab destinations; they are secondary
 /// management surfaces reached from the server/environment menu.
@@ -93,6 +103,45 @@ struct WorkspaceSessionScopedDestinationView: View {
             if let connection = resolvedConnection {
                 ChatView(sessionId: target.sessionId)
                     .withServerScopedEnvironment(connection)
+            } else {
+                ProgressView("Connecting…")
+            }
+        }
+        .onAppear(perform: activateTargetServer)
+        .task(id: target.serverId) {
+            activateTargetServer()
+        }
+    }
+
+    @MainActor
+    private func activateTargetServer() {
+        guard coordinator.switchToServer(target.serverId) else { return }
+        scopedConnection = coordinator.connection(for: target.serverId)
+    }
+}
+
+struct WorkspaceLinkedFileDestinationView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    let target: WorkspaceLinkedFileNavTarget
+
+    @State private var scopedConnection: ServerConnection?
+
+    private var resolvedConnection: ServerConnection? {
+        scopedConnection ?? coordinator.connection(for: target.serverId)
+    }
+
+    var body: some View {
+        Group {
+            if let connection = resolvedConnection {
+                switch target.kind {
+                case .workspaceFile(let path, let fileName):
+                    FileBrowserContentView(
+                        workspaceId: target.workspaceId,
+                        filePath: path,
+                        fileName: fileName
+                    )
+                    .withServerScopedEnvironment(connection)
+                }
             } else {
                 ProgressView("Connecting…")
             }
@@ -269,6 +318,9 @@ struct WorkspaceHomeView: View {
         }
         .navigationDestination(for: WorkspaceSessionNavTarget.self) { target in
             WorkspaceSessionScopedDestinationView(target: target)
+        }
+        .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
+            WorkspaceLinkedFileDestinationView(target: target)
         }
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)

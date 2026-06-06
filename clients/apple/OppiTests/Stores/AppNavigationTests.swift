@@ -115,7 +115,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.splitSelectedSession == target)
-        #expect(navigation.splitColumnVisibility == .all)
+        #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
     @Test func workspaceSelectionRestoresSessionLayerVisibility() {
@@ -154,7 +154,60 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .fileBrowser(fileTarget))
-        #expect(navigation.splitColumnVisibility == .all)
+        #expect(navigation.splitColumnVisibility == .detailOnly)
+    }
+
+    @Test func linkedFileUsesDedicatedDestinationInSplitPresentation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        let fileTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "server/src/server.ts", fileName: "server.ts")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceLinkedFile(fileTarget, workspace: workspaceTarget)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == .linkedFile(fileTarget))
+        #expect(navigation.splitColumnVisibility == .detailOnly)
+    }
+
+    @Test func givenWorkspaceFileInsideHostMountWhenResolvingThenItOpensThatWorkspaceFile() {
+        let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
+        let payload = FileLinkPayload(
+            workspaceID: "workspace-1",
+            filePath: NSString(string: "~/workspace/oppi/server/src/server.ts").expandingTildeInPath,
+            originalURL: URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts")!
+        )
+
+        let resolved = FileLinkOpenPolicy.resolve(
+            payload: payload,
+            workspacesByServer: ["server-1": [workspace]]
+        )
+
+        #expect(resolved?.serverId == "server-1")
+        #expect(resolved?.workspace.id == "workspace-1")
+        #expect(resolved?.relativePath == "server/src/server.ts")
+        #expect(resolved?.fileName == "server.ts")
+    }
+
+    @Test func givenWorkspaceFileOutsideHostMountWhenResolvingThenItIsRejected() {
+        let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
+        let payload = FileLinkPayload(
+            workspaceID: "workspace-1",
+            filePath: "/tmp/server.ts",
+            originalURL: URL(string: "file:///tmp/server.ts")!
+        )
+
+        let resolved = FileLinkOpenPolicy.resolve(
+            payload: payload,
+            workspacesByServer: ["server-1": [workspace]]
+        )
+
+        #expect(resolved == nil)
     }
 
     @Test func utilityUsesSplitDetailSelectionInSplitPresentation() {
@@ -232,7 +285,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceUtility(.appSettings)
 
         #expect(navigation.splitDetailTarget == .utility(.appSettings))
-        #expect(navigation.splitColumnVisibility == .detailOnly)
+        #expect(navigation.splitColumnVisibility == .all)
     }
 
     private func readyNavigation() -> AppNavigation {

@@ -230,9 +230,16 @@ final class AssistantMarkdownContentView: UIView {
 
 // MARK: - Link Classification
 
+struct FileLinkPayload: Equatable {
+    let workspaceID: String
+    let filePath: String
+    let originalURL: URL
+}
+
 enum LinkAction: Equatable {
     case deepLink(URL)
     case webLink(URL)
+    case fileLink(FileLinkPayload)
     case systemDefault
 }
 
@@ -250,6 +257,10 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         }
         if scheme == "http" || scheme == "https" {
             return .webLink(normalizedURL)
+        }
+        if scheme == "file",
+           let payload = fileLinkPayload(for: normalizedURL) {
+            return .fileLink(payload)
         }
         return .systemDefault
     }
@@ -288,6 +299,10 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return UIAction { _ in
                 NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
             }
+        case .fileLink(let payload):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
+            }
         case .systemDefault:
             return defaultAction
         }
@@ -302,43 +317,63 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
-        guard case .webLink(let normalizedURL) = classifyLink(url) else {
+        switch classifyLink(url) {
+        case .webLink(let normalizedURL):
+            let copyAction = UIAction(
+                title: "Copy Link",
+                image: UIImage(systemName: "doc.on.doc")
+            ) { _ in
+                UIPasteboard.general.string = normalizedURL.absoluteString
+            }
+
+            let openAction = UIAction(
+                title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
+                image: UIImage(systemName: "safari")
+            ) { _ in
+                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+            }
+
+            // Note: uses UIActivityViewController directly rather than FileSharePresenter
+            // because this shares a URL from a text interaction menu, not file content.
+            let shareAction = UIAction(
+                title: "Share...",
+                image: UIImage(systemName: "square.and.arrow.up")
+            ) { [weak textView] _ in
+                guard let textView else { return }
+                let activityVC = UIActivityViewController(
+                    activityItems: [normalizedURL],
+                    applicationActivities: nil
+                )
+                activityVC.popoverPresentationController?.sourceView = textView
+                textView.window?.rootViewController?
+                    .presentedViewController?.present(activityVC, animated: true)
+                    ?? textView.window?.rootViewController?.present(activityVC, animated: true)
+            }
+
+            let menu = UIMenu(children: [openAction, copyAction, shareAction])
+            return UITextItem.MenuConfiguration(menu: menu)
+
+        case .fileLink, .deepLink, .systemDefault:
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
+    }
 
-        let copyAction = UIAction(
-            title: "Copy Link",
-            image: UIImage(systemName: "doc.on.doc")
-        ) { _ in
-            UIPasteboard.general.string = normalizedURL.absoluteString
+    private func fileLinkPayload(for url: URL) -> FileLinkPayload? {
+        guard url.isFileURL,
+              let config = currentConfig,
+              let workspaceID = config.workspaceID,
+              !workspaceID.isEmpty else {
+            return nil
         }
 
-        let openAction = UIAction(
-            title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
-            image: UIImage(systemName: "safari")
-        ) { _ in
-            NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-        }
+        let filePath = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !filePath.isEmpty else { return nil }
 
-        // Note: uses UIActivityViewController directly rather than FileSharePresenter
-        // because this shares a URL from a text interaction menu, not file content.
-        let shareAction = UIAction(
-            title: "Share...",
-            image: UIImage(systemName: "square.and.arrow.up")
-        ) { [weak textView] _ in
-            guard let textView else { return }
-            let activityVC = UIActivityViewController(
-                activityItems: [normalizedURL],
-                applicationActivities: nil
-            )
-            activityVC.popoverPresentationController?.sourceView = textView
-            textView.window?.rootViewController?
-                .presentedViewController?.present(activityVC, animated: true)
-                ?? textView.window?.rootViewController?.present(activityVC, animated: true)
-        }
-
-        let menu = UIMenu(children: [openAction, copyAction, shareAction])
-        return UITextItem.MenuConfiguration(menu: menu)
+        return FileLinkPayload(
+            workspaceID: workspaceID,
+            filePath: filePath,
+            originalURL: url
+        )
     }
 
     private static let trailingLinkDelimiters: Set<Character> = ["`", "'", "\"", "\u{2018}", "\u{201C}"]

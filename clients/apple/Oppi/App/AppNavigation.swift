@@ -24,6 +24,7 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
 enum WorkspaceSplitDetailTarget: Hashable {
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
+    case linkedFile(WorkspaceLinkedFileNavTarget)
     case workspaceConfiguration(WorkspaceNavTarget)
     case utility(WorkspaceUtilityNavTarget)
 }
@@ -88,9 +89,13 @@ final class AppNavigation {
 
     func setWorkspaceNavigationPresentation(_ presentation: WorkspaceNavigationPresentation) {
         guard workspaceNavigationPresentation != presentation else { return }
+        let preservedStackPath = presentation == .stack ? stackPathForCurrentSplitSelection() : nil
         workspaceNavigationPresentation = presentation
         switch presentation {
         case .stack:
+            if let preservedStackPath {
+                workspacePath = preservedStackPath
+            }
             splitSelectedWorkspace = nil
             splitDetailTarget = nil
             splitDetailPath = NavigationPath()
@@ -126,6 +131,7 @@ final class AppNavigation {
             }
             splitDetailTarget = .session(target)
             splitDetailPath = NavigationPath()
+            splitColumnVisibility = .detailOnly
         }
     }
 
@@ -140,6 +146,23 @@ final class AppNavigation {
             }
             splitDetailTarget = .fileBrowser(target)
             splitDetailPath = NavigationPath()
+            splitColumnVisibility = .detailOnly
+        }
+    }
+
+    func openWorkspaceLinkedFile(_ target: WorkspaceLinkedFileNavTarget, workspace: WorkspaceNavTarget? = nil) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            workspacePath = NavigationPath()
+            workspacePath.append(target)
+        case .split:
+            if let workspace {
+                splitSelectedWorkspace = workspace
+            }
+            splitDetailTarget = .linkedFile(target)
+            splitDetailPath = NavigationPath()
+            splitColumnVisibility = .detailOnly
         }
     }
 
@@ -151,6 +174,7 @@ final class AppNavigation {
         case .split:
             splitDetailTarget = .utility(target)
             splitDetailPath = NavigationPath()
+            splitColumnVisibility = .all
         }
     }
 
@@ -163,6 +187,7 @@ final class AppNavigation {
             splitSelectedWorkspace = target
             splitDetailTarget = .workspaceConfiguration(target)
             splitDetailPath = NavigationPath()
+            splitColumnVisibility = .all
         }
     }
 
@@ -202,6 +227,7 @@ final class AppNavigation {
         case .split:
             splitDetailTarget = .session(target)
             splitDetailPath = NavigationPath()
+            splitColumnVisibility = .detailOnly
         }
     }
 
@@ -273,6 +299,32 @@ final class AppNavigation {
         }
         selectedTab = .workspaces
         return target
+    }
+
+    private func stackPathForCurrentSplitSelection() -> NavigationPath? {
+        var path = NavigationPath()
+
+        switch splitDetailTarget {
+        case .session(let target):
+            path.append(target)
+        case .fileBrowser(let target):
+            if let workspace = splitSelectedWorkspace {
+                path.append(workspace)
+                path.append(target)
+            }
+        case .linkedFile(let target):
+            path.append(target)
+        case .workspaceConfiguration(let target):
+            path.append(target)
+        case .utility(let target):
+            path.append(target)
+        case nil:
+            if let workspace = splitSelectedWorkspace {
+                path.append(workspace)
+            }
+        }
+
+        return path.count > 0 ? path : nil
     }
 }
 

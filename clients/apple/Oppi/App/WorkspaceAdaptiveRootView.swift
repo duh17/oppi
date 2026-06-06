@@ -4,25 +4,34 @@ struct WorkspaceAdaptiveRootView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    private var presentation: WorkspaceNavigationPresentation {
-        horizontalSizeClass == .regular ? .split : .stack
-    }
+    private let minimumSplitWidth: CGFloat = 980
 
     var body: some View {
-        Group {
-            switch presentation {
-            case .stack:
-                WorkspaceStackRootView()
-            case .split:
-                WorkspaceSplitRootView()
+        GeometryReader { proxy in
+            let presentation = presentation(for: proxy.size)
+
+            Group {
+                switch presentation {
+                case .stack:
+                    WorkspaceStackRootView()
+                case .split:
+                    WorkspaceSplitRootView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                applyPresentation(presentation)
+            }
+            .onChange(of: presentation) { _, newValue in
+                applyPresentation(newValue)
             }
         }
-        .onAppear {
-            applyPresentation(presentation)
-        }
-        .onChange(of: presentation) { _, newValue in
-            applyPresentation(newValue)
-        }
+    }
+
+    private func presentation(for size: CGSize) -> WorkspaceNavigationPresentation {
+        guard horizontalSizeClass == .regular else { return .stack }
+        guard size.width >= minimumSplitWidth else { return .stack }
+        return size.width >= size.height ? .split : .stack
     }
 
     private func applyPresentation(_ presentation: WorkspaceNavigationPresentation) {
@@ -113,6 +122,8 @@ private struct WorkspaceSplitDetailDestinationView: View {
             WorkspaceSessionScopedDestinationView(target: target)
         case .fileBrowser(let target):
             WorkspaceSplitFileBrowserDestinationView(target: target)
+        case .linkedFile(let target):
+            WorkspaceLinkedFileDestinationView(target: target)
         case .workspaceConfiguration(let target):
             WorkspaceSplitWorkspaceConfigurationDestinationView(target: target)
         case .utility(let target):

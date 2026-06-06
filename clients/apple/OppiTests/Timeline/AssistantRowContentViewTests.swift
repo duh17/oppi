@@ -674,6 +674,37 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func givenWorkspaceContextWhenClassifyingFileLinkThenItRoutesInternally() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "[server.ts](file:///Users/example/workspace/oppi/server/src/server.ts)",
+            isStreaming: false,
+            themeID: .light,
+            workspaceID: "workspace-1",
+            sessionID: "session-1"
+        ))
+
+        let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
+        let action = markdownView.classifyLink(url)
+        guard case .fileLink(let payload) = action else {
+            Issue.record("Expected .fileLink, got \(action)")
+            return
+        }
+        #expect(payload.workspaceID == "workspace-1")
+        #expect(payload.filePath == "/Users/example/workspace/oppi/server/src/server.ts")
+        #expect(payload.originalURL == url)
+    }
+
+    @MainActor
+    @Test func givenNoWorkspaceContextWhenClassifyingFileLinkThenItUsesSystemDefault() throws {
+        let markdownView = makeMarkdownView()
+        let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
+
+        let action = markdownView.classifyLink(url)
+        #expect(action == .systemDefault)
+    }
+
+    @MainActor
     @Test func allowsCustomAppLinksToUseSystemDefault() throws {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "mailto:support@example.com"))
