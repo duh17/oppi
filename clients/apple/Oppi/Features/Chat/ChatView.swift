@@ -18,8 +18,41 @@ struct TreeNavigationViewUpdate: Equatable {
     }
 }
 
+struct ExtensionSurfaceSessionLink: Equatable {
+    let sessionId: String
+    let workspaceId: String?
+
+    static func parse(_ url: URL, defaultWorkspaceId: String? = nil) -> ExtensionSurfaceSessionLink? {
+        guard url.scheme?.lowercased() == "oppi",
+              url.host?.lowercased() == "session",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let pathParts = components.percentEncodedPath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard let rawId = pathParts.first, !rawId.isEmpty else {
+            return nil
+        }
+
+        let sessionId = rawId.removingPercentEncoding ?? rawId
+        guard !sessionId.isEmpty else { return nil }
+
+        let queryWorkspaceId = components.queryItems?.first { $0.name == "workspaceId" }?.value
+        let workspaceId = normalized(queryWorkspaceId) ?? normalized(defaultWorkspaceId)
+        return ExtensionSurfaceSessionLink(sessionId: sessionId, workspaceId: workspaceId)
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
 struct ChatView: View {
     let sessionId: String
+    private let workspaceIdHint: String?
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
@@ -76,19 +109,27 @@ struct ChatView: View {
     @State private var showReviewCommentStash = false
     @State private var focusedReviewCommentId: String?
 
-    init(sessionId: String, initialInputText: String = "", initialPendingFiles: [PendingFileReference] = []) {
+    init(
+        sessionId: String,
+        workspaceIdHint: String? = nil,
+        initialInputText: String = "",
+        initialPendingFiles: [PendingFileReference] = []
+    ) {
         self.sessionId = sessionId
-        _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
+        self.workspaceIdHint = workspaceIdHint
+        _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId, workspaceIdHint: workspaceIdHint))
         _inputText = State(initialValue: initialInputText)
         _pendingRepoPointers = State(initialValue: initialPendingFiles)
     }
 
     private struct ForkRoute: Identifiable, Hashable {
         let id: String
+        let workspaceId: String?
     }
 
     private struct ChildSessionRoute: Identifiable, Hashable {
         let id: String
+        let workspaceId: String?
     }
 
     private enum TreeNavigationError: LocalizedError {
@@ -260,8 +301,9 @@ struct ChatView: View {
                     onSelectChild: { childId in
                         // Prime focus/transport before the push animation so the
                         // parent session can't reclaim the shared WS first.
-                        connection.prepareForSessionReentry(childId)
-                        childSessionToOpen = ChildSessionRoute(id: childId)
+                        let childWorkspaceId = sessionStore.workspaceId(for: childId) ?? session?.workspaceId
+                        connection.prepareForSessionReentry(childId, workspaceIdHint: childWorkspaceId)
+                        childSessionToOpen = ChildSessionRoute(id: childId, workspaceId: childWorkspaceId)
                     },
                     onReviewInCurrentSession: { prompt, files in
                         stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
@@ -415,7 +457,7 @@ struct ChatView: View {
                 }
 
                 // Stand up new session
-                sessionManager = ChatSessionManager(sessionId: newId)
+                sessionManager = ChatSessionManager(sessionId: newId, workspaceIdHint: workspaceIdHint)
                 scrollController = ChatScrollController()
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
@@ -470,10 +512,10 @@ struct ChatView: View {
             .navigationTitle(sessionDisplayName)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $forkedSessionToOpen) { route in
-                Self(sessionId: route.id)
+                Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
             .navigationDestination(item: $childSessionToOpen) { route in
-                Self(sessionId: route.id)
+                Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
     }
 
@@ -950,23 +992,16 @@ struct ChatView: View {
 
     @MainActor
     private func openExtensionSurfaceURL(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "oppi",
-              url.host?.lowercased() == "session" else {
+        let defaultWorkspaceId = session?.workspaceId ?? sessionStore.workspaceId(for: sessionId)
+        guard let link = ExtensionSurfaceSessionLink.parse(url, defaultWorkspaceId: defaultWorkspaceId) else {
             return false
         }
-        let pathParts = url.path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard let rawId = pathParts.first, !rawId.isEmpty else {
-            return false
-        }
-        let targetSessionId = rawId.removingPercentEncoding ?? rawId
-        guard targetSessionId != sessionId else {
+        guard link.sessionId != sessionId else {
             return true
         }
 
-        connection.prepareForSessionReentry(targetSessionId)
-        childSessionToOpen = ChildSessionRoute(id: targetSessionId)
+        connection.prepareForSessionReentry(link.sessionId, workspaceIdHint: link.workspaceId)
+        childSessionToOpen = ChildSessionRoute(id: link.sessionId, workspaceId: link.workspaceId)
         return true
     }
 
@@ -976,7 +1011,7 @@ struct ChatView: View {
         // The async sessionManager.connect() task starts shortly after onAppear,
         // but users can tap toolbar controls before that task has a chance to
         // refocus the connection on this session.
-        connection.prepareForSessionReentry(sessionId)
+        connection.prepareForSessionReentry(sessionId, workspaceIdHint: workspaceIdHint)
 
         sessionManager.markAppeared()
         voiceInputManager.loadPreferences()
@@ -1659,7 +1694,7 @@ struct ChatView: View {
                 let displayName = title.flatMap { $0.isEmpty ? nil : $0 } ?? "Session \(forked.id.prefix(8))"
                 reducer.appendSystemEvent("Fork created as new session: \(displayName)")
 
-                forkedSessionToOpen = ForkRoute(id: forked.id)
+                forkedSessionToOpen = ForkRoute(id: forked.id, workspaceId: forked.workspaceId ?? workspaceId)
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Fork failed: \(error.localizedDescription)"))
             }

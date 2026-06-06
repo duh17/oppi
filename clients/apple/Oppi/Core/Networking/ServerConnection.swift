@@ -969,7 +969,7 @@ final class ServerConnection {
     /// Unlike `disconnectSession`, this does NOT close the previous session stream
     /// continuations or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
-    func focusSession(_ sessionId: String) {
+    func focusSession(_ sessionId: String, workspaceIdHint: String? = nil) {
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
@@ -982,7 +982,10 @@ final class ServerConnection {
             silenceWatchdog.stop()
         }
 
+        let normalizedWorkspaceIdHint = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackWorkspaceId = normalizedWorkspaceIdHint?.isEmpty == false ? normalizedWorkspaceIdHint : nil
         let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
+            ?? fallbackWorkspaceId
         focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
         // Reset per-connection UI state for the new focused session
         activeExtensionDialog = nil
@@ -998,14 +1001,17 @@ final class ServerConnection {
     /// If we already know the split-stream endpoint for an active session, eagerly
     /// reopen the transport so toolbar actions like Stop work immediately while the
     /// chat view's async connect loop is still spinning up its per-session timeline.
-    func prepareForSessionReentry(_ sessionId: String) {
+    func prepareForSessionReentry(_ sessionId: String, workspaceIdHint: String? = nil) {
         _onPrepareForSessionReentryForTesting?(sessionId)
-        focusSession(sessionId)
+        focusSession(sessionId, workspaceIdHint: workspaceIdHint)
+
+        let normalizedWorkspaceIdHint = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackWorkspaceId = normalizedWorkspaceIdHint?.isEmpty == false ? normalizedWorkspaceIdHint : nil
 
         guard hasRequiredSplitStreamCapabilities,
               let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
               session.status != .stopped,
-              let workspaceId = session.workspaceId,
+              let workspaceId = session.workspaceId ?? fallbackWorkspaceId,
               !workspaceId.isEmpty else {
             return
         }

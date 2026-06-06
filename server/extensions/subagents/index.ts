@@ -339,6 +339,12 @@ function subagentDetail(session: Session): string | undefined {
   return snippets[0];
 }
 
+function subagentSessionLink(ctx: SubagentsContext, child: Session): string {
+  const base = `oppi://session/${encodeURIComponent(child.id)}`;
+  const workspaceId = child.workspaceId || ctx.workspaceId;
+  return workspaceId ? `${base}?workspaceId=${encodeURIComponent(workspaceId)}` : base;
+}
+
 function createSubagentsWidget(
   ctx: SubagentsContext,
   getTrackedSessionIds: () => Iterable<string>,
@@ -488,7 +494,7 @@ function createSubagentsWidget(
               subtitle: subagentSubtitle(child),
               detail: subagentDetail(child),
               state: subagentState(child.status),
-              link: `oppi://session/${encodeURIComponent(child.id)}`,
+              link: subagentSessionLink(ctx, child),
             })),
           },
         ],

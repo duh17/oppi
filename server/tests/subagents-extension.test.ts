@@ -247,7 +247,9 @@ describe("spawn_agent", () => {
     const widgetFactory = widgets.get("subagents")?.content;
     expect(typeof widgetFactory).toBe("function");
     const component = (widgetFactory as (tui: unknown) => unknown)({ requestRender: () => {} }) as {
-      renderNative: () => { blocks: Array<{ type: string; rows?: Array<{ state?: string; subtitle?: string }> }> };
+      renderNative: () => {
+        blocks: Array<{ type: string; rows?: Array<{ state?: string; subtitle?: string; link?: string }> }>;
+      };
     };
 
     await spawn.execute("tc-1", {
@@ -270,6 +272,7 @@ describe("spawn_agent", () => {
     const row = surface.blocks[0]?.rows?.[0];
     expect(row?.state).toBe("success");
     expect(row?.subtitle).toContain("Ready");
+    expect(row?.link).toBe(`oppi://session/${encodeURIComponent(childId)}?workspaceId=ws-1`);
   });
 
   it("sends subagent_result and triggers parent turn when parent is idle", async () => {

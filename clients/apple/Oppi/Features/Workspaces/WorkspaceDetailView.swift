@@ -548,7 +548,7 @@ struct WorkspaceDetailView: View {
             )
         }
         .navigationDestination(for: String.self) { sessionId in
-            ChatView(sessionId: sessionId)
+            ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
         }
         .navigationDestination(for: FileBrowserNavTarget.self) { target in
             FileBrowserView(workspaceId: target.workspaceId, initialPath: target.path)
@@ -556,7 +556,7 @@ struct WorkspaceDetailView: View {
         .navigationDestination(
             item: $navigateToSessionId
         ) { sessionId in
-            ChatView(sessionId: sessionId)
+            ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {

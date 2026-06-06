@@ -76,6 +76,19 @@ struct ServerConnectionStreamTests {
         #expect(conn.wsClient?.status == .disconnected)
     }
 
+    @Test func prepareForSessionReentryKeepsWorkspaceHintForUncachedSession() {
+        let (conn, _) = makeTestConnection(sessionId: "parent")
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        conn.prepareForSessionReentry("new-child", workspaceIdHint: " ws-1 ")
+
+        #expect(conn.focusedSessionId == "new-child")
+        #expect(conn.focusedSessionStore.focused?.workspaceId == "ws-1")
+        #expect(conn.streamConsumptionTask == nil,
+                "Unknown sessions should not eagerly open a stream until ChatSessionManager binds it with history context")
+    }
+
     @Test func prepareForSessionReentryReconnectsStreamWhenCapabilitiesAreReady() {
         let (conn, _) = makeTestConnection(sessionId: "child")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)

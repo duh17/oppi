@@ -105,6 +105,7 @@ struct WorkspaceReviewFileDetailView: View {
         .navigationDestination(item: $navigateToQuickAction) { dest in
             ChatView(
                 sessionId: dest.id,
+                workspaceIdHint: workspaceId,
                 initialInputText: dest.inputText,
                 initialPendingFiles: dest.filePaths.map {
                     PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)

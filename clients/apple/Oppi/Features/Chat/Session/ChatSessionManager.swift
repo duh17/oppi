@@ -114,8 +114,10 @@ final class ChatSessionManager {
     /// Test seam: override trace save destination for lifecycle snapshot flush.
     var _saveTraceSnapshotForTesting: (([TraceEvent]) async -> Void)?
 
-    init(sessionId: String) {
+    init(sessionId: String, workspaceIdHint: String? = nil) {
         self.sessionId = sessionId
+        let normalizedWorkspaceIdHint = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.workspaceIdHint = normalizedWorkspaceIdHint?.isEmpty == false ? normalizedWorkspaceIdHint : nil
 
         // Wire per-session coalescer → reducer pipeline.
         coalescer.onFlush = { [weak self] events in
@@ -277,7 +279,7 @@ final class ChatSessionManager {
         let generation = connectionGeneration
 
         transitionTo(.idle)
-        connection.focusSession(sessionId)
+        connection.focusSession(sessionId, workspaceIdHint: workspaceIdHint)
         connection.fatalSetupError = false
         cancelAutoReconnect()
         cancelStateSync()
