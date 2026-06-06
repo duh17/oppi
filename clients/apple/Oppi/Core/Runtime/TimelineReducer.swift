@@ -516,10 +516,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return nil
 
         case .system:
-            insertItem(.systemEvent(
-                id: event.id,
-                message: event.text ?? ""
-            ), appendOnly: appendOnly)
+            if let presentation = event.presentation, presentation.kind == "custom" {
+                insertItem(.customEvent(
+                    id: event.id,
+                    message: event.text ?? "",
+                    presentation: presentation
+                ), appendOnly: appendOnly)
+            } else {
+                insertItem(.systemEvent(
+                    id: event.id,
+                    message: event.text ?? ""
+                ), appendOnly: appendOnly)
+            }
             return nil
 
         case .compaction:

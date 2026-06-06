@@ -32,13 +32,15 @@ struct TraceRenderingTests {
         toolName: String? = nil,
         output: String? = nil,
         isError: Bool? = nil,
-        thinking: String? = nil
+        thinking: String? = nil,
+        presentation: TraceEventPresentation? = nil
     ) -> TraceEvent {
         TraceEvent(
             id: id, type: type, timestamp: timestamp,
             text: text, tool: tool, args: args, output: output,
             toolCallId: toolCallId, toolName: toolName, isError: isError,
-            thinking: thinking
+            thinking: thinking,
+            presentation: presentation
         )
     }
 
@@ -50,6 +52,7 @@ struct TraceRenderingTests {
         case .thinking: return "thinking"
         case .toolCall(_, let tool, _, _, _, _, _): return "tool(\(tool))"
         case .systemEvent: return "system"
+        case .customEvent: return "custom"
         case .error: return "error"
         }
     }
@@ -500,6 +503,37 @@ struct TraceRenderingTests {
             return
         }
         #expect(msg == "Context compacted")
+    }
+
+    @Test func customPresentationSystemEventUsesCustomTimelineItem() {
+        let reducer = TimelineReducer()
+        let presentation = TraceEventPresentation(
+            kind: "custom",
+            title: "Task Notification",
+            subtitle: "agent-1",
+            status: "completed",
+            body: "The background task finished.",
+            fields: [
+                TraceEventPresentationField(label: "Result", value: "Readable result"),
+            ],
+            accent: "success"
+        )
+        reducer.loadSession([
+            traceEvent(
+                id: "custom-1",
+                type: .system,
+                text: "Task Notification\nResult: Readable result",
+                presentation: presentation
+            ),
+        ])
+
+        guard case .customEvent(_, let message, let renderedPresentation) = reducer.items.first else {
+            Issue.record("Expected custom event item")
+            return
+        }
+
+        #expect(message.contains("Task Notification"))
+        #expect(renderedPresentation == presentation)
     }
 
     // MARK: - Multiple thinking blocks

@@ -697,6 +697,8 @@ struct ScrollPropertyTestHarness {
             return reducer.expandedItemIDs.contains(id) ? 220 : 92
         case .systemEvent:
             return 68
+        case .customEvent:
+            return 112
         case .error:
             return 72
         }

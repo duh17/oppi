@@ -23,6 +23,7 @@ enum ChatItem: Identifiable, Equatable {
         isDone: Bool
     )
     case systemEvent(id: String, message: String)
+    case customEvent(id: String, message: String, presentation: TraceEventPresentation)
     case error(id: String, message: String)
 
     var id: String {
@@ -33,6 +34,7 @@ enum ChatItem: Identifiable, Equatable {
         case .thinking(let id, _, _, _): return id
         case .toolCall(let id, _, _, _, _, _, _): return id
         case .systemEvent(let id, _): return id
+        case .customEvent(let id, _, _): return id
         case .error(let id, _): return id
         }
     }

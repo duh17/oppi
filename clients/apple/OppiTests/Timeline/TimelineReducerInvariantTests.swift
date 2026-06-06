@@ -464,6 +464,8 @@ private func itemSignatures(_ items: [ChatItem]) -> [ItemSignature] {
             return .tool(id, tool, outputPreview, isError, isDone)
         case .systemEvent(_, let message):
             return .system(message)
+        case .customEvent(_, let message, _):
+            return .system(message)
         case .error(_, let message):
             return .error(message)
         }

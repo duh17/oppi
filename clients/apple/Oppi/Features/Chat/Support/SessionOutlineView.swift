@@ -943,6 +943,9 @@ struct SessionOutlineView: View {
         case .systemEvent(_, let msg):
             return msg
 
+        case .customEvent(_, let msg, let presentation):
+            return msg.isEmpty ? presentation.title : msg
+
         case .error(_, let msg):
             return msg
         }
@@ -1147,6 +1150,7 @@ private struct OutlineRow: View {
         case .toolCall(_, let tool, _, _, _, _, _):
             return ToolCallFormatting.sfSymbolName(for: tool) ?? "wrench"
         case .systemEvent: return "info.circle"
+        case .customEvent: return "info.circle.fill"
         case .error: return "exclamationmark.triangle"
         }
     }
@@ -1164,6 +1168,7 @@ private struct OutlineRow: View {
         case .toolCall(_, _, _, _, _, let isError, _):
             return isError ? .themeRed : .themeCyan
         case .systemEvent: return .themeComment
+        case .customEvent: return .themeBlue
         case .error: return .themeRed
         }
     }

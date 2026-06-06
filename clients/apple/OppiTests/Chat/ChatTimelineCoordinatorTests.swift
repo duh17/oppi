@@ -159,6 +159,41 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func customEventsRenderWithNativeCardConfiguration() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let presentation = TraceEventPresentation(
+            kind: "custom",
+            title: "Task Notification",
+            subtitle: "agent-1",
+            status: "completed",
+            body: "Background work finished.",
+            fields: [TraceEventPresentationField(label: "Result", value: "Readable result")],
+            accent: "success"
+        )
+
+        let config = makeTimelineConfiguration(
+            items: [
+                .customEvent(
+                    id: "custom-1",
+                    message: "Task Notification\nResult: Readable result",
+                    presentation: presentation
+                ),
+            ],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+
+        let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
+        #expect(cell.contentConfiguration is CustomTimelineRowConfiguration)
+    }
+
+    @MainActor
     @Test func compactionRowsRenderWithNativeConfiguration() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let router = ReviewCommentSelectionRouter { _ in }

@@ -342,6 +342,11 @@ describe("buildSessionContext", () => {
       "Result: /path/to/subagents-extension.test.ts tests the subagents extension.",
     );
     expect(custom?.text).not.toContain("<task-notification>");
+    expect(custom?.presentation).toMatchObject({
+      kind: "custom",
+      title: "Task Notification",
+      status: "Wrapped up (turn limit)",
+    });
   });
 
   it("suppresses structured custom messages when a parent custom event is visible", () => {
@@ -370,17 +375,17 @@ describe("buildSessionContext", () => {
     expect(events.map((event) => event.text ?? "").join("\n")).not.toContain("<task-notification>");
   });
 
-  it("renders Pi Agent subagent records as parent trace system events", () => {
+  it("renders generic custom records as presentation-backed system events", () => {
     const entries = [
-      msg("1", null, "user", "group these changes"),
+      msg("1", null, "user", "run build"),
       entry("custom", "2", null, {
-        customType: "subagents:record",
+        customType: "extension:notice",
         data: {
-          id: "738f21e6-13e8-415",
-          type: "general-purpose",
-          description: "Review Apple diffs",
+          id: "notice-1",
+          type: "build",
+          description: "Build pipeline finished",
           status: "completed",
-          result: "Proposed Apple commit groups",
+          result: "All checks passed",
         },
       }),
       msg("3", "1", "assistant", "done"),
@@ -390,10 +395,21 @@ describe("buildSessionContext", () => {
     const custom = events.find((event) => event.id === "2");
     expect(custom).toMatchObject({
       type: "system",
-      text: expect.stringContaining("Subagent general-purpose 738f21e6-13e8-415: completed"),
+      text: expect.stringContaining("Extension Notice"),
+      presentation: {
+        kind: "custom",
+        title: "Extension Notice",
+        subtitle: "build · notice-1",
+        status: "completed",
+        accent: "success",
+        fields: expect.arrayContaining([
+          { label: "Description", value: "Build pipeline finished" },
+          { label: "Result", value: "All checks passed" },
+        ]),
+      },
     });
-    expect(custom?.text).toContain("Review Apple diffs");
-    expect(custom?.text).toContain("Proposed Apple commit groups");
+    expect(custom?.text).toContain("Build pipeline finished");
+    expect(custom?.text).toContain("All checks passed");
   });
 
   it("does not leak subagent records from an inactive branch", () => {

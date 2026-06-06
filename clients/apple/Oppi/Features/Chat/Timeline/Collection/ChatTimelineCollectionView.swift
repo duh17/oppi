@@ -440,7 +440,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             switch item {
             case .audioClip, .toolCall:
                 return true
-            case .assistantMessage, .error, .systemEvent, .thinking, .userMessage:
+            case .assistantMessage, .customEvent, .error, .systemEvent, .thinking, .userMessage:
                 return false
             }
         }
@@ -909,6 +909,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // Compaction rows now use an explicit chevron button affordance
                 // for expand/collapse to keep row-level tap behavior consistent
                 // with double-tap copy gestures.
+                return
+
+            case .customEvent:
                 return
 
             default:

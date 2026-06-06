@@ -129,6 +129,13 @@ extension ChatTimelineCollectionHost.Controller {
     }
 
     func systemEventRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
+        if case .customEvent(_, let message, let presentation) = item {
+            return CustomTimelineRowConfiguration(
+                message: message,
+                presentation: presentation
+            )
+        }
+
         guard case .systemEvent(_, let message) = item else { return nil }
 
         if let compaction = Self.compactionPresentation(from: message) {

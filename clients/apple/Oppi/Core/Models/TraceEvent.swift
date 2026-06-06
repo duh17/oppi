@@ -28,6 +28,9 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     // Thinking
     let thinking: String?
 
+    // Optional semantic presentation for custom/system events.
+    let presentation: TraceEventPresentation?
+
     init(
         id: String,
         type: TraceEventType,
@@ -40,7 +43,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         toolName: String? = nil,
         isError: Bool? = nil,
         details: JSONValue? = nil,
-        thinking: String? = nil
+        thinking: String? = nil,
+        presentation: TraceEventPresentation? = nil
     ) {
         self.id = id
         self.type = type
@@ -54,7 +58,23 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.isError = isError
         self.details = details
         self.thinking = thinking
+        self.presentation = presentation
     }
+}
+
+struct TraceEventPresentation: Codable, Equatable, Sendable {
+    let kind: String
+    let title: String
+    let subtitle: String?
+    let status: String?
+    let body: String?
+    let fields: [TraceEventPresentationField]?
+    let accent: String?
+}
+
+struct TraceEventPresentationField: Codable, Equatable, Sendable {
+    let label: String
+    let value: String
 }
 
 enum TraceEventType: String, Codable, Sendable {

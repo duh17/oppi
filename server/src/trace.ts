@@ -65,6 +65,23 @@ export interface TraceEvent {
   details?: unknown;
   /** For thinking: thinking content */
   thinking?: string;
+  /** Optional semantic presentation for custom/system events. */
+  presentation?: TraceEventPresentation;
+}
+
+export interface TraceEventPresentationField {
+  label: string;
+  value: string;
+}
+
+export interface TraceEventPresentation {
+  kind: "custom";
+  title: string;
+  subtitle?: string;
+  status?: string;
+  body?: string;
+  fields?: TraceEventPresentationField[];
+  accent?: "info" | "success" | "warning" | "error";
 }
 
 // ─── Raw JSONL Entry (matches pi's session file format) ───
@@ -236,7 +253,6 @@ export function buildSessionContext(
   const supplementalCustomEntries = entries.filter(
     (entry) =>
       entry.type === "custom" &&
-      entry.customType === "subagents:record" &&
       !visibleEntryIds.has(entry.id) &&
       (entry.parentId === null || entry.parentId === undefined) &&
       entry.display !== false,
@@ -306,16 +322,17 @@ export function buildSessionContext(
         if (entry.content && entry.display !== false) {
           const text = extractText(entry.content);
           if (text) {
-            const structured = formatStructuredCustomMessage(text);
             const parent = entry.parentId ? visibleEntryById.get(entry.parentId) : undefined;
-            if (structured && parent?.type === "custom") {
+            if (parent?.type === "custom") {
               break;
             }
+            const presentation = customPresentationFromText(text);
             events.push({
               id: entry.id,
               type: "system",
               timestamp,
-              text: structured ?? text,
+              text: textFromPresentation(presentation),
+              presentation,
             });
           }
         }
@@ -348,17 +365,31 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
   };
 }
 
-function formatStructuredCustomMessage(text: string): string | undefined {
+function customPresentationFromText(text: string): TraceEventPresentation {
   const trimmed = text.trim();
   const rootMatch = trimmed.match(/^<([A-Za-z][\w:-]*)[\s>]/);
-  if (!rootMatch) return undefined;
+  if (!rootMatch) {
+    const lines = trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const firstLine = lines[0] ?? "";
+    const title = firstLine.length > 120 ? "Custom Message" : firstLine || "Custom Message";
+    const body = firstLine.length > 120 ? trimmed : lines.slice(1).join("\n").trim();
+    return {
+      kind: "custom",
+      title: truncateCustomField(title),
+      ...(body ? { body } : {}),
+      accent: "info",
+    };
+  }
 
   const rootName = rootMatch[1] ?? "custom-message";
   const rootBodyMatch = trimmed.match(
     new RegExp(`^<${rootName}[^>]*>([\\s\\S]*)</${rootName}>$`, "i"),
   );
   const body = rootBodyMatch?.[1] ?? trimmed;
-  const fields: Array<{ label: string; value: string }> = [];
+  const fields: TraceEventPresentationField[] = [];
   const tagRegex = /<([A-Za-z][\w:-]*)>([\s\S]*?)<\/\1>/g;
   let match: RegExpExecArray | null;
   while ((match = tagRegex.exec(body))) {
@@ -368,20 +399,28 @@ function formatStructuredCustomMessage(text: string): string | undefined {
     fields.push({ label: titleFromIdentifier(name), value: collapseWhitespace(value) });
   }
 
-  if (fields.length === 0) return undefined;
-
-  const priority = new Map([
-    ["Status", 0],
-    ["Summary", 1],
-    ["Result", 2],
-  ]);
-  fields.sort((a, b) => (priority.get(a.label) ?? 10) - (priority.get(b.label) ?? 10));
-
-  const lines = [titleFromIdentifier(rootName)];
-  for (const field of fields.slice(0, 6)) {
-    lines.push(`${field.label}: ${truncateCustomField(field.value)}`);
+  if (fields.length === 0) {
+    return {
+      kind: "custom",
+      title: titleFromIdentifier(rootName),
+      body: trimmed,
+      accent: "info",
+    };
   }
-  return lines.join("\n");
+
+  const sortedFields = sortPresentationFields(fields);
+  const status = firstFieldValue(sortedFields, "Status");
+
+  return {
+    kind: "custom",
+    title: titleFromIdentifier(rootName),
+    ...(status ? { status } : {}),
+    fields: sortedFields.slice(0, 8).map((field) => ({
+      label: field.label,
+      value: truncateCustomField(field.value),
+    })),
+    accent: accentForStatus(status),
+  };
 }
 
 function titleFromIdentifier(value: string): string {
@@ -402,28 +441,114 @@ function truncateCustomField(value: string): string {
 
 function formatCustomEntryEvent(entry: SessionEntry, timestamp: string): TraceEvent | undefined {
   if (entry.display === false) return undefined;
-  if (entry.customType !== "subagents:record") return undefined;
-
-  const record = asRecord(entry.data);
-  if (!record) return undefined;
-
-  const id = typeof record.id === "string" ? record.id.trim() : "";
-  const type = typeof record.type === "string" ? record.type.trim() : "Agent";
-  const description = typeof record.description === "string" ? record.description.trim() : "";
-  const status = typeof record.status === "string" ? record.status.trim() : "recorded";
-  const result = typeof record.result === "string" ? record.result.trim() : "";
-
-  const titleParts = [type, id].filter((part) => part.length > 0).join(" ");
-  const lines = [`Subagent ${titleParts || "task"}: ${status}`];
-  if (description) lines.push(description);
-  if (result) lines.push("", result);
+  const presentation = customPresentationFromEntry(entry);
+  if (!presentation) return undefined;
 
   return {
     id: entry.id,
     type: "system",
     timestamp,
-    text: lines.join("\n"),
+    text: textFromPresentation(presentation),
+    presentation,
   };
+}
+
+function customPresentationFromEntry(entry: SessionEntry): TraceEventPresentation | undefined {
+  const title = titleFromIdentifier(entry.customType || entry.type || "custom");
+  const source = entry.data ?? entry.content ?? entry.details;
+
+  if (typeof source === "string") {
+    const presentation = customPresentationFromText(source);
+    return { ...presentation, title: presentation.title || title };
+  }
+
+  const record = asRecord(source);
+  if (!record) {
+    return {
+      kind: "custom",
+      title,
+      accent: "info",
+    };
+  }
+
+  const fields = sortPresentationFields(fieldsFromRecord(record));
+  const status = firstFieldValue(fields, "Status");
+  const subtitle = [firstFieldValue(fields, "Type"), firstFieldValue(fields, "Id")]
+    .filter((value): value is string => !!value)
+    .join(" · ");
+
+  return {
+    kind: "custom",
+    title,
+    ...(subtitle ? { subtitle } : {}),
+    ...(status ? { status } : {}),
+    fields: fields.slice(0, 8),
+    accent: accentForStatus(status),
+  };
+}
+
+function fieldsFromRecord(record: Record<string, unknown>): TraceEventPresentationField[] {
+  const fields: TraceEventPresentationField[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    const rendered = renderPrimitiveCustomValue(value);
+    if (!rendered) continue;
+    fields.push({ label: titleFromIdentifier(key), value: truncateCustomField(rendered) });
+  }
+  return fields;
+}
+
+function renderPrimitiveCustomValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+function sortPresentationFields(
+  fields: TraceEventPresentationField[],
+): TraceEventPresentationField[] {
+  const priority = new Map([
+    ["Status", 0],
+    ["Summary", 1],
+    ["Description", 2],
+    ["Result", 3],
+    ["Type", 4],
+    ["Id", 5],
+  ]);
+  return [...fields].sort((a, b) => (priority.get(a.label) ?? 10) - (priority.get(b.label) ?? 10));
+}
+
+function firstFieldValue(fields: TraceEventPresentationField[], label: string): string | undefined {
+  return fields.find((field) => field.label === label)?.value;
+}
+
+function accentForStatus(status: string | undefined): TraceEventPresentation["accent"] {
+  switch (status?.toLowerCase()) {
+    case "completed":
+    case "complete":
+    case "success":
+    case "succeeded":
+      return "success";
+    case "warning":
+    case "warn":
+    case "retrying":
+      return "warning";
+    case "error":
+    case "failed":
+    case "failure":
+      return "error";
+    default:
+      return "info";
+  }
+}
+
+function textFromPresentation(presentation: TraceEventPresentation): string {
+  const lines = [presentation.title];
+  if (presentation.subtitle) lines.push(presentation.subtitle);
+  if (presentation.body) lines.push("", presentation.body);
+  for (const field of presentation.fields ?? []) {
+    lines.push(`${field.label}: ${field.value}`);
+  }
+  return lines.join("\n");
 }
 
 /**
