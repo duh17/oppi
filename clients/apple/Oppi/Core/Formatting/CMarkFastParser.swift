@@ -25,9 +25,11 @@ private func cmarkParsedDocument(_ source: String) -> UnsafeMutablePointer<cmark
         cmark_parser_attach_syntax_extension(parser, tasklistExt)
     }
 
-    // Feed source text.
-    source.withCString { ptr in
-        cmark_parser_feed(parser, ptr, source.utf8.count)
+    // Feed source text. Escape wiki-link label separators before cmark-gfm
+    // sees table delimiters so `[[target|label]]` survives inside table cells.
+    let parserSource = MarkdownWikiLinkRewriter.sourceForCommonMarkParsing(source)
+    parserSource.withCString { ptr in
+        cmark_parser_feed(parser, ptr, parserSource.utf8.count)
     }
 
     let doc = cmark_parser_finish(parser)

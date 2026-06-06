@@ -23,6 +23,31 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func rendersWikiLinksAsClickableWorkspaceNoteLinks() throws {
+        let text = "See [[notes/sessions/oppi-jZhDRKeV|session note]] for context"
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: text,
+            isStreaming: false,
+            canFork: false,
+            onFork: nil,
+            workspaceID: "workspace-1"
+        ))
+        let textView = try #require(timelineFirstTextView(in: view))
+
+        let fullText = textView.attributedText.string
+        #expect(fullText == "See session note for context")
+        let nsText = fullText as NSString
+        let labelRange = nsText.range(of: "session note")
+        #expect(labelRange.location != NSNotFound)
+
+        let linkedValue = textView.attributedText.attribute(.link, at: labelRange.location, effectiveRange: nil)
+        let linkedURL = try #require(linkedValue as? URL)
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(linkedURL))
+        #expect(parsed.workspaceID == "workspace-1")
+        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+    }
+
+    @MainActor
     @Test func enablesLinkDataDetectorsForBareUrls() throws {
         let text = "Visit https://example.com/docs for details"
         let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
@@ -260,6 +285,34 @@ struct AssistantTimelineRowContentViewTests {
         _ = fittedTimelineSize(for: view, width: 370)
         let tableView = timelineFirstView(ofType: NativeTableBlockView.self, in: view)
         #expect(tableView != nil)
+    }
+
+    @MainActor
+    @Test func rendersWikiLinksInsideTableCellsAsClickableWorkspaceNoteLinks() throws {
+        let text = """
+        | Title | Link |
+        | --- | --- |
+        | Session | [[notes/sessions/oppi-jZhDRKeV|session note]] |
+        """
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: text,
+            isStreaming: false,
+            canFork: false,
+            onFork: nil,
+            workspaceID: "workspace-1"
+        ))
+        _ = fittedTimelineSize(for: view, width: 370)
+        let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: view))
+        let textView = try #require(timelineAllTextViews(in: tableView).first)
+
+        let rendered = textView.attributedText.string
+        let labelRange = (rendered as NSString).range(of: "session note")
+        #expect(labelRange.location != NSNotFound)
+        let linkedValue = textView.attributedText.attribute(.link, at: labelRange.location, effectiveRange: nil)
+        let linkedURL = try #require(linkedValue as? URL)
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(linkedURL))
+        #expect(parsed.workspaceID == "workspace-1")
+        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
     }
 
     @MainActor
@@ -671,6 +724,48 @@ struct AssistantTimelineRowContentViewTests {
             return
         }
         #expect(routed == url)
+    }
+
+    @MainActor
+    @Test func givenWorkspaceContextWhenClassifyingWikiLinkThenItRoutesAsWorkspaceFileLink() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "See [[notes/sessions/oppi-jZhDRKeV|session note]]",
+            isStreaming: false,
+            themeID: .light,
+            workspaceID: "workspace-1"
+        ))
+
+        let url = try #require(WorkspaceWikiLinkURL.make(
+            workspaceID: "workspace-1",
+            filePath: "notes/sessions/oppi-jZhDRKeV.md"
+        ))
+        let action = markdownView.classifyLink(url)
+        guard case .fileLink(let payload) = action else {
+            Issue.record("Expected .fileLink, got \(action)")
+            return
+        }
+        #expect(payload.workspaceID == "workspace-1")
+        #expect(payload.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+        #expect(payload.originalURL == url)
+    }
+
+    @MainActor
+    @Test func givenDifferentWorkspaceWhenClassifyingWikiLinkThenItUsesSystemDefault() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "See [[notes/sessions/oppi-jZhDRKeV|session note]]",
+            isStreaming: false,
+            themeID: .light,
+            workspaceID: "workspace-1"
+        ))
+
+        let url = try #require(WorkspaceWikiLinkURL.make(
+            workspaceID: "workspace-2",
+            filePath: "notes/sessions/oppi-jZhDRKeV.md"
+        ))
+        let action = markdownView.classifyLink(url)
+        #expect(action == .systemDefault)
     }
 
     @MainActor

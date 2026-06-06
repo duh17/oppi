@@ -715,6 +715,28 @@ final class NativeTableBlockView: UIView {
 extension NativeTableBlockView: UITextViewDelegate {
     func textView(
         _ textView: UITextView,
+        primaryActionFor textItem: UITextItem,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        guard case let .link(url) = textItem.content,
+              let parsed = WorkspaceWikiLinkURL.parse(url) else {
+            return defaultAction
+        }
+
+        return UIAction { _ in
+            NotificationCenter.default.post(
+                name: .fileLinkTapped,
+                object: FileLinkPayload(
+                    workspaceID: parsed.workspaceID,
+                    filePath: parsed.filePath,
+                    originalURL: url
+                )
+            )
+        }
+    }
+
+    func textView(
+        _ textView: UITextView,
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {

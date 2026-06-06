@@ -258,6 +258,10 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         if scheme == "http" || scheme == "https" {
             return .webLink(normalizedURL)
         }
+        if scheme == WorkspaceWikiLinkURL.scheme,
+           let payload = workspaceWikiLinkPayload(for: normalizedURL) {
+            return .fileLink(payload)
+        }
         if scheme == "file",
            let payload = fileLinkPayload(for: normalizedURL) {
             return .fileLink(payload)
@@ -356,6 +360,20 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         case .fileLink, .deepLink, .systemDefault:
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
+    }
+
+    private func workspaceWikiLinkPayload(for url: URL) -> FileLinkPayload? {
+        guard let parsed = WorkspaceWikiLinkURL.parse(url),
+              let config = currentConfig,
+              parsed.workspaceID == config.workspaceID else {
+            return nil
+        }
+
+        return FileLinkPayload(
+            workspaceID: parsed.workspaceID,
+            filePath: parsed.filePath,
+            originalURL: url
+        )
     }
 
     private func fileLinkPayload(for url: URL) -> FileLinkPayload? {

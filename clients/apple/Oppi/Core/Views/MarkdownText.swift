@@ -274,6 +274,11 @@ enum FlatSegment: Sendable {
         sourceDirectory: String? = nil
     ) -> [Self] {
         let palette = themeID.palette
+        let blocks = MarkdownWikiLinkRewriter.rewrite(
+            blocks: blocks,
+            workspaceID: workspaceID,
+            sourceDirectory: sourceDirectory
+        )
         var result: [Self] = []
         result.reserveCapacity(blocks.count)
 

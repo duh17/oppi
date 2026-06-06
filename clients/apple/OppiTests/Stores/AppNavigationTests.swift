@@ -194,6 +194,29 @@ struct AppNavigationShellRoutingTests {
         #expect(resolved?.fileName == "server.ts")
     }
 
+    @Test func givenWorkspaceRelativeFileWhenResolvingThenItOpensThatWorkspaceFile() throws {
+        let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
+        let originalURL = try #require(WorkspaceWikiLinkURL.make(
+            workspaceID: "workspace-1",
+            filePath: "notes/sessions/oppi-jZhDRKeV.md"
+        ))
+        let payload = FileLinkPayload(
+            workspaceID: "workspace-1",
+            filePath: "notes/sessions/oppi-jZhDRKeV.md",
+            originalURL: originalURL
+        )
+
+        let resolved = FileLinkOpenPolicy.resolve(
+            payload: payload,
+            workspacesByServer: ["server-1": [workspace]]
+        )
+
+        #expect(resolved?.serverId == "server-1")
+        #expect(resolved?.workspace.id == "workspace-1")
+        #expect(resolved?.relativePath == "notes/sessions/oppi-jZhDRKeV.md")
+        #expect(resolved?.fileName == "oppi-jZhDRKeV.md")
+    }
+
     @Test func givenWorkspaceFileOutsideHostMountWhenResolvingThenItIsRejected() {
         let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
         let payload = FileLinkPayload(

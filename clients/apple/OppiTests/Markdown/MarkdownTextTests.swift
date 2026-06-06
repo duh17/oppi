@@ -399,6 +399,111 @@ struct FlatSegmentBuildTests {
     }
 }
 
+// MARK: - Workspace wiki links
+
+@Suite("Workspace wiki links")
+struct WorkspaceWikiLinkRenderingTests {
+    private func textSegment(from segments: [FlatSegment]) throws -> AttributedString {
+        #expect(segments.count == 1)
+        guard segments.count == 1, case .text(let attributed) = segments[0] else {
+            Issue.record("Expected one .text segment, got \(segments)")
+            throw WikiLinkTestFailure()
+        }
+        return attributed
+    }
+
+    private func firstLink(in attributed: AttributedString) throws -> URL {
+        try #require(attributed.runs.compactMap(\.link).first)
+    }
+
+    @Test func givenBareWikiLinkWhenWorkspaceContextExistsThenItRendersAsInternalWorkspaceNoteLink() throws {
+        let blocks = parseCommonMark("See [[oppi-jZhDRKeV]] next")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "See oppi-jZhDRKeV next")
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        #expect(parsed.workspaceID == "workspace-1")
+        #expect(parsed.filePath == "oppi-jZhDRKeV.md")
+    }
+
+    @Test func givenLabeledWikiLinkThenVisibleTextUsesLabelAndTargetUsesPath() throws {
+        let blocks = parseCommonMark("Read [[notes/sessions/oppi-jZhDRKeV|session note]].")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "Read session note.")
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+    }
+
+    @Test func givenMarkdownExtensionInTargetThenPathIsPreserved() throws {
+        let blocks = parseCommonMark("Open [[notes/daily/2026-06-06.md]]")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let attributed = try textSegment(from: segments)
+
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        #expect(parsed.filePath == "notes/daily/2026-06-06.md")
+    }
+
+    @Test func givenExplicitRelativeWikiLinkThenItResolvesAgainstSourceDirectory() throws {
+        let blocks = parseCommonMark("See [[./topic|topic note]]")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: "notes/sessions"
+        )
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "See topic note")
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        #expect(parsed.filePath == "notes/sessions/topic.md")
+    }
+
+    @Test func givenWorkspaceContextMissingThenWikiLinkRendersAsPlainLabelWithoutTapTarget() throws {
+        let blocks = parseCommonMark("See [[notes/daily/2026-06-06|today]]")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "See today")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test func givenUnsupportedHeadingSuffixThenRawWikiSyntaxIsPreserved() throws {
+        let blocks = parseCommonMark("See [[notes/daily/2026-06-06#Heading|today heading]]")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "See [[notes/daily/2026-06-06#Heading|today heading]]")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test func givenWikiSyntaxInsideInlineCodeThenItIsNotRewritten() throws {
+        let blocks = parseCommonMark("Use `[[note]]` literally")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "Use [[note]] literally")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test func givenLabeledWikiSyntaxInsideInlineCodeThenPipeRemainsLiteral() throws {
+        let blocks = parseCommonMark("Use `[[note|label]]` literally")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "Use [[note|label]] literally")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+}
+
+private struct WikiLinkTestFailure: Error {}
+
 // MARK: - MarkdownSegmentCache
 
 @Suite("MarkdownSegmentCache")
@@ -1000,6 +1105,32 @@ struct TableCellInlineContentTests {
             return false
         }
         #expect(hasLink, "FlatSegment.table should preserve link inlines")
+    }
+
+    @Test func flatSegmentTableRewritesWikiLinksWithWorkspaceContext() throws {
+        let md = """
+        | Title | Link |
+        | --- | --- |
+        | Session | [[notes/sessions/oppi-jZhDRKeV|session note]] |
+        """
+        let blocks = parseCommonMark(md)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+
+        #expect(segments.count == 1)
+        guard case .table(_, let rows) = segments[0] else {
+            Issue.record("Expected .table segment")
+            return
+        }
+        let linkInline = try #require(rows[0][1].first)
+        guard case .link(let children, let destination) = linkInline else {
+            Issue.record("Expected wiki link to be rewritten in table cell, got \(linkInline)")
+            return
+        }
+        #expect(plainText(from: children) == "session note")
+        let url = try #require(destination.flatMap(URL.init(string:)))
+        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        #expect(parsed.workspaceID == "workspace-1")
+        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
     }
 }
 
