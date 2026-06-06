@@ -20,8 +20,7 @@ function makeWorkspace(extensions?: string[]): Workspace {
 }
 
 describe("isManagedExtensionName", () => {
-  it("does not reserve permission-gate away from native Pi loading", () => {
-    expect(isManagedExtensionName("permission-gate")).toBe(false);
+  it("does not reserve Oppi built-ins as managed host extensions", () => {
     expect(isManagedExtensionName("ask")).toBe(false);
     expect(isManagedExtensionName("subagents")).toBe(false);
     expect(isManagedExtensionName("voice")).toBe(false);
@@ -39,7 +38,6 @@ describe("built-in extension names", () => {
     expect(isBuiltInExtensionName("subagents")).toBe(true);
     expect(isBuiltInExtensionName("voice")).toBe(true);
     expect(isBuiltInExtensionName("oppi-admin")).toBe(true);
-    expect(isBuiltInExtensionName("permission-gate")).toBe(false);
     expect(isBuiltInExtensionName("memory")).toBe(false);
   });
 });

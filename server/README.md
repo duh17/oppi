@@ -185,6 +185,7 @@ The server ships four built-in extension names:
 
 Oppi built-in names are `ask`, `subagents`, `voice`, and `oppi-admin`.
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
+Approval logic lives in Pi extensions, not in Oppi server config.
 
 Workspace extension behavior is explicit:
 
@@ -216,6 +217,7 @@ Key config sections:
 | `images` | Image attachment preprocessing before upload                                |
 
 Model routing and API keys are managed by pi (`pi auth`), not the oppi config.
+Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
 Quick inspection:
 

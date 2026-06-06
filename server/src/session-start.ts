@@ -94,7 +94,6 @@ export class SessionStartCoordinator {
       this.deps.persistSessionNow(key, session);
 
       try {
-        const usePermissionGate = this.deps.config.permissionGate !== false;
         const skillPathResolver = this.deps.getSkillPathResolver();
         const skillPaths =
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
@@ -142,7 +141,6 @@ export class SessionStartCoordinator {
           workspace,
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
-          permissionGate: usePermissionGate,
           skillPaths,
           builtInExtensionContext: {
             storage: this.deps.storage,

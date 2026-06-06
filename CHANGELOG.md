@@ -60,7 +60,7 @@ Example:
 
 ### Changed
 
-- **Server:** Replaced the custom Oppi permission policy flow with standard Pi extension permission handling for broader extension compatibility.
+- **Server:** Replaced the custom Oppi approval flow with standard Pi extension permission handling for broader extension compatibility.
 - **Client:** App-owned deep links now use only the `oppi://` scheme; legacy `pi://` handling was removed.
 - **Client:** Model switches now apply immediately without the prompt-cache warning dialog.
 - **Client:** Renamed the public diagnostics toggle to “Send Diagnostics to Server” and clarified that it covers performance metrics, client breadcrumbs, and crash diagnostics.
@@ -72,12 +72,12 @@ Example:
 
 ### Removed
 
-- **Server:** Removed the retired server approval-policy stack and related policy routes.
+- **Server:** Removed the retired server approval stack and related routes.
 - **Client:** Removed legacy Apple permission surfaces.
 
 ### Migration notes
 
-- **Server:** Existing Pi extensions with their own input, confirm, or approval flows can use the mobile extension UI bridge and should mostly behave as they do in terminal Pi. Existing configs with retired approval-policy keys still start, but approval behavior now belongs to Pi extensions.
+- **Server:** Existing Pi extensions with their own input, confirm, or approval flows can use the mobile extension UI bridge and should mostly behave as they do in terminal Pi. Existing configs with retired approval keys still start, but approval behavior now belongs to Pi extensions.
 
 ## [0.1.2] - 2026-03-31
 

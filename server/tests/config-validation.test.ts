@@ -126,31 +126,18 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.unknownField: unknown key"))).toBe(true);
   });
 
-  it("accepts legacy policy config without preserving it", () => {
+  it("warns and ignores unknown top-level keys in non-strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      policy: {
-        schemaVersion: 1,
-        fallback: "ask",
-        guardrails: [],
-        permissions: [],
-      },
+      obsoleteField: true,
+      extraConfig: { enabled: true },
     };
 
-    const result = Storage.validateConfig(raw, dir, true);
+    const result = Storage.validateConfig(raw, dir, false);
     expect(result.valid).toBe(true);
-    expect(result.config?.policy).toBeUndefined();
-  });
-
-  it("accepts permissionGate config for compatibility", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      permissionGate: false,
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
-    expect(result.valid).toBe(true);
-    expect(result.config?.permissionGate).toBe(false);
+    expect(result.config).not.toHaveProperty("obsoleteField");
+    expect(result.config).not.toHaveProperty("extraConfig");
+    expect(result.warnings).toContain("config: ignored 2 unknown top-level keys");
   });
 
   it("accepts extensions.subagents config with all fields", () => {

@@ -295,8 +295,8 @@
     {
       "_label": "extension_error: extension raised an error",
       "type": "extension_error",
-      "extensionName": "permission-gate",
-      "error": "Gate connection refused"
+      "extensionName": "review-helper",
+      "error": "Extension backend connection refused"
     },
     {
       "_label": "extension_ui_request: dialog from extension",

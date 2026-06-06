@@ -117,8 +117,8 @@ describe("resolveWorkspaceExtensions", () => {
     expect(result.warnings.some((w) => w.includes("not found"))).toBe(true);
   });
 
-  it("does not treat permission-gate as a managed extension in explicit lists", () => {
-    const result = resolveWorkspaceExtensions(["permission-gate"]);
+  it("does not treat regular host extensions as managed in explicit lists", () => {
+    const result = resolveWorkspaceExtensions(["reviewer"]);
     expect(result.warnings.some((w) => w.includes("managed"))).toBe(false);
   });
 
@@ -137,14 +137,14 @@ describe("listHostExtensions", () => {
     expect(Array.isArray(extensions)).toBe(true);
   });
 
-  it("lists permission-gate as a normal host extension", () => {
+  it("lists host extensions as normal extensions", () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
     const globalDir = join(root, "global");
     mkdirSync(globalDir, { recursive: true });
-    writeFileSync(join(globalDir, "permission-gate.ts"), "export default function() {}\n");
+    writeFileSync(join(globalDir, "reviewer.ts"), "export default function() {}\n");
 
     const extensions = listHostExtensions({ globalDir });
-    expect(extensions.find((e) => e.name === "permission-gate")).toBeDefined();
+    expect(extensions.find((e) => e.name === "reviewer")).toBeDefined();
   });
 
   it("does not list mobile renderers (they live in ~/.pi/agent/mobile-renderers/)", () => {

@@ -33,8 +33,6 @@ export interface ServerConfig {
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
-  /** Compatibility switch for the configured global host extension. */
-  permissionGate?: boolean;
 
   /** PATH entries used for runtime tool execution. */
   runtimePathEntries?: string[];
@@ -43,9 +41,6 @@ export interface ServerConfig {
 
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
-
-  /** Legacy custom server policy config; accepted but ignored. */
-  policy?: unknown;
 
   // Owner/admin bearer token
   token?: string;

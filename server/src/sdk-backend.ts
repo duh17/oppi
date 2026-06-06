@@ -7,7 +7,7 @@
 
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -88,8 +88,6 @@ function resolveRegistryModel(
   return modelRegistry.find(parsed.provider, parsed.model);
 }
 
-const PERMISSION_GATE_EXTENSION_NAME = "permission-gate";
-
 type LoadedExtensionForFilter = {
   path: string;
   resolvedPath: string;
@@ -97,73 +95,32 @@ type LoadedExtensionForFilter = {
 
 export interface SdkExtensionFilterOptions {
   workspaceExtensions?: string[];
-  permissionGateEnabled: boolean;
-  permissionGatePath?: string;
 }
 
 function getLoadedExtensionName(ext: { path: string; resolvedPath?: string }): string {
   return extensionNameFromPath(ext.resolvedPath || ext.path);
 }
 
-function resolveGlobalPermissionGateExtensionPath(agentDir: string): string | undefined {
-  const base = join(agentDir, "extensions", PERMISSION_GATE_EXTENSION_NAME);
-  const candidates = [`${base}.ts`, `${base}.js`, base];
-  return candidates.find((candidate) => existsSync(candidate));
-}
-
-function canonicalPathForCompare(path: string): string {
-  const resolved = resolvePath(path);
-  try {
-    return realpathSync.native(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
-function extensionPathMatches(ext: LoadedExtensionForFilter, targetPath: string): boolean {
-  const target = canonicalPathForCompare(targetPath);
-  return [ext.path, ext.resolvedPath].some(
-    (candidate) => canonicalPathForCompare(candidate) === target,
-  );
-}
-
 export function filterSdkLoadedExtensions<T extends LoadedExtensionForFilter>(
   extensions: T[],
   options: SdkExtensionFilterOptions,
 ): T[] {
-  let filtered = extensions.filter((ext) => {
+  const filtered = extensions.filter((ext) => {
     if (ext.path.startsWith("<inline:")) return true;
 
     const name = getLoadedExtensionName(ext);
     if (isManagedExtensionName(name) || isBuiltInExtensionName(name)) {
       return false;
     }
-
-    if (name !== PERMISSION_GATE_EXTENSION_NAME) {
-      return true;
-    }
-
-    if (!options.permissionGateEnabled) {
-      return false;
-    }
-
-    if (options.permissionGatePath) {
-      return extensionPathMatches(ext, options.permissionGatePath);
-    }
-
-    return options.workspaceExtensions?.includes(PERMISSION_GATE_EXTENSION_NAME) ?? false;
+    return true;
   });
 
   if (options.workspaceExtensions !== undefined) {
     const allowed = new Set(options.workspaceExtensions);
-    filtered = filtered.filter((ext) => {
+    return filtered.filter((ext) => {
       if (ext.path.startsWith("<inline:")) return true;
 
       const name = getLoadedExtensionName(ext);
-      if (name === PERMISSION_GATE_EXTENSION_NAME && options.permissionGateEnabled) {
-        return true;
-      }
-
       return allowed.has(name);
     });
   }
@@ -294,8 +251,6 @@ export interface SdkBackendConfig {
   onEvent: (event: SessionBackendEvent) => void;
   /** Called when the session ends. */
   onEnd: (reason: string) => void;
-  /** Whether to keep the configured global host extension available. Default: true. */
-  permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
   /** Session-scoped deps for Oppi built-in extensions. */
@@ -476,18 +431,9 @@ export class SdkBackend {
       }
 
       // Build extension factories for Oppi-owned in-process tools.
-      // Approval behavior stays in host extensions; SDK sessions load the
-      // configured global host extension through the resource loader.
+      // Approval behavior stays in normal Pi extensions loaded through the
+      // resource loader and workspace/user Pi configuration.
       const extensionFactories: ExtensionFactory[] = [];
-      const usePermissionGate = config.permissionGate !== false;
-      const permissionGateExtensionPath = usePermissionGate
-        ? resolveGlobalPermissionGateExtensionPath(runtimeAgentDir)
-        : undefined;
-      if (usePermissionGate && !permissionGateExtensionPath) {
-        log.warn("sdk.permission_gate_extension.missing", {
-          agentDir: runtimeAgentDir,
-        });
-      }
       extensionFactories.push(
         ...createBuiltInExtensionFactories(workspace, config.builtInExtensionContext),
       );
@@ -498,15 +444,12 @@ export class SdkBackend {
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
       // Built-in Oppi extensions are injected as in-process factories when the
-      // workspace explicitly enables them. The configured global host extension
-      // remains a normal Pi extension so approvals use native extension UI requests.
+      // workspace explicitly enables them. Host extensions keep Pi's normal
+      // discovery/settings/package behavior, including approval UI requests.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        additionalExtensionPaths: permissionGateExtensionPath
-          ? [permissionGateExtensionPath]
-          : undefined,
         additionalSkillPaths: config.skillPaths ?? [],
         noSkills: true,
         noThemes: true,
@@ -552,13 +495,9 @@ export class SdkBackend {
         extensionsOverride: (base) => {
           // Filter out names owned directly by oppi-server from host paths.
           // Built-ins are injected above as inline factories when enabled.
-          // The configured global host extension is kept even when workspace.extensions
-          // is an explicit allowlist, so users do not need to add it to every workspace.
           const allowedNames = workspace?.extensions;
           const filtered = filterSdkLoadedExtensions(base.extensions, {
             workspaceExtensions: allowedNames,
-            permissionGateEnabled: usePermissionGate,
-            permissionGatePath: permissionGateExtensionPath,
           });
 
           // Debug: log extension filtering

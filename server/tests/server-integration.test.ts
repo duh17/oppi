@@ -1024,9 +1024,9 @@ describe("device token API", () => {
   });
 });
 
-// ── Workspace policy routes ──
+// ── Retired workspace routes ──
 
-describe("workspace policy routes", () => {
+describe("retired workspace routes", () => {
   it("GET /workspaces/:id/policy returns 404", async () => {
     const createRes = await post("/workspaces", { name: "policy-check", skills: [] });
     expect(createRes.status).toBe(201);

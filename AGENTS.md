@@ -17,7 +17,7 @@ server/         Server runtime (TypeScript, Node.js 22+)
 
 - `server/src/types.ts` defines the client/server protocol unions.
 - `server/src/session-*.ts` owns session lifecycle, input, queueing, broadcasts, turns, state, summaries, and UI event shaping.
-- `server/src/policy-*.ts` owns command policy, approvals, allowlists, and bash/git heuristics.
+- `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, and `server/src/session-events.ts` own Pi extension UI requests, approvals, and native response plumbing.
 - `server/src/routes/workspaces.ts` owns workspace CRUD plus workspace-home summaries.
 - `server/src/routes/sessions.ts` owns focused-session REST plus unified workspace session-list, archive bucket, attention, and local-session import APIs.
 - `server/src/storage/session-sqlite-store.ts` owns the SQLite read model for recent session snapshots, workspace summaries, and stopped-history buckets.
