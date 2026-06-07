@@ -122,7 +122,6 @@ export interface OppiGoalState {
   continuationCount: number;
   maxTurns: number;
   maxElapsedMs: number;
-  continuationQueued?: boolean;
   lastSummary?: string;
   blocker?: string;
   tasks?: OppiGoalTask[];
@@ -391,7 +390,6 @@ function validGoalState(value: unknown): OppiGoalState | undefined {
       typeof record.maxElapsedMs === "number"
         ? record.maxElapsedMs
         : DEFAULT_MAX_ELAPSED_MS,
-    continuationQueued: record.continuationQueued === true,
     lastSummary:
       typeof record.lastSummary === "string" ? record.lastSummary : undefined,
     blocker: typeof record.blocker === "string" ? record.blocker : undefined,
@@ -739,7 +737,6 @@ export function createOppiGoalExtension(
       {
         ...state,
         status: "complete",
-        continuationQueued: false,
         lastSummary: summary?.trim() || state.lastSummary,
       },
       ctx,
@@ -757,7 +754,6 @@ export function createOppiGoalExtension(
       {
         ...state,
         status: "blocked",
-        continuationQueued: false,
         blocker: blocker?.trim() || summary?.trim() || state.blocker,
         lastSummary: summary?.trim() || state.lastSummary,
       },
@@ -767,7 +763,7 @@ export function createOppiGoalExtension(
 
   function clearGoal(ctx: ExtensionContext): void {
     if (state) {
-      setState({ ...state, status: "cleared", continuationQueued: false }, ctx);
+      setState({ ...state, status: "cleared" }, ctx);
     }
     state = undefined;
     ctx.ui.setWidget(GOAL_WIDGET_KEY, undefined);
@@ -775,12 +771,12 @@ export function createOppiGoalExtension(
 
   function pauseGoal(ctx: ExtensionContext): void {
     if (!state || state.status !== "active") return;
-    setState({ ...state, status: "paused", continuationQueued: false }, ctx);
+    setState({ ...state, status: "paused" }, ctx);
   }
 
   function resumeGoal(ctx: ExtensionContext): void {
     if (!state || state.status !== "paused") return;
-    setState({ ...state, status: "active", continuationQueued: false }, ctx);
+    setState({ ...state, status: "active" }, ctx);
   }
 
   function statusText(): string {
@@ -890,7 +886,6 @@ export function createOppiGoalExtension(
             {
               ...baseState,
               status: "paused",
-              continuationQueued: false,
               lastSummary: summary || baseState.lastSummary,
             },
             ctx,
@@ -902,7 +897,6 @@ export function createOppiGoalExtension(
             {
               ...baseState,
               status: "active",
-              continuationQueued: false,
               lastSummary: summary || baseState.lastSummary,
               blocker: undefined,
             },
@@ -958,8 +952,6 @@ export function createOppiGoalExtension(
 
   pi.on("before_agent_start", () => {
     if (!isGoalActive(state)) return;
-    state = { ...state, continuationQueued: false };
-    persist();
     return {
       message: {
         customType: GOAL_CONTEXT_CUSTOM_TYPE,
@@ -967,12 +959,6 @@ export function createOppiGoalExtension(
         display: false,
       },
     };
-  });
-
-  pi.on("agent_start", () => {
-    if (!isGoalActive(state) || !state.continuationQueued) return;
-    state = { ...state, continuationQueued: false };
-    persist();
   });
 
   pi.on("agent_end", (event, ctx) => {
@@ -1000,7 +986,7 @@ export function createOppiGoalExtension(
       );
       return;
     }
-    if (state.continuationQueued || ctx.hasPendingMessages()) {
+    if (ctx.hasPendingMessages()) {
       setState(countedState, ctx);
       return;
     }
@@ -1010,7 +996,6 @@ export function createOppiGoalExtension(
         ...state,
         turnCount: nextTurnCount,
         continuationCount: state.continuationCount + 1,
-        continuationQueued: true,
       },
       ctx,
     );

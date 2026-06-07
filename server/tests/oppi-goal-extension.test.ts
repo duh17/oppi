@@ -310,9 +310,9 @@ describe("oppi-goal extension", () => {
       expect.objectContaining({
         turnCount: 1,
         continuationCount: 1,
-        continuationQueued: true,
       }),
     );
+    expect(pi.appendEntry.mock.calls.at(-1)?.[1]).not.toHaveProperty("continuationQueued");
     expect(pi.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         customType: "oppi-goal-continuation",
@@ -329,32 +329,28 @@ describe("oppi-goal extension", () => {
     );
   });
 
-  it("clears queued state at agent_start so goal continuations can loop", async () => {
+  it("does not let stale queued persistence block a new continuation", async () => {
     const pi = createMockPi();
-    const ctx = createMockContext();
+    const staleState = { ...activeState("Keep going"), continuationCount: 1, continuationQueued: true };
+    const ctx = createMockContext([
+      { type: "custom", customType: "oppi-goal", data: staleState },
+    ]);
     createOppiGoalExtension(pi as never);
-    await pi.commands.get("goal")?.handler("Keep going", ctx);
 
-    await emit(pi, "agent_end", ctx);
+    await emit(pi, "session_start", ctx);
     pi.appendEntry.mockClear();
     pi.sendMessage.mockClear();
-
-    await emit(pi, "agent_start", ctx);
-    expect(pi.appendEntry).toHaveBeenCalledWith(
-      "oppi-goal",
-      expect.objectContaining({ continuationCount: 1, continuationQueued: false }),
-    );
 
     await emit(pi, "agent_end", ctx);
 
     expect(pi.appendEntry).toHaveBeenCalledWith(
       "oppi-goal",
       expect.objectContaining({
-        turnCount: 2,
+        turnCount: 1,
         continuationCount: 2,
-        continuationQueued: true,
       }),
     );
+    expect(pi.appendEntry.mock.calls.at(-1)?.[1]).not.toHaveProperty("continuationQueued");
     expect(pi.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ customType: "oppi-goal-continuation" }),
       { triggerTurn: true, deliverAs: "followUp" },
@@ -403,7 +399,6 @@ describe("oppi-goal extension", () => {
       expect.objectContaining({
         status: "blocked",
         turnCount: 1,
-        continuationQueued: false,
         blocker: expect.stringContaining("provider stream ended"),
       }),
     );
