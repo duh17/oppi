@@ -130,6 +130,43 @@ struct WorkspaceEditView: View {
 
     var body: some View {
         List {
+            Section("Details") {
+                TextField("Name", text: $name)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("workspace.edit.name")
+                TextField("Description", text: $description)
+                    .accessibilityIdentifier("workspace.edit.description")
+                TextField("Icon (SF Symbol or emoji)", text: $icon)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("workspace.edit.icon")
+            }
+            .selectionDisabled()
+
+            Section("Workspace Folder") {
+                TextField("~/workspace/project (must exist)", text: $hostMount)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .font(.system(.body, design: .monospaced))
+                    .accessibilityIdentifier("workspace.edit.hostMount")
+
+                Text("Leave empty to use the server home folder. If the folder doesn’t exist, use Create this folder below; Oppi asks before creating one directory.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                hostMountValidationView
+            }
+            .selectionDisabled()
+
+            Section("Workspace Changes") {
+                Toggle("Show workspace changes in chat", isOn: $gitStatusEnabled)
+
+                Text("Shows branch, changed files, and line stats above the chat.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+            .selectionDisabled()
+
             Section("Workspace Instructions") {
                 Button {
                     isShowingSystemPromptEditor = true
@@ -172,21 +209,6 @@ struct WorkspaceEditView: View {
             }
             .selectionDisabled()
 
-            Section("Identity") {
-                TextField("Name", text: $name)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("workspace.edit.name")
-                TextField("Description", text: $description)
-                    .accessibilityIdentifier("workspace.edit.description")
-                TextField("Icon (SF Symbol or emoji)", text: $icon)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .accessibilityIdentifier("workspace.edit.icon")
-            }
-            .selectionDisabled()
-
-            extensionsSection
-
             if skills.isEmpty {
                 Section("Skills") {
                     Text("Loading skills…")
@@ -219,29 +241,7 @@ struct WorkspaceEditView: View {
                 }
             }
 
-            Section("Workspace Folder") {
-                TextField("~/workspace/project (must exist)", text: $hostMount)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .font(.system(.body, design: .monospaced))
-                    .accessibilityIdentifier("workspace.edit.hostMount")
-
-                Text("Leave empty to use the server home folder. If the folder doesn’t exist, use Create this folder below; Oppi asks before creating one directory.")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-
-                hostMountValidationView
-            }
-            .selectionDisabled()
-
-            Section("Workspace Changes") {
-                Toggle("Show workspace changes in chat", isOn: $gitStatusEnabled)
-
-                Text("Shows branch, changed files, and line stats above the chat.")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            }
-            .selectionDisabled()
+            extensionsSection
 
             if runtime == .sandbox {
                 Section {

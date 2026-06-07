@@ -66,7 +66,9 @@ struct SettingsView: View {
                 NavigationLink("Import Theme") {
                     ThemeImportView()
                 }
+            }
 
+            Section {
                 Button {
                     showAvatarPicker = true
                 } label: {
@@ -101,6 +103,10 @@ struct SettingsView: View {
                         .frame(width: 20, height: 20)
                         .id(spinnerStyle)
                 }
+            } header: {
+                Text("Chat Display")
+            } footer: {
+                Text("Controls how chat activity appears on this device.")
             }
 
             Section {
@@ -186,9 +192,9 @@ struct SettingsView: View {
                     useMonoMessages: useMonoMessages
                 )
             } header: {
-                Text("Typography")
+                Text("Text")
             } footer: {
-                Text("Typography settings are saved on this device.")
+                Text("Text settings are saved on this device.")
             }
 
             Section {
@@ -210,25 +216,11 @@ struct SettingsView: View {
                     AppPreferences.ScreenAwake.setTimeoutPreset(newValue)
                     ScreenAwakeController.shared.refreshFromPreferences()
                 }
-            } header: {
-                Text("Sessions")
-            } footer: {
-                Text(screenAwakeFooter)
-            }
 
-            Section {
-                NavigationLink {
-                    QuickCommentsSettingsView()
-                } label: {
-                    Label("Quick Comments", systemImage: "text.bubble")
-                }
-            } header: {
-                Text("Text Selection")
-            } footer: {
-                Text("Edit the quick comments shown after selecting text and choosing Comment.")
-            }
+                Text(screenAwakeDetail)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
 
-            Section {
                 Picker("Open Links", selection: $linkOpeningMode) {
                     ForEach(AppPreferences.Browser.LinkOpeningMode.allCases) { mode in
                         Text(mode.label).tag(mode)
@@ -242,10 +234,18 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
             } header: {
-                Text("Browser")
+                Text("Sessions")
+            } footer: {
+                Text("Session defaults are saved on this device.")
             }
 
             Section {
+                NavigationLink {
+                    QuickCommentsSettingsView()
+                } label: {
+                    Label("Quick Comments", systemImage: "text.bubble")
+                }
+
                 Picker("Voice Replies", selection: $voiceReplyMode) {
                     ForEach(AppPreferences.Voice.ReplyMode.allCases) { mode in
                         Text(mode.label).tag(mode)
@@ -268,12 +268,11 @@ struct SettingsView: View {
                     AppPreferences.Voice.setEngineMode(newValue)
                 }
             } header: {
-                Text("Voice")
+                Text("Input")
             } footer: {
                 Text(
-                    "Voice replies can stay manual or follow each reply's playback behavior. "
-                        + "Session-specific changes still happen in chat. "
-                        + "Server dictation uses your Mac's ASR model; on-device dictation uses Apple's local dictation."
+                    "Controls text selection shortcuts, voice replies, and dictation defaults. "
+                        + "Session-specific changes still happen in chat."
                 )
             }
 
@@ -287,9 +286,7 @@ struct SettingsView: View {
                 }
             }
 
-            securitySection
-
-            diagnosticsSection
+            privacySecuritySection
 
             Section("Storage") {
                 if let cacheSizeText {
@@ -374,7 +371,7 @@ struct SettingsView: View {
         return "\(version) (\(build))"
     }
 
-    private var screenAwakeFooter: String {
+    private var screenAwakeDetail: String {
         switch screenAwakePreset {
         case .off:
             return "Keeps the screen on while voice input is active or the agent is working."
@@ -383,44 +380,21 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Diagnostics Section
+    // MARK: - Privacy & Security Section
 
-    @ViewBuilder
-    private var diagnosticsSection: some View {
-        if TelemetryMode.current == .public {
-            // Release builds: opt-in toggle for diagnostics to user's own server.
-            Section {
-                Toggle("Send Diagnostics to Server", isOn: $telemetryEnabled)
-                    .onChange(of: telemetryEnabled) { _, newValue in
-                        AppPreferences.Telemetry.setEnabled(newValue)
-                        MetricKitService.shared.refreshAfterPreferenceChange()
-                        DeviceResourceSampler.shared.refreshAfterPreferenceChange()
-                    }
-            } header: {
-                Text("Diagnostics")
-            } footer: {
-                Text(
-                    "Send performance metrics, client logs, and crash diagnostics to your server. "
-                        + "Data stays on your server and is never shared externally."
-                )
-            }
-        } else {
-            // Internal/debug builds: always active, no toggle needed.
-            Section {
-                Text("Diagnostics are active (internal build)")
-                    .foregroundStyle(.themeComment)
-            } header: {
-                Text("Diagnostics")
-            } footer: {
-                Text("Performance metrics are uploaded automatically in internal builds.")
-            }
-        }
+    private var privacySecurityFooter: String {
+        let bio = BiometricService.shared
+        let authenticationText = biometricEnabled
+            ? "Sensitive local actions require \(bio.biometricName)."
+            : "Sensitive local actions skip device authentication."
+        let diagnosticsText = TelemetryMode.current == .public
+            ? "Diagnostics stay on your server and are never shared externally."
+            : "Internal builds upload performance metrics automatically."
+        return "\(authenticationText) \(diagnosticsText)"
     }
 
-    // MARK: - Security Section
-
     @ViewBuilder
-    private var securitySection: some View {
+    private var privacySecuritySection: some View {
         let bio = BiometricService.shared
 
         Section {
@@ -433,14 +407,22 @@ struct SettingsView: View {
             .onChange(of: biometricEnabled) { _, newValue in
                 bio.isEnabled = newValue
             }
-        } header: {
-            Text("Security")
-        } footer: {
-            if biometricEnabled {
-                Text("Sensitive local actions require \(bio.biometricName).")
+
+            if TelemetryMode.current == .public {
+                Toggle("Send Diagnostics to Server", isOn: $telemetryEnabled)
+                    .onChange(of: telemetryEnabled) { _, newValue in
+                        AppPreferences.Telemetry.setEnabled(newValue)
+                        MetricKitService.shared.refreshAfterPreferenceChange()
+                        DeviceResourceSampler.shared.refreshAfterPreferenceChange()
+                    }
             } else {
-                Text("Sensitive local actions skip device authentication.")
+                Text("Diagnostics are active (internal build)")
+                    .foregroundStyle(.themeComment)
             }
+        } header: {
+            Text("Privacy & Security")
+        } footer: {
+            Text(privacySecurityFooter)
         }
     }
 
