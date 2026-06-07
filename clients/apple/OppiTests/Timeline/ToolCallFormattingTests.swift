@@ -164,6 +164,15 @@ struct ToolCallFormattingTests {
         #expect(!result.contains("-"))
     }
 
+    @Test func displayFilePathLimitOnlyDefaultsToStartLineOne() {
+        let args: [String: JSONValue] = [
+            "path": .string("file.swift"),
+            "limit": .number(20),
+        ]
+        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
+        #expect(result == "file.swift:1-20")
+    }
+
     @Test func displayFilePathNoRangeForWrite() {
         let args: [String: JSONValue] = [
             "path": .string("file.swift"),
@@ -177,6 +186,44 @@ struct ToolCallFormattingTests {
     @Test func displayFilePathFallsBackToSummary() {
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: nil, argsSummary: "some summary")
         #expect(result == "some summary")
+    }
+
+    @Test func compactReadDisplayTitleShowsSkillName() {
+        let args: [String: JSONValue] = [
+            "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
+            "offset": .number(1),
+            "limit": .number(220),
+        ]
+        let result = ToolCallFormatting.compactReadDisplayTitle(
+            tool: "read",
+            args: args,
+            argsSummary: ""
+        )
+        #expect(result == "[skill] oppi-dev:1-220")
+    }
+
+    @Test func compactReadDisplayTitleIgnoresRegularMarkdown() {
+        let args: [String: JSONValue] = [
+            "path": .string("/Users/dev/workspace/oppi/README.md"),
+        ]
+        let result = ToolCallFormatting.compactReadDisplayTitle(
+            tool: "read",
+            args: args,
+            argsSummary: ""
+        )
+        #expect(result == nil)
+    }
+
+    @Test func compactReadDisplayTitleRequiresReadTool() {
+        let args: [String: JSONValue] = [
+            "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
+        ]
+        let result = ToolCallFormatting.compactReadDisplayTitle(
+            tool: "write",
+            args: args,
+            argsSummary: ""
+        )
+        #expect(result == nil)
     }
 
     // MARK: - Parse Arg Value

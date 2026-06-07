@@ -436,6 +436,53 @@ struct ToolPresentationBuilderTests {
         #expect(config.titleLineBreakMode == .byTruncatingMiddle)
     }
 
+    @Test("read collapsed skill markdown shows skill label")
+    func readCollapsedSkillMarkdown() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: /Users/dev/.pi/agent/skills/oppi-dev/SKILL.md",
+            outputPreview: "---\nname: oppi-dev\n---",
+            isError: false, isDone: true,
+            context: emptyContext(args: [
+                "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
+                "offset": .number(1),
+                "limit": .number(220),
+            ])
+        )
+
+        #expect(config.title == "[skill] oppi-dev:1-220")
+        #expect(config.toolNamePrefix == "read")
+        #expect(config.languageBadge == nil)
+        #expect(config.titleLineBreakMode == .byTruncatingTail)
+    }
+
+    @Test("read expanded skill markdown keeps file path")
+    func readExpandedSkillMarkdownKeepsPath() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: /Users/dev/.pi/agent/skills/oppi-dev/SKILL.md",
+            outputPreview: "# Oppi Dev",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),
+                    "offset": .number(1),
+                    "limit": .number(220),
+                ],
+                expanded: ["t1"],
+                fullOutput: "# Oppi Dev"
+            )
+        )
+
+        #expect(config.title == "~/.pi/agent/skills/oppi-dev/SKILL.md:1-220")
+        #expect(config.languageBadge == "Markdown")
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content")
+            return
+        }
+        #expect(text == "# Oppi Dev")
+    }
+
     @Test("read ignores segment title override so path truncation stays informative")
     func readIgnoresSegmentTitleOverride() {
         let config = ToolPresentationBuilder.build(

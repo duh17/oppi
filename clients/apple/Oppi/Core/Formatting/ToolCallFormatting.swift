@@ -102,17 +102,60 @@ enum ToolCallFormatting {
 
         var display = normalizedDisplayPath(path)
 
-        // Append line range for read tool
         if isReadTool(tool) {
-            let offset = args?["offset"]?.numberValue.map(Int.init)
-            let limit = args?["limit"]?.numberValue.map(Int.init)
-            if let offset {
-                let end = limit.map { offset + $0 - 1 }
-                display += ":\(offset)\(end.map { "-\($0)" } ?? "")"
-            }
+            display += readLineRangeSuffix(from: args)
         }
 
         return display
+    }
+
+    /// Compact title for read calls that point at well-known pi resource files.
+    ///
+    /// Mirrors pi TUI's compact `SKILL.md` handling: collapsed reads of a
+    /// skill's instruction file should identify the skill instead of spending
+    /// the whole row on an implementation path.
+    static func compactReadDisplayTitle(
+        tool: String,
+        args: [String: JSONValue]?,
+        argsSummary: String
+    ) -> String? {
+        guard isReadTool(tool),
+              let path = filePath(from: args) ?? parseArgValue("path", from: argsSummary),
+              let skillName = skillNameFromReadPath(path) else {
+            return nil
+        }
+
+        return "[skill] \(skillName)\(readLineRangeSuffix(from: args))"
+    }
+
+    private static func skillNameFromReadPath(_ rawPath: String) -> String? {
+        let components = normalizedPathComponents(rawPath)
+        guard components.last == "SKILL.md",
+              components.count >= 2 else {
+            return nil
+        }
+
+        let parent = components[components.count - 2]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return parent.isEmpty ? nil : parent
+    }
+
+    private static func normalizedPathComponents(_ rawPath: String) -> [String] {
+        rawPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/")
+            .map(String.init)
+    }
+
+    static func readLineRangeSuffix(from args: [String: JSONValue]?) -> String {
+        let offset = args?["offset"]?.numberValue.map(Int.init)
+        let limit = args?["limit"]?.numberValue.map(Int.init)
+        guard offset != nil || limit != nil else { return "" }
+
+        let start = offset ?? 1
+        let end = limit.map { start + $0 - 1 }
+        return ":\(start)\(end.map { "-\($0)" } ?? "")"
     }
 
     private static func normalizedDisplayPath(_ rawPath: String) -> String {

@@ -261,15 +261,28 @@ enum ToolPresentationBuilder {
                 tool: normalizedTool, args: args, argsSummary: argsSummary
             )
             let fileMetadata = filePresentationMetadata(args: args, argsSummary: argsSummary)
-            result.title = displayPath.isEmpty ? normalizedTool : displayPath
             result.toolNamePrefix = normalizedTool
             result.toolNameColor = UIColor(Color.themeCyan)
-            result.titleLineBreakMode = .byTruncatingMiddle
 
-            if fileMetadata.fileType == .markdown || fileMetadata.fileType == .image {
-                result.languageBadge = fileMetadata.fileType?.displayLabel
+            if normalizedTool == "read",
+               !isExpanded,
+               let compactTitle = ToolCallFormatting.compactReadDisplayTitle(
+                   tool: normalizedTool,
+                   args: args,
+                   argsSummary: argsSummary
+               ) {
+                result.title = compactTitle
+                result.titleLineBreakMode = .byTruncatingTail
+                result.languageBadge = nil
             } else {
-                result.languageBadge = fileMetadata.language?.displayName
+                result.title = displayPath.isEmpty ? normalizedTool : displayPath
+                result.titleLineBreakMode = .byTruncatingMiddle
+
+                if fileMetadata.fileType == .markdown || fileMetadata.fileType == .image {
+                    result.languageBadge = fileMetadata.fileType?.displayLabel
+                } else {
+                    result.languageBadge = fileMetadata.language?.displayName
+                }
             }
 
             if normalizedTool == "edit" {
