@@ -159,6 +159,8 @@ struct ReadySessionScrollToBottomTests {
                 sessionId: sessionManager.sessionId,
                 workspaceId: "ws-test",
                 isBusy: isBusy,
+                extensionWorkingState: nil,
+                extensionHiddenThinkingLabel: nil,
                 currentModel: nil,
                 connection: connection,
                 scrollController: scrollController,

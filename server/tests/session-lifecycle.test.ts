@@ -302,7 +302,7 @@ describe("SessionManager extension UI", () => {
       text: "Act on findings",
       widgetKey: "review",
       widgetLines: ["Review active"],
-      widgetPlacement: "above-editor",
+      widgetPlacement: "aboveEditor",
     });
 
     const notif = events.find((e) => e.type === "extension_ui_notification");
@@ -317,7 +317,7 @@ describe("SessionManager extension UI", () => {
       text: "Act on findings",
       widgetKey: "review",
       widgetLines: ["Review active"],
-      widgetPlacement: "above-editor",
+      widgetPlacement: "aboveEditor",
     });
   });
 
@@ -347,7 +347,7 @@ describe("SessionManager extension UI", () => {
       nativeSurface: {
         version: 1,
         id: "extension-picked-id",
-        source: "request",
+        source: "widget",
         presentation: { style: "surfacePanel" },
         blocks: [{ type: "text", spans: [{ text: "Agents active" }] }],
       },
@@ -447,7 +447,6 @@ describe("SessionManager extension UI", () => {
         method: "setWidget",
         widgetKey: "agents",
         widgetLines: undefined,
-        nativeSurface: undefined,
       }),
       expect.objectContaining({
         type: "extension_ui_notification",
@@ -493,7 +492,7 @@ describe("SessionManager extension UI", () => {
   });
 
   it("respondToUIRequest clears pending request", () => {
-    const { manager, active } = makeManagerHarness();
+    const { manager, active, sdkBackend } = makeManagerHarness();
 
     // Set up a pending request
     active.pendingUIRequests.set("ui-3", {
@@ -511,7 +510,29 @@ describe("SessionManager extension UI", () => {
 
     const result = manager.respondToUIRequest("s1", response);
     expect(result).toBe(true);
+    expect(sdkBackend.respondToExtensionUIRequest).toHaveBeenCalledWith(response);
     expect(active.pendingUIRequests.has("ui-3")).toBe(false);
+  });
+
+  it("respondToUIRequest keeps pending request when the SDK bridge rejects delivery", () => {
+    const { manager, active, sdkBackend } = makeManagerHarness();
+    vi.mocked(sdkBackend.respondToExtensionUIRequest).mockReturnValueOnce(false);
+
+    active.pendingUIRequests.set("ui-undelivered", {
+      type: "extension_ui_request",
+      id: "ui-undelivered",
+      method: "confirm",
+      title: "Are you sure?",
+    });
+
+    const result = manager.respondToUIRequest("s1", {
+      type: "extension_ui_response",
+      id: "ui-undelivered",
+      confirmed: true,
+    });
+
+    expect(result).toBe(false);
+    expect(active.pendingUIRequests.has("ui-undelivered")).toBe(true);
   });
 
   it("clears settled extension UI requests so they are not replayed", () => {
@@ -536,7 +557,7 @@ describe("SessionManager extension UI", () => {
     expect(manager.getPendingUIRequestMessages("s1")).toEqual([]);
   });
 
-  it("preserves native surfaces when replaying pending extension UI requests", () => {
+  it("does not replay request-side native surfaces for blocking extension UI", () => {
     const { manager } = makeManagerHarness();
 
     feedEvent(manager, "s1", {
@@ -547,23 +568,19 @@ describe("SessionManager extension UI", () => {
       nativeSurface: {
         version: 1,
         id: "request:plan-editor",
-        source: "custom",
-        presentation: { style: "sheet", title: "Edit plan" },
+        source: "widget",
+        presentation: { style: "surfacePanel", title: "Edit plan" },
         blocks: [{ type: "text", spans: [{ text: "Review before submitting." }] }],
       },
     });
 
-    expect(manager.getPendingUIRequestMessages("s1")).toEqual([
-      expect.objectContaining({
-        type: "extension_ui_request",
-        id: "ui-native",
-        sessionId: "s1",
-        nativeSurface: expect.objectContaining({
-          id: "request:plan-editor",
-          source: "custom",
-        }),
-      }),
-    ]);
+    const [message] = manager.getPendingUIRequestMessages("s1");
+    expect(message).toMatchObject({
+      type: "extension_ui_request",
+      id: "ui-native",
+      sessionId: "s1",
+    });
+    expect("nativeSurface" in (message as Record<string, unknown>)).toBe(false);
   });
 
   it("respondToUIRequest returns false for unknown request", () => {

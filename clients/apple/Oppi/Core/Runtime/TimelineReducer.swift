@@ -65,6 +65,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
+    private var extensionToolsExpanded: Bool?
 
     /// Separate store for full tool output.
     let toolOutputStore = ToolOutputStore()
@@ -110,6 +111,26 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Frozen elapsed duration for a completed tool call.
     func toolElapsed(for id: String) -> Int? {
         toolElapsedSeconds[id]
+    }
+
+    func applyExtensionToolsExpanded(_ expanded: Bool) {
+        extensionToolsExpanded = expanded
+        let toolIDs = items.compactMap { item -> String? in
+            guard case .toolCall(let id, let tool, _, _, _, _, _) = item,
+                  ToolCallFormatting.normalized(tool) != "ask" else {
+                return nil
+            }
+            return id
+        }
+        let before = expandedItemIDs
+        if expanded {
+            expandedItemIDs.formUnion(toolIDs)
+        } else {
+            expandedItemIDs.subtract(toolIDs)
+        }
+        if expandedItemIDs != before {
+            bumpRenderVersion()
+        }
     }
 
     /// Trace event IDs from the last successful history load.
@@ -921,6 +942,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         let before = renderMutationCheckpoint()
+        let beforeExpandedItemIDs = expandedItemIDs
         let previousArgs = toolArgsStore.args(for: toolEventId)
         let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
         finalizeAssistantMessage()
@@ -978,7 +1000,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if let callSegments, !callSegments.isEmpty {
             toolSegmentStore.setCallSegments(callSegments, for: toolEventId)
         }
+        if extensionToolsExpanded == true, ToolCallFormatting.normalized(tool) != "ask" {
+            expandedItemIDs.insert(toolEventId)
+        }
         return renderMutationCheckpoint() != before ||
+            expandedItemIDs != beforeExpandedItemIDs ||
             toolArgsStore.args(for: toolEventId) != previousArgs ||
             toolSegmentStore.callSegments(for: toolEventId) != previousCallSegments
     }

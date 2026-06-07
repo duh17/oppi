@@ -3,6 +3,7 @@ import {
   runtimeCommandSuccess,
   type AgentRuntimeCommandTransport,
 } from "./agent-runtime-transport.js";
+import { consumeSyntheticE2EUIRequest, recordE2EUIResponse } from "./e2e-ui-harness-state.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type {
@@ -131,6 +132,7 @@ export class WsMessageHandler {
       }
 
       case "extension_ui_response": {
+        recordE2EUIResponse(session.id, msg);
         const ok = this.deps.sessions.respondToUIRequest(session.id, {
           type: "extension_ui_response",
           id: msg.id,
@@ -139,6 +141,9 @@ export class WsMessageHandler {
           cancelled: msg.cancelled,
         });
         if (!ok) {
+          if (consumeSyntheticE2EUIRequest(session.id, msg.id)) {
+            return;
+          }
           send({ type: "error", error: `UI request not found: ${msg.id}` });
         }
         return;

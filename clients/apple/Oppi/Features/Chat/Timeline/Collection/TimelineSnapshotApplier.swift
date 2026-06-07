@@ -16,7 +16,8 @@ enum TimelineSnapshotApplier {
         previousStreamingAssistantID: String?,
         sessionId: String? = nil,
         themeChanged: Bool = false,
-        isBusy: Bool = false
+        isBusy: Bool = false,
+        forceReconfigureIDs: [String] = []
     ) {
         // Fast path: when no previous items exist (cold start), skip change
         // detection entirely — everything is new.
@@ -52,14 +53,18 @@ enum TimelineSnapshotApplier {
 
         if idsUnchanged {
             // Minimal perf tracking for the streaming fast path.
-            let changedIDs = changedItemIDsForReconfigure(
+            let changedIDs = mergedReconfigureIDs(
+                changedItemIDsForReconfigure(
+                    nextIDs: nextIDs,
+                    nextItemByID: nextItemByID,
+                    previousItemByID: previousItemByID,
+                    hiddenCount: hiddenCount,
+                    previousHiddenCount: previousHiddenCount,
+                    streamingAssistantID: streamingAssistantID,
+                    previousStreamingAssistantID: previousStreamingAssistantID
+                ),
                 nextIDs: nextIDs,
-                nextItemByID: nextItemByID,
-                previousItemByID: previousItemByID,
-                hiddenCount: hiddenCount,
-                previousHiddenCount: previousHiddenCount,
-                streamingAssistantID: streamingAssistantID,
-                previousStreamingAssistantID: previousStreamingAssistantID
+                forceReconfigureIDs: forceReconfigureIDs
             )
             ChatTimelinePerf.beginTimelineApplyCycle(
                 itemCount: nextIDs.count,
@@ -87,16 +92,20 @@ enum TimelineSnapshotApplier {
         let dedupedChangedIDs: [String]
         do {
             let nextIDSet = Set(nextIDs)
-            dedupedChangedIDs = reconfigureItemIDs(
+            dedupedChangedIDs = mergedReconfigureIDs(
+                reconfigureItemIDs(
+                    nextIDs: nextIDs,
+                    nextIDSet: nextIDSet,
+                    nextItemByID: nextItemByID,
+                    previousItemByID: previousItemByID,
+                    hiddenCount: hiddenCount,
+                    previousHiddenCount: previousHiddenCount,
+                    streamingAssistantID: streamingAssistantID,
+                    previousStreamingAssistantID: previousStreamingAssistantID,
+                    themeChanged: themeChanged
+                ),
                 nextIDs: nextIDs,
-                nextIDSet: nextIDSet,
-                nextItemByID: nextItemByID,
-                previousItemByID: previousItemByID,
-                hiddenCount: hiddenCount,
-                previousHiddenCount: previousHiddenCount,
-                streamingAssistantID: streamingAssistantID,
-                previousStreamingAssistantID: previousStreamingAssistantID,
-                themeChanged: themeChanged
+                forceReconfigureIDs: forceReconfigureIDs
             )
         }
 
@@ -138,6 +147,22 @@ enum TimelineSnapshotApplier {
             FrameBudgetMonitor.shared.endSection()
         }
         ChatTimelinePerf.endCollectionApply(applyToken)
+    }
+
+    private static func mergedReconfigureIDs(
+        _ changedIDs: [String],
+        nextIDs: [String],
+        forceReconfigureIDs: [String]
+    ) -> [String] {
+        guard !forceReconfigureIDs.isEmpty else { return changedIDs }
+        let nextIDSet = Set(nextIDs)
+        var seen = Set(changedIDs)
+        var merged = changedIDs
+        for id in forceReconfigureIDs where nextIDSet.contains(id) && !seen.contains(id) {
+            merged.append(id)
+            seen.insert(id)
+        }
+        return merged
     }
 
     /// Filter out the load-more row from reconfigure during animated applies.

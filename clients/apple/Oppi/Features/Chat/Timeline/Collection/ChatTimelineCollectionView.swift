@@ -23,6 +23,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let hiddenCount: Int
         let renderWindowStep: Int
         let isBusy: Bool
+        let showsWorkingIndicator: Bool
         let streamingAssistantID: String?
         let sessionId: String
         let workspaceId: String?
@@ -37,6 +38,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let toolDetailsStore: ToolDetailsStore
         let connection: ServerConnection
         let currentModel: String?
+        let extensionWorkingState: ExtensionWorkingState?
+        let extensionHiddenThinkingLabel: String?
         let audioPlayer: AudioPlayerService
         let audioLifecycleCoordinator: AudioLifecycleCoordinator?
         let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -48,6 +51,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             hiddenCount: Int,
             renderWindowStep: Int,
             isBusy: Bool,
+            showsWorkingIndicator: Bool? = nil,
             streamingAssistantID: String?,
             sessionId: String,
             workspaceId: String?,
@@ -62,6 +66,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             toolDetailsStore: ToolDetailsStore? = nil,
             connection: ServerConnection,
             currentModel: String? = nil,
+            extensionWorkingState: ExtensionWorkingState? = nil,
+            extensionHiddenThinkingLabel: String? = nil,
             audioPlayer: AudioPlayerService,
             audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
@@ -72,6 +78,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.hiddenCount = hiddenCount
             self.renderWindowStep = renderWindowStep
             self.isBusy = isBusy
+            self.showsWorkingIndicator = showsWorkingIndicator ?? isBusy
             self.streamingAssistantID = streamingAssistantID
             self.sessionId = sessionId
             self.workspaceId = workspaceId
@@ -86,6 +93,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
             self.connection = connection
             self.currentModel = currentModel
+            self.extensionWorkingState = extensionWorkingState
+            self.extensionHiddenThinkingLabel = extensionHiddenThinkingLabel
             self.audioPlayer = audioPlayer
             self.audioLifecycleCoordinator = audioLifecycleCoordinator
             self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
@@ -220,6 +229,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             set { context.currentModel = newValue }
         }
 
+        var currentExtensionWorkingState: ExtensionWorkingState? {
+            get { context.extensionWorkingState }
+            set { context.extensionWorkingState = newValue }
+        }
+
+        var currentExtensionHiddenThinkingLabel: String? {
+            get { context.extensionHiddenThinkingLabel }
+            set { context.extensionHiddenThinkingLabel = newValue }
+        }
+
         var interactionContext: TimelineInteractionContext {
             context.interactionContext
         }
@@ -237,6 +256,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousStreamingAssistantID: String?
         private var previousHiddenCount = 0
         private var previousItemCount = 0
+        private var previousShowsWorkingIndicator = false
+        private var previousExtensionWorkingState: ExtensionWorkingState?
+        private var previousHiddenThinkingLabel: String?
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         var lastObservedContentOffsetY: CGFloat?
@@ -542,8 +564,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let structurallyUnchanged = configuration.items.count == previousItemCount
                 && configuration.streamingAssistantID == previousStreamingAssistantID
                 && configuration.isBusy == isTimelineBusy
+                && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
                 && configuration.hiddenCount == previousHiddenCount
                 && !appearanceChanged
+                && configuration.extensionWorkingState == previousExtensionWorkingState
+                && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
 
             if structurallyUnchanged,
                let streamingID = configuration.streamingAssistantID,
@@ -601,6 +626,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
+                previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+                previousExtensionWorkingState = configuration.extensionWorkingState
+                previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
                 isTimelineBusy = configuration.isBusy
 
                 let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
@@ -656,7 +684,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     previousHiddenCount = configuration.hiddenCount
                     previousItemCount = configuration.items.count
                     previousThemeID = currentThemeID
-                        isTimelineBusy = configuration.isBusy
+                    previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+                    previousExtensionWorkingState = configuration.extensionWorkingState
+                    previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
+                    isTimelineBusy = configuration.isBusy
                     ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
                     updateDetachedStreamingHintVisibility()
                     return
@@ -696,6 +727,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
+                previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+                previousExtensionWorkingState = configuration.extensionWorkingState
+                previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
                 isTimelineBusy = configuration.isBusy
 
                 let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
@@ -722,6 +756,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 items: configuration.items,
                 hiddenCount: configuration.hiddenCount,
                 isBusy: configuration.isBusy,
+                showsWorkingIndicator: configuration.showsWorkingIndicator,
                 streamingAssistantID: configuration.streamingAssistantID
             ).withRemovedIDs(from: currentIDs)
 
@@ -745,6 +780,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
             }
 
+            var forceReconfigureIDs: [String] = []
+            if configuration.showsWorkingIndicator,
+               configuration.extensionWorkingState != previousExtensionWorkingState {
+                forceReconfigureIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
+            }
+            if configuration.extensionHiddenThinkingLabel != previousHiddenThinkingLabel {
+                forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
+                    if case .thinking = applyPlan.nextItemByID[id] {
+                        return true
+                    }
+                    return false
+                })
+            }
+
             TimelineSnapshotApplier.applySnapshot(
                 dataSource: dataSource,
                 nextIDs: applyPlan.nextIDs,
@@ -757,7 +806,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousStreamingAssistantID: previousStreamingAssistantID,
                 sessionId: configuration.sessionId,
                 themeChanged: appearanceChanged,
-                isBusy: configuration.isBusy
+                isBusy: configuration.isBusy,
+                forceReconfigureIDs: forceReconfigureIDs
             )
 
             previousItemByID = applyPlan.nextItemByID
@@ -765,6 +815,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousHiddenCount = configuration.hiddenCount
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
+            previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+            previousExtensionWorkingState = configuration.extensionWorkingState
+            previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
             isTimelineBusy = configuration.isBusy
 
             // Note: detached anchor is NOT cleared here. It persists until

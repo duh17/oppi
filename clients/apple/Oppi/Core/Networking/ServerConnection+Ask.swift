@@ -4,25 +4,7 @@ import Foundation
 
 extension ServerConnection {
 
-    func askRequest(from request: ExtensionUIRequest) -> AskRequest? {
-        guard request.method == "ask",
-              let questions = request.askQuestions,
-              !questions.isEmpty else {
-            return nil
-        }
-
-        return AskRequest(
-            id: request.id,
-            sessionId: request.sessionId,
-            questions: questions,
-            allowCustom: request.allowCustom ?? true,
-            timeout: request.timeout
-        )
-    }
-
-    func presentAskRequest(_ ask: AskRequest, for sessionId: String) {
-        pendingAskRequests.removeValue(forKey: sessionId)
-        activeAskRequest = ask
+    func storeAskRequest(_ ask: AskRequest, for sessionId: String, isFocusedSession: Bool) {
         askRequestStore.set(ask, for: sessionId)
         if let workspaceId = attentionWorkspaceId(
             explicitWorkspaceId: ask.workspaceId,
@@ -36,81 +18,41 @@ extension ServerConnection {
                 activeSessionId: focusedSessionId
             )
         }
-        // The agent is blocked waiting for user input, so silence is expected.
-        silenceWatchdog.stop()
+        if isFocusedSession {
+            // The agent is blocked waiting for user input, so silence is expected.
+            silenceWatchdog.stop()
+        }
     }
 
-    func stashPendingAskRequest(
-        _ ask: AskRequest,
-        for sessionId: String,
-        keepStoreEntry: Bool = true
-    ) {
-        pendingAskRequests[sessionId] = ask
-        if keepStoreEntry {
-            askRequestStore.set(ask, for: sessionId)
-        } else {
-            askRequestStore.remove(for: sessionId)
-        }
+    func syncActiveAskWorkspaceSummary() {
+        guard let focusedSessionId,
+              let restored = askRequestStore.pending(for: focusedSessionId) else { return }
         if let workspaceId = attentionWorkspaceId(
-            explicitWorkspaceId: ask.workspaceId,
-            sessionId: sessionId
+            explicitWorkspaceId: restored.workspaceId,
+            sessionId: focusedSessionId
         ) {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.notifyAskIfNeeded(
-                ask,
-                activeSessionId: focusedSessionId
-            )
-        }
-    }
-
-    func restorePendingAskRequestIfNeeded(for sessionId: String) {
-        let restored = pendingAskRequests.removeValue(forKey: sessionId)
-            ?? askRequestStore.pending(for: sessionId)
-
-        if let restored {
-            activeAskRequest = restored
-            askRequestStore.set(restored, for: sessionId)
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: restored.workspaceId,
-                sessionId: sessionId
-            ) {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-        } else {
-            activeAskRequest = nil
-        }
-    }
-
-    func stashActiveAskIfNeeded(keepStoreEntry: Bool = true) {
-        guard let focusedSessionId, let ask = activeAskRequest else { return }
-        stashPendingAskRequest(ask, for: focusedSessionId, keepStoreEntry: keepStoreEntry)
-        activeAskRequest = nil
     }
 
     func clearAskState(for sessionId: String?) {
         guard let sessionId else {
-            activeAskRequest = nil
+            if let focusedSessionId {
+                clearAskState(for: focusedSessionId)
+            }
             return
         }
 
-        let explicitWorkspaceId = pendingAskRequests[sessionId]?.workspaceId
-            ?? askRequestStore.pending(for: sessionId)?.workspaceId
-            ?? (activeAskRequest?.sessionId == sessionId ? activeAskRequest?.workspaceId : nil)
+        let explicitWorkspaceId = askRequestStore.pending(for: sessionId)?.workspaceId
         let removedWorkspaceId = attentionWorkspaceId(
             explicitWorkspaceId: explicitWorkspaceId,
             sessionId: sessionId
         )
-        pendingAskRequests.removeValue(forKey: sessionId)
         askRequestStore.remove(for: sessionId)
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
         }
 
-        if activeAskRequest?.sessionId == sessionId {
-            activeAskRequest = nil
-        }
         if let removedWorkspaceId {
             syncWorkspaceSummary(workspaceId: removedWorkspaceId)
         }
@@ -120,29 +62,7 @@ extension ServerConnection {
         var removedWorkspaceIds = Set<String>()
         var removedSessionIds = Set<String>()
 
-        if let activeAskRequest, activeAskRequest.id == requestId {
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: activeAskRequest.workspaceId,
-                sessionId: activeAskRequest.sessionId
-            ) {
-                removedWorkspaceIds.insert(workspaceId)
-            }
-            removedSessionIds.insert(activeAskRequest.sessionId)
-            self.activeAskRequest = nil
-        }
-
-        for (sessionId, ask) in Array(pendingAskRequests) where ask.id == requestId {
-            if let workspaceId = attentionWorkspaceId(
-                explicitWorkspaceId: ask.workspaceId,
-                sessionId: sessionId
-            ) {
-                removedWorkspaceIds.insert(workspaceId)
-            }
-            removedSessionIds.insert(sessionId)
-            pendingAskRequests.removeValue(forKey: sessionId)
-        }
-
-        for (sessionId, ask) in askRequestStore.pending where ask.id == requestId {
+        for (sessionId, ask) in Array(askRequestStore.pending) where ask.id == requestId {
             if let workspaceId = attentionWorkspaceId(
                 explicitWorkspaceId: ask.workspaceId,
                 sessionId: sessionId
@@ -164,67 +84,37 @@ extension ServerConnection {
         }
     }
 
-    // MARK: - Generic extension dialog lifecycle helpers
+    // MARK: - Sheet-backed extension request lifecycle helpers
 
-    func presentExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
-        pendingExtensionDialogs.removeValue(forKey: sessionId)
-        activeExtensionDialog = request
-        syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
-        // Blocking extension dialogs wait for user input, so silence is expected.
-        silenceWatchdog.stop()
-    }
-
-    func stashPendingExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
+    func storeExtensionDialog(
+        _ request: ExtensionUIRequest,
+        for sessionId: String,
+        isFocusedSession: Bool
+    ) {
         pendingExtensionDialogs[sessionId] = request
         syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
-    }
-
-    func restorePendingExtensionDialogIfNeeded(for sessionId: String) {
-        guard let restored = pendingExtensionDialogs.removeValue(forKey: sessionId) else {
-            activeExtensionDialog = nil
-            return
+        if isFocusedSession {
+            // Blocking extension dialogs wait for user input, so silence is expected.
+            silenceWatchdog.stop()
         }
-
-        activeExtensionDialog = restored
-        // Blocking extension dialogs wait for user input, so silence is expected.
-        silenceWatchdog.stop()
-    }
-
-    func stashActiveExtensionDialogIfNeeded() {
-        guard let focusedSessionId, let request = activeExtensionDialog else { return }
-        pendingExtensionDialogs[focusedSessionId] = request
-        activeExtensionDialog = nil
     }
 
     func clearExtensionDialog(for sessionId: String?) {
         guard let sessionId else {
-            let previousSessionId = activeExtensionDialog?.sessionId
-            activeExtensionDialog = nil
-            if let previousSessionId {
-                syncExtensionDialogWorkspaceSummary(sessionId: previousSessionId)
+            guard let focusedSessionId else { return }
+            if pendingExtensionDialogs.removeValue(forKey: focusedSessionId) != nil {
+                syncExtensionDialogWorkspaceSummary(sessionId: focusedSessionId)
             }
             return
         }
 
-        let hadPending = pendingExtensionDialogs.removeValue(forKey: sessionId) != nil
-        let hadActive = activeExtensionDialog?.sessionId == sessionId
-        if hadActive {
-            activeExtensionDialog = nil
-        }
-        if hadPending || hadActive {
+        if pendingExtensionDialogs.removeValue(forKey: sessionId) != nil {
             syncExtensionDialogWorkspaceSummary(sessionId: sessionId)
         }
     }
 
     func clearExtensionDialog(id requestId: String) {
         var changedSessionIds = Set<String>()
-        if activeExtensionDialog?.id == requestId {
-            if let sessionId = activeExtensionDialog?.sessionId {
-                changedSessionIds.insert(sessionId)
-            }
-            activeExtensionDialog = nil
-        }
-
         for (sessionId, request) in Array(pendingExtensionDialogs) where request.id == requestId {
             pendingExtensionDialogs.removeValue(forKey: sessionId)
             changedSessionIds.insert(sessionId)
@@ -236,7 +126,7 @@ extension ServerConnection {
     }
 
     func hasPendingExtensionDialog(for sessionId: String) -> Bool {
-        activeExtensionDialog?.sessionId == sessionId || pendingExtensionDialogs[sessionId] != nil
+        pendingExtensionDialogs[sessionId] != nil
     }
 
     private func syncExtensionDialogWorkspaceSummary(sessionId: String) {

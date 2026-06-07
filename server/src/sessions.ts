@@ -35,10 +35,13 @@ import {
 import type { SessionCatchUpResponse } from "./session-broadcast.js";
 import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
-import { type ExtensionUIResponse } from "./session-ui.js";
 import { createLogger } from "./logger.js";
-import { buildExtensionUIRequestMessage } from "./extension-ui-contract.js";
-import { buildPersistentExtensionUINotificationMessages } from "./session-events.js";
+import {
+  buildPendingExtensionUIRequestMessages,
+  respondToExtensionUIRequest,
+  settleExtensionUIRequest,
+  type ExtensionUIResponse,
+} from "./extension-ui-state.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { SpawnSessionParams } from "./session-spawn-types.js";
 import {
@@ -101,7 +104,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly queueCoordinator: SessionCoordinatorBundle["queueCoordinator"];
   private readonly agentEventCoordinator: SessionCoordinatorBundle["agentEventCoordinator"];
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
-  private readonly uiCoordinator: SessionCoordinatorBundle["uiCoordinator"];
 
   constructor(storage: Storage, metrics?: ServerMetricCollector) {
     super();
@@ -151,7 +153,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.queueCoordinator = bundle.queueCoordinator;
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
-    this.uiCoordinator = bundle.uiCoordinator;
   }
 
   private resolveStoredWorkspace(sessionId: string): Workspace | undefined {
@@ -243,7 +244,16 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
     const key = this.sessionKey(sessionId);
-    return this.uiCoordinator.respondToUIRequest(key, response);
+    const active = this.active.get(key);
+    if (!active) {
+      return false;
+    }
+    return respondToExtensionUIRequest(active, response, {
+      metrics: this.opsMetrics ?? undefined,
+      deliver: (payload) => {
+        return active.sdkBackend.respondToExtensionUIRequest(payload);
+      },
+    });
   }
 
   /**
@@ -554,29 +564,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.active.get(this.sessionKey(sessionId))?.session;
   }
 
-  /** Return the stored ask broadcast message if this session has a pending ask. */
-  getPendingAskMessage(sessionId: string): ServerMessage | undefined {
-    return this.active.get(this.sessionKey(sessionId))?.pendingAsk?.broadcastMessage;
-  }
-
-  /** Return pending generic extension UI dialogs for stream re-subscribe replay. */
+  /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
-    const active = this.active.get(this.sessionKey(sessionId));
-    if (!active) {
-      return [];
-    }
-
-    const messages: ServerMessage[] = buildPersistentExtensionUINotificationMessages(active);
-    for (const req of active.pendingUIRequests.values()) {
-      // Ask has a dedicated replay path because its broadcast payload has
-      // ask-specific fields and mobile state handling.
-      if (req.method === "ask") {
-        continue;
-      }
-
-      messages.push(buildExtensionUIRequestMessage(sessionId, req));
-    }
-    return messages;
+    return buildPendingExtensionUIRequestMessages(this.active.get(this.sessionKey(sessionId)));
   }
 
   /** Cancel a pending ask request. */
@@ -595,8 +585,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       return;
     }
 
-    active.pendingUIRequests.delete(ask.requestId);
-    this.eventProcessor.completeAskRequest(active, true);
+    settleExtensionUIRequest(active, ask.requestId, {
+      cancelled: true,
+      metrics: this.opsMetrics ?? undefined,
+    });
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
@@ -629,7 +621,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   hasPendingUIRequest(sessionId: string, requestId: string): boolean {
-    return this.uiCoordinator.hasPendingUIRequest(this.sessionKey(sessionId), requestId);
+    return this.active.get(this.sessionKey(sessionId))?.pendingUIRequests.has(requestId) ?? false;
   }
 
   // ─── Spawn Agent ───

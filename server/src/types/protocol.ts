@@ -202,46 +202,6 @@ export interface ExtensionUITextSpan {
   link?: string;
 }
 
-export interface ExtensionUIChoice {
-  value: string;
-  label: string;
-  description?: string;
-  selected?: boolean;
-  disabled?: boolean;
-}
-
-export type ExtensionUIField =
-  | {
-      id: string;
-      type: "text";
-      label: string;
-      placeholder?: string;
-      value?: string;
-      required?: boolean;
-      sensitive?: boolean;
-    }
-  | {
-      id: string;
-      type: "textArea";
-      label: string;
-      placeholder?: string;
-      value?: string;
-      minLines?: number;
-      maxLines?: number;
-      sensitive?: boolean;
-    }
-  | { id: string; type: "toggle"; label: string; value: boolean; description?: string }
-  | { id: string; type: "picker"; label: string; value?: string; options: ExtensionUIChoice[] };
-
-export interface ExtensionUISettingItem {
-  id: string;
-  label: string;
-  value: string;
-  description?: string;
-  values?: string[];
-  disabled?: boolean;
-}
-
 export interface ExtensionUIActivityRow {
   id: string;
   title: string;
@@ -251,22 +211,6 @@ export interface ExtensionUIActivityRow {
   progress?: number;
   link?: string;
   children?: ExtensionUIActivityRow[];
-  actions?: ExtensionUINativeAction[];
-}
-
-export interface ExtensionUINativeAction {
-  id: string;
-  label: string;
-  role?: "primary" | "secondary" | "cancel" | "destructive";
-  target?: "surface" | "block";
-  value?: unknown;
-  disabled?: boolean;
-  confirmation?: {
-    title: string;
-    message?: string;
-    confirmLabel?: string;
-  };
-  accessibility?: ExtensionUIAccessibility;
 }
 
 export type ExtensionUINativeBlock =
@@ -283,23 +227,6 @@ export type ExtensionUINativeBlock =
       title?: string;
       subtitle?: string;
       blocks: ExtensionUINativeBlock[];
-    })
-  | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
-      type: "choiceGroup";
-      id: string;
-      question: string;
-      options: ExtensionUIChoice[];
-      multiSelect?: boolean;
-      allowCustom?: boolean;
-      customPlaceholder?: string;
-    })
-  | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
-      type: "form";
-      fields: ExtensionUIField[];
-    })
-  | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
-      type: "settingsList";
-      items: ExtensionUISettingItem[];
     })
   | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
       type: "activityList";
@@ -320,12 +247,6 @@ export type ExtensionUINativeBlock =
       language?: string;
       text: string;
     })
-  | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
-      type: "image";
-      mimeType: string;
-      dataRef: string;
-      alt?: string;
-    })
   | ({ id?: string; accessibility?: ExtensionUIAccessibility } & { type: "divider" })
   | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
       type: "spacer";
@@ -333,27 +254,9 @@ export type ExtensionUINativeBlock =
     });
 
 export interface ExtensionUINativePresentation {
-  style:
-    | "inlineCard"
-    | "sheet"
-    | "fullScreen"
-    | "surfacePanel"
-    | "status"
-    | "toast"
-    | "timelineRow";
-  placement?: "composer" | "aboveEditor" | "belowEditor" | "timeline" | "footer";
+  style: "surfacePanel";
   title?: string;
   subtitle?: string;
-  timeoutAt?: number;
-  priority?: "low" | "normal" | "blocking";
-}
-
-export interface ExtensionUIDisplayLifecycle {
-  kind: "blocking" | "persistent" | "ephemeral" | "timeline" | "editorHandoff";
-  updateMode?: "replace" | "append";
-  clearOn?: Array<
-    "response" | "settled" | "explicitClear" | "sessionEnd" | "sessionDelete" | "runtimeDispose"
-  >;
 }
 
 export interface ExtensionUINativeFallback {
@@ -364,23 +267,18 @@ export interface ExtensionUINativeFallback {
 export interface ExtensionUINativeSurface {
   version: 1;
   id: string;
-  revision?: number;
-  source:
-    | "ask"
-    | "select"
-    | "confirm"
-    | "input"
-    | "editor"
-    | "custom"
-    | "widget"
-    | "status"
-    | "tool"
-    | "message";
+  source: "widget";
   presentation: ExtensionUINativePresentation;
-  lifecycle?: ExtensionUIDisplayLifecycle;
   blocks: ExtensionUINativeBlock[];
-  actions?: ExtensionUINativeAction[];
   fallback?: ExtensionUINativeFallback;
+}
+
+export type ExtensionUINotifyType = "info" | "warning" | "error";
+export type ExtensionUIWidgetPlacement = "aboveEditor" | "belowEditor";
+
+export interface ExtensionUIWorkingIndicator {
+  frames?: string[];
+  intervalMs?: number;
 }
 
 // Server → Client
@@ -517,21 +415,24 @@ export type ServerMessage = // ── Connection ──
         // ── Ask extension fields (method: "ask") ──
         questions?: AskQuestion[];
         allowCustom?: boolean;
-        nativeSurface?: ExtensionUINativeSurface;
       }
     | {
         type: "extension_ui_notification";
         method: string;
         message?: string;
-        notifyType?: string;
+        notifyType?: ExtensionUINotifyType;
         statusKey?: string;
         statusText?: string;
         title?: string;
         text?: string;
         widgetKey?: string;
         widgetLines?: string[];
-        widgetPlacement?: string;
+        widgetPlacement?: ExtensionUIWidgetPlacement;
         nativeSurface?: ExtensionUINativeSurface;
+        workingIndicator?: ExtensionUIWorkingIndicator;
+        workingVisible?: boolean;
+        hiddenThinkingLabel?: string;
+        toolsExpanded?: boolean;
       }
     | {
         type: "extension_ui_settled";

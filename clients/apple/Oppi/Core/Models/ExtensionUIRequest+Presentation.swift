@@ -1,16 +1,67 @@
 import Foundation
 
-extension ExtensionUIRequest {
-    var shouldPresentAsInlineAskCard: Bool {
-        method == "select" || method == "confirm" || method == "input"
+struct ExtensionUIResponsePayload: Equatable, Sendable {
+    let value: String?
+    let confirmed: Bool?
+    let cancelled: Bool?
+
+    init(value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil) {
+        self.value = value
+        self.confirmed = confirmed
+        self.cancelled = cancelled
     }
 
-    var shouldPresentAsSheet: Bool {
-        !shouldPresentAsInlineAskCard
+    static let cancelled = ExtensionUIResponsePayload(cancelled: true)
+}
+
+enum ExtensionUIPresentation: Equatable, Sendable {
+    case askCard
+    case inlineAskCard
+    case editorSheet
+    case fallbackSheet
+}
+
+extension ExtensionUIRequest {
+    var nativePresentation: ExtensionUIPresentation {
+        switch method {
+        case "ask":
+            .askCard
+        case "select" where options?.isEmpty == false:
+            .inlineAskCard
+        case "confirm", "input":
+            .inlineAskCard
+        case "editor":
+            .editorSheet
+        default:
+            .fallbackSheet
+        }
+    }
+
+    var askRequest: AskRequest? {
+        switch nativePresentation {
+        case .askCard:
+            guard let questions = askQuestions, !questions.isEmpty else {
+                return nil
+            }
+
+            return AskRequest(
+                id: id,
+                sessionId: sessionId,
+                questions: questions,
+                allowCustom: allowCustom ?? true,
+                timeout: timeout
+            )
+
+        case .inlineAskCard:
+            return inlineAskRequest
+
+        case .editorSheet, .fallbackSheet:
+            return nil
+        }
     }
 
     var inlineAskRequest: AskRequest? {
-        guard shouldPresentAsInlineAskCard else { return nil }
+        guard nativePresentation == .inlineAskCard else { return nil }
 
         let prompt = inlinePromptParts(optionLabels: options ?? [])
         let resolvedQuestion = prompt.question.isEmpty ? "Choose an option" : prompt.question
@@ -18,6 +69,7 @@ extension ExtensionUIRequest {
         let askOptions: [AskOption]
         let allowCustom: Bool
         let customPlaceholder: String?
+        let responseEncoding: AskResponseEncoding
         switch method {
         case "select":
             let values = options ?? []
@@ -27,6 +79,7 @@ extension ExtensionUIRequest {
             }
             allowCustom = false
             customPlaceholder = nil
+            responseEncoding = .extensionSelect
 
         case "confirm":
             askOptions = [
@@ -35,11 +88,13 @@ extension ExtensionUIRequest {
             ]
             allowCustom = false
             customPlaceholder = nil
+            responseEncoding = .extensionConfirm
 
         case "input":
             askOptions = []
             allowCustom = true
             customPlaceholder = placeholder
+            responseEncoding = .extensionInput
 
         default:
             return nil
@@ -58,7 +113,8 @@ extension ExtensionUIRequest {
             ],
             allowCustom: allowCustom,
             timeout: timeout,
-            customPlaceholder: customPlaceholder
+            customPlaceholder: customPlaceholder,
+            responseEncoding: responseEncoding
         )
     }
 
@@ -137,5 +193,34 @@ extension ExtensionUIRequest {
         }
 
         return nil
+    }
+}
+
+extension AskRequest {
+    func responsePayload(from answers: [String: AskAnswer]) -> ExtensionUIResponsePayload? {
+        switch responseEncoding {
+        case .ask:
+            return ExtensionUIResponsePayload(value: AskResponseEncoder.encode(answers))
+
+        case .extensionSelect:
+            guard case .single(let value) = answers[ExtensionUIRequest.inlineQuestionId] else {
+                return .cancelled
+            }
+            return ExtensionUIResponsePayload(value: value)
+
+        case .extensionConfirm:
+            if answers[ExtensionUIRequest.inlineQuestionId] == .single(ExtensionUIRequest.confirmValue) {
+                return ExtensionUIResponsePayload(confirmed: true)
+            }
+            return .cancelled
+
+        case .extensionInput:
+            switch answers[ExtensionUIRequest.inlineQuestionId] {
+            case .custom(let value), .single(let value):
+                return ExtensionUIResponsePayload(value: value)
+            case .multi, nil:
+                return .cancelled
+            }
+        }
     }
 }

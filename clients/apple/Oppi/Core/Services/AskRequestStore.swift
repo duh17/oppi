@@ -1,11 +1,11 @@
 import Foundation
 
-/// Observable store for pending ask requests (agent questions to the user).
+/// Observable store for pending AskCard prompts (agent questions to the user).
 ///
 /// Each session can have at most one pending ask at a time.
 ///
-/// Separate from ServerConnection so session list views can observe
-/// ask state without depending on the full connection.
+/// This is the canonical pending ask projection for composer rendering,
+/// cross-session restore, workspace attention snapshots, and session list badges.
 @MainActor @Observable
 final class AskRequestStore {
     // Per-server backing storage

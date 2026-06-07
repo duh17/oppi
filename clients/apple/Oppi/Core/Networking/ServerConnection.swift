@@ -192,18 +192,24 @@ final class ServerConnection {
     var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
 
     // Extension UI
-    var activeExtensionDialog: ExtensionUIRequest?
-    /// Pending generic extension dialogs for sessions the user is not currently viewing.
-    /// Restored when focus returns, matching ask request behavior.
+    var activeExtensionDialog: ExtensionUIRequest? {
+        get {
+            guard let focusedSessionId else { return nil }
+            return pendingExtensionDialogs[focusedSessionId]
+        }
+        set {
+            if let newValue {
+                pendingExtensionDialogs[newValue.sessionId] = newValue
+            } else if let focusedSessionId {
+                pendingExtensionDialogs.removeValue(forKey: focusedSessionId)
+            }
+        }
+    }
+    /// Sheet-backed generic extension dialogs keyed by session id.
+    /// The active dialog is the entry for the focused session.
     var pendingExtensionDialogs: [String: ExtensionUIRequest] = [:]
     var extensionToast: String?
     var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
-
-    // Ask extension
-    var activeAskRequest: AskRequest?
-    /// Pending ask requests for sessions the user isn't currently viewing.
-    /// Restored to activeAskRequest when the user enters the session.
-    var pendingAskRequests: [String: AskRequest] = [:]
 
     /// Per-connection chat UI state (composer, caches, thinking level).
     /// Views observe this directly via `@Environment(ChatSessionState.self)`.
@@ -973,12 +979,8 @@ final class ServerConnection {
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
-            // Hand off session-scoped control-plane state before switching the
-            // focused command target. Without this, an ask from the previous
-            // session can be lost and its watchdog can keep running against
-            // the newly focused session.
-            stashActiveAskIfNeeded()
-            stashActiveExtensionDialogIfNeeded()
+            // Stop the old focused-session watchdog before switching command
+            // routing. Pending AskCard state already lives in AskRequestStore.
             silenceWatchdog.stop()
         }
 
@@ -987,13 +989,11 @@ final class ServerConnection {
         let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
             ?? fallbackWorkspaceId
         focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
-        // Reset per-connection UI state for the new focused session
-        activeExtensionDialog = nil
+        // Reset per-connection chat state for the new focused session.
+        // Sheet-backed extension dialogs are derived from pendingExtensionDialogs.
         chatState.resetSessionState()
 
-        // Restore pending user-blocking UI for this session.
-        restorePendingAskRequestIfNeeded(for: sessionId)
-        restorePendingExtensionDialogIfNeeded(for: sessionId)
+        syncActiveAskWorkspaceSummary()
     }
 
     /// Re-establish command routing before a session view re-enters foreground interaction.
@@ -1034,16 +1034,11 @@ final class ServerConnection {
 
         guard isFocusedSession else { return }
 
-        // Stash pending user-blocking UI before clearing focus so it can
-        // be restored on focusSession(). Without this, navigating away loses
-        // in-flight client/server UI state permanently.
-        stashActiveAskIfNeeded()
-        stashActiveExtensionDialogIfNeeded()
+        // Pending AskCard state already lives in AskRequestStore and will be
+        // visible again when focus returns to this session.
 
         focusedSessionStore.clear()
         sessionStreamCoordinator.noteStreamDisconnected()
-        // Clear stale extension dialog — it's tied to the active session stream
-        activeExtensionDialog = nil
         silenceWatchdog.stop()
         chatState.resetSessionState()
 
@@ -1103,20 +1098,21 @@ final class ServerConnection {
 
     func getForkMessages() async throws -> [ForkMessage] { try await sender.getForkMessages() }
 
-    /// Respond to an extension UI dialog (has UI side effects — stays on ServerConnection).
     func respondToExtensionUI(
         id: String,
         sessionId: String,
-        value: String? = nil,
-        confirmed: Bool? = nil,
-        cancelled: Bool? = nil
+        payload: ExtensionUIResponsePayload
     ) async throws {
         try await sender.dispatchSend(
-            .extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled),
+            .extensionUIResponse(
+                id: id,
+                value: payload.value,
+                confirmed: payload.confirmed,
+                cancelled: payload.cancelled
+            ),
             sessionIdOverride: sessionId
         )
-        activeExtensionDialog = nil
-        pendingExtensionDialogs.removeValue(forKey: sessionId)
+        clearExtensionDialog(for: sessionId)
         clearAskState(for: sessionId)
     }
 

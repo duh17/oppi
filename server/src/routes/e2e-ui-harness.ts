@@ -1,5 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import {
+  clearRecordedE2EUIResponses,
+  getRecordedE2EUIResponses,
+  recordSyntheticE2EUIRequest,
+} from "../e2e-ui-harness-state.js";
+import {
+  buildExtensionUINotificationMessage,
+  buildExtensionUIRequestMessage,
+  normalizeExtensionUIWidgetNativeSurface,
+} from "../extension-ui-contract.js";
 import type { AskQuestion, ServerMessage } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
@@ -19,8 +29,14 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
-    const match = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/message$/);
-    if (!match) {
+    const responseMatch = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/responses$/);
+    if (responseMatch) {
+      handleHarnessResponses(helpers, decodeURIComponent(responseMatch[1]), method, res);
+      return true;
+    }
+
+    const messageMatch = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/message$/);
+    if (!messageMatch) {
       helpers.error(res, 404, "Not found");
       return true;
     }
@@ -30,9 +46,29 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
-    await handleHarnessMessage(ctx, helpers, decodeURIComponent(match[1]), req, res);
+    await handleHarnessMessage(ctx, helpers, decodeURIComponent(messageMatch[1]), req, res);
     return true;
   };
+}
+
+function handleHarnessResponses(
+  helpers: RouteHelpers,
+  sessionId: string,
+  method: string,
+  res: ServerResponse,
+): void {
+  if (method === "GET") {
+    helpers.json(res, { ok: true, responses: getRecordedE2EUIResponses(sessionId) });
+    return;
+  }
+
+  if (method === "DELETE") {
+    clearRecordedE2EUIResponses(sessionId);
+    helpers.json(res, { ok: true });
+    return;
+  }
+
+  helpers.error(res, 405, "Method not allowed");
 }
 
 async function handleHarnessMessage(
@@ -62,6 +98,10 @@ async function handleHarnessMessage(
     return;
   }
 
+  if (message.type === "extension_ui_request") {
+    recordSyntheticE2EUIRequest(sessionId, message.id);
+  }
+
   const subscriberCount = ctx.sessions.broadcastSessionMessage(sessionId, message);
   helpers.json(res, { ok: true, subscriberCount, message });
 }
@@ -77,6 +117,20 @@ function normalizeHarnessMessage(
       return normalizeExtensionUINotification(body);
     case "extension_ui_settled":
       return normalizeExtensionUISettled(sessionId, body);
+    case "session_ended":
+      return normalizeSessionEnded(body);
+    case "agent_start":
+      return { type: "agent_start" };
+    case "agent_end":
+      return { type: "agent_end" };
+    case "thinking_delta":
+      return normalizeThinkingDelta(body);
+    case "tool_start":
+      return normalizeToolStart(body);
+    case "tool_output":
+      return normalizeToolOutput(body);
+    case "tool_end":
+      return normalizeToolEnd(body);
     default:
       return null;
   }
@@ -90,10 +144,8 @@ function normalizeExtensionUIRequest(
   const method = stringField(body.method);
   if (!id || !method) return null;
 
-  return {
-    type: "extension_ui_request",
+  return buildExtensionUIRequestMessage(sessionId, {
     id,
-    sessionId,
     method,
     title: stringField(body.title),
     options: stringArrayField(body.options),
@@ -104,15 +156,26 @@ function normalizeExtensionUIRequest(
     timeoutAt: numberField(body.timeoutAt),
     questions: askQuestionsField(body.questions),
     allowCustom: booleanField(body.allowCustom),
-  };
+  });
 }
 
 function normalizeExtensionUINotification(body: Record<string, unknown>): ServerMessage | null {
   const method = stringField(body.method);
   if (!method) return null;
+  const widgetKey = stringField(body.widgetKey);
+  const hasNativeSurface = Object.hasOwn(body, "nativeSurface");
+  const nativeSurface = hasNativeSurface
+    ? normalizeExtensionUIWidgetNativeSurface(body.nativeSurface, widgetKey, {
+        maxBytes: MAX_E2E_UI_MESSAGE_BYTES,
+      })
+    : undefined;
 
-  return {
-    type: "extension_ui_notification",
+  if (hasNativeSurface && (!nativeSurface || method !== "setWidget")) {
+    return null;
+  }
+
+  return buildExtensionUINotificationMessage({
+    id: stringField(body.id) ?? "e2e-ui-notification",
     method,
     message: stringField(body.message),
     notifyType: stringField(body.notifyType),
@@ -120,9 +183,61 @@ function normalizeExtensionUINotification(body: Record<string, unknown>): Server
     statusText: stringField(body.statusText),
     title: stringField(body.title),
     text: stringField(body.text),
-    widgetKey: stringField(body.widgetKey),
+    widgetKey,
     widgetLines: stringArrayField(body.widgetLines),
     widgetPlacement: stringField(body.widgetPlacement),
+    workingIndicator: recordField(body.workingIndicator),
+    workingVisible: booleanField(body.workingVisible),
+    hiddenThinkingLabel: stringField(body.hiddenThinkingLabel),
+    toolsExpanded: booleanField(body.toolsExpanded),
+    nativeSurface,
+  });
+}
+
+function normalizeThinkingDelta(body: Record<string, unknown>): ServerMessage {
+  return {
+    type: "thinking_delta",
+    delta: stringField(body.delta) ?? "",
+    contentIndex: numberField(body.contentIndex),
+  };
+}
+
+function normalizeToolStart(body: Record<string, unknown>): ServerMessage | null {
+  const tool = stringField(body.tool);
+  if (!tool) return null;
+  return {
+    type: "tool_start",
+    tool,
+    args: recordField(body.args) ?? {},
+    toolCallId: stringField(body.toolCallId),
+  };
+}
+
+function normalizeToolOutput(body: Record<string, unknown>): ServerMessage | null {
+  const output = stringField(body.output);
+  if (output === undefined) return null;
+  const mode = stringField(body.mode);
+  return {
+    type: "tool_output",
+    output,
+    isError: booleanField(body.isError),
+    toolCallId: stringField(body.toolCallId),
+    mode: mode === "replace" ? "replace" : mode === "append" ? "append" : undefined,
+    truncated: booleanField(body.truncated),
+    totalBytes: numberField(body.totalBytes),
+    details: recordField(body.details),
+  };
+}
+
+function normalizeToolEnd(body: Record<string, unknown>): ServerMessage | null {
+  const tool = stringField(body.tool);
+  if (!tool) return null;
+  return {
+    type: "tool_end",
+    tool,
+    toolCallId: stringField(body.toolCallId),
+    details: recordField(body.details),
+    isError: booleanField(body.isError),
   };
 }
 
@@ -140,6 +255,13 @@ function normalizeExtensionUISettled(
   };
 }
 
+function normalizeSessionEnded(body: Record<string, unknown>): ServerMessage {
+  return {
+    type: "session_ended",
+    reason: stringField(body.reason) ?? "e2e_ui_harness",
+  };
+}
+
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -150,6 +272,12 @@ function numberField(value: unknown): number | undefined {
 
 function booleanField(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function recordField(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function askQuestionsField(value: unknown): AskQuestion[] | undefined {

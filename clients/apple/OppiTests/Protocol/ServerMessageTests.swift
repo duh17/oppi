@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -435,7 +436,7 @@ struct ServerMessageTests {
         #expect(req.timeoutAt == Date(timeIntervalSince1970: 1_893_456_000))
     }
 
-    @Test func decodesExtensionUIRequestNativeSurface() throws {
+    @Test func extensionUIRequestIgnoresNativeSurface() throws {
         let json = """
         {
           "type": "extension_ui_request",
@@ -446,8 +447,8 @@ struct ServerMessageTests {
           "nativeSurface": {
             "version": 1,
             "id": "request:plan",
-            "source": "custom",
-            "presentation": { "style": "sheet", "title": "Edit plan" },
+            "source": "widget",
+            "presentation": { "style": "surfacePanel", "title": "Edit plan" },
             "blocks": [{ "type": "text", "spans": [{ "text": "Review before submit." }] }]
           }
         }
@@ -457,8 +458,9 @@ struct ServerMessageTests {
             Issue.record("Expected .extensionUIRequest")
             return
         }
-        #expect(request.nativeSurface?.id == "request:plan")
-        #expect(request.nativeSurface?.hasVisibleContent == true)
+        #expect(request.id == "ext-native")
+        #expect(request.method == "editor")
+        #expect(request.title == "Edit plan")
     }
 
     @Test func decodesExtensionUISettled() throws {
@@ -482,7 +484,7 @@ struct ServerMessageTests {
             "version": 1,
             "id": "widget:subagents",
             "source": "widget",
-            "presentation": { "style": "surfacePanel", "placement": "aboveEditor", "title": "Agents" },
+            "presentation": { "style": "surfacePanel", "title": "Agents" },
             "blocks": [
               {
                 "type": "activityList",
@@ -513,6 +515,109 @@ struct ServerMessageTests {
             return
         }
         #expect(rows.first?.link == "oppi://session/child-1")
+    }
+
+    @Test func decodesExtensionUIWorkingNotification() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWorkingIndicator",
+          "message": "Running checks",
+          "hiddenThinkingLabel": "Private reasoning",
+          "toolsExpanded": true,
+          "workingVisible": false,
+          "workingIndicator": {
+            "frames": ["●"],
+            "intervalMs": 250
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg else {
+            Issue.record("Expected .extensionUINotification")
+            return
+        }
+        #expect(notification.method == "setWorkingIndicator")
+        #expect(notification.message == "Running checks")
+        #expect(notification.hiddenThinkingLabel == "Private reasoning")
+        #expect(notification.toolsExpanded == true)
+        #expect(notification.workingVisible == false)
+        #expect(notification.workingIndicator?.frames == ["●"])
+        #expect(notification.workingIndicator?.intervalMs == 250)
+    }
+
+    @Test func extensionNativeTextSpansPreserveRoleTraitsAndLinks() throws {
+        let spans = [
+            ExtensionUITextSpan(
+                text: "Open child",
+                role: "danger",
+                traits: ["bold", "underline"],
+                link: "oppi://session/child-1"
+            ),
+            ExtensionUITextSpan(
+                text: " code",
+                role: "code",
+                traits: ["monospaced", "strikethrough"],
+                link: nil
+            )
+        ]
+
+        let attributed = spans.extensionNativeAttributedString
+
+        #expect(String(attributed.characters) == "Open child code")
+
+        let url = try #require(URL(string: "oppi://session/child-1"))
+        let linkRun = try #require(attributed.runs.first { $0.link == url })
+        #expect(String(attributed.characters[linkRun.range]) == "Open child")
+        #expect(linkRun.inlinePresentationIntent?.contains(.stronglyEmphasized) == true)
+        #expect(linkRun.underlineStyle == .single)
+        #expect(linkRun.foregroundColor == .themeRed)
+
+        let codeRun = try #require(attributed.runs.first { run in
+            String(attributed.characters[run.range]) == " code"
+        })
+        #expect(codeRun.strikethroughStyle == .single)
+        #expect(codeRun.foregroundColor == .themeYellow)
+        #expect(codeRun.font != nil)
+    }
+
+    @Test func decodesTerminalNativeSurfaceLinksFromFallbackSpans() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "links",
+          "widgetLines": ["Open child now"],
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:links",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel", "title": "links" },
+            "blocks": [
+              {
+                "type": "terminal",
+                "id": "terminal-fallback",
+                "lines": [[
+                  { "text": "Open " },
+                  { "text": "child", "link": "oppi://session/child-1" },
+                  { "text": " now" }
+                ]]
+              }
+            ],
+            "fallback": { "lines": ["Open child now"] }
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg,
+              case .terminal(_, let lines)? = notification.nativeSurface?.blocks.first,
+              let line = lines.first else {
+            Issue.record("Expected native terminal block with spans")
+            return
+        }
+
+        #expect(line.map(\.text).joined() == "Open child now")
+        #expect(line.first { $0.text == "child" }?.link == "oppi://session/child-1")
     }
 
     @Test func extensionSurfaceSessionLinkParsesWorkspaceQuery() throws {
@@ -619,7 +724,7 @@ struct ServerMessageTests {
         #expect(notification.nativeSurface?.fallbackDisplayLines == ["Unsupported extension surface: form, settingsList"])
     }
 
-    @Test func decodesExtensionUINativeFormAndSettingsPayloads() throws {
+    @Test func retiredExtensionUINativeBlockFamiliesFallbackAsUnsupported() throws {
         let json = """
         {
           "type": "extension_ui_notification",
@@ -654,36 +759,20 @@ struct ServerMessageTests {
         guard case .extensionUINotification(let notification) = msg,
               let blocks = notification.nativeSurface?.blocks,
               blocks.count == 2 else {
-            Issue.record("Expected native form and settings blocks")
+            Issue.record("Expected retained block placeholders")
             return
         }
 
-        guard case .form(_, let fields) = blocks[0] else {
-            Issue.record("Expected form fields to decode")
+        guard case .unsupported(_, let formType) = blocks[0] else {
+            Issue.record("Expected retired form block to decode as unsupported")
             return
         }
-        #expect(fields.count == 2)
-        guard case .text(let textField) = fields[0] else {
-            Issue.record("Expected text field")
+        guard case .unsupported(_, let settingsType) = blocks[1] else {
+            Issue.record("Expected retired settings block to decode as unsupported")
             return
         }
-        #expect(textField.id == "token")
-        #expect(textField.placeholder == "paste token")
-        #expect(textField.required == true)
-        #expect(textField.sensitive == true)
-        guard case .toggle(let toggleField) = fields[1] else {
-            Issue.record("Expected toggle field")
-            return
-        }
-        #expect(toggleField.value == true)
-
-        guard case .settingsList(_, let items) = blocks[1] else {
-            Issue.record("Expected settings items to decode")
-            return
-        }
-        #expect(items.first?.id == "model")
-        #expect(items.first?.values == ["gpt", "local"])
-        #expect(items.first?.disabled == false)
+        #expect(formType == "form")
+        #expect(settingsType == "settingsList")
         #expect(notification.nativeSurface?.nativeDisplayBlocks.isEmpty == true)
         #expect(notification.nativeSurface?.fallbackDisplayLines == ["Unsupported extension surface: form, settingsList"])
     }

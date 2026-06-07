@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type { ExtensionUIDialogOptions, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionUIDialogOptions,
+  ExtensionUIContext,
+  WorkingIndicatorOptions,
+} from "@earendil-works/pi-coding-agent";
 
 import { safeErrorMessage } from "./log-utils.js";
 import type {
@@ -8,7 +12,19 @@ import type {
   ExtensionUIRequestEvent,
   SessionBackendEvent,
 } from "./pi-events.js";
-import type { AskQuestion, ExtensionUINativeSurface } from "./types.js";
+import {
+  createExtensionUINativeRenderContext,
+  normalizeExtensionUIWidgetNativeSurface,
+  parseExtensionUIAskResponse,
+  parseExtensionUIConfirmResponse,
+  parseExtensionUISelectResponse,
+  parseExtensionUITextResponse,
+  type ExtensionUIAskResult,
+  type ExtensionUINativeRenderableComponent,
+  type ExtensionUIResponsePayload,
+} from "./extension-ui-contract.js";
+import { terminalLineVisibleText } from "./ansi.js";
+import type { AskQuestion, ExtensionUINativeSurface, ExtensionUIWidgetPlacement } from "./types.js";
 
 type ExtensionAudioStreamInput = Omit<ExtensionAudioStreamEvent, "type">;
 
@@ -16,40 +32,14 @@ type OppiExtensionUIContext = ExtensionUIContext & {
   audioStream: (event: ExtensionAudioStreamInput) => void;
 };
 
-export interface ExtensionUIResponsePayload {
-  id: string;
-  value?: string;
-  confirmed?: boolean;
-  cancelled?: boolean;
-}
-
 interface PendingExtensionUIResponse {
   resolve: (response: ExtensionUIResponsePayload) => void;
   cancel: () => void;
 }
 
-interface AskUIResult {
-  answers: Record<string, string | string[]>;
-  allIgnored: boolean;
-}
-
-interface NativeRenderContext {
-  target: "oppi-native-v1";
-  capabilities: string[];
-  locale?: string;
-}
-
-interface CustomUIComponent {
-  render: (width: number) => string[];
-  renderNative?: (context: NativeRenderContext) => ExtensionUINativeSurface | undefined;
-  handleInput?: (data: string) => void;
-  invalidate?: () => void;
-  dispose?: () => void;
-}
-
 interface ActiveWidgetComponent {
-  component: CustomUIComponent;
-  placement?: string;
+  component: ExtensionUINativeRenderableComponent;
+  placement?: ExtensionUIWidgetPlacement;
 }
 
 // Snapshot callbacks are not attached to a real terminal, but Pi extension authors
@@ -75,7 +65,6 @@ const EXTENSION_AUDIO_MIME_TYPES = new Set<ExtensionAudioStreamEvent["mimeType"]
 const CUSTOM_UI_SNAPSHOT_WIDTH = 88;
 const CUSTOM_UI_SNAPSHOT_ROWS = 40;
 const CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES = 8;
-const CUSTOM_UI_NATIVE_MAX_BYTES = 64 * 1024;
 
 function validateExtensionAudioStreamEvent(
   event: ExtensionAudioStreamInput,
@@ -127,67 +116,7 @@ function validateExtensionAudioStreamEvent(
   return event;
 }
 
-function invalidAskResponse(message: string): Error {
-  return new Error(`Malformed ask response: ${message}`);
-}
-
-function normalizeAskAnswers(value: string): Record<string, string | string[]> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw invalidAskResponse(error instanceof Error ? error.message : String(error));
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw invalidAskResponse("expected a JSON object");
-  }
-
-  const answers: Record<string, string | string[]> = {};
-  for (const [key, answer] of Object.entries(parsed)) {
-    if (typeof answer === "string") {
-      answers[key] = answer;
-      continue;
-    }
-
-    if (Array.isArray(answer) && answer.every((item) => typeof item === "string")) {
-      answers[key] = answer;
-      continue;
-    }
-
-    throw invalidAskResponse(`expected string or string[] for "${key}"`);
-  }
-
-  return answers;
-}
-
-function stripAnsiCodes(input: string): string {
-  let output = "";
-  let skippingAnsi = false;
-
-  for (let i = 0; i < input.length; i++) {
-    const char = input[i];
-
-    if (!skippingAnsi && char === "\u001b" && input[i + 1] === "[") {
-      skippingAnsi = true;
-      i += 1;
-      continue;
-    }
-
-    if (skippingAnsi) {
-      if (char === "m") {
-        skippingAnsi = false;
-      }
-      continue;
-    }
-
-    output += char;
-  }
-
-  return output;
-}
-
-function renderWidgetSnapshotLines(component: CustomUIComponent): string[] {
+function renderWidgetSnapshotLines(component: ExtensionUINativeRenderableComponent): string[] {
   let lines: string[];
 
   try {
@@ -197,7 +126,7 @@ function renderWidgetSnapshotLines(component: CustomUIComponent): string[] {
   }
 
   const safeLines = lines
-    .map((line) => stripAnsiCodes(line).trimEnd())
+    .map((line) => terminalLineVisibleText(line).trimEnd())
     .filter((line) => line.length > 0);
 
   const limited = safeLines.slice(0, CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES);
@@ -208,50 +137,16 @@ function renderWidgetSnapshotLines(component: CustomUIComponent): string[] {
   return limited;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeNativeSurface(value: unknown): ExtensionUINativeSurface | undefined {
-  if (!isRecord(value)) return undefined;
-  if (value.version !== 1) return undefined;
-  if (typeof value.id !== "string" || value.id.length === 0) return undefined;
-  if (typeof value.source !== "string") return undefined;
-  if (!isRecord(value.presentation)) return undefined;
-  if (!Array.isArray(value.blocks)) return undefined;
-
-  let json: string;
-  try {
-    json = JSON.stringify(value);
-  } catch {
-    return undefined;
-  }
-
-  if (Buffer.byteLength(json, "utf8") > CUSTOM_UI_NATIVE_MAX_BYTES) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(json) as ExtensionUINativeSurface;
-  } catch {
-    return undefined;
-  }
-}
-
 function renderWidgetNativeSurface(
-  component: CustomUIComponent,
+  component: ExtensionUINativeRenderableComponent,
+  widgetKey: string,
 ): ExtensionUINativeSurface | undefined {
   if (!component.renderNative) return undefined;
 
   try {
-    return normalizeNativeSurface(
-      component.renderNative({
-        target: "oppi-native-v1",
-        capabilities: [
-          "extension-native-ui:v1:text-fallback",
-          "extension-native-ui:v1:surface-native",
-        ],
-      }),
+    return normalizeExtensionUIWidgetNativeSurface(
+      component.renderNative(createExtensionUINativeRenderContext()),
+      widgetKey,
     );
   } catch {
     return undefined;
@@ -294,6 +189,7 @@ export class SdkUiBridge {
   private readonly pendingResponses = new Map<string, PendingExtensionUIResponse>();
   private readonly activeWidgets = new Map<string, ActiveWidgetComponent>();
   private readonly pendingWidgetRenders = new Set<string>();
+  private toolsExpanded = false;
 
   constructor(
     private readonly emitEvent: (event: SessionBackendEvent) => void,
@@ -309,21 +205,11 @@ export class SdkUiBridge {
           return Promise.reject(new Error("ask UI requires at least one question"));
         }
 
-        return this.createDialogPromise<AskUIResult>(
+        return this.createDialogPromise<ExtensionUIAskResult>(
           opts,
           { answers: {}, allIgnored: true },
           { method: "ask", questions, allowCustom },
-          (response) => {
-            if (response.cancelled || !response.value) {
-              return { answers: {}, allIgnored: true };
-            }
-
-            const answers = normalizeAskAnswers(response.value);
-            return {
-              answers,
-              allIgnored: Object.keys(answers).length === 0,
-            };
-          },
+          parseExtensionUIAskResponse,
         );
       },
 
@@ -332,12 +218,15 @@ export class SdkUiBridge {
           opts,
           undefined,
           { method: "select", title, options },
-          (response) => (response.cancelled ? undefined : response.value),
+          parseExtensionUISelectResponse,
         ),
 
       confirm: (title, message, opts) =>
-        this.createDialogPromise(opts, false, { method: "confirm", title, message }, (response) =>
-          response.cancelled ? false : (response.confirmed ?? false),
+        this.createDialogPromise(
+          opts,
+          false,
+          { method: "confirm", title, message },
+          parseExtensionUIConfirmResponse,
         ),
 
       input: (title, placeholder, opts) =>
@@ -345,7 +234,7 @@ export class SdkUiBridge {
           opts,
           undefined,
           { method: "input", title, placeholder },
-          (response) => (response.cancelled ? undefined : response.value),
+          parseExtensionUITextResponse,
         ),
 
       notify: (message, type) => {
@@ -370,16 +259,28 @@ export class SdkUiBridge {
         });
       },
 
-      setWorkingMessage: (_message) => {
-        // Working message requires TUI access; unsupported in Oppi sessions.
+      setWorkingMessage: (message) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setWorkingMessage",
+          message,
+        });
       },
 
-      setWorkingIndicator: (_options) => {
-        // Working indicator customization requires TUI access; unsupported in Oppi sessions.
+      setWorkingIndicator: (options?: WorkingIndicatorOptions) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setWorkingIndicator",
+          workingIndicator: options,
+        });
       },
 
-      setWorkingVisible: (_visible) => {
-        // Working row visibility requires TUI access; unsupported in Oppi sessions.
+      setWorkingVisible: (visible) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setWorkingVisible",
+          workingVisible: visible,
+        });
       },
 
       setWidget: (key, content, options) => {
@@ -400,11 +301,18 @@ export class SdkUiBridge {
           const component = content(
             createCustomUISnapshotTui(() => this.scheduleWidgetSnapshot(key)) as never,
             createCustomUISnapshotTheme() as never,
-          ) as CustomUIComponent;
+          ) as ExtensionUINativeRenderableComponent;
           this.activeWidgets.set(key, { component, placement: options?.placement });
           this.emitWidgetSnapshot(key);
         } catch (error) {
           this.disposeWidget(key);
+          this.emitExtensionUIRequest({
+            id: randomUUID(),
+            method: "setWidget",
+            widgetKey: key,
+            widgetLines: undefined,
+            widgetPlacement: options?.placement,
+          });
           this.emitExtensionUIRequest({
             id: randomUUID(),
             method: "notify",
@@ -436,7 +344,7 @@ export class SdkUiBridge {
           theme: ExtensionUIContext["theme"],
           keybindings: unknown,
           done: (result: T) => void,
-        ) => CustomUIComponent | Promise<CustomUIComponent>,
+        ) => ExtensionUINativeRenderableComponent | Promise<ExtensionUINativeRenderableComponent>,
       ) => {
         // Oppi follows Pi's standard RPC/SDK UI contract on mobile. Arbitrary
         // keyboard-driven TUI components are terminal-only, so ctx.ui.custom()
@@ -470,7 +378,7 @@ export class SdkUiBridge {
           undefined,
           undefined,
           { method: "editor", title, prefill },
-          (response) => (response.cancelled ? undefined : response.value),
+          parseExtensionUITextResponse,
         ),
 
       addAutocompleteProvider: (_factory) => {
@@ -498,14 +406,23 @@ export class SdkUiBridge {
         error: "Theme switching not supported in Oppi sessions",
       }),
 
-      getToolsExpanded: () => false,
+      getToolsExpanded: () => this.toolsExpanded,
 
-      setToolsExpanded: (_expanded) => {
-        // Tool expansion requires TUI access; unsupported in Oppi sessions.
+      setToolsExpanded: (expanded) => {
+        this.toolsExpanded = expanded;
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setToolsExpanded",
+          toolsExpanded: expanded,
+        });
       },
 
-      setHiddenThinkingLabel: (_label) => {
-        // Thinking label customization requires TUI; unsupported in Oppi sessions.
+      setHiddenThinkingLabel: (label) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setHiddenThinkingLabel",
+          hiddenThinkingLabel: label,
+        });
       },
     } as ExtensionUIContext;
 
@@ -569,7 +486,7 @@ export class SdkUiBridge {
       return;
     }
 
-    const nativeSurface = renderWidgetNativeSurface(active.component);
+    const nativeSurface = renderWidgetNativeSurface(active.component, key);
 
     this.emitExtensionUIRequest({
       id: randomUUID(),
@@ -577,13 +494,7 @@ export class SdkUiBridge {
       widgetKey: key,
       widgetLines: renderWidgetSnapshotLines(active.component),
       widgetPlacement: active.placement,
-      nativeSurface: nativeSurface
-        ? {
-            ...nativeSurface,
-            id: `widget:${key}`,
-            source: "widget",
-          }
-        : undefined,
+      nativeSurface,
     });
   }
 

@@ -56,6 +56,7 @@ struct ChatView: View {
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
+    @Environment(AskRequestStore.self) private var askRequestStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(AudioPlayerService.self) private var audioPlayer
     @Environment(GitStatusStore.self) private var gitStatusStore
@@ -223,17 +224,8 @@ struct ChatView: View {
         connection.extensionSurfaceBySession[sessionId]
     }
 
-    private var activeInlineExtensionRequest: ExtensionUIRequest? {
-        guard let request = connection.activeExtensionDialog,
-              request.sessionId == sessionId,
-              request.shouldPresentAsInlineAskCard else {
-            return nil
-        }
-        return request
-    }
-
     private var activeComposerAskRequest: AskRequest? {
-        connection.activeAskRequest ?? activeInlineExtensionRequest?.inlineAskRequest
+        askRequestStore.pending(for: sessionId)
     }
 
     /// Show toolbar when composing (keyboard up) or at bottom of chat.
@@ -265,6 +257,8 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             isBusy: isBusy,
+            extensionWorkingState: extensionSurfaceState?.working,
+            extensionHiddenThinkingLabel: extensionSurfaceState?.hiddenThinkingLabel,
             currentModel: session?.model,
             connection: connection,
             scrollController: scrollController,
@@ -430,9 +424,13 @@ struct ChatView: View {
             }
             .onAppear {
                 handleAppear()
+                applyExtensionToolsExpandedState()
             }
             .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in
                 handleExtensionEditorTextUpdate()
+            }
+            .onChange(of: extensionSurfaceState?.toolsExpanded) { _, _ in
+                applyExtensionToolsExpandedState()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 isKeyboardVisible = true
@@ -557,8 +555,12 @@ struct ChatView: View {
         } else {
             VStack(spacing: 8) {
                 if let surface = extensionSurfaceState,
-                   surface.hasVisibleContent {
-                    ExtensionSurfacePanel(surface: surface, onOpenURL: openExtensionSurfaceURL)
+                   surface.hasVisibleContent(in: .aboveEditor) {
+                    ExtensionSurfacePanel(
+                        surface: surface,
+                        placement: .aboveEditor,
+                        onOpenURL: openExtensionSurfaceURL
+                    )
                         .padding(.horizontal, 16)
                 }
 
@@ -654,6 +656,16 @@ struct ChatView: View {
                         composerActionRow
                     }
                 )
+
+                if let surface = extensionSurfaceState,
+                   surface.hasVisibleContent(in: .belowEditor) {
+                    ExtensionSurfacePanel(
+                        surface: surface,
+                        placement: .belowEditor,
+                        onOpenURL: openExtensionSurfaceURL
+                    )
+                    .padding(.horizontal, 16)
+                }
             }
         }
     }
@@ -1079,6 +1091,12 @@ struct ChatView: View {
     }
 
     @MainActor
+    private func applyExtensionToolsExpandedState() {
+        guard let toolsExpanded = extensionSurfaceState?.toolsExpanded else { return }
+        reducer.applyExtensionToolsExpanded(toolsExpanded)
+    }
+
+    @MainActor
     private func handleSessionStatusChange(_ newStatus: SessionStatus?) {
         if newStatus != .stopping {
             actionHandler.resetStopState()
@@ -1274,49 +1292,16 @@ struct ChatView: View {
     }
 
     private func handleComposerAskSubmit(_ answers: [String: AskAnswer]) {
-        if let ask = connection.activeAskRequest {
-            let value = AskResponseEncoder.encode(answers)
-            Task {
-                do {
-                    try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, value: value)
-                } catch {
-                    connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
-                }
-            }
-            return
-        }
+        guard let ask = activeComposerAskRequest,
+              let payload = ask.responsePayload(from: answers) else { return }
 
-        guard let request = activeInlineExtensionRequest else { return }
-        let answer = answers[ExtensionUIRequest.inlineQuestionId]
         Task {
             do {
-                switch request.method {
-                case "select":
-                    guard case .single(let value) = answer else {
-                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
-                        return
-                    }
-                    try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: value)
-
-                case "confirm":
-                    let confirmed = (answer == .single(ExtensionUIRequest.confirmValue))
-                    if confirmed {
-                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, confirmed: true)
-                    } else {
-                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
-                    }
-
-                case "input":
-                    switch answer {
-                    case .custom(let value), .single(let value):
-                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: value)
-                    case .multi, nil:
-                        try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
-                    }
-
-                default:
-                    break
-                }
+                try await connection.respondToExtensionUI(
+                    id: ask.id,
+                    sessionId: ask.sessionId,
+                    payload: payload
+                )
             } catch {
                 connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
             }
@@ -1324,21 +1309,15 @@ struct ChatView: View {
     }
 
     private func handleComposerAskIgnoreAll() {
-        if let ask = connection.activeAskRequest {
-            Task {
-                do {
-                    try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, cancelled: true)
-                } catch {
-                    connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
-                }
-            }
-            return
-        }
+        guard let ask = activeComposerAskRequest else { return }
 
-        guard let request = activeInlineExtensionRequest else { return }
         Task {
             do {
-                try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
+                try await connection.respondToExtensionUI(
+                    id: ask.id,
+                    sessionId: ask.sessionId,
+                    payload: .cancelled
+                )
             } catch {
                 connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
             }
@@ -1911,7 +1890,7 @@ private struct ExtensionNativeBlockView: View {
     var body: some View {
         switch block {
         case .text(_, let spans):
-            ExtensionNativeTextSpansView(spans: spans)
+            ExtensionNativeTextSpansView(spans: spans, onOpenURL: onOpenURL)
         case .markdown(_, let markdown):
             Text(markdown)
                 .font(.caption)
@@ -1954,14 +1933,14 @@ private struct ExtensionNativeBlockView: View {
             }
             .frame(minHeight: 28, alignment: .leading)
         case .terminal(_, let lines):
-            ExtensionWidgetLinesView(lines: lines.map { spans in spans.map(\.text).joined() })
+            ExtensionNativeTerminalLinesView(lines: lines, onOpenURL: onOpenURL)
         case .code(_, _, let text):
             ExtensionWidgetLinesView(lines: text.components(separatedBy: .newlines))
         case .divider:
             Divider()
         case .spacer(_, let size):
             Color.clear.frame(height: spacerHeight(size))
-        case .choiceGroup, .form, .settingsList, .image, .unsupported:
+        case .unsupported:
             EmptyView()
         }
     }
@@ -1977,12 +1956,133 @@ private struct ExtensionNativeBlockView: View {
 
 private struct ExtensionNativeTextSpansView: View {
     let spans: [ExtensionUITextSpan]
+    var font: Font = .caption
+    var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
-        Text(spans.map(\.text).joined())
-            .font(.caption)
+        Text(spans.extensionNativeAttributedString)
+            .font(font)
             .foregroundStyle(.themeFg)
             .fixedSize(horizontal: false, vertical: true)
+            .environment(\.openURL, OpenURLAction { url in
+                onOpenURL?(url) == true ? .handled : .systemAction
+            })
+    }
+}
+
+private struct ExtensionNativeTerminalLinesView: View {
+    let lines: [[ExtensionUITextSpan]]
+    var onOpenURL: ((URL) -> Bool)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                ExtensionNativeTextSpansView(
+                    spans: line,
+                    font: .caption2.monospaced(),
+                    onOpenURL: onOpenURL
+                )
+                .lineLimit(1)
+                .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.themeBg.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.themeComment.opacity(0.16), lineWidth: 1)
+        }
+    }
+}
+
+extension Array where Element == ExtensionUITextSpan {
+    var extensionNativeAttributedString: AttributedString {
+        var result = AttributedString()
+        for span in self {
+            result.append(span.extensionNativeAttributedString)
+        }
+        return result
+    }
+}
+
+private extension ExtensionUITextSpan {
+    var extensionNativeAttributedString: AttributedString {
+        var result = AttributedString(text)
+        let traits = normalizedTraits
+        var intent = InlinePresentationIntent()
+
+        if traits.contains("bold") {
+            intent.insert(.stronglyEmphasized)
+        }
+        if traits.contains("italic") {
+            intent.insert(.emphasized)
+        }
+        if !intent.isEmpty {
+            result.inlinePresentationIntent = intent
+        }
+
+        if traits.contains("underline") {
+            result.underlineStyle = .single
+        }
+        if traits.contains("strikethrough") {
+            result.strikethroughStyle = .single
+        }
+
+        let url = nativeURL
+        if let color = nativeRoleColor {
+            result.foregroundColor = color
+        } else if url != nil {
+            result.foregroundColor = .themeCyan
+        }
+
+        if role?.lowercased() == "code" || traits.contains("monospaced") {
+            result.font = .system(.caption, design: .monospaced)
+        }
+
+        if let url {
+            result.link = url
+            result.underlineStyle = .single
+        }
+
+        return result
+    }
+
+    var normalizedTraits: Set<String> {
+        Set((traits ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+    }
+
+    var nativeURL: URL? {
+        guard let link,
+              let url = URL(string: link),
+              url.scheme?.isEmpty == false else {
+            return nil
+        }
+        return url
+    }
+
+    var nativeRoleColor: Color? {
+        switch role?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "primary":
+            .themeFg
+        case "secondary":
+            .themeComment
+        case "muted":
+            .themeFgDim
+        case "accent":
+            .themeCyan
+        case "success":
+            .themeGreen
+        case "warning":
+            .themeOrange
+        case "danger":
+            .themeRed
+        case "code":
+            .themeYellow
+        default:
+            nil
+        }
     }
 }
 
@@ -2006,8 +2106,8 @@ private struct ExtensionNativeActivityRowView: View {
     var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
-        let content = ExtensionNativeActivityRowContent(row: row)
-        if let link = row.link, let url = URL(string: link) {
+        let content = ExtensionNativeActivityRowContent(row: row, showsNavigationCue: linkedURL != nil)
+        if let url = linkedURL {
             Button {
                 if onOpenURL?(url) != true {
                     openURL(url)
@@ -2021,10 +2121,20 @@ private struct ExtensionNativeActivityRowView: View {
             content
         }
     }
+
+    private var linkedURL: URL? {
+        guard let link = row.link,
+              let url = URL(string: link),
+              url.scheme?.isEmpty == false else {
+            return nil
+        }
+        return url
+    }
 }
 
 private struct ExtensionNativeActivityRowContent: View {
     let row: ExtensionUIActivityRow
+    let showsNavigationCue: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -2038,7 +2148,7 @@ private struct ExtensionNativeActivityRowContent: View {
                 Text(row.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.tail)
 
                 if let subtitle = row.subtitle, !subtitle.isEmpty {
@@ -2064,6 +2174,14 @@ private struct ExtensionNativeActivityRowContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if showsNavigationCue {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .padding(.top, 3)
+                    .accessibilityHidden(true)
+            }
         }
         .frame(minHeight: 44, alignment: .center)
         .contentShape(Rectangle())
@@ -2142,8 +2260,41 @@ private struct ExtensionWidgetLineView: View {
     }
 }
 
+enum ExtensionSurfacePlacementGroup {
+    case aboveEditor
+    case belowEditor
+
+    var showsChrome: Bool {
+        self == .aboveEditor
+    }
+
+    func includes(widgetPlacement: String?) -> Bool {
+        switch self {
+        case .aboveEditor:
+            return widgetPlacement != "belowEditor"
+        case .belowEditor:
+            return widgetPlacement == "belowEditor"
+        }
+    }
+}
+
+private extension ExtensionSurfaceState {
+    func hasVisibleContent(in placement: ExtensionSurfacePlacementGroup) -> Bool {
+        let hasTitle = placement.showsChrome && !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasStatuses = placement.showsChrome && !statuses.isEmpty
+        let hasWidgets = widgets.values.contains {
+            placement.includes(widgetPlacement: $0.placement) && !$0.lines.isEmpty
+        }
+        let hasNativeSurfaces = nativeSurfaces.values.contains {
+            placement.includes(widgetPlacement: $0.placement) && $0.hasVisibleContent
+        }
+        return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces
+    }
+}
+
 struct ExtensionSurfacePanel: View {
     let surface: ExtensionSurfaceState
+    let placement: ExtensionSurfacePlacementGroup
     var onOpenURL: ((URL) -> Bool)? = nil
 
     private var sortedStatuses: [(key: String, text: String)] {
@@ -2155,38 +2306,43 @@ struct ExtensionSurfacePanel: View {
     private var sortedWidgets: [ExtensionWidgetState] {
         surface.widgets
             .values
+            .filter { placement.includes(widgetPlacement: $0.placement) }
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
     }
 
-    private var sortedNativeSurfaces: [ExtensionUINativeSurface] {
+    private var sortedNativeSurfaces: [ExtensionNativeSurfaceState] {
         surface.nativeSurfaces
             .values
+            .filter { placement.includes(widgetPlacement: $0.placement) }
             .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let title = surface.title,
+            if placement.showsChrome,
+               let title = surface.title,
                !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeComment)
             }
 
-            ForEach(sortedStatuses, id: \.key) { status in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(status.key)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                    Text(status.text)
-                        .font(.caption)
-                        .foregroundStyle(.themeFg)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            if placement.showsChrome {
+                ForEach(sortedStatuses, id: \.key) { status in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(status.key)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                        Text(status.text)
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
 
             ForEach(sortedNativeSurfaces) { nativeSurface in
-                ExtensionNativeSurfaceView(surface: nativeSurface, onOpenURL: onOpenURL)
+                ExtensionNativeSurfaceView(surface: nativeSurface.surface, onOpenURL: onOpenURL)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 

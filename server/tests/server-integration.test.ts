@@ -192,6 +192,15 @@ describe("GET /server/info", () => {
     expect(body.os).toBeTypeOf("string");
     expect(body.runtimeUpdate).toBeTypeOf("object");
     expect(body.capabilities?.sessionStream?.version).toBe(1);
+    expect(body.capabilities?.extensionNativeUI).toEqual({
+      version: 1,
+      capabilities: [
+        "extension-native-ui:v1:text-fallback",
+        "extension-native-ui:v1:prompt-native",
+        "extension-native-ui:v1:surface-native",
+        "extension-native-ui:v1:osc8-links",
+      ],
+    });
   });
 });
 

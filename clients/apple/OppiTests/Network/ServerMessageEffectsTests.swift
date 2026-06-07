@@ -31,6 +31,45 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
     }
 
+    @Test func terminalStateRoutedThroughParentClearsOnlyPayloadSessionUI() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .state(session: makeTestSession(id: "child", status: .stopped)),
+            routedSessionId: "parent",
+            isFocusedSession: true
+        )
+
+        #expect(!effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds == ["child"])
+        #expect(effects.clearExtensionDialogSessionIds == ["child"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["child"])
+        #expect(!effects.clearExtensionSurfaceSessionIds.contains("parent"))
+    }
+
+    @Test func readyStateKeepsPersistentExtensionSurfaces() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .state(session: makeTestSession(id: "s1", status: .ready)),
+            routedSessionId: "s1",
+            isFocusedSession: true
+        )
+
+        #expect(effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds == ["s1"])
+        #expect(effects.clearExtensionDialogSessionIds == ["s1"])
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+    }
+
+    @Test func readySessionSummaryKeepsPersistentExtensionSurfaces() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionSummary(SessionSummary(from: makeTestSession(id: "summary-s1", status: .ready))),
+            routedSessionId: "summary-s1",
+            isFocusedSession: false
+        )
+
+        #expect(effects.clearAskSessionIds == ["summary-s1"])
+        #expect(effects.clearExtensionDialogSessionIds == ["summary-s1"])
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+    }
+
     @Test func terminalSessionSummaryClearsPersistentExtensionSurfaces() {
         let effects = ServerMessageEffects.cleanupEffects(
             for: .sessionSummary(SessionSummary(from: makeTestSession(id: "summary-s1", status: .stopped))),
@@ -51,6 +90,7 @@ struct ServerMessageEffectsTests {
         )
         #expect(focused.stopSilenceWatchdog)
         #expect(focused.clearAskSessionIds == ["s1"])
+        #expect(focused.clearExtensionDialogSessionIds == ["s1"])
         #expect(focused.clearExtensionSurfaceSessionIds == ["s1"])
         #expect(focused.clearMessageQueueSessionIds == ["s1"])
 
@@ -61,6 +101,7 @@ struct ServerMessageEffectsTests {
         )
         #expect(!inactive.stopSilenceWatchdog)
         #expect(inactive.clearAskSessionIds == ["s2"])
+        #expect(inactive.clearExtensionDialogSessionIds == ["s2"])
         #expect(inactive.clearExtensionSurfaceSessionIds == ["s2"])
         #expect(inactive.clearMessageQueueSessionIds.isEmpty)
     }
@@ -73,8 +114,21 @@ struct ServerMessageEffectsTests {
         )
 
         #expect(effects.clearAskSessionIds == ["deleted"])
+        #expect(effects.clearExtensionDialogSessionIds == ["deleted"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["deleted"])
         #expect(effects.clearMessageQueueSessionIds == ["deleted"])
+    }
+
+    @Test func stopConfirmedClearsBlockingExtensionDialog() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .stopConfirmed(source: .user, reason: nil),
+            routedSessionId: "s1",
+            isFocusedSession: true
+        )
+
+        #expect(effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds == ["s1"])
+        #expect(effects.clearExtensionDialogSessionIds == ["s1"])
     }
 
     @Test func extensionUISettledClearsMatchingPendingInteraction() {

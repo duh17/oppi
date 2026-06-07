@@ -364,7 +364,7 @@
       "type": "extension_ui_notification",
       "method": "setWidget",
       "message": "Build completed successfully",
-      "notifyType": "success",
+      "notifyType": "info",
       "statusKey": "build",
       "statusText": "✅ Build passed",
       "title": "Build status",
@@ -374,7 +374,16 @@
         "Review session active",
         "Run /end-review when done"
       ],
-      "widgetPlacement": "above-editor"
+      "widgetPlacement": "aboveEditor",
+      "workingIndicator": {
+        "frames": [
+          "●"
+        ],
+        "intervalMs": 250
+      },
+      "workingVisible": true,
+      "hiddenThinkingLabel": "Private reasoning",
+      "toolsExpanded": true
     },
     "extension_ui_settled": {
       "type": "extension_ui_settled",

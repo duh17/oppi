@@ -25,6 +25,8 @@ struct ChatTimelineView: View {
     let sessionId: String
     let workspaceId: String?
     let isBusy: Bool
+    let extensionWorkingState: ExtensionWorkingState?
+    let extensionHiddenThinkingLabel: String?
     let currentModel: String?
     let connection: ServerConnection
     let scrollController: ChatScrollController
@@ -51,7 +53,7 @@ struct ChatTimelineView: View {
     }
 
     private var showsWorkingIndicator: Bool {
-        isBusy
+        isBusy && (extensionWorkingState?.visible ?? true)
     }
 
     private var bottomItemID: String? {
@@ -86,6 +88,7 @@ struct ChatTimelineView: View {
                 hiddenCount: hiddenCount,
                 renderWindowStep: Self.renderWindowStep,
                 isBusy: isBusy,
+                showsWorkingIndicator: showsWorkingIndicator,
                 streamingAssistantID: reducer.streamingAssistantID,
                 sessionId: sessionId,
                 workspaceId: workspaceId,
@@ -102,6 +105,8 @@ struct ChatTimelineView: View {
                 toolDetailsStore: reducer.toolDetailsStore,
                 connection: connection,
                 currentModel: currentModel,
+                extensionWorkingState: extensionWorkingState,
+                extensionHiddenThinkingLabel: extensionHiddenThinkingLabel,
                 audioPlayer: audioPlayer,
                 audioLifecycleCoordinator: audioLifecycleCoordinator,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,

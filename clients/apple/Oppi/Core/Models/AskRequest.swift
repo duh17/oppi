@@ -1,5 +1,13 @@
 import Foundation
 
+/// How composer answers are converted back to Pi extension UI response payloads.
+enum AskResponseEncoding: Equatable, Sendable {
+    case ask
+    case extensionSelect
+    case extensionConfirm
+    case extensionInput
+}
+
 /// A structured question request from the `ask` extension.
 ///
 /// Agents use `ask` to pose clarifying questions with predefined options.
@@ -12,6 +20,7 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
     let timeout: Int? // ms
     let workspaceId: String?
     let customPlaceholder: String?
+    let responseEncoding: AskResponseEncoding
 
     init(
         id: String,
@@ -20,7 +29,8 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
         allowCustom: Bool,
         timeout: Int?,
         workspaceId: String? = nil,
-        customPlaceholder: String? = nil
+        customPlaceholder: String? = nil,
+        responseEncoding: AskResponseEncoding = .ask
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -29,6 +39,23 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
         self.timeout = timeout
         self.workspaceId = workspaceId
         self.customPlaceholder = customPlaceholder
+        self.responseEncoding = responseEncoding
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        questions = try c.decode([AskQuestion].self, forKey: .questions)
+        allowCustom = try c.decodeIfPresent(Bool.self, forKey: .allowCustom) ?? true
+        timeout = try c.decodeIfPresent(Int.self, forKey: .timeout)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        customPlaceholder = try c.decodeIfPresent(String.self, forKey: .customPlaceholder)
+        responseEncoding = .ask
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionId, questions, allowCustom, timeout, workspaceId, customPlaceholder
     }
 }
 

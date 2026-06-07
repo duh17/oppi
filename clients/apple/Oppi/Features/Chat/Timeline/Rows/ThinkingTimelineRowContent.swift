@@ -25,6 +25,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let fullText: String?
     let maxBubbleHeight: CGFloat
     let itemID: String?
+    let sourceLabel: String?
     var interactionContext: TimelineInteractionContext? = nil
 
     init(
@@ -33,6 +34,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
         fullText: String?,
         maxBubbleHeight: CGFloat = ThinkingRowHeightPolicy.defaultMaxBubbleHeight,
         itemID: String? = nil,
+        sourceLabel: String? = nil,
         interactionContext: TimelineInteractionContext? = nil
     ) {
         self.isDone = isDone
@@ -40,6 +42,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
         self.fullText = fullText
         self.maxBubbleHeight = maxBubbleHeight
         self.itemID = itemID
+        self.sourceLabel = sourceLabel
         self.interactionContext = interactionContext
     }
 
@@ -47,6 +50,14 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     var displayText: String {
         let full = (fullText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return full.isEmpty ? previewText : full
+    }
+
+    var normalizedSourceLabel: String {
+        let normalized = sourceLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalized, !normalized.isEmpty {
+            return normalized
+        }
+        return String(localized: "Thinking")
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -286,6 +297,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         let palette = ThemeRuntimeState.currentPalette()
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceLabel = configuration.normalizedSourceLabel
+        textLabel.accessibilityLabel = text.isEmpty ? nil : "\(sourceLabel): \(text)"
         fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)
 
         let signature = Self.textSignature(text: text, isDone: configuration.isDone)
@@ -297,7 +310,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             if text.isEmpty {
                 textLabel.attributedText = nil
-                        renderSignature = signature
+                textLabel.accessibilityLabel = nil
+                renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -313,7 +327,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     text,
                     color: UIColor(palette.fg).withAlphaComponent(0.94)
                 )
-                        renderSignature = signature
+                renderSignature = signature
             }
 
             // Done state starts at top of clipped preview.
@@ -329,7 +343,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             if text.isEmpty {
                 textLabel.attributedText = nil
-                        renderSignature = signature
+                textLabel.accessibilityLabel = nil
+                renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -343,7 +358,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     textLabel.text = text
                     textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
                     textLabel.font = .preferredFont(forTextStyle: .callout)
-                                renderSignature = signature
+                    renderSignature = signature
                 }
                 updateBubbleHeight(forWidth: bounds.width)
                 if needsTextUpdate, contentIsTruncated {
@@ -545,7 +560,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         let reviewCommentSelectionContext = currentConfiguration.interactionContext?
             .reviewCommentSelectionContext?
             .overriding(
-                sourceLabel: "Thinking",
+                sourceLabel: currentConfiguration.normalizedSourceLabel,
                 timelineItemId: currentConfiguration.itemID
             )
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
@@ -628,7 +643,7 @@ extension ThinkingTimelineRowContentView: UITextViewDelegate {
             router: currentConfiguration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .thinking,
-                sourceLabel: "Thinking",
+                sourceLabel: currentConfiguration.normalizedSourceLabel,
                 timelineItemId: currentConfiguration.itemID
             )
         )

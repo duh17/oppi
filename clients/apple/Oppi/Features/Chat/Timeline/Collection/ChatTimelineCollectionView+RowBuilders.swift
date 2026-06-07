@@ -113,6 +113,7 @@ extension ChatTimelineCollectionHost.Controller {
             fullText: toolOutputStore?.fullOutput(for: itemID),
             maxBubbleHeight: maxBubbleHeight,
             itemID: itemID,
+            sourceLabel: currentExtensionHiddenThinkingLabel,
             interactionContext: interactionContext
         )
     }

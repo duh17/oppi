@@ -42,20 +42,25 @@ OPPI_MIRROR_TOKEN=your-token \
 pi
 ```
 
-Disable automatic startup in `~/.pi/agent/settings.json`:
+Configure startup and missing-workspace behavior in `~/.pi/agent/settings.json`:
 
 ```json
 {
   "oppiMirror": {
-    "autoStart": false
+    "autoStart": false,
+    "workspaceCreation": "ask"
   }
 }
 ```
 
-Or disable it for one process:
+`workspaceCreation` accepts `ask`, `always`, or `never`. The default is `ask`: if the terminal cwd is not inside an Oppi workspace, Pi prompts before creating one. Approved workspaces use the nearest parent git repo as `hostMount`; without a git repo, they use the terminal cwd.
+
+For one process:
 
 ```bash
-OPPI_MIRROR_AUTO_START=false pi
+OPPI_MIRROR_AUTO_START=false \
+OPPI_MIRROR_WORKSPACE_CREATION=never \
+pi
 ```
 
 ## What it supports

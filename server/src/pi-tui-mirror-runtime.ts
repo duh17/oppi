@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
-import { closeSync, existsSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
@@ -11,9 +11,14 @@ import {
   type AgentRuntimeTransport,
 } from "./agent-runtime-transport.js";
 import {
-  buildExtensionUIRequestMessage,
-  buildExtensionUISettledMessage,
-} from "./extension-ui-contract.js";
+  buildPendingExtensionUIRequestMessages,
+  drainExtensionUITeardownMessages,
+  handleExtensionUIRequest as handleExtensionUIRequestState,
+  respondToExtensionUIRequest as respondToExtensionUIRequestState,
+  settleExtensionUIRequest as settleExtensionUIRequestState,
+  type ExtensionUIRequest,
+  type ExtensionUIResponse,
+} from "./extension-ui-state.js";
 import { EventRing } from "./event-ring.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -37,14 +42,7 @@ import { isPiTuiTaskRecordBridgeState } from "./pi-tui-session-classification.js
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
-import {
-  buildPersistentExtensionUINotificationMessages,
-  drainPersistentExtensionUIClearMessages,
-  SessionEventProcessor,
-  type EventProcessorSessionState,
-  type ExtensionUIRequest,
-} from "./session-events.js";
-import type { ExtensionUIResponse } from "./session-ui.js";
+import { SessionEventProcessor, type EventProcessorSessionState } from "./session-events.js";
 import { SessionInputCoordinator, type SessionInputSessionState } from "./session-input.js";
 import {
   assertQueueBaseVersion,
@@ -84,6 +82,7 @@ const EVENT_RING_CAPACITY = 500;
 const OPPI_RUNTIME_CONFLICT_RETRY_MS = 10_000;
 const PI_TUI_STOP_TIMEOUT_MS = 15_000;
 const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
+const MIRROR_EXTENSION_NAME = "oppi-mirror";
 
 class BridgeRegistrationError extends Error {
   constructor(
@@ -115,6 +114,7 @@ interface PiBridgeHelloMessage {
   hostname?: string;
   cwd?: string;
   workspaceId?: string;
+  createWorkspace?: boolean;
   capabilities?: string[];
   state?: PiBridgeStateSnapshot;
 }
@@ -328,6 +328,45 @@ function pathContains(parent: string, child: string): boolean {
   return resolvedChild === resolvedParent || resolvedChild.startsWith(`${resolvedParent}/`);
 }
 
+function requireExistingDirectory(path: string): string {
+  const resolved = normalizePath(path);
+  try {
+    if (statSync(resolved).isDirectory()) return resolved;
+  } catch {
+    // Fall through to a deterministic bridge registration error.
+  }
+  throw new Error(`Terminal cwd is not an existing directory: ${path}`);
+}
+
+function nearestGitRoot(startDir: string): string | undefined {
+  let current = requireExistingDirectory(startDir);
+  while (true) {
+    if (existsSync(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+function mirrorWorkspaceRootForCwd(cwd: string): string {
+  const resolvedCwd = requireExistingDirectory(cwd);
+  return nearestGitRoot(resolvedCwd) ?? resolvedCwd;
+}
+
+interface MirrorWorkspaceSuggestion {
+  hostMount: string;
+  name: string;
+}
+
+function workspaceNameFromHostMount(hostMount: string): string {
+  return basename(normalizePath(hostMount)) || "Terminal Workspace";
+}
+
+function mirrorWorkspaceSuggestionForCwd(cwd: string): MirrorWorkspaceSuggestion {
+  const hostMount = mirrorWorkspaceRootForCwd(cwd);
+  return { hostMount, name: workspaceNameFromHostMount(hostMount) };
+}
+
 function normalizeModelId(model: PiBridgeStateSnapshot["model"]): string | undefined {
   if (!model) return undefined;
   if (typeof model === "string") return model.trim() || undefined;
@@ -419,7 +458,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         const active = this.active.get(sessionId);
         if (active) this.storage.saveSession(active.session);
       },
-      respondToUIRequest: () => false,
       recordUserMessagesFromEvents: true,
     });
     this.turnCoordinator = new SessionTurnCoordinator({
@@ -595,24 +633,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     requestId: string,
     cancelled: boolean,
   ): boolean {
-    const req = active.pendingUIRequests.get(requestId);
-    if (!req) return false;
-
-    active.pendingUIRequests.delete(requestId);
-    if (req.method === "ask") {
-      this.eventProcessor.completeAskRequest(active, cancelled);
-    } else if (active.pendingAsk?.requestId === requestId) {
-      active.pendingAsk = undefined;
-    }
-
-    this.broadcast(active.session.id, buildExtensionUISettledMessage(active.session.id, requestId));
-    return true;
-  }
-
-  private settleAllExtensionUIRequests(active: MirrorActiveSession, cancelled: boolean): void {
-    for (const requestId of Array.from(active.pendingUIRequests.keys())) {
-      this.settleExtensionUIRequest(active, requestId, cancelled);
-    }
+    return settleExtensionUIRequestState(active, requestId, {
+      cancelled,
+      broadcastSettled: (message) => this.broadcast(active.session.id, message),
+    });
   }
 
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
@@ -628,24 +652,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return this.broadcaster.getCatchUp(sessionId, sinceSeq);
   }
 
-  getPendingAskMessage(sessionId: string): ServerMessage | undefined {
-    return this.ensureActiveFromStorage(sessionId)?.pendingAsk?.broadcastMessage;
-  }
-
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
-    const active = this.ensureActiveFromStorage(sessionId);
-    if (!active) {
-      return [];
-    }
-
-    const messages: ServerMessage[] = buildPersistentExtensionUINotificationMessages(active);
-    for (const req of active.pendingUIRequests.values()) {
-      if (req.method === "ask") {
-        continue;
-      }
-      messages.push(buildExtensionUIRequestMessage(sessionId, req));
-    }
-    return messages;
+    return buildPendingExtensionUIRequestMessages(this.ensureActiveFromStorage(sessionId));
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
@@ -870,35 +878,35 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const active = this.ensureActiveFromStorage(sessionId);
     if (!active) return false;
 
-    const req = active.pendingUIRequests.get(response.id);
-    if (!req) return false;
-
     const connection = this.connectedBridgeForSession(sessionId);
     if (!connection) return false;
 
-    try {
-      connection.ws.send(
-        JSON.stringify({
-          type: "extension_ui_response",
-          id: response.id,
-          value: response.value,
-          confirmed: response.confirmed,
-          cancelled: response.cancelled,
-        }),
-      );
-    } catch (error) {
-      log.warn("mirror_bridge.extension_ui_response_send_failed", {
-        runtime: MIRROR_RUNTIME_LOG_TAG,
-        sessionId,
-        bridgeId: connection.bridgeId,
-        requestId: response.id,
-        error: safeErrorMessage(error),
-      });
-      return false;
-    }
-
-    this.settleExtensionUIRequest(active, response.id, !!response.cancelled);
-    return true;
+    return respondToExtensionUIRequestState(active, response, {
+      broadcastSettled: (message) => this.broadcast(active.session.id, message),
+      deliver: (payload) => {
+        try {
+          connection.ws.send(
+            JSON.stringify({
+              type: "extension_ui_response",
+              id: payload.id,
+              value: payload.value,
+              confirmed: payload.confirmed,
+              cancelled: payload.cancelled,
+            }),
+          );
+          return true;
+        } catch (error) {
+          log.warn("mirror_bridge.extension_ui_response_send_failed", {
+            runtime: MIRROR_RUNTIME_LOG_TAG,
+            sessionId,
+            bridgeId: connection.bridgeId,
+            requestId: payload.id,
+            error: safeErrorMessage(error),
+          });
+          return false;
+        }
+      },
+    });
   }
 
   async forwardClientCommand(
@@ -948,7 +956,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const now = Date.now();
     const protocolVersion = hello.protocolVersion ?? BRIDGE_PROTOCOL_VERSION;
     const bridgeId = hello.bridgeId?.trim() || `pi-tui-${process.pid}-${now}`;
-    const workspace = this.resolveWorkspace(hello);
     const state = { ...hello.state, cwd: hello.state?.cwd ?? hello.cwd };
     if (isPiTuiTaskRecordBridgeState(state)) {
       throw new BridgeRegistrationError(
@@ -957,6 +964,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         { sessionName: state.sessionName },
       );
     }
+    const workspace = this.resolveWorkspace(hello);
     const session = this.resolveOrCreateSession(workspace, state);
     const active = this.ensureActive(session);
 
@@ -1061,7 +1069,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         return;
 
       case "extension_ui_request":
-        this.eventProcessor.handleExtensionUIRequest(connection.sessionId, active, message);
+        handleExtensionUIRequestState(active, message, {
+          broadcast: (serverMessage) => this.broadcast(connection.sessionId, serverMessage),
+        });
         return;
 
       case "extension_ui_request_settled":
@@ -1233,8 +1243,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     const active = this.active.get(connection.sessionId);
     if (active) {
-      this.settleAllExtensionUIRequests(active, true);
-      for (const message of drainPersistentExtensionUIClearMessages(active)) {
+      for (const message of drainExtensionUITeardownMessages(active, { cancelled: true })) {
         this.broadcast(connection.sessionId, message);
       }
       const disconnectedAt = Date.now();
@@ -1288,8 +1297,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       const active = this.active.get(sessionId);
       if (!active) continue;
 
-      this.settleAllExtensionUIRequests(active, true);
-      for (const message of drainPersistentExtensionUIClearMessages(active)) {
+      for (const message of drainExtensionUITeardownMessages(active, { cancelled: true })) {
         this.broadcast(sessionId, message);
       }
       const disconnectedAt = Date.now();
@@ -1340,7 +1348,20 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       );
     const workspace = candidates[0];
     if (!workspace) {
-      throw new Error(`No Oppi workspace hostMount contains terminal cwd: ${cwd}`);
+      const suggestion = mirrorWorkspaceSuggestionForCwd(cwd);
+      if (hello.createWorkspace === true) {
+        return this.createMirrorWorkspaceForSuggestion(suggestion, cwd);
+      }
+
+      throw new BridgeRegistrationError(
+        `No Oppi workspace hostMount contains terminal cwd: ${cwd}`,
+        "workspace_missing",
+        {
+          cwd,
+          suggestedHostMount: suggestion.hostMount,
+          suggestedName: suggestion.name,
+        },
+      );
     }
 
     const matchLength = normalizePath(workspace.hostMount ?? "").length;
@@ -1351,6 +1372,29 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       throw new Error(`Ambiguous Oppi workspace match for terminal cwd: ${cwd}`);
     }
 
+    return workspace;
+  }
+
+  private createMirrorWorkspaceForSuggestion(
+    suggestion: MirrorWorkspaceSuggestion,
+    cwd: string,
+  ): Workspace {
+    const workspace = this.storage.createWorkspace({
+      name: suggestion.name,
+      description: "Created from an interactive Pi terminal session.",
+      skills: [],
+      hostMount: suggestion.hostMount,
+      extensions: [MIRROR_EXTENSION_NAME],
+      gitStatusEnabled: true,
+      runtime: "host",
+    });
+
+    log.info("mirror_bridge.workspace_created", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
+      workspaceId: workspace.id,
+      hostMount: workspace.hostMount,
+      cwd,
+    });
     return workspace;
   }
 

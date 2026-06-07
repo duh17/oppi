@@ -78,6 +78,18 @@ struct WorkingIndicatorVisibilityTests {
                 "Indicator must not show when session is idle")
     }
 
+    @Test func hiddenWhenExtensionWorkingRowIsHiddenWhileBusy() {
+        let plan = ChatTimelineApplyPlan.build(
+            items: [],
+            hiddenCount: 0,
+            isBusy: true,
+            showsWorkingIndicator: false,
+            streamingAssistantID: nil
+        )
+        #expect(!plan.nextIDs.contains(workingID),
+                "Pi setWorkingVisible(false) hides only the visual working row")
+    }
+
     @Test func showsWhileStreamingAssistantContent() {
         let assistantMsg = ChatItem.assistantMessage(
             id: "asst-1", text: "thinking...", timestamp: Date()

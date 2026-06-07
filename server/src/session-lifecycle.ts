@@ -1,16 +1,14 @@
-import type { ExtensionUIRequest } from "./session-events.js";
+import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-state.js";
 import type { PendingStop, StopSessionState } from "./session-stop.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
 
-export interface SessionLifecycleSessionState {
+export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
   sdkBackend: SdkBackend;
   workspaceId: string;
-  pendingUIRequests: Map<string, ExtensionUIRequest>;
-  persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
   /** Output tokens when this activation started. Used to detect new work vs. prior-life tokens. */
   outputTokensAtStart: number;
 }
@@ -79,8 +77,7 @@ export class SessionLifecycleCoordinator {
       });
     }
 
-    active.pendingUIRequests.clear();
-    active.persistentExtensionUINotifications?.clear();
+    clearExtensionUIState(active);
 
     if (!active.sdkBackend.isDisposed) {
       await active.sdkBackend.dispose();

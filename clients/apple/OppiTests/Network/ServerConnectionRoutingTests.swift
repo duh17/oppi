@@ -101,7 +101,7 @@ struct ServerConnectionRoutingTests {
         )
 
         #expect(conn.activityStore.lastActivity(for: "s1") != nil)
-        #expect(conn.activeAskRequest?.id == "ask-1")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
         #expect(conn.silenceWatchdog.lastEventTime == nil)
 
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
@@ -110,7 +110,7 @@ struct ServerConnectionRoutingTests {
         conn.applyFetchedSessionState(makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
 
         #expect(conn.activityStore.lastActivity(for: "s1") == nil)
-        #expect(conn.activeAskRequest == nil)
+        #expect(conn.askRequestStore.pending(for: "s1") == nil)
         #expect(conn.silenceWatchdog.lastEventTime == nil)
         #expect(!conn.screenAwakeController.isPreventingSleep)
         #expect(conn.sessionStore.turnEndedDate(for: "s1") != nil)
@@ -644,9 +644,9 @@ struct ServerConnectionRoutingTests {
         let request = ExtensionUIRequest(
             id: "ext1",
             sessionId: "s1",
-            method: "confirm",
-            title: "Confirm action",
-            message: "Are you sure?"
+            method: "editor",
+            title: "Edit value",
+            message: "Review before submitting."
         )
 
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")

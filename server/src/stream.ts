@@ -376,9 +376,6 @@ export class BoundSessionStreamMux {
         session: this.ctx.ensureSessionContextWindow(activeSession),
       });
 
-      const pendingAskMsg = this.ctx.sessionRuntimes.getPendingAskMessage(sessionId);
-      if (pendingAskMsg) send(pendingAskMsg);
-
       const pendingUIMsgs = this.ctx.sessionRuntimes.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
         send(pendingUIMsg);
@@ -395,7 +392,7 @@ export class BoundSessionStreamMux {
         catchup_complete: "true",
         started_session: isMirrorSession ? "false" : hadActiveSession ? "false" : "true",
         pending_permissions: countBucketForTag(0),
-        pending_ui_requests: countBucketForTag((pendingAskMsg ? 1 : 0) + pendingUIDialogCount),
+        pending_ui_requests: countBucketForTag(pendingUIDialogCount),
       });
 
       ws.on("message", (data, isBinary) => {

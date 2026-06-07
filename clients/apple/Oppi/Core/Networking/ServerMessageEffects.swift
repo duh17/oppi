@@ -159,20 +159,26 @@ enum ServerMessageEffects {
 
         switch message {
         case .state(let session) where session.status.isTerminal:
-            if isFocusedSession {
+            let subjectSessionId = session.id
+            if isFocusedSession && subjectSessionId == sessionId {
                 effects.stopSilenceWatchdog = true
             }
-            effects.clearAskSessionIds.insert(sessionId)
-            effects.clearExtensionDialogSessionIds.insert(sessionId)
-            effects.clearExtensionSurfaceSessionIds.insert(sessionId)
+            effects.clearAskSessionIds.insert(subjectSessionId)
+            effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
+            if session.status != .ready {
+                effects.clearExtensionSurfaceSessionIds.insert(subjectSessionId)
+            }
 
         case .sessionSummary(let summary) where summary.status.isTerminal:
-            if isFocusedSession {
+            let subjectSessionId = summary.id
+            if isFocusedSession && subjectSessionId == sessionId {
                 effects.stopSilenceWatchdog = true
             }
-            effects.clearAskSessionIds.insert(summary.id)
-            effects.clearExtensionDialogSessionIds.insert(summary.id)
-            effects.clearExtensionSurfaceSessionIds.insert(summary.id)
+            effects.clearAskSessionIds.insert(subjectSessionId)
+            effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
+            if summary.status != .ready {
+                effects.clearExtensionSurfaceSessionIds.insert(subjectSessionId)
+            }
 
         case .sessionEnded:
             if isFocusedSession {
@@ -180,6 +186,7 @@ enum ServerMessageEffects {
                 effects.clearMessageQueueSessionIds.insert(sessionId)
             }
             effects.clearAskSessionIds.insert(sessionId)
+            effects.clearExtensionDialogSessionIds.insert(sessionId)
             effects.clearExtensionSurfaceSessionIds.insert(sessionId)
 
         case .extensionUISettled(let id, _):
@@ -191,6 +198,7 @@ enum ServerMessageEffects {
                 effects.clearMessageQueueSessionIds.insert(deletedId)
             }
             effects.clearAskSessionIds.insert(deletedId)
+            effects.clearExtensionDialogSessionIds.insert(deletedId)
             effects.clearExtensionSurfaceSessionIds.insert(deletedId)
 
         case .stopConfirmed:
@@ -198,6 +206,7 @@ enum ServerMessageEffects {
                 effects.stopSilenceWatchdog = true
             }
             effects.clearAskSessionIds.insert(sessionId)
+            effects.clearExtensionDialogSessionIds.insert(sessionId)
 
         default:
             break

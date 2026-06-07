@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
 import {
@@ -19,10 +19,13 @@ import {
   type OppiMirrorBridgeCommand,
 } from "./oppi-mirror-contract.ts";
 
+type OppiMirrorWorkspaceCreationMode = "ask" | "always" | "never";
+
 interface OppiMirrorSettings {
   serverUrl?: string;
   token?: string;
   autoStart?: boolean;
+  workspaceCreation?: OppiMirrorWorkspaceCreationMode;
 }
 
 type MirrorLogLevel = "debug" | "info" | "warn" | "error";
@@ -293,6 +296,18 @@ function localHostForConfig(host: unknown): string {
   return value;
 }
 
+function normalizeWorkspaceCreationMode(
+  value: unknown,
+): OppiMirrorWorkspaceCreationMode | undefined {
+  if (typeof value === "boolean") return value ? "always" : "never";
+  if (typeof value !== "string") return undefined;
+  const mode = value.trim().toLowerCase();
+  if (mode === "ask" || mode === "always" || mode === "never") {
+    return mode;
+  }
+  return undefined;
+}
+
 function autoDiscoverOppiSettings(): Partial<OppiMirrorSettings> {
   const config = readJsonFile(oppiConfigPath()) as {
     host?: unknown;
@@ -323,6 +338,12 @@ function loadSettings(): OppiMirrorSettings {
       : autoStartEnv === "1" ||
         autoStartEnv === "true" ||
         autoStartEnv === "yes";
+  const workspaceCreation =
+    normalizeWorkspaceCreationMode(
+      process.env.OPPI_MIRROR_WORKSPACE_CREATION,
+    ) ??
+    normalizeWorkspaceCreationMode(fileSettings.workspaceCreation) ??
+    "ask";
 
   return {
     serverUrl:
@@ -333,6 +354,7 @@ function loadSettings(): OppiMirrorSettings {
       process.env.OPPI_MIRROR_TOKEN || fileSettings.token || discovered.token,
     // Installing/enabling the extension is the opt-in. Mirror automatically unless explicitly disabled.
     autoStart: envAutoStart ?? fileSettings.autoStart !== false,
+    workspaceCreation,
   };
 }
 
@@ -893,14 +915,37 @@ interface MirrorWidgetComponent {
   dispose?(): void;
 }
 
+interface MirrorAskOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+interface MirrorAskQuestion {
+  id: string;
+  question: string;
+  options: MirrorAskOption[];
+  multiSelect?: boolean;
+}
+
 interface MirrorAskUIResult {
   answers: Record<string, string | string[]>;
   allIgnored: boolean;
 }
 
+type MirrorAskFunction = (
+  questions: MirrorAskQuestion[],
+  allowCustom?: boolean,
+  opts?: ExtensionUIDialogOptions,
+) => Promise<MirrorAskUIResult>;
+
+type MirrorUIContextWithAsk = ExtensionUIContext & {
+  ask?: MirrorAskFunction;
+};
+
 const MIRROR_WIDGET_SNAPSHOT_WIDTH = 88;
 const MIRROR_WIDGET_SNAPSHOT_MAX_LINES = 12;
-const MIRROR_NATIVE_SURFACE_MAX_BYTES = 64 * 1024;
+const MIRROR_WIDGET_NATIVE_SURFACE_MAX_BYTES = 64 * 1024;
 
 function stripAnsiCodes(input: string): string {
   return input.replace(
@@ -967,13 +1012,6 @@ export function snapshotMirrorWidgetNativeSurface(
     return undefined;
   }
 
-  if (!isRecord(value)) return undefined;
-  if (value.version !== 1) return undefined;
-  if (typeof value.id !== "string" || value.id.length === 0) return undefined;
-  if (typeof value.source !== "string") return undefined;
-  if (!isRecord(value.presentation)) return undefined;
-  if (!Array.isArray(value.blocks)) return undefined;
-
   let json: string;
   try {
     json = JSON.stringify(value);
@@ -981,12 +1019,13 @@ export function snapshotMirrorWidgetNativeSurface(
     return undefined;
   }
 
-  if (Buffer.byteLength(json, "utf8") > MIRROR_NATIVE_SURFACE_MAX_BYTES) {
+  if (Buffer.byteLength(json, "utf8") > MIRROR_WIDGET_NATIVE_SURFACE_MAX_BYTES) {
     return undefined;
   }
 
   try {
-    return JSON.parse(json) as Record<string, unknown>;
+    const parsed = JSON.parse(json);
+    return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -1198,7 +1237,7 @@ function mergeToolTuiRenderSnapshot(
   return { ...details, tuiRender: snapshot };
 }
 
-interface MirrorExtensionUIResponse {
+export interface MirrorExtensionUIResponse {
   type: "extension_ui_response";
   id: string;
   value?: string;
@@ -1255,6 +1294,111 @@ export function normalizeMirrorAskAnswers(
   return { answers, allIgnored: Object.keys(answers).length === 0 };
 }
 
+export function parseMirrorAskUIResponse(
+  response: MirrorExtensionUIResponse,
+): MirrorAskUIResult {
+  return response.cancelled
+    ? { answers: {}, allIgnored: true }
+    : normalizeMirrorAskAnswers(response.value);
+}
+
+export function parseMirrorSelectUIResponse(
+  response: MirrorExtensionUIResponse,
+): string | undefined {
+  return response.cancelled ? undefined : response.value;
+}
+
+export function parseMirrorConfirmUIResponse(
+  response: MirrorExtensionUIResponse,
+): boolean {
+  return response.cancelled ? false : (response.confirmed ?? false);
+}
+
+export function parseMirrorTextUIResponse(
+  response: MirrorExtensionUIResponse,
+): string | undefined {
+  return response.cancelled ? undefined : response.value;
+}
+
+function formatTerminalAskOption(option: MirrorAskOption): string {
+  return option.description
+    ? `${option.label} — ${option.description}`
+    : option.label;
+}
+
+function parseMultiSelectText(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function terminalAskFallback(
+  questions: MirrorAskQuestion[],
+  allowCustom: boolean | undefined,
+  opts: ExtensionUIDialogOptions | undefined,
+  ui: Pick<ExtensionUIContext, "select" | "input">,
+): Promise<MirrorAskUIResult> {
+  const answers: Record<string, string | string[]> = {};
+  const customAnswersAllowed = allowCustom !== false;
+
+  for (const question of questions) {
+    if (opts?.signal?.aborted) break;
+
+    const id = question.id;
+    if (!id) continue;
+
+    const title = question.question || id;
+    const options = Array.isArray(question.options) ? question.options : [];
+
+    if (question.multiSelect) {
+      const optionHint = options
+        .map((option) => `${option.label} (${option.value})`)
+        .join(", ");
+      const response = await ui.input(
+        title,
+        optionHint
+          ? `Comma-separated option values: ${optionHint}`
+          : "Comma-separated answers, blank to skip",
+        opts,
+      );
+      const selected = parseMultiSelectText(response);
+      if (selected.length > 0) answers[id] = selected;
+      continue;
+    }
+
+    if (options.length > 0) {
+      const labels = options.map(formatTerminalAskOption);
+      const customLabel = "Custom answer";
+      const skipLabel = "Skip";
+      const choices = customAnswersAllowed
+        ? [...labels, customLabel, skipLabel]
+        : [...labels, skipLabel];
+      const selected = await ui.select(title, choices, opts);
+      if (!selected || selected === skipLabel) continue;
+
+      if (selected === customLabel) {
+        const custom = await ui.input(title, "Type a custom answer", opts);
+        const trimmed = custom?.trim();
+        if (trimmed) answers[id] = trimmed;
+        continue;
+      }
+
+      const index = labels.indexOf(selected);
+      if (index >= 0) answers[id] = options[index]?.value ?? selected;
+      continue;
+    }
+
+    if (!customAnswersAllowed) continue;
+    const answer = await ui.input(title, "Type an answer, blank to skip", opts);
+    const trimmed = answer?.trim();
+    if (trimmed) answers[id] = trimmed;
+  }
+
+  return { answers, allIgnored: Object.keys(answers).length === 0 };
+}
+
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 const OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
 
@@ -1283,6 +1427,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   let runtimeActive = true;
   let connectionSerial = 0;
   let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+  let createWorkspaceOnNextConnect = false;
+  let workspaceCreationPromptActive = false;
   let lastOppiRuntimeConflictSessionId: string | null = null;
   let lastOppiRuntimeConflictNotifiedAt = 0;
 
@@ -1533,15 +1679,23 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function installExtensionUIProxy(ctx: ExtensionContext): void {
-    const ui = ctx.ui as ExtensionUIContext;
+    const ui = ctx.ui as MirrorUIContextWithAsk;
     if (proxiedUIContexts.has(ui as object)) return;
-    proxiedUIContexts.add(ui as object);
 
+    const originalSelect = ui.select.bind(ui);
+    const originalInput = ui.input.bind(ui);
     const original = {
-      ask: ui.ask.bind(ui),
-      select: ui.select.bind(ui),
+      ask:
+        typeof ui.ask === "function"
+          ? ui.ask.bind(ui)
+          : (questions, allowCustom = true, opts) =>
+              terminalAskFallback(questions, allowCustom, opts, {
+                select: originalSelect,
+                input: originalInput,
+              }),
+      select: originalSelect,
       confirm: ui.confirm.bind(ui),
-      input: ui.input.bind(ui),
+      input: originalInput,
       editor: ui.editor.bind(ui),
       notify: ui.notify.bind(ui),
       setStatus: ui.setStatus.bind(ui),
@@ -1551,6 +1705,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       pasteToEditor: ui.pasteToEditor.bind(ui),
     };
 
+    proxiedUIContexts.add(ui as object);
+
     ui.ask = (questions, allowCustom = true, opts) =>
       raceMirrorDialog(
         "ask",
@@ -1558,10 +1714,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         opts,
         { answers: {}, allIgnored: true },
         (nextOpts) => original.ask(questions, allowCustom, nextOpts),
-        (response) =>
-          response.cancelled
-            ? { answers: {}, allIgnored: true }
-            : normalizeMirrorAskAnswers(response.value),
+        parseMirrorAskUIResponse,
       );
 
     ui.select = (title, options, opts) =>
@@ -1571,7 +1724,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         opts,
         undefined,
         (nextOpts) => original.select(title, options, nextOpts),
-        (response) => (response.cancelled ? undefined : response.value),
+        parseMirrorSelectUIResponse,
       );
 
     ui.confirm = (title, message, opts) =>
@@ -1581,8 +1734,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         opts,
         false,
         (nextOpts) => original.confirm(title, message, nextOpts),
-        (response) =>
-          response.cancelled ? false : (response.confirmed ?? false),
+        parseMirrorConfirmUIResponse,
       );
 
     ui.input = (title, placeholder, opts) =>
@@ -1592,7 +1744,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         opts,
         undefined,
         (nextOpts) => original.input(title, placeholder, nextOpts),
-        (response) => (response.cancelled ? undefined : response.value),
+        parseMirrorTextUIResponse,
       );
 
     ui.editor = (title, prefill) =>
@@ -1602,7 +1754,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         undefined,
         undefined,
         () => original.editor(title, prefill),
-        (response) => (response.cancelled ? undefined : response.value),
+        parseMirrorTextUIResponse,
       );
 
     ui.notify = (message, type) => {
@@ -2007,6 +2159,101 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     return { serverUrl: settings.serverUrl, token: settings.token };
   }
 
+  function workspaceNameFromSuggestion(hostMount: string): string {
+    return (
+      basename(hostMount.trim().replace(/\/+$/, "")) || "Terminal Workspace"
+    );
+  }
+
+  function parkBridgeForWorkspaceDecision() {
+    manualStop = true;
+    connectionSerial += 1;
+    clearTimers();
+    pendingUIResponses.clear();
+    const socket = ws;
+    ws = null;
+    if (
+      socket &&
+      (socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING)
+    ) {
+      socket.close(1000, "Waiting for workspace creation decision");
+    }
+  }
+
+  async function handleWorkspaceMissingError(
+    ctx: ExtensionContext,
+    err: Record<string, unknown>,
+  ) {
+    const cwd = typeof err.cwd === "string" ? err.cwd : ctx.cwd;
+    const suggestedHostMount =
+      typeof err.suggestedHostMount === "string" ? err.suggestedHostMount : cwd;
+    const suggestedName =
+      typeof err.suggestedName === "string" && err.suggestedName.trim()
+        ? err.suggestedName.trim()
+        : workspaceNameFromSuggestion(suggestedHostMount);
+    const mode = settings.workspaceCreation ?? "ask";
+    const wasRequestingCreate =
+      createWorkspaceOnNextConnect || mode === "always";
+
+    createWorkspaceOnNextConnect = false;
+    nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+    setIndicatorMode("blocked");
+    parkBridgeForWorkspaceDecision();
+    writeMirrorLog("warn", "workspace_missing", {
+      cwd,
+      suggestedHostMount,
+      suggestedName,
+      workspaceCreation: mode,
+      wasRequestingCreate,
+    });
+
+    if (wasRequestingCreate) {
+      notify(
+        ctx,
+        `Oppi Mirror could not create workspace ${suggestedName}; details were logged.`,
+        "warning",
+      );
+      return;
+    }
+
+    if (mode === "never") {
+      notify(
+        ctx,
+        `Oppi Mirror needs an Oppi workspace for ${suggestedHostMount}. Create it in Oppi, or set oppiMirror.workspaceCreation to ask or always.`,
+        "warning",
+      );
+      return;
+    }
+
+    if (workspaceCreationPromptActive) return;
+    workspaceCreationPromptActive = true;
+    let confirmed = false;
+    try {
+      confirmed = await withSuppressedUIForwarding(() =>
+        ctx.ui.confirm(
+          "Create Oppi workspace?",
+          `No Oppi workspace contains this terminal path.\n\nCreate ${suggestedName} at ${suggestedHostMount}?`,
+        ),
+      );
+    } catch (error) {
+      logCallbackError("workspace creation prompt failed", error);
+    } finally {
+      workspaceCreationPromptActive = false;
+    }
+
+    if (!runtimeActive) return;
+    if (!confirmed) {
+      notify(ctx, "Oppi Mirror stopped; no workspace was created.", "info");
+      stopIndicator(ctx);
+      return;
+    }
+
+    createWorkspaceOnNextConnect = true;
+    manualStop = false;
+    connect(ctx);
+  }
+
   function connect(ctx: ExtensionContext) {
     if (!runtimeActive) return;
     latestCtx = ctx;
@@ -2065,6 +2312,9 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         return;
       }
       try {
+        const shouldCreateWorkspace =
+          createWorkspaceOnNextConnect ||
+          settings.workspaceCreation === "always";
         send({
           type: "hello",
           protocolVersion: 1,
@@ -2072,6 +2322,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           pid: process.pid,
           hostname: hostname(),
           cwd: ctx.cwd,
+          ...(shouldCreateWorkspace ? { createWorkspace: true } : {}),
           capabilities: OPPI_MIRROR_CAPABILITIES,
           state: stateSnapshot(pi, ctx),
         });
@@ -2194,6 +2445,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         connectedWorkspaceId =
           (message as { workspaceId?: string }).workspaceId ?? null;
         nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+        createWorkspaceOnNextConnect = false;
+        workspaceCreationPromptActive = false;
         lastOppiRuntimeConflictSessionId = null;
         lastOppiRuntimeConflictNotifiedAt = 0;
         writeMirrorLog("info", "bridge_connected", {
@@ -2221,8 +2474,15 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           error?: string;
           retryAfterMs?: number;
           sessionId?: string;
+          cwd?: string;
+          suggestedHostMount?: string;
+          suggestedName?: string;
         };
         const errorText = err.error ?? "unknown";
+        if (err.code === "workspace_missing") {
+          await handleWorkspaceMissingError(ctx, err);
+          return;
+        }
         if (
           err.code === "oppi_runtime_active" ||
           errorText.includes("already owned by the oppi runtime")
@@ -2259,6 +2519,9 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           error: errorText,
           retryAfterMs: err.retryAfterMs,
           sessionId: err.sessionId,
+          cwd: err.cwd,
+          suggestedHostMount: err.suggestedHostMount,
+          suggestedName: err.suggestedName,
         });
         notify(
           ctx,

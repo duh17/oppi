@@ -42,7 +42,6 @@ describe("SessionEventProcessor", () => {
         broadcast: vi.fn(),
         persistSessionNow: vi.fn(),
         markSessionDirty: vi.fn(),
-        respondToUIRequest: vi.fn(),
       });
       const active = makeActiveSession({ ...makeSession("sess-1"), workspaceId: "ws-1" });
 

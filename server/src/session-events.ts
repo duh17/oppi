@@ -1,10 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import {
-  buildExtensionUINotificationMessage,
-  buildExtensionUIRequestMessage,
-  isExtensionUIFireAndForgetMethod,
-} from "./extension-ui-contract.js";
+import type { ExtensionUIState } from "./extension-ui-state.js";
 import { getGitStatus } from "./git-status.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -19,158 +15,7 @@ import { extractQueuedUserText } from "./session-queue-utils.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
-import type { AskQuestion, ExtensionUINativeSurface, Session, ServerMessage } from "./types.js";
-
-/** Extension UI request from pi SDK (stdout) */
-export interface ExtensionUIRequest {
-  type: "extension_ui_request";
-  id: string;
-  method: string;
-  title?: string;
-  options?: string[];
-  message?: string;
-  placeholder?: string;
-  prefill?: string;
-  notifyType?: "info" | "warning" | "error";
-  statusKey?: string;
-  statusText?: string;
-  widgetKey?: string;
-  widgetLines?: string[];
-  widgetPlacement?: string;
-  text?: string;
-  timeout?: number;
-  timeoutAt?: number;
-  questions?: AskQuestion[];
-  allowCustom?: boolean;
-  nativeSurface?: ExtensionUINativeSurface;
-}
-
-const TERMINAL_ONLY_STATUS_KEYS = new Set(["oppi-mirror"]);
-
-function terminalOnlyStatusText(req: ExtensionUIRequest): string | undefined {
-  if (req.method === "setStatus" && req.statusKey && TERMINAL_ONLY_STATUS_KEYS.has(req.statusKey)) {
-    return undefined;
-  }
-  return req.statusText;
-}
-
-function notificationReplayKey(req: ExtensionUIRequest): string | undefined {
-  switch (req.method) {
-    case "setStatus":
-      return req.statusKey && !TERMINAL_ONLY_STATUS_KEYS.has(req.statusKey)
-        ? `status:${req.statusKey}`
-        : undefined;
-    case "setWidget":
-      return req.widgetKey ? `widget:${req.widgetKey}` : undefined;
-    case "setTitle":
-      return "title";
-    default:
-      return undefined;
-  }
-}
-
-function widgetLinesHaveContent(lines: string[] | undefined): boolean {
-  return lines?.some((line) => line.replace(/[\r\n]/g, "").length > 0) ?? false;
-}
-
-function hasPersistentNotificationContent(req: ExtensionUIRequest): boolean {
-  switch (req.method) {
-    case "setStatus":
-      return (req.statusText?.trim().length ?? 0) > 0;
-    case "setWidget":
-      return req.nativeSurface !== undefined || widgetLinesHaveContent(req.widgetLines);
-    case "setTitle":
-      return (req.title?.trim().length ?? 0) > 0;
-    default:
-      return false;
-  }
-}
-
-function normalizeFireAndForgetNotificationRequest(req: ExtensionUIRequest): ExtensionUIRequest {
-  if (req.method === "setStatus") {
-    return { ...req, statusText: terminalOnlyStatusText(req) };
-  }
-  return req;
-}
-
-export function updatePersistentExtensionUINotifications(
-  active: Pick<EventProcessorSessionState, "persistentExtensionUINotifications">,
-  req: ExtensionUIRequest,
-): void {
-  const key = notificationReplayKey(req);
-  if (!key) {
-    return;
-  }
-
-  const store = (active.persistentExtensionUINotifications ??= new Map());
-  if (hasPersistentNotificationContent(req)) {
-    store.set(key, req);
-    return;
-  }
-
-  const clearReq = buildPersistentExtensionUIClearRequest(req);
-  if (clearReq) {
-    store.set(key, clearReq);
-  } else {
-    store.delete(key);
-  }
-}
-
-export function buildPersistentExtensionUINotificationMessages(
-  active: Pick<EventProcessorSessionState, "persistentExtensionUINotifications">,
-): ServerMessage[] {
-  return Array.from(active.persistentExtensionUINotifications?.values() ?? []).map((req) =>
-    buildExtensionUINotificationMessage(req),
-  );
-}
-
-function buildPersistentExtensionUIClearRequest(
-  req: ExtensionUIRequest,
-): ExtensionUIRequest | undefined {
-  switch (req.method) {
-    case "setStatus":
-      return req.statusKey
-        ? {
-            type: "extension_ui_request",
-            id: req.id,
-            method: "setStatus",
-            statusKey: req.statusKey,
-          }
-        : undefined;
-    case "setWidget":
-      return req.widgetKey
-        ? {
-            type: "extension_ui_request",
-            id: req.id,
-            method: "setWidget",
-            widgetKey: req.widgetKey,
-          }
-        : undefined;
-    case "setTitle":
-      return { type: "extension_ui_request", id: req.id, method: "setTitle" };
-    default:
-      return undefined;
-  }
-}
-
-export function drainPersistentExtensionUIClearMessages(
-  active: Pick<EventProcessorSessionState, "persistentExtensionUINotifications">,
-): ServerMessage[] {
-  const store = active.persistentExtensionUINotifications;
-  if (!store?.size) {
-    return [];
-  }
-
-  const messages: ServerMessage[] = [];
-  for (const req of store.values()) {
-    const clearReq = buildPersistentExtensionUIClearRequest(req);
-    if (clearReq) {
-      messages.push(buildExtensionUINotificationMessage(clearReq));
-    }
-  }
-  store.clear();
-  return messages;
-}
+import type { Session, ServerMessage } from "./types.js";
 
 function estimateCharsFromContent(content: unknown): number {
   if (typeof content === "string") {
@@ -225,21 +70,8 @@ function estimateTokensFromChars(chars: number): number {
   return Math.ceil(Math.max(0, chars) / 4);
 }
 
-/** Server-side state for a pending first-class ask request. */
-export interface PendingAskState {
-  requestId: string;
-  questionCount: number;
-  /** Full broadcast message — stored for re-sending on client reconnect. */
-  broadcastMessage: ServerMessage;
-  /** Timestamp when the ask flow was initiated (for round-trip timing). */
-  initiatedAt: number;
-}
-
-export interface EventProcessorSessionState {
+export interface EventProcessorSessionState extends ExtensionUIState {
   session: Session;
-  pendingUIRequests: Map<string, ExtensionUIRequest>;
-  /** Last persistent extension UI surfaces/status/title, replayed to late focused clients. */
-  persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
@@ -256,8 +88,6 @@ export interface EventProcessorSessionState {
   streamingArgPreviews: Set<string>;
   /** Last serialized streaming tool args emitted per toolCallId this turn. */
   streamingToolUpdatesSeen: Map<string, string>;
-  /** Pending first-class ask request awaiting a user response. */
-  pendingAsk?: PendingAskState;
   /** Timestamp (ms) when the current turn started (agent_start). */
   turnStartedAt?: number;
   /** Whether the first text/thinking token has been recorded for the current turn. */
@@ -282,11 +112,6 @@ export interface SessionEventProcessorDeps {
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
-  /** Respond to a pending extension UI request. */
-  respondToUIRequest: (
-    key: string,
-    response: { type: "extension_ui_response"; id: string; value?: string; cancelled?: boolean },
-  ) => boolean;
   /** Server operational metric collector (metrics silently skipped when absent). */
   metrics?: ServerMetricCollector;
   /** Mirror mode receives terminal-origin user messages as pi events. */
@@ -320,41 +145,6 @@ export class SessionEventProcessor {
       streamingArgPreviews: active.streamingArgPreviews,
       streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
     };
-  }
-
-  /**
-   * Handle extension_ui_request from pi.
-   * Fire-and-forget methods are forwarded as notifications.
-   * Dialog methods are forwarded to the phone and held until
-   * respondToUIRequest() is called.
-   */
-  handleExtensionUIRequest(
-    key: string,
-    active: EventProcessorSessionState,
-    req: ExtensionUIRequest,
-  ): void {
-    if (isExtensionUIFireAndForgetMethod(req.method)) {
-      const notificationReq = normalizeFireAndForgetNotificationRequest(req);
-      updatePersistentExtensionUINotifications(active, notificationReq);
-      this.deps.broadcast(key, buildExtensionUINotificationMessage(notificationReq));
-      return;
-    }
-
-    active.pendingUIRequests.set(req.id, req);
-
-    if (req.method === "ask") {
-      const broadcastMessage = buildExtensionUIRequestMessage(active.session.id, req);
-      active.pendingAsk = {
-        requestId: req.id,
-        questionCount: req.questions?.length ?? 0,
-        broadcastMessage,
-        initiatedAt: Date.now(),
-      };
-      this.deps.broadcast(key, broadcastMessage);
-      return;
-    }
-
-    this.deps.broadcast(key, buildExtensionUIRequestMessage(active.session.id, req));
   }
 
   /**
@@ -602,27 +392,6 @@ export class SessionEventProcessor {
     active.contextUsageLastBroadcastTokens = estimatedTokens;
     this.deps.broadcast(key, { type: "state", session: active.session });
     this.deps.markSessionDirty(key);
-  }
-
-  completeAskRequest(
-    active: Pick<EventProcessorSessionState, "pendingAsk" | "session">,
-    cancelled: boolean,
-  ): void {
-    const ask = active.pendingAsk;
-    if (!ask) {
-      return;
-    }
-
-    const metrics = this.deps.metrics;
-    if (metrics && ask.initiatedAt) {
-      metrics.record("server.ask_round_trip_ms", Date.now() - ask.initiatedAt, {
-        sessionId: active.session.id,
-        cancelled: cancelled ? "true" : "false",
-        questionCount: String(ask.questionCount),
-      });
-    }
-
-    active.pendingAsk = undefined;
   }
 
   /**

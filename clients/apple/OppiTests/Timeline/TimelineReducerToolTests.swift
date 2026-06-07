@@ -122,6 +122,34 @@ struct TimelineReducerToolTests {
         #expect(stored == nil, "Empty args should not be stored")
     }
 
+    @Test func extensionToolsExpandedAppliesToCurrentAndFutureToolRows() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(
+            sessionId: "s1",
+            toolEventId: "tool-1",
+            tool: "bash",
+            args: ["command": .string("pwd")]
+        ))
+        #expect(!reducer.expandedItemIDs.contains("tool-1"))
+
+        reducer.applyExtensionToolsExpanded(true)
+        #expect(reducer.expandedItemIDs.contains("tool-1"))
+
+        reducer.process(.toolStart(
+            sessionId: "s1",
+            toolEventId: "tool-2",
+            tool: "bash",
+            args: ["command": .string("ls")]
+        ))
+        #expect(reducer.expandedItemIDs.contains("tool-2"))
+
+        reducer.applyExtensionToolsExpanded(false)
+        #expect(!reducer.expandedItemIDs.contains("tool-1"))
+        #expect(!reducer.expandedItemIDs.contains("tool-2"))
+    }
+
     @Test func toolEndStoresDetails() {
         let reducer = TimelineReducer()
 

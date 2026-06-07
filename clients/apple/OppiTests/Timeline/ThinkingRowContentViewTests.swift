@@ -136,6 +136,23 @@ struct ThinkingRowContentViewTests {
         #expect(copyMenuAction.title == "Copy")
     }
 
+    @Test func customSourceLabelUpdatesAccessibilityWithoutVisibleHeader() throws {
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: "Analyzing the next step",
+            fullText: nil,
+            sourceLabel: "Private reasoning"
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        #expect(label.text == "Analyzing the next step")
+        #expect(label.accessibilityLabel == "Private reasoning: Analyzing the next step")
+        #expect(fullScreenButton(in: view) == nil)
+    }
+
     @Test func selectedTextModeKeepsOverflowFullScreenGesturesAndDisablesInlineSelection() throws {
         let router = ReviewCommentSelectionRouter { _ in }
         let interactionCtx = TimelineInteractionContext()

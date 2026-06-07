@@ -12,6 +12,7 @@ class E2ETestCase: XCTestCase {
     /// nonisolated(unsafe) is required for Swift 6 strict concurrency — XCTest
     /// runs these UI tests serially in the harness.
     nonisolated(unsafe) private static var _app: XCUIApplication?
+    nonisolated(unsafe) static var e2eDeviceTokenCache: String?
 
     var app: XCUIApplication {
         Self._app!
@@ -94,7 +95,13 @@ class E2ETestCase: XCTestCase {
             )
             return
         }
-        if !paired || newSessionButton.waitForExistence(timeout: 2) || chatInput.exists {
+        XCTAssertTrue(
+            paired,
+            "Workspace surface did not appear after pairing"
+        )
+        guard paired else { return }
+
+        if newSessionButton.waitForExistence(timeout: 2) || chatInput.exists {
             return
         }
 
@@ -122,14 +129,7 @@ class E2ETestCase: XCTestCase {
     }
 
     private func dismissInitialExtensionSheet(in application: XCUIApplication) {
-        let doneButton = application.buttons["Done"]
-        guard doneButton.waitForExistence(timeout: 3) else { return }
-
-        if doneButton.isHittable {
-            doneButton.tap()
-        } else {
-            doneButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
+        dismissExtensionSurfaceIfNeeded(in: application, timeout: 3)
     }
 
     func revealSplitSidebarIfNeeded(in application: XCUIApplication) {
@@ -146,10 +146,18 @@ class E2ETestCase: XCTestCase {
     }
 
     private func readDeviceToken() throws -> String {
+        if let token = Self.e2eDeviceTokenCache, !token.isEmpty {
+            return token
+        }
+
         let path = "/tmp/oppi-e2e-device-token.txt"
         guard FileManager.default.fileExists(atPath: path) else { return "" }
-        return try String(contentsOfFile: path, encoding: .utf8)
+        let token = try String(contentsOfFile: path, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            Self.e2eDeviceTokenCache = token
+        }
+        return token
     }
 
     /// Reads the invite URL written by the E2E server harness.
@@ -224,9 +232,22 @@ class E2ETestCase: XCTestCase {
     }
 
     func dismissExtensionSheetIfNeeded(timeout: TimeInterval = 1) {
-        let doneButton = app.buttons["Done"]
-        if doneButton.waitForExistence(timeout: timeout) {
-            tap(doneButton, named: "dismiss extension sheet", timeout: 1)
+        dismissExtensionSurfaceIfNeeded(in: app, timeout: timeout)
+    }
+
+    private func dismissExtensionSurfaceIfNeeded(in application: XCUIApplication, timeout: TimeInterval) {
+        let buttons = [
+            application.buttons["extension.dialog.cancel"],
+            application.buttons["Done"],
+        ]
+
+        for button in buttons where button.waitForExistence(timeout: timeout) {
+            if button.isHittable {
+                button.tap()
+            } else {
+                button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+            return
         }
     }
 
@@ -484,10 +505,7 @@ class E2ETestCase: XCTestCase {
             chatInput.waitForExistence(timeout: 15),
             "Chat input not available before sending"
         )
-        let doneButton = app.buttons["Done"]
-        if doneButton.waitForExistence(timeout: 1) {
-            tap(doneButton, named: "extension sheet done", timeout: 1)
-        }
+        dismissExtensionSheetIfNeeded(timeout: 1)
         chatInput.tap()
         let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
         if !focusPredicate.evaluate(with: chatInput) {

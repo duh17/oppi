@@ -34,7 +34,6 @@ import {
 } from "./session-stop-flow.js";
 import { SessionStopCoordinator } from "./session-stop.js";
 import { SessionTurnCoordinator, type TurnSessionState } from "./session-turns.js";
-import { SessionUICoordinator } from "./session-ui.js";
 import type { Storage } from "./storage.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
@@ -62,7 +61,6 @@ export interface SessionCoordinatorBundle {
   queueCoordinator: SessionMessageQueueCoordinator;
   agentEventCoordinator: SessionAgentEventCoordinator;
   stopFlowCoordinator: SessionStopFlowCoordinator;
-  uiCoordinator: SessionUICoordinator;
 }
 
 export interface SessionCoordinatorBundleDeps {
@@ -113,8 +111,6 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     markSessionDirty: (key) => deps.markSessionDirty(key),
-    // Lazy — uiCoordinator created later in this function
-    respondToUIRequest: (key, response): boolean => uiCoordinator.respondToUIRequest(key, response),
     metrics: deps.metrics,
   });
 
@@ -284,11 +280,6 @@ export function createSessionCoordinatorBundle(
     deps.stopSessionGraceMs,
   );
 
-  const uiCoordinator = new SessionUICoordinator({
-    getActiveSession: (key) => deps.active.get(key),
-    eventProcessor,
-  });
-
   return {
     broadcaster,
     eventProcessor,
@@ -303,6 +294,5 @@ export function createSessionCoordinatorBundle(
     queueCoordinator,
     agentEventCoordinator,
     stopFlowCoordinator,
-    uiCoordinator,
   };
 }

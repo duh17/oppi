@@ -123,22 +123,54 @@ struct ExtensionWidgetState: Equatable, Sendable {
     var placement: String?
 }
 
+struct ExtensionNativeSurfaceState: Equatable, Sendable, Identifiable {
+    let surface: ExtensionUINativeSurface
+    var placement: String?
+
+    var id: String { surface.id }
+
+    var hasVisibleContent: Bool {
+        surface.hasVisibleContent
+    }
+}
+
+struct ExtensionWorkingState: Equatable, Sendable {
+    var message: String?
+    var visible: Bool = true
+    var indicator: ExtensionUIWorkingIndicator?
+
+    var isDefault: Bool {
+        (message?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            && visible
+            && indicator == nil
+    }
+}
+
 struct ExtensionSurfaceState: Equatable, Sendable {
     var title: String?
     var statuses: [String: String]
     var widgets: [String: ExtensionWidgetState]
-    var nativeSurfaces: [String: ExtensionUINativeSurface]
+    var nativeSurfaces: [String: ExtensionNativeSurfaceState]
+    var working: ExtensionWorkingState?
+    var hiddenThinkingLabel: String?
+    var toolsExpanded: Bool?
 
     init(
         title: String? = nil,
         statuses: [String: String] = [:],
         widgets: [String: ExtensionWidgetState] = [:],
-        nativeSurfaces: [String: ExtensionUINativeSurface] = [:]
+        nativeSurfaces: [String: ExtensionNativeSurfaceState] = [:],
+        working: ExtensionWorkingState? = nil,
+        hiddenThinkingLabel: String? = nil,
+        toolsExpanded: Bool? = nil
     ) {
         self.title = title
         self.statuses = statuses
         self.widgets = widgets
         self.nativeSurfaces = nativeSurfaces
+        self.working = working
+        self.hiddenThinkingLabel = hiddenThinkingLabel
+        self.toolsExpanded = toolsExpanded
     }
 
     var hasVisibleContent: Bool {
@@ -147,6 +179,13 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         let hasWidgets = widgets.values.contains { !$0.lines.isEmpty }
         let hasNativeSurfaces = nativeSurfaces.values.contains { $0.hasVisibleContent }
         return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces
+    }
+
+    var hasRetainedContent: Bool {
+        hasVisibleContent
+            || working?.isDefault == false
+            || !(hiddenThinkingLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            || toolsExpanded != nil
     }
 }
 

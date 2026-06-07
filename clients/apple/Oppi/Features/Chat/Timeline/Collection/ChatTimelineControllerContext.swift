@@ -14,6 +14,8 @@ final class ChatTimelineControllerContext {
     var toolDetailsStore: ToolDetailsStore?
     var connection: ServerConnection?
     var currentModel: String?
+    var extensionWorkingState: ExtensionWorkingState?
+    var extensionHiddenThinkingLabel: String?
     var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
 
@@ -34,6 +36,8 @@ final class ChatTimelineControllerContext {
         toolDetailsStore = configuration.toolDetailsStore
         connection = configuration.connection
         currentModel = configuration.currentModel
+        extensionWorkingState = configuration.extensionWorkingState
+        extensionHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
         audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
         interactionContext.reviewCommentSelectionRouter = configuration.reviewCommentSelectionRouter
         interactionContext.sessionId = configuration.sessionId

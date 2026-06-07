@@ -631,12 +631,23 @@ describe("SdkBackend extension UI bridge", () => {
   interface CapturedRequest {
     id: string;
     method: string;
+    title?: string;
     message?: string;
     options?: string[];
     questions?: AskQuestion[];
     allowCustom?: boolean;
+    notifyType?: string;
+    statusKey?: string;
+    statusText?: string;
+    widgetKey?: string;
     widgetLines?: string[];
+    widgetPlacement?: string;
     nativeSurface?: ExtensionUINativeSurface;
+    workingIndicator?: Record<string, unknown>;
+    workingVisible?: boolean;
+    hiddenThinkingLabel?: string;
+    toolsExpanded?: boolean;
+    text?: string;
   }
 
   interface HarnessResponse {
@@ -686,6 +697,7 @@ describe("SdkBackend extension UI bridge", () => {
       const request: CapturedRequest = {
         id: event.id,
         method: event.method,
+        title: typeof record.title === "string" ? record.title : undefined,
         message: event.message,
         options: event.options,
         questions:
@@ -694,15 +706,32 @@ describe("SdkBackend extension UI bridge", () => {
             ? (record.questions as AskQuestion[])
             : undefined,
         allowCustom: typeof record.allowCustom === "boolean" ? record.allowCustom : undefined,
+        notifyType: typeof record.notifyType === "string" ? record.notifyType : undefined,
+        statusKey: typeof record.statusKey === "string" ? record.statusKey : undefined,
+        statusText: typeof record.statusText === "string" ? record.statusText : undefined,
+        widgetKey: typeof record.widgetKey === "string" ? record.widgetKey : undefined,
         widgetLines:
           Array.isArray(record.widgetLines) &&
           record.widgetLines.every((value) => typeof value === "string")
             ? (record.widgetLines as string[])
             : undefined,
+        widgetPlacement:
+          typeof record.widgetPlacement === "string" ? record.widgetPlacement : undefined,
         nativeSurface:
           record.nativeSurface && typeof record.nativeSurface === "object"
             ? (record.nativeSurface as ExtensionUINativeSurface)
             : undefined,
+        workingIndicator:
+          record.workingIndicator && typeof record.workingIndicator === "object"
+            ? (record.workingIndicator as Record<string, unknown>)
+            : undefined,
+        workingVisible:
+          typeof record.workingVisible === "boolean" ? record.workingVisible : undefined,
+        hiddenThinkingLabel:
+          typeof record.hiddenThinkingLabel === "string" ? record.hiddenThinkingLabel : undefined,
+        toolsExpanded:
+          typeof record.toolsExpanded === "boolean" ? record.toolsExpanded : undefined,
+        text: typeof record.text === "string" ? record.text : undefined,
       };
       requests.push(request);
 
@@ -725,11 +754,123 @@ describe("SdkBackend extension UI bridge", () => {
     return { backend, ui, requests };
   }
 
+  it("forwards Pi notification, title, status, and string widget APIs", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    ui.notify("Command allowed", "info");
+    ui.setTitle("Review session");
+    ui.setStatus("build", "Running checks");
+    ui.setWidget("review", ["Review active"], { placement: "belowEditor" });
+    ui.setWidget("review", undefined);
+
+    expect(requests).toMatchObject([
+      {
+        method: "notify",
+        message: "Command allowed",
+        notifyType: "info",
+      },
+      {
+        method: "setTitle",
+        title: "Review session",
+      },
+      {
+        method: "setStatus",
+        statusKey: "build",
+        statusText: "Running checks",
+      },
+      {
+        method: "setWidget",
+        widgetKey: "review",
+        widgetLines: ["Review active"],
+        widgetPlacement: "belowEditor",
+      },
+      {
+        method: "setWidget",
+        widgetKey: "review",
+        widgetLines: undefined,
+      },
+    ]);
+  });
+
   it("provides a snapshot theme on the UI context", () => {
     const { ui } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     expect(ui.theme.bold("Review session active")).toBe("Review session active");
     expect(ui.theme.fg("warning", "Needs attention")).toBe("Needs attention");
+    expect(ui.getAllThemes()).toEqual([]);
+    expect(ui.getTheme("default")).toBeUndefined();
+    expect(ui.setTheme("default")).toEqual({
+      success: false,
+      error: "Theme switching not supported in Oppi sessions",
+    });
+  });
+
+  it("keeps Pi editor and terminal-only UI shims compatible with mobile sessions", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+    let terminalInputCalled = false;
+
+    const unsubscribe = ui.onTerminalInput(() => {
+      terminalInputCalled = true;
+    });
+    unsubscribe();
+    ui.setEditorText("draft from extension");
+    ui.pasteToEditor("pasted from extension");
+    ui.addAutocompleteProvider((current) => current);
+    ui.setFooter(undefined);
+    ui.setHeader(undefined);
+
+    const editorFactory = (() => ({})) as Parameters<
+      PiSdk.ExtensionUIContext["setEditorComponent"]
+    >[0];
+    ui.setEditorComponent(editorFactory);
+
+    expect(requests).toMatchObject([
+      {
+        method: "set_editor_text",
+        text: "draft from extension",
+      },
+      {
+        method: "set_editor_text",
+        text: "pasted from extension",
+      },
+    ]);
+    expect(ui.getEditorText()).toBe("");
+    expect(ui.getEditorComponent()).toBe(editorFactory);
+    expect(terminalInputCalled).toBe(false);
+  });
+
+  it("forwards Pi working-row customizations into extension UI notifications", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    ui.setWorkingMessage("Running checks");
+    ui.setWorkingVisible(false);
+    ui.setWorkingIndicator({ frames: ["●"], intervalMs: 250 });
+    ui.setHiddenThinkingLabel("Private reasoning");
+    ui.setToolsExpanded(true);
+
+    expect(requests).toMatchObject([
+      {
+        method: "setWorkingMessage",
+        message: "Running checks",
+      },
+      {
+        method: "setWorkingVisible",
+        workingVisible: false,
+      },
+      {
+        method: "setWorkingIndicator",
+        workingIndicator: { frames: ["●"], intervalMs: 250 },
+      },
+      {
+        method: "setHiddenThinkingLabel",
+        hiddenThinkingLabel: "Private reasoning",
+      },
+      {
+        method: "setToolsExpanded",
+        toolsExpanded: true,
+      },
+    ]);
+    expect(ui.getToolsExpanded()).toBe(true);
   });
 
   it("renders component widgets into mobile-friendly line snapshots", () => {
@@ -744,37 +885,60 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[0].widgetLines).toEqual(["Review session active"]);
   });
 
-  it("forwards native surfaces from component widgets", () => {
+  it("sanitizes terminal component widget snapshots before mobile projection", () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
-    ui.setWidget("agents", () => ({
-      render: () => ["● Agents", "  Running Explore files"],
-      renderNative: () => ({
-        version: 1,
-        id: "widget:agents",
-        source: "widget",
-        presentation: { style: "surfacePanel", placement: "aboveEditor", title: "Agents" },
-        lifecycle: { kind: "persistent", updateMode: "replace" },
-        blocks: [
-          {
-            type: "activityList",
-            id: "agents",
-            rows: [
-              {
-                id: "child-1",
-                title: "Explore files",
-                subtitle: "Running",
-                state: "running",
-                link: "oppi://session/child-1",
-              },
-            ],
-          },
-        ],
-        fallback: { lines: ["● Agents", "  Running Explore files"] },
-      }),
+    ui.setWidget("links", () => ({
+      render: () => ["Open \x1b]8;;oppi://session/child-1\x07child\x1b]8;;\x07 now"],
     }));
 
     expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("setWidget");
+    expect(requests[0].widgetLines).toEqual(["Open child now"]);
+  });
+
+  it("forwards native surfaces from component widgets", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+    let renderContext: { target: string; capabilities: string[] } | undefined;
+
+    ui.setWidget("agents", () => ({
+      render: () => ["● Agents", "  Running Explore files"],
+      renderNative: (context) => {
+        renderContext = context;
+        return {
+          version: 1,
+          id: "widget:agents",
+          source: "widget",
+          presentation: { style: "surfacePanel", title: "Agents" },
+          blocks: [
+            {
+              type: "activityList",
+              id: "agents",
+              rows: [
+                {
+                  id: "child-1",
+                  title: "Explore files",
+                  subtitle: "Running",
+                  state: "running",
+                  link: "oppi://session/child-1",
+                },
+              ],
+            },
+          ],
+          fallback: { lines: ["● Agents", "  Running Explore files"] },
+        };
+      },
+    }));
+
+    expect(requests).toHaveLength(1);
+    expect(renderContext).toEqual({
+      target: "oppi-native-v1",
+      capabilities: [
+        "extension-native-ui:v1:text-fallback",
+        "extension-native-ui:v1:surface-native",
+      ],
+      locale: undefined,
+    });
     expect(requests[0].method).toBe("setWidget");
     expect(requests[0].widgetLines).toEqual(["● Agents", "  Running Explore files"]);
     expect(requests[0].nativeSurface?.id).toBe("widget:agents");
@@ -839,6 +1003,34 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests).toHaveLength(2);
     expect(requests[1].method).toBe("setWidget");
     expect(requests[1].widgetLines).toBeUndefined();
+  });
+
+  it("clears stale component widget projection when replacement factory throws", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    ui.setWidget("goal", () => ({
+      render: () => ["Goal active"],
+    }));
+    ui.setWidget("goal", () => {
+      throw new Error("snapshot failed");
+    });
+
+    expect(requests).toHaveLength(3);
+    expect(requests[0]).toMatchObject({
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: ["Goal active"],
+    });
+    expect(requests[1]).toMatchObject({
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: undefined,
+    });
+    expect(requests[2]).toMatchObject({
+      method: "notify",
+      notifyType: "warning",
+      message: "Failed to render extension widget: snapshot failed",
+    });
   });
 
   it("emits a direct ask request and parses structured answers", async () => {

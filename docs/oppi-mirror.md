@@ -53,7 +53,6 @@ Stop or restart the bridge:
 /oppi-mirror start
 ```
 
-
 ## Configuration
 
 By default, the extension reads the local Oppi server URL and token from `~/.config/oppi/config.json`.
@@ -66,20 +65,31 @@ OPPI_MIRROR_TOKEN=your-token \
 pi
 ```
 
-Disable automatic startup in `~/.pi/agent/settings.json`:
+Configure startup and missing-workspace behavior in `~/.pi/agent/settings.json`:
 
 ```json
 {
   "oppiMirror": {
-    "autoStart": false
+    "autoStart": false,
+    "workspaceCreation": "ask"
   }
 }
 ```
 
-Or disable it for one process:
+`workspaceCreation` accepts:
+
+- `ask` — prompt in terminal Pi before creating a workspace. This is the default.
+- `always` — create the workspace without prompting.
+- `never` — do not create workspaces from mirror mode.
+
+When creation is approved, Oppi uses the nearest parent git repo as the workspace root. If there is no git repo, it uses the terminal cwd.
+
+For one process:
 
 ```bash
-OPPI_MIRROR_AUTO_START=false pi
+OPPI_MIRROR_AUTO_START=false \
+OPPI_MIRROR_WORKSPACE_CREATION=never \
+pi
 ```
 
 ## Commands
@@ -177,4 +187,3 @@ OPPI_MIRROR_AUTO_START=false pi
 ### The session appears twice
 
 The mirror session and local JSONL import must share the same `piSessionId` and canonical session file. If duplicates appear, check the server’s mirror identity coalescing and local-session import behavior.
-

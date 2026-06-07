@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  clearRecordedE2EUIResponses,
+  getRecordedE2EUIResponses,
+  recordSyntheticE2EUIRequest,
+} from "../src/e2e-ui-harness-state.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 import { WsMessageHandler, type WsMessageHandlerDeps } from "../src/ws-message-handler.js";
 
@@ -253,6 +258,43 @@ describe("WsMessageHandler", () => {
         error: "UI request not found: ui-1",
       },
     ]);
+  });
+
+  it("records harness extension UI responses without reporting synthetic missing requests", async () => {
+    const originalFlag = process.env.OPPI_E2E_UI_HARNESS;
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    clearRecordedE2EUIResponses("s1");
+
+    try {
+      const harness = makeHarness();
+      harness.sessions.respondToUIRequest.mockReturnValueOnce(false);
+      recordSyntheticE2EUIRequest("s1", "ui-1");
+
+      await dispatch(harness, {
+        type: "extension_ui_response",
+        id: "ui-1",
+        value: "approved",
+        requestId: "req-4",
+      });
+
+      expect(getRecordedE2EUIResponses("s1")).toMatchObject([
+        {
+          type: "extension_ui_response",
+          sessionId: "s1",
+          id: "ui-1",
+          value: "approved",
+          requestId: "req-4",
+        },
+      ]);
+      expect(harness.sent).toEqual([]);
+    } finally {
+      clearRecordedE2EUIResponses("s1");
+      if (originalFlag === undefined) {
+        delete process.env.OPPI_E2E_UI_HARNESS;
+      } else {
+        process.env.OPPI_E2E_UI_HARNESS = originalFlag;
+      }
+    }
   });
 
   it("forwards RPC commands with request IDs", async () => {

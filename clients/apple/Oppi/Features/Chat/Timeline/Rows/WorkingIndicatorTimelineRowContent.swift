@@ -2,6 +2,7 @@ import UIKit
 
 struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
     let modelId: String?
+    let workingState: ExtensionWorkingState?
 
     func makeContentView() -> any UIView & UIContentView {
         WorkingIndicatorTimelineRowContentView(configuration: self)
@@ -15,11 +16,20 @@ struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
 /// Working indicator row: [10pt leading][16x16 spinner][6pt gap]["Working..." label]
 /// Supports braille dots and Game of Life spinner styles via Settings.
 final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
+    private static let defaultCustomInterval: TimeInterval = 0.08
+
+    private let stackView = UIStackView()
+    private let indicatorContainer = UIView()
     private let brailleView = BrailleSpinnerUIView()
     private let golView = GameOfLifeUIView(gridSize: 6)
+    private let customIndicatorLabel = UILabel()
     private let workingLabel = UILabel()
 
     private var currentConfiguration: WorkingIndicatorTimelineRowConfiguration
+    nonisolated(unsafe) private var customTimer: Timer?
+    private var customFrames: [String] = []
+    private var customFrameIndex = 0
+    private var customInterval = defaultCustomInterval
 
     init(configuration: WorkingIndicatorTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -33,6 +43,10 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         nil
     }
 
+    deinit {
+        stopCustomAnimation()
+    }
+
     var configuration: UIContentConfiguration {
         get { currentConfiguration }
         set {
@@ -41,38 +55,69 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            startCustomAnimationIfNeeded()
+        } else {
+            stopCustomAnimation()
+        }
+    }
+
     private func setupViews() {
         backgroundColor = .clear
 
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        indicatorContainer.translatesAutoresizingMaskIntoConstraints = false
         brailleView.translatesAutoresizingMaskIntoConstraints = false
         golView.translatesAutoresizingMaskIntoConstraints = false
+        customIndicatorLabel.translatesAutoresizingMaskIntoConstraints = false
         workingLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(brailleView)
-        addSubview(golView)
-        addSubview(workingLabel)
+        addSubview(stackView)
+        stackView.axis = .horizontal
+        stackView.alignment = .center
+        stackView.spacing = 6
+        stackView.addArrangedSubview(indicatorContainer)
+        stackView.addArrangedSubview(workingLabel)
+
+        indicatorContainer.addSubview(brailleView)
+        indicatorContainer.addSubview(golView)
+        indicatorContainer.addSubview(customIndicatorLabel)
 
         workingLabel.text = "Working..."
         workingLabel.font = .preferredFont(forTextStyle: .callout)
+        customIndicatorLabel.font = AppFont.monoLarge
+        customIndicatorLabel.textAlignment = .center
+        customIndicatorLabel.adjustsFontForContentSizeCategory = true
+        workingLabel.adjustsFontForContentSizeCategory = true
+        workingLabel.numberOfLines = 0
 
         let spinnerConstraints: [NSLayoutConstraint] = [
+            stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            stackView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+
+            indicatorContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
+            indicatorContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 16),
+
             // Braille spinner
-            brailleView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            brailleView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            brailleView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            brailleView.centerXAnchor.constraint(equalTo: indicatorContainer.centerXAnchor),
+            brailleView.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
             brailleView.widthAnchor.constraint(equalToConstant: 16),
             brailleView.heightAnchor.constraint(equalToConstant: 16),
 
             // GoL spinner (same position)
-            golView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            golView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            golView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            golView.centerXAnchor.constraint(equalTo: indicatorContainer.centerXAnchor),
+            golView.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
             golView.widthAnchor.constraint(equalToConstant: 16),
             golView.heightAnchor.constraint(equalToConstant: 16),
 
-            // Working label
-            workingLabel.leadingAnchor.constraint(equalTo: brailleView.trailingAnchor, constant: 6),
-            workingLabel.centerYAnchor.constraint(equalTo: brailleView.centerYAnchor),
+            customIndicatorLabel.leadingAnchor.constraint(equalTo: indicatorContainer.leadingAnchor),
+            customIndicatorLabel.trailingAnchor.constraint(equalTo: indicatorContainer.trailingAnchor),
+            customIndicatorLabel.topAnchor.constraint(equalTo: indicatorContainer.topAnchor),
+            customIndicatorLabel.bottomAnchor.constraint(equalTo: indicatorContainer.bottomAnchor),
         ]
 
         NSLayoutConstraint.activate(spinnerConstraints)
@@ -81,15 +126,64 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: WorkingIndicatorTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let style = SpinnerStyle.current
-        brailleView.isHidden = style != .brailleDots
-        golView.isHidden = style != .gameOfLife
-
         let palette = ThemeRuntimeState.currentPalette()
         let providerColor = UIColor(ProviderColor.color(for: configuration.modelId, palette: palette))
+        let customFrames = configuration.workingState?.indicator?.frames
+        let hidesIndicator = customFrames?.isEmpty == true
+        let showsCustomIndicator = customFrames?.isEmpty == false
+
+        let style = SpinnerStyle.current
+        brailleView.isHidden = hidesIndicator || showsCustomIndicator || style != .brailleDots
+        golView.isHidden = hidesIndicator || showsCustomIndicator || style != .gameOfLife
+        customIndicatorLabel.isHidden = !showsCustomIndicator
+        indicatorContainer.isHidden = hidesIndicator
+            || (!showsCustomIndicator && style != .brailleDots && style != .gameOfLife)
 
         brailleView.tintUIColor = providerColor
         golView.tintUIColor = providerColor
+        customIndicatorLabel.textColor = providerColor
         workingLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.6)
+        workingLabel.text = configuration.workingState?.message ?? "Working..."
+        accessibilityLabel = workingLabel.text
+
+        configureCustomIndicator(
+            frames: showsCustomIndicator ? customFrames : nil,
+            intervalMs: configuration.workingState?.indicator?.intervalMs
+        )
+    }
+
+    private func configureCustomIndicator(frames: [String]?, intervalMs: Int?) {
+        stopCustomAnimation()
+        customFrameIndex = 0
+
+        guard let frames else {
+            customFrames = []
+            customIndicatorLabel.text = nil
+            return
+        }
+
+        customFrames = frames
+        customInterval = Self.interval(from: intervalMs)
+        customIndicatorLabel.text = frames.first ?? ""
+        startCustomAnimationIfNeeded()
+    }
+
+    private func startCustomAnimationIfNeeded() {
+        guard window != nil, customTimer == nil, customFrames.count > 1 else { return }
+        customTimer = Timer.scheduledTimer(withTimeInterval: customInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.customFrameIndex = (self.customFrameIndex + 1) % self.customFrames.count
+            self.customIndicatorLabel.text = self.customFrames[self.customFrameIndex]
+        }
+    }
+
+    private func stopCustomAnimation() {
+        customTimer?.invalidate()
+        customTimer = nil
+    }
+
+    private static func interval(from intervalMs: Int?) -> TimeInterval {
+        guard let intervalMs, intervalMs > 0 else { return defaultCustomInterval }
+        return TimeInterval(intervalMs) / 1_000
     }
 }

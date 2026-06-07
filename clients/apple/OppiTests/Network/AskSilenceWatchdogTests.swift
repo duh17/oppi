@@ -48,9 +48,9 @@ struct AskSilenceWatchdogTests {
         // Receive an ask extensionUIRequest
         conn.handleActiveSessionUI(makeAskMessage(), sessionId: "s1")
 
-        // The ask card should be set
-        #expect(conn.activeAskRequest != nil)
-        #expect(conn.activeAskRequest?.id == "ask-1")
+        // The ask card should be available from the canonical ask store.
+        #expect(conn.askRequestStore.pending(for: "s1") != nil)
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
 
         // The silence watchdog should be stopped — silence is expected during ask
         #expect(conn.silenceWatchdog.lastEventTime == nil,
@@ -65,7 +65,7 @@ struct AskSilenceWatchdogTests {
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
         #expect(conn.silenceWatchdog.lastEventTime != nil)
 
-        // Receive a blocking non-ask extension request (e.g. "select")
+        // Receive a blocking translated prompt request (e.g. "select")
         let selectRequest = ExtensionUIRequest(
             id: "ext-1",
             sessionId: "s1",
@@ -75,7 +75,11 @@ struct AskSilenceWatchdogTests {
         )
         conn.handleActiveSessionUI(.extensionUIRequest(selectRequest), sessionId: "s1")
 
-        // The extension dialog waits for user input, so silence is expected.
+        let pendingAsk = conn.askRequestStore.pending(for: "s1")
+        #expect(pendingAsk?.id == "ext-1")
+        #expect(pendingAsk?.responseEncoding == .extensionSelect)
+
+        // The translated ask card waits for user input, so silence is expected.
         #expect(conn.silenceWatchdog.lastEventTime == nil,
                 "Watchdog should stop while a blocking extension request is pending")
     }
@@ -87,16 +91,16 @@ struct AskSilenceWatchdogTests {
         // Set up running state with ask
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
         conn.handleActiveSessionUI(makeAskMessage(), sessionId: "s1")
-        #expect(conn.activeAskRequest != nil)
+        #expect(conn.askRequestStore.pending(for: "s1") != nil)
 
         // Session ends
         conn.handleActiveSessionUI(.sessionEnded(reason: ""), sessionId: "s1")
 
-        #expect(conn.activeAskRequest == nil)
+        #expect(conn.askRequestStore.pending(for: "s1") == nil)
         #expect(conn.silenceWatchdog.lastEventTime == nil)
     }
 
-    @Test func foregroundRecoveryStashesAskBeforeClearing() async {
+    @Test func foregroundRecoveryPreservesFocusedAskInCanonicalStore() async {
         let conn = ServerConnection()
         conn.configure(credentials: makeTestCredentials())
         conn._setActiveSessionIdForTesting("s1")
@@ -112,20 +116,15 @@ struct AskSilenceWatchdogTests {
             allowCustom: true,
             timeout: nil
         )
-        conn.activeAskRequest = ask
         conn.askRequestStore.set(ask, for: "s1")
 
         // Simulate foreground recovery with dead stream.
-        // reconnectIfNeeded clears activeAskRequest but should stash it first.
+        // Ask state is already canonical in AskRequestStore, so recovery should
+        // leave the focused ask visible instead of copying it through a stash.
         await conn.reconnectIfNeeded()
 
-        // activeAskRequest is cleared during reconnect
-        #expect(conn.activeAskRequest == nil)
-
-        // But the ask should be stashed so focusSession() can restore it
-        #expect(conn.pendingAskRequests["s1"] != nil,
-                "Ask should be stashed in pendingAskRequests during foreground recovery")
-        #expect(conn.pendingAskRequests["s1"]?.id == "ask-stash")
+        #expect(conn.askRequestStore.pending(for: "s1") != nil,
+                "Ask should remain available from the canonical store during foreground recovery")
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-stash")
     }
 
@@ -137,11 +136,11 @@ struct AskSilenceWatchdogTests {
         // Set up running state with ask
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
         conn.handleActiveSessionUI(makeAskMessage(), sessionId: "s1")
-        #expect(conn.activeAskRequest != nil)
+        #expect(conn.askRequestStore.pending(for: "s1") != nil)
 
         conn.applyFetchedSessionState(makeTestSession(id: "s1", status: .ready))
 
-        #expect(conn.activeAskRequest == nil)
+        #expect(conn.askRequestStore.pending(for: "s1") == nil)
         #expect(conn.silenceWatchdog.lastEventTime == nil)
     }
 
@@ -152,11 +151,11 @@ struct AskSilenceWatchdogTests {
         // Set up running state with ask
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
         conn.handleActiveSessionUI(makeAskMessage(), sessionId: "s1")
-        #expect(conn.activeAskRequest != nil)
+        #expect(conn.askRequestStore.pending(for: "s1") != nil)
 
         // Stop confirmed
         conn.handleActiveSessionUI(.stopConfirmed(source: .user, reason: nil), sessionId: "s1")
 
-        #expect(conn.activeAskRequest == nil)
+        #expect(conn.askRequestStore.pending(for: "s1") == nil)
     }
 }

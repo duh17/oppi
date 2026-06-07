@@ -91,16 +91,14 @@ extension ServerConnection {
 
     func applyUIEffects(_ effects: ServerMessageUIEffects, sessionId: String) {
         if let request = effects.extensionRequest {
-            if let ask = askRequest(from: request) {
-                if effects.isFocusedSession {
-                    presentAskRequest(ask, for: sessionId)
-                } else {
-                    stashPendingAskRequest(ask, for: sessionId)
-                }
-            } else if effects.isFocusedSession {
-                presentExtensionDialog(request, for: sessionId)
+            if let ask = request.askRequest {
+                storeAskRequest(ask, for: sessionId, isFocusedSession: effects.isFocusedSession)
             } else {
-                stashPendingExtensionDialog(request, for: sessionId)
+                storeExtensionDialog(
+                    request,
+                    for: sessionId,
+                    isFocusedSession: effects.isFocusedSession
+                )
             }
         }
 
@@ -116,6 +114,10 @@ extension ServerConnection {
                 widgetKey: notification.widgetKey,
                 widgetLines: notification.widgetLines,
                 widgetPlacement: notification.widgetPlacement,
+                workingIndicator: notification.workingIndicator,
+                workingVisible: notification.workingVisible,
+                hiddenThinkingLabel: notification.hiddenThinkingLabel,
+                toolsExpanded: notification.toolsExpanded,
                 nativeSurface: notification.nativeSurface,
                 sessionId: sessionId,
                 isActiveSession: effects.isFocusedSession
@@ -183,6 +185,10 @@ extension ServerConnection {
         widgetKey: String?,
         widgetLines: [String]?,
         widgetPlacement: String?,
+        workingIndicator: ExtensionUIWorkingIndicator?,
+        workingVisible: Bool?,
+        hiddenThinkingLabel: String?,
+        toolsExpanded: Bool?,
         nativeSurface: ExtensionUINativeSurface?,
         sessionId: String,
         isActiveSession: Bool
@@ -192,6 +198,39 @@ extension ServerConnection {
             if isActiveSession {
                 extensionToast = message
             }
+
+        case "setWorkingMessage":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            var working = surface.working ?? ExtensionWorkingState()
+            let normalized = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+            working.message = (normalized?.isEmpty == false) ? normalized : nil
+            surface.working = working.isDefault ? nil : working
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "setWorkingVisible":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            var working = surface.working ?? ExtensionWorkingState()
+            working.visible = workingVisible ?? true
+            surface.working = working.isDefault ? nil : working
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "setWorkingIndicator":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            var working = surface.working ?? ExtensionWorkingState()
+            working.indicator = workingIndicator
+            surface.working = working.isDefault ? nil : working
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "setHiddenThinkingLabel":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            let normalized = hiddenThinkingLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+            surface.hiddenThinkingLabel = (normalized?.isEmpty == false) ? normalized : nil
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "setToolsExpanded":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            surface.toolsExpanded = toolsExpanded ?? false
+            storeExtensionSurface(surface, for: sessionId)
 
         case "setStatus":
             guard let statusKey else { return }
@@ -215,7 +254,10 @@ extension ServerConnection {
             let nativeSurfaceId = nativeSurface?.id ?? "widget:\(widgetKey)"
             if let nativeSurface, nativeSurface.hasVisibleContent {
                 surface.widgets.removeValue(forKey: widgetKey)
-                surface.nativeSurfaces[nativeSurface.id] = nativeSurface
+                surface.nativeSurfaces[nativeSurface.id] = ExtensionNativeSurfaceState(
+                    surface: nativeSurface,
+                    placement: widgetPlacement
+                )
             } else if let widgetLines {
                 surface.nativeSurfaces.removeValue(forKey: nativeSurfaceId)
                 let normalizedLines = widgetLines
@@ -255,7 +297,7 @@ extension ServerConnection {
     }
 
     func storeExtensionSurface(_ surface: ExtensionSurfaceState, for sessionId: String) {
-        if surface.hasVisibleContent {
+        if surface.hasRetainedContent {
             extensionSurfaceBySession[sessionId] = surface
         } else {
             extensionSurfaceBySession.removeValue(forKey: sessionId)

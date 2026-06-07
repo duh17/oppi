@@ -3,8 +3,8 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { EventRing } from "./event-ring.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
+import type { ExtensionUIState } from "./extension-ui-state.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
-import type { ExtensionUIRequest, PendingAskState } from "./session-events.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
@@ -12,13 +12,11 @@ import { TurnDedupeCache } from "./turn-cache.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 
-export interface SessionStartActiveSession {
+export interface SessionStartActiveSession extends ExtensionUIState {
   session: Session;
   sdkBackend: SdkBackend;
   workspaceId: string;
   subscribers: Set<(msg: ServerMessage) => void>;
-  pendingUIRequests: Map<string, ExtensionUIRequest>;
-  persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
@@ -29,7 +27,6 @@ export interface SessionStartActiveSession {
   shellPreviewLastSent: Map<string, number>;
   streamingArgPreviews: Set<string>;
   streamingToolUpdatesSeen: Map<string, string>;
-  pendingAsk?: PendingAskState;
   toolFullOutputPaths: Map<string, string>;
   messageQueue?: SessionMessageQueueStore;
   turnCache: TurnDedupeCache;

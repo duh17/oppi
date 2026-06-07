@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripAnsiEscapes } from "../src/ansi.js";
+import { stripAnsiEscapes, terminalLineToTextSpans, terminalLineVisibleText } from "../src/ansi.js";
 
 describe("stripAnsiEscapes", () => {
   it("returns plain text unchanged", () => {
@@ -124,5 +124,44 @@ describe("stripAnsiEscapes", () => {
   it("preserves npm colored output", () => {
     const input = "\x1b[1;32mnpm\x1b[0m test";
     expect(stripAnsiEscapes(input)).toBe(input);
+  });
+});
+
+describe("terminalLineToTextSpans", () => {
+  it("preserves OSC-8 links terminated by BEL as semantic spans", () => {
+    const input = "Open \x1b]8;;oppi://session/child-1\x07child\x1b]8;;\x07 now";
+
+    expect(terminalLineToTextSpans(input)).toEqual([
+      { text: "Open " },
+      { text: "child", link: "oppi://session/child-1" },
+      { text: " now" },
+    ]);
+    expect(terminalLineVisibleText(input)).toBe("Open child now");
+  });
+
+  it("preserves OSC-8 links terminated by ST as semantic spans", () => {
+    const input = "\x1b]8;id=docs;https://example.com/docs\x1b\\Docs\x1b]8;;\x1b\\";
+
+    expect(terminalLineToTextSpans(input)).toEqual([
+      { text: "Docs", link: "https://example.com/docs" },
+    ]);
+    expect(terminalLineVisibleText(input)).toBe("Docs");
+  });
+
+  it("maps a small SGR subset to native semantic roles and traits", () => {
+    const input = "\x1b[1;31mDanger\x1b[0m \x1b[4;36mlinkish\x1b[0m";
+
+    expect(terminalLineToTextSpans(input)).toEqual([
+      { text: "Danger", role: "danger", traits: ["bold"] },
+      { text: " " },
+      { text: "linkish", role: "accent", traits: ["underline"] },
+    ]);
+  });
+
+  it("strips non-link OSC and cursor control from visible fallback text", () => {
+    const input = "\x1b]0;window title\x07\x1b[2KReady";
+
+    expect(terminalLineToTextSpans(input)).toEqual([{ text: "Ready" }]);
+    expect(terminalLineVisibleText(input)).toBe("Ready");
   });
 });

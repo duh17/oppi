@@ -162,8 +162,8 @@ struct AskRequestTests {
         #expect(req.askQuestions?.first?.options.first?.value == "a")
     }
 
-    @Test func genericSelectNotRoutedToAsk() throws {
-        // method: "select" should NOT populate askQuestions
+    @Test func genericSelectDecodesWithoutAskQuestions() throws {
+        // method: "select" keeps the raw Pi extension UI fields separate from askQuestions.
         let json = """
         {"type":"extension_ui_request","id":"ext1","sessionId":"s1","method":"select","title":"Choose","options":["A","B"]}
         """
@@ -260,9 +260,136 @@ struct AskRequestTests {
         #expect(ask?.questions.first?.options[1].description == "Block the tool call")
     }
 
+    @Test func extensionSelectInlineResponseMapsSingleAnswerToValue() throws {
+        let request = ExtensionUIRequest(
+            id: "select-1",
+            sessionId: "s1",
+            method: "select",
+            options: ["A", "B"]
+        )
+
+        let ask = try #require(request.askRequest)
+        let payload = try #require(ask.responsePayload(from: [
+            ExtensionUIRequest.inlineQuestionId: .single("B"),
+        ]))
+
+        #expect(ask.responseEncoding == .extensionSelect)
+        #expect(payload == ExtensionUIResponsePayload(value: "B"))
+    }
+
+    @Test func extensionSelectInlineResponseCancelsWhenMissingAnswer() throws {
+        let request = ExtensionUIRequest(
+            id: "select-2",
+            sessionId: "s1",
+            method: "select",
+            options: ["A", "B"]
+        )
+
+        let ask = try #require(request.askRequest)
+        let payload = try #require(ask.responsePayload(from: [:]))
+
+        #expect(ask.responseEncoding == .extensionSelect)
+        #expect(payload == .cancelled)
+    }
+
+    @Test func extensionConfirmInlineResponseMapsConfirmAndCancel() throws {
+        let request = ExtensionUIRequest(id: "confirm-1", sessionId: "s1", method: "confirm")
+        let ask = try #require(request.askRequest)
+
+        let confirmed = try #require(ask.responsePayload(from: [
+            ExtensionUIRequest.inlineQuestionId: .single(ExtensionUIRequest.confirmValue),
+        ]))
+        let cancelled = try #require(ask.responsePayload(from: [
+            ExtensionUIRequest.inlineQuestionId: .single(ExtensionUIRequest.cancelValue),
+        ]))
+
+        #expect(ask.responseEncoding == .extensionConfirm)
+        #expect(confirmed == ExtensionUIResponsePayload(confirmed: true))
+        #expect(cancelled == .cancelled)
+    }
+
+    @Test func extensionInputInlineResponseMapsTextAnswersToValue() throws {
+        let request = ExtensionUIRequest(id: "input-1", sessionId: "s1", method: "input")
+        let ask = try #require(request.askRequest)
+
+        let custom = try #require(ask.responsePayload(from: [
+            ExtensionUIRequest.inlineQuestionId: .custom("custom text"),
+        ]))
+        let single = try #require(ask.responsePayload(from: [
+            ExtensionUIRequest.inlineQuestionId: .single("single text"),
+        ]))
+
+        #expect(ask.responseEncoding == .extensionInput)
+        #expect(custom == ExtensionUIResponsePayload(value: "custom text"))
+        #expect(single == ExtensionUIResponsePayload(value: "single text"))
+    }
+
+    @Test func extensionInputInlineResponseCancelsWhenMissingText() throws {
+        let request = ExtensionUIRequest(id: "input-2", sessionId: "s1", method: "input")
+
+        let ask = try #require(request.askRequest)
+        let payload = try #require(ask.responsePayload(from: [:]))
+
+        #expect(ask.responseEncoding == .extensionInput)
+        #expect(payload == .cancelled)
+    }
+
+    @Test func extensionEditorDoesNotProduceInlineResponsePayload() {
+        let request = ExtensionUIRequest(id: "editor-1", sessionId: "s1", method: "editor")
+
+        #expect(request.nativePresentation == .editorSheet)
+        #expect(request.askRequest == nil)
+        #expect(request.inlineAskRequest == nil)
+    }
+
+    @Test func extensionDialogPresentationKeepsStandardPromptsInlineAndEditorSheet() {
+        let ask = ExtensionUIRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            method: "ask",
+            askQuestions: [
+                AskQuestion(id: "q1", question: "Proceed?", options: [
+                    AskOption(value: "yes", label: "Yes"),
+                ], multiSelect: false),
+            ],
+            allowCustom: false
+        )
+        let select = ExtensionUIRequest(id: "select-1", sessionId: "s1", method: "select", options: ["A"])
+        let confirm = ExtensionUIRequest(id: "confirm-1", sessionId: "s1", method: "confirm")
+        let input = ExtensionUIRequest(id: "input-1", sessionId: "s1", method: "input")
+        let editor = ExtensionUIRequest(id: "editor-1", sessionId: "s1", method: "editor")
+        let emptySelect = ExtensionUIRequest(id: "empty-select", sessionId: "s1", method: "select", options: [])
+        let future = ExtensionUIRequest(id: "future-1", sessionId: "s1", method: "futureForm")
+
+        #expect(ask.nativePresentation == .askCard)
+        #expect(ask.askRequest?.id == "ask-1")
+        #expect(ask.askRequest?.allowCustom == false)
+        #expect(ask.askRequest?.responseEncoding == .ask)
+        #expect(ask.inlineAskRequest == nil)
+
+        #expect(select.nativePresentation == .inlineAskCard)
+        #expect(select.askRequest?.responseEncoding == .extensionSelect)
+        #expect(confirm.nativePresentation == .inlineAskCard)
+        #expect(confirm.askRequest?.responseEncoding == .extensionConfirm)
+        #expect(input.nativePresentation == .inlineAskCard)
+        #expect(input.askRequest?.responseEncoding == .extensionInput)
+
+        #expect(editor.nativePresentation == .editorSheet)
+        #expect(editor.askRequest == nil)
+        #expect(editor.inlineAskRequest == nil)
+
+        #expect(emptySelect.nativePresentation == .fallbackSheet)
+        #expect(emptySelect.askRequest == nil)
+        #expect(emptySelect.inlineAskRequest == nil)
+
+        #expect(future.nativePresentation == .fallbackSheet)
+        #expect(future.askRequest == nil)
+        #expect(future.inlineAskRequest == nil)
+    }
+
     // MARK: - Router Integration
 
-    @Test @MainActor func routerRoutesAskToActiveAskRequest() {
+    @Test @MainActor func routerRoutesAskToAskRequestStore() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -283,16 +410,17 @@ struct AskRequestTests {
         let message = ServerMessage.extensionUIRequest(request)
         conn.handleActiveSessionUI(message, sessionId: "s1")
 
-        #expect(conn.activeAskRequest != nil)
-        #expect(conn.activeAskRequest?.id == "ask-r1")
-        #expect(conn.activeAskRequest?.questions.count == 1)
-        #expect(conn.activeAskRequest?.allowCustom == true)
-        #expect(conn.activeAskRequest?.timeout == 60000)
+        let pendingAsk = conn.askRequestStore.pending(for: "s1")
+        #expect(pendingAsk != nil)
+        #expect(pendingAsk?.id == "ask-r1")
+        #expect(pendingAsk?.questions.count == 1)
+        #expect(pendingAsk?.allowCustom == true)
+        #expect(pendingAsk?.timeout == 60000)
         // Generic dialog should NOT be set
         #expect(conn.activeExtensionDialog == nil)
     }
 
-    @Test @MainActor func routerRoutesSelectToGenericDialog() {
+    @Test @MainActor func routerRoutesSelectToAskRequestStore() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -307,29 +435,32 @@ struct AskRequestTests {
         let message = ServerMessage.extensionUIRequest(request)
         conn.handleActiveSessionUI(message, sessionId: "s1")
 
-        #expect(conn.activeExtensionDialog != nil)
-        #expect(conn.activeExtensionDialog?.id == "ext-1")
-        // Ask request should NOT be set
-        #expect(conn.activeAskRequest == nil)
+        let pendingAsk = conn.askRequestStore.pending(for: "s1")
+        #expect(pendingAsk?.id == "ext-1")
+        #expect(pendingAsk?.responseEncoding == .extensionSelect)
+        #expect(conn.activeExtensionDialog == nil)
     }
 
-    @Test @MainActor func disconnectClearsAskRequest() {
+    @Test @MainActor func disconnectClearsFocusedSessionAndPreservesPendingAsk() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
-        conn.activeAskRequest = AskRequest(
+        let ask = AskRequest(
             id: "ask-1",
             sessionId: "s1",
             questions: [AskQuestion(id: "q1", question: "Q", options: [], multiSelect: false)],
             allowCustom: true,
             timeout: nil
         )
+        conn.askRequestStore.set(ask, for: "s1")
+
         conn.disconnectSession()
 
-        #expect(conn.activeAskRequest == nil)
+        #expect(conn.focusedSessionId == nil)
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
     }
 
-    @Test @MainActor func disconnectStashesAskForRestore() {
+    @Test @MainActor func disconnectPreservesPendingAskForRestore() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -340,13 +471,11 @@ struct AskRequestTests {
             allowCustom: true,
             timeout: nil
         )
-        conn.activeAskRequest = ask
         conn.askRequestStore.set(ask, for: "s1")
 
         conn.disconnectSession()
 
-        #expect(conn.activeAskRequest == nil)
-        #expect(conn.pendingAskRequests["s1"]?.id == "ask-stash")
+        #expect(conn.focusedSessionId == nil)
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-stash")
     }
 
@@ -359,16 +488,14 @@ struct AskRequestTests {
             allowCustom: true,
             timeout: nil
         )
-        conn.pendingAskRequests["s1"] = ask
+        conn.askRequestStore.set(ask, for: "s1")
 
         conn.focusSession("s1")
 
-        #expect(conn.activeAskRequest?.id == "ask-pending")
-        #expect(conn.pendingAskRequests["s1"] == nil)
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-pending")
     }
 
-    @Test @MainActor func focusSessionStashesPreviousAskAndStopsWatchdogOnHandoff() {
+    @Test @MainActor func focusSessionPreservesPreviousAskAndStopsWatchdogOnHandoff() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -387,23 +514,20 @@ struct AskRequestTests {
             timeout: nil
         )
 
-        conn.activeAskRequest = firstAsk
         conn.askRequestStore.set(firstAsk, for: "s1")
-        conn.pendingAskRequests["s2"] = secondAsk
+        conn.askRequestStore.set(secondAsk, for: "s2")
         conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
 
         #expect(conn.silenceWatchdog.lastEventTime != nil)
 
         conn.focusSession("s2")
 
-        #expect(conn.pendingAskRequests["s1"]?.id == "ask-s1")
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-s1")
-        #expect(conn.activeAskRequest?.id == "ask-s2")
-        #expect(conn.pendingAskRequests["s2"] == nil)
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-s2")
         #expect(conn.silenceWatchdog.lastEventTime == nil)
     }
 
-    @Test @MainActor func routeStreamMessageStashesAskForInactiveSession() {
+    @Test @MainActor func routeStreamMessageStoresAskForInactiveSession() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("active")
 
@@ -427,12 +551,11 @@ struct AskRequestTests {
             message: .extensionUIRequest(request)
         ))
 
-        #expect(conn.activeAskRequest == nil)
-        #expect(conn.pendingAskRequests["s2"]?.id == "ask-other")
+        #expect(conn.askRequestStore.pending(for: "active") == nil)
         #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-other")
     }
 
-    @Test @MainActor func inactiveTerminalMessagesClearStashedAsk() {
+    @Test @MainActor func inactiveTerminalMessagesClearPendingAskForInactiveSession() {
         let terminalMessages: [ServerMessage] = [
             .stopConfirmed(source: .user, reason: nil),
             .sessionEnded(reason: "done"),
@@ -449,7 +572,6 @@ struct AskRequestTests {
                 allowCustom: true,
                 timeout: nil
             )
-            conn.pendingAskRequests["s2"] = ask
             conn.askRequestStore.set(ask, for: "s2")
 
             conn.routeStreamMessage(StreamMessage(
@@ -459,15 +581,45 @@ struct AskRequestTests {
                 message: message
             ))
 
-            #expect(conn.pendingAskRequests["s2"] == nil)
             #expect(conn.askRequestStore.pending(for: "s2") == nil)
 
             conn.focusSession("s2")
-            #expect(conn.activeAskRequest == nil)
+            #expect(conn.askRequestStore.pending(for: "s2") == nil)
         }
     }
 
-    @Test @MainActor func inactiveTerminalStateClearsStashedAsk() {
+    @Test @MainActor func inactiveTerminalMessagesClearStashedExtensionDialog() {
+        let terminalMessages: [ServerMessage] = [
+            .stopConfirmed(source: .user, reason: nil),
+            .sessionEnded(reason: "done"),
+        ]
+
+        for message in terminalMessages {
+            let conn = ServerConnection()
+            conn._setActiveSessionIdForTesting("active")
+
+            conn.pendingExtensionDialogs["s2"] = ExtensionUIRequest(
+                id: "editor-stale",
+                sessionId: "s2",
+                method: "editor",
+                title: "Edit"
+            )
+
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: "s2",
+                seq: 1,
+                currentSeq: nil,
+                message: message
+            ))
+
+            #expect(conn.pendingExtensionDialogs["s2"] == nil)
+
+            conn.focusSession("s2")
+            #expect(conn.activeExtensionDialog == nil)
+        }
+    }
+
+    @Test @MainActor func inactiveTerminalStateClearsPendingAskForInactiveSession() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("active")
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
@@ -479,7 +631,6 @@ struct AskRequestTests {
             allowCustom: true,
             timeout: nil
         )
-        conn.pendingAskRequests["s2"] = ask
         conn.askRequestStore.set(ask, for: "s2")
 
         conn.routeStreamMessage(StreamMessage(
@@ -489,11 +640,10 @@ struct AskRequestTests {
             message: .state(session: makeTestSession(id: "s2", status: .ready))
         ))
 
-        #expect(conn.pendingAskRequests["s2"] == nil)
         #expect(conn.askRequestStore.pending(for: "s2") == nil)
 
         conn.focusSession("s2")
-        #expect(conn.activeAskRequest == nil)
+        #expect(conn.askRequestStore.pending(for: "s2") == nil)
     }
 
     @Test @MainActor func secondAskReplacesFirst() {
@@ -510,7 +660,7 @@ struct AskRequestTests {
             allowCustom: true
         )
         conn.handleActiveSessionUI(.extensionUIRequest(first), sessionId: "s1")
-        #expect(conn.activeAskRequest?.id == "ask-1")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
 
         let second = ExtensionUIRequest(
             id: "ask-2",
@@ -522,7 +672,7 @@ struct AskRequestTests {
             allowCustom: false
         )
         conn.handleActiveSessionUI(.extensionUIRequest(second), sessionId: "s1")
-        #expect(conn.activeAskRequest?.id == "ask-2")
-        #expect(conn.activeAskRequest?.allowCustom == false)
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-2")
+        #expect(conn.askRequestStore.pending(for: "s1")?.allowCustom == false)
     }
 }

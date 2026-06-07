@@ -289,13 +289,6 @@ extension ServerConnection {
                 workspaceIds.insert(workspaceId)
             }
         }
-        if let activeExtensionDialog,
-           let workspaceId = attentionWorkspaceId(
-               explicitWorkspaceId: nil,
-               sessionId: activeExtensionDialog.sessionId
-           ) {
-            workspaceIds.insert(workspaceId)
-        }
 
         for workspaceId in workspaceIds where !workspaceId.isEmpty {
             syncWorkspaceSummary(workspaceId: workspaceId)
@@ -311,7 +304,7 @@ extension ServerConnection {
         }
         let hasPendingExtensionDialog = pendingExtensionDialogs.values.contains { request in
             workspaceSessionIds.contains(request.sessionId)
-        } || activeExtensionDialog.map { workspaceSessionIds.contains($0.sessionId) } == true
+        }
         let hasListAttention = workspaceSessions.contains { session in
             sessionStore.listPendingAskCount(for: session.id) > 0
         }
@@ -366,19 +359,8 @@ extension ServerConnection {
             workspaceSessionIds: workspaceSessionIds
         )
         for sessionId in removedAskSessionIds {
-            pendingAskRequests.removeValue(forKey: sessionId)
             if ReleaseFeatures.localAttentionNotificationsEnabled {
                 AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
-            }
-            if activeAskRequest?.sessionId == sessionId {
-                activeAskRequest = nil
-            }
-        }
-        for ask in response.attention.asks {
-            if activeAskRequest?.sessionId == ask.sessionId {
-                activeAskRequest = ask
-            } else {
-                pendingAskRequests[ask.sessionId] = ask
             }
         }
 

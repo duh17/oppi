@@ -80,7 +80,7 @@ extension E2ETestCase {
     }
 
     /// Calls the paired E2E server API using the harness token.
-    func e2eLabAPIJSON(method: String, path: String, body: [String: Any]) throws -> [String: Any] {
+    func e2eLabAPIJSON(method: String, path: String, body: [String: Any] = [:]) throws -> [String: Any] {
         let response = try e2eLabAPIData(method: method, path: path, body: body)
         guard (200..<300).contains(response.statusCode) else {
             throw E2ELabAPIError.httpStatus(response.statusCode, response.bodyText)
@@ -108,14 +108,16 @@ extension E2ETestCase {
         return outputURL
     }
 
-    private func e2eLabAPIData(method: String, path: String, body: [String: Any]) throws -> E2ELabHTTPResponse {
+    private func e2eLabAPIData(method: String, path: String, body: [String: Any] = [:]) throws -> E2ELabHTTPResponse {
         let url = try e2eLabURL(path: path)
         let token = try e2eLabDeviceToken()
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        if method != "GET" || !body.isEmpty {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
 
         let semaphore = DispatchSemaphore(value: 0)
         let resultBox = E2ELabHTTPResultBox()
@@ -151,10 +153,23 @@ extension E2ETestCase {
     }
 
     private func e2eLabDeviceToken() throws -> String {
+        if let token = Self.e2eDeviceTokenCache, !token.isEmpty {
+            return token
+        }
+
+        if let token = ProcessInfo.processInfo.environment["OPPI_E2E_DEVICE_TOKEN"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !token.isEmpty {
+            Self.e2eDeviceTokenCache = token
+            return token
+        }
+
         let path = "/tmp/oppi-e2e-device-token.txt"
         let token = try String(contentsOfFile: path, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return try XCTUnwrap(token.isEmpty ? nil : token, "E2E device token file is empty")
+        let resolvedToken = try XCTUnwrap(token.isEmpty ? nil : token, "E2E device token file is empty")
+        Self.e2eDeviceTokenCache = resolvedToken
+        return resolvedToken
     }
 }
 

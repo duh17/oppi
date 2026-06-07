@@ -189,24 +189,25 @@ struct ReliabilityTests {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "input",
+            id: "ext1", sessionId: "s1", method: "editor",
             title: "Enter value", message: "Please enter a value", timeout: 30
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
+        #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
     }
 
     @Test func extensionDialogReplacedByNewRequest() {
         let (conn, pipe) = makeTestConnection()
 
         let req1 = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "input", title: "First", timeout: 30
+            id: "ext1", sessionId: "s1", method: "editor", title: "First", timeout: 30
         )
         pipe.handle(.extensionUIRequest(req1), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
 
         let req2 = ExtensionUIRequest(
-            id: "ext2", sessionId: "s1", method: "confirm", title: "Second"
+            id: "ext2", sessionId: "s1", method: "futureForm", title: "Second"
         )
         pipe.handle(.extensionUIRequest(req2), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext2", "New request should replace old")
@@ -216,7 +217,7 @@ struct ReliabilityTests {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "confirm", title: "Confirm?", timeout: 25
+            id: "ext1", sessionId: "s1", method: "editor", title: "Confirm?", timeout: 25
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
@@ -234,13 +235,15 @@ struct ReliabilityTests {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "input", title: "Test"
+            id: "ext1", sessionId: "s1", method: "editor", title: "Test"
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
+        #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
 
         conn.focusSession("s2")
         #expect(conn.activeExtensionDialog == nil)
+        #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
 
         conn.focusSession("s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
@@ -252,7 +255,7 @@ struct ReliabilityTests {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "confirm", title: "Confirm?"
+            id: "ext1", sessionId: "s1", method: "editor", title: "Confirm?"
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog != nil)
@@ -267,7 +270,7 @@ struct ReliabilityTests {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "input", title: "Test"
+            id: "ext1", sessionId: "s1", method: "editor", title: "Test"
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog != nil)
@@ -284,7 +287,7 @@ struct ReliabilityTests {
         let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
-            id: "ext1", sessionId: "s1", method: "input", title: "Test"
+            id: "ext1", sessionId: "s1", method: "editor", title: "Test"
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
 

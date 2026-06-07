@@ -20,10 +20,10 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 
 ## Extension surfaces
 
-| Surface                 | Enabled by                                                  | Declared in                        | Loaded by                          | Notes                                                 |
-| ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------------------- |
-| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader                 | Must work without Oppi server services                |
-| Oppi built-ins          | Workspace `extensions` allowlist                            | `server/extensions/`               | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs |
+| Surface                 | Enabled by                                                  | Declared in                        | Loaded by                          | Notes                                                                                                      |
+| ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader                 | Must work without Oppi server services                                                                     |
+| Oppi built-ins          | Workspace `extensions` allowlist                            | `server/extensions/`               | Oppi `SdkBackend` inline factories | Can use Oppi server storage, sessions, and admin APIs                                                      |
 | Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client                 | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
@@ -130,7 +130,7 @@ The picker response:
 
 ## Native extension UI contract
 
-Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract defines `ExtensionUINativeSurface`, native blocks such as `choiceGroup`, `form`, `settingsList`, `activityList`, and the Apple presentation mapping for inline cards, sheets, full-screen flows, surface panels, and timeline rows.
+Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract keeps blocking prompts Pi-shaped, maps `ask`, `select`, `confirm`, `input`, and `editor` to native iOS prompt presentations, projects Pi UI state such as working rows, hidden thinking labels, and tool expansion, and defines display-only widget `ExtensionUINativeSurface` panels with blocks such as `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, and `code`.
 
 The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components.
 
@@ -232,32 +232,36 @@ This keeps user-installed terminal extensions broadly compatible while making mo
 
 ### Persistent extension surface
 
-Oppi maps fire-and-forget extension UI calls to a compact native card above the composer:
+Oppi maps fire-and-forget extension UI calls to generic native presentation above the composer:
 
 - `ctx.ui.setTitle()` → card heading
 - `ctx.ui.setStatus()` → status rows
-- `ctx.ui.setWidget()` → monospaced widget lines
+- `ctx.ui.setWidget(string[])` → monospaced widget lines
+- `ctx.ui.setWidget(component)` with `renderNative()` → display-only native surface panel
 - `ctx.ui.notify()` → toast/banner
 - `ctx.ui.setEditorText()` / `pasteToEditor()` → composer text handoff
+- `ctx.ui.setWorkingMessage()` / `setWorkingVisible()` / `setWorkingIndicator()` → native timeline working row
+- `ctx.ui.setHiddenThinkingLabel()` → thinking row accessibility and source metadata
+- `ctx.ui.setToolsExpanded()` / `getToolsExpanded()` → native tool-row expansion state
 
-This is a native mobile surface, not a terminal footer/header. `setFooter`, `setHeader`, arbitrary `custom()` components, and editor replacement remain terminal-first APIs with limited compatibility behavior in Oppi.
+This is a native mobile surface, not a terminal footer/header. `setFooter`, `setHeader`, arbitrary `custom()` components, and editor replacement remain terminal-first APIs; SDK sessions ignore them or preserve factories only when Pi compatibility requires it.
 
 Mirror mode uses the same protocol surface from an interactive terminal Pi process. Keep the mirror-specific support table and first-wins dialog race rules in `docs/oppi-mirror.md#extension-ui-compatibility-matrix` rather than duplicating them here.
 
 ## Relevant implementation files
 
-| File                                   | Why it matters                                                            |
-| -------------------------------------- | ------------------------------------------------------------------------- |
-| `server/extensions/built-ins.ts`       | Built-in and managed-name rules                                           |
-| `server/src/routes/skills.ts`          | Workspace extension picker (`GET /extensions`)                            |
-| `server/src/sdk-backend.ts`            | Extension filtering, built-in injection, and workspace allowlist behavior |
-| `server/src/sdk-ui-bridge.ts`          | Extension UI bridge from pi APIs to Oppi protocol events                  |
-| `server/src/extension-ui-contract.ts`  | Shared extension UI request, notification, and settled message builders   |
-| `server/extensions/ask.ts`             | Built-in ask tool                                                         |
-| `server/extensions/subagents/`         | Built-in subagents toolset                                                |
-| `server/extensions/voice.ts`           | Built-in voice tool                                                       |
-| `server/extensions/oppi-admin.ts`      | Built-in workspace/admin tool                                             |
-| `server/src/mobile-renderer.ts`        | Mobile tool-row rendering                                                 |
+| File                                  | Why it matters                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| `server/extensions/built-ins.ts`      | Built-in and managed-name rules                                           |
+| `server/src/routes/skills.ts`         | Workspace extension picker (`GET /extensions`)                            |
+| `server/src/sdk-backend.ts`           | Extension filtering, built-in injection, and workspace allowlist behavior |
+| `server/src/sdk-ui-bridge.ts`         | Extension UI bridge from pi APIs to Oppi protocol events                  |
+| `server/src/extension-ui-contract.ts` | Shared extension UI request, notification, and settled message builders   |
+| `server/extensions/ask.ts`            | Built-in ask tool                                                         |
+| `server/extensions/subagents/`        | Built-in subagents toolset                                                |
+| `server/extensions/voice.ts`          | Built-in voice tool                                                       |
+| `server/extensions/oppi-admin.ts`     | Built-in workspace/admin tool                                             |
+| `server/src/mobile-renderer.ts`       | Mobile tool-row rendering                                                 |
 
 ## When to read pi docs instead
 

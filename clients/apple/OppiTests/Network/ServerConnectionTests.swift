@@ -276,9 +276,9 @@ struct ServerConnectionTests {
         let request = ExtensionUIRequest(
             id: "ext1",
             sessionId: "s1",
-            method: "confirm",
-            title: "Confirm action",
-            message: "Are you sure?"
+            method: "editor",
+            title: "Edit value",
+            message: "Review before submitting."
         )
 
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
@@ -332,6 +332,249 @@ struct ServerConnectionTests {
         )
 
         #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"] == "running")
+    }
+
+    @Test func routeExtensionWorkingNotificationsStoreTimelineState() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWorkingMessage",
+                    message: "Running checks",
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWorkingVisible",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil,
+                    workingVisible: false
+                )
+            ),
+            sessionId: "s1"
+        )
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWorkingIndicator",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil,
+                    workingIndicator: ExtensionUIWorkingIndicator(frames: ["●"], intervalMs: 250)
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        let working = conn.extensionSurfaceBySession["s1"]?.working
+        #expect(working?.message == "Running checks")
+        #expect(working?.visible == false)
+        #expect(working?.indicator?.frames == ["●"])
+        #expect(working?.indicator?.intervalMs == 250)
+    }
+
+    @Test func routeExtensionHiddenThinkingLabelStoresAndClearsTimelineState() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setHiddenThinkingLabel",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil,
+                    hiddenThinkingLabel: " Private reasoning "
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"]?.hiddenThinkingLabel == "Private reasoning")
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setHiddenThinkingLabel",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+    }
+
+    @Test func routeExtensionToolsExpandedStoresTimelineState() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setToolsExpanded",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil,
+                    toolsExpanded: true
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"]?.toolsExpanded == true)
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setToolsExpanded",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil,
+                    toolsExpanded: false
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"]?.toolsExpanded == false)
+    }
+
+    @Test func routeExtensionNativeWidgetStoresPlacement() {
+        let (conn, pipe) = makeTestConnection()
+        let nativeSurface = ExtensionUINativeSurface(
+            version: 1,
+            id: "widget:below",
+            source: "widget",
+            presentation: ExtensionUINativePresentation(
+                style: "surfacePanel",
+                title: "Below editor",
+                subtitle: nil
+            ),
+            blocks: [
+                .text(
+                    base: ExtensionUIBlockBase(id: "body", accessibility: nil),
+                    spans: [
+                        ExtensionUITextSpan(
+                            text: "Rendered below the composer",
+                            role: nil,
+                            traits: nil,
+                            link: nil
+                        ),
+                    ]
+                ),
+            ],
+            fallback: nil
+        )
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWidget",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: "below",
+                    widgetLines: ["Rendered below the composer"],
+                    widgetPlacement: "belowEditor",
+                    nativeSurface: nativeSurface
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        let stored = conn.extensionSurfaceBySession["s1"]?.nativeSurfaces["widget:below"]
+        #expect(stored?.surface.id == "widget:below")
+        #expect(stored?.placement == "belowEditor")
+        #expect(conn.extensionSurfaceBySession["s1"]?.widgets["below"] == nil)
+    }
+
+    @Test func routeChildTerminalStateKeepsParentExtensionSurface() {
+        let (conn, pipe) = makeTestConnection(sessionId: "parent")
+        conn.extensionSurfaceBySession["parent"] = ExtensionSurfaceState(
+            widgets: [
+                "goal": ExtensionWidgetState(
+                    key: "goal",
+                    lines: ["Goal: Pursuing goal"],
+                    placement: "aboveEditor"
+                )
+            ]
+        )
+        var child = makeTestSession(id: "child", status: .stopped)
+        child.parentSessionId = "parent"
+
+        pipe.handle(.state(session: child), sessionId: "parent")
+
+        #expect(conn.extensionSurfaceBySession["parent"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
+    }
+
+    @Test func routeReadyStateKeepsPersistentExtensionSurface() {
+        let (conn, pipe) = makeTestConnection(sessionId: "s1")
+        conn.extensionSurfaceBySession["s1"] = ExtensionSurfaceState(
+            widgets: [
+                "goal": ExtensionWidgetState(
+                    key: "goal",
+                    lines: ["Goal: Pursuing goal"],
+                    placement: "aboveEditor"
+                )
+            ]
+        )
+
+        pipe.handle(.state(session: makeTestSession(id: "s1", status: .ready)), sessionId: "s1")
+
+        #expect(conn.extensionSurfaceBySession["s1"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
     @Test func routeOppiMirrorStatusStaysOutOfChatSurface() {
@@ -1377,15 +1620,16 @@ struct ForegroundRecoveryTests {
         conn.syncWorkspaceSummary(workspaceId: "w1")
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
 
-        conn.stashPendingExtensionDialog(
+        conn.storeExtensionDialog(
             ExtensionUIRequest(
                 id: "ui-1",
                 sessionId: "ready-root",
-                method: "select",
+                method: "editor",
                 title: "Dangerous command",
-                options: ["Allow once", "Deny"]
+                prefill: "Review this change before continuing."
             ),
-            for: "ready-root"
+            for: "ready-root",
+            isFocusedSession: false
         )
         #expect(conn.hasPendingExtensionDialog(for: "ready-root") == true)
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
@@ -1798,9 +2042,10 @@ struct StreamLifecycleTests {
                 hasErrorRoot: false
             )
         ])
-        conn.presentAskRequest(
+        conn.storeAskRequest(
             AskRequest(id: "a1", sessionId: "s1", questions: [], allowCustom: true, timeout: nil, workspaceId: "w1"),
-            for: "s1"
+            for: "s1",
+            isFocusedSession: true
         )
 
         conn.applyWorkspaceAttentionSnapshot(
@@ -1828,9 +2073,10 @@ struct StreamLifecycleTests {
                 hasErrorRoot: true
             )
         ])
-        conn.presentAskRequest(
+        conn.storeAskRequest(
             AskRequest(id: "a1", sessionId: "s1", questions: [], allowCustom: true, timeout: nil, workspaceId: "w1"),
-            for: "s1"
+            for: "s1",
+            isFocusedSession: true
         )
 
         conn.applyWorkspaceAttentionSnapshot(
@@ -1867,7 +2113,7 @@ struct StreamLifecycleTests {
             workspaceId: "w1"
         )
 
-        conn.presentAskRequest(ask, for: "s1")
+        conn.storeAskRequest(ask, for: "s1", isFocusedSession: true)
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
 
         conn.clearAskState(for: "s1")

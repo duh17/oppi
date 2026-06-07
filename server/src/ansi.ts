@@ -1,3 +1,5 @@
+import type { ExtensionUITextSpan } from "./types.js";
+
 /**
  * Minimal terminal colors. Replaces chalk — zero deps.
  * Each function wraps text in ANSI escape codes with reset.
@@ -52,4 +54,251 @@ export function stripAnsiEscapes(text: string): string {
   if (text.indexOf("\x1b") === -1 && text.indexOf("\x9b") === -1) return text;
 
   return text.replace(NON_SGR_ESCAPE_RE, "");
+}
+
+interface TerminalSpanStyle {
+  role?: ExtensionUITextSpan["role"];
+  traits: Set<NonNullable<ExtensionUITextSpan["traits"]>[number]>;
+}
+
+const ESC = "\x1b";
+const BEL = "\x07";
+const CSI_8BIT = "\x9b";
+
+function cloneStyle(style: TerminalSpanStyle): TerminalSpanStyle {
+  return { role: style.role, traits: new Set(style.traits) };
+}
+
+function normalizedTraits(style: TerminalSpanStyle): ExtensionUITextSpan["traits"] | undefined {
+  const traits = [...style.traits].sort();
+  return traits.length > 0 ? traits : undefined;
+}
+
+function sameSpanMetadata(
+  span: ExtensionUITextSpan,
+  style: TerminalSpanStyle,
+  link: string | undefined,
+): boolean {
+  const spanTraits = [...(span.traits ?? [])].sort();
+  const styleTraits = [...style.traits].sort();
+  return (
+    span.role === style.role &&
+    span.link === link &&
+    spanTraits.length === styleTraits.length &&
+    spanTraits.every((trait, index) => trait === styleTraits[index])
+  );
+}
+
+function appendTerminalSpan(
+  spans: ExtensionUITextSpan[],
+  text: string,
+  style: TerminalSpanStyle,
+  link: string | undefined,
+): void {
+  if (!text) return;
+
+  const last = spans.at(-1);
+  if (last && sameSpanMetadata(last, style, link)) {
+    last.text += text;
+    return;
+  }
+
+  const span: ExtensionUITextSpan = { text };
+  if (style.role) span.role = style.role;
+  const traits = normalizedTraits(style);
+  if (traits) span.traits = traits;
+  if (link) span.link = link;
+  spans.push(span);
+}
+
+function parseOsc(
+  input: string,
+  index: number,
+): { content: string; nextIndex: number } | undefined {
+  const start = index + 2;
+  let belIndex = input.indexOf(BEL, start);
+  if (belIndex === -1) belIndex = Number.POSITIVE_INFINITY;
+
+  const stIndex = input.indexOf(`${ESC}\\`, start);
+  const resolvedStIndex = stIndex === -1 ? Number.POSITIVE_INFINITY : stIndex;
+  const end = Math.min(belIndex, resolvedStIndex);
+  if (!Number.isFinite(end)) return undefined;
+
+  return {
+    content: input.slice(start, end),
+    nextIndex: end + (end === resolvedStIndex ? 2 : 1),
+  };
+}
+
+function parseCsi(
+  input: string,
+  index: number,
+): { command: string; nextIndex: number } | undefined {
+  let cursor = input[index] === CSI_8BIT ? index + 1 : index + 2;
+  while (cursor < input.length) {
+    const code = input.charCodeAt(cursor);
+    if (code >= 0x40 && code <= 0x7e) {
+      return {
+        command: input.slice(index + (input[index] === CSI_8BIT ? 1 : 2), cursor + 1),
+        nextIndex: cursor + 1,
+      };
+    }
+    cursor += 1;
+  }
+  return undefined;
+}
+
+function applySgr(command: string, style: TerminalSpanStyle): TerminalSpanStyle {
+  if (!command.endsWith("m")) return style;
+  const body = command.slice(0, -1);
+  const codes = body.length === 0 ? [0] : body.split(";").map((part) => Number(part || "0"));
+  const next = cloneStyle(style);
+
+  for (let index = 0; index < codes.length; index += 1) {
+    const code = codes[index];
+    switch (code) {
+      case 0:
+        next.role = undefined;
+        next.traits.clear();
+        break;
+      case 1:
+        next.traits.add("bold");
+        break;
+      case 2:
+        next.role = "muted";
+        break;
+      case 3:
+        next.traits.add("italic");
+        break;
+      case 4:
+        next.traits.add("underline");
+        break;
+      case 9:
+        next.traits.add("strikethrough");
+        break;
+      case 22:
+        next.traits.delete("bold");
+        if (next.role === "muted") next.role = undefined;
+        break;
+      case 23:
+        next.traits.delete("italic");
+        break;
+      case 24:
+        next.traits.delete("underline");
+        break;
+      case 29:
+        next.traits.delete("strikethrough");
+        break;
+      case 31:
+      case 91:
+        next.role = "danger";
+        break;
+      case 32:
+      case 92:
+        next.role = "success";
+        break;
+      case 33:
+      case 93:
+        next.role = "warning";
+        break;
+      case 34:
+      case 35:
+      case 36:
+      case 94:
+      case 95:
+      case 96:
+        next.role = "accent";
+        break;
+      case 37:
+      case 39:
+        next.role = undefined;
+        break;
+      case 38:
+      case 48:
+        if (codes[index + 1] === 5) index += 2;
+        else if (codes[index + 1] === 2) index += 4;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return next;
+}
+
+function osc8Link(content: string): string | undefined | null {
+  if (!content.startsWith("8;")) return null;
+  const uriSeparator = content.indexOf(";", 2);
+  if (uriSeparator === -1) return null;
+  const uri = content.slice(uriSeparator + 1);
+  return uri.length > 0 ? uri : undefined;
+}
+
+/**
+ * Parse one terminal-rendered line into semantic text spans for native fallback
+ * cards. OSC-8 hyperlinks are preserved as `span.link`; other terminal control
+ * sequences are stripped. A small SGR subset maps to semantic roles/traits.
+ */
+export function terminalLineToTextSpans(input: string): ExtensionUITextSpan[] {
+  if (input.length === 0) return [];
+
+  const spans: ExtensionUITextSpan[] = [];
+  let style: TerminalSpanStyle = { traits: new Set() };
+  let activeLink: string | undefined;
+  let buffer = "";
+
+  const flush = (): void => {
+    appendTerminalSpan(spans, buffer, style, activeLink);
+    buffer = "";
+  };
+
+  for (let index = 0; index < input.length; ) {
+    const char = input[index];
+
+    if (char === ESC && input[index + 1] === "]") {
+      const osc = parseOsc(input, index);
+      if (!osc) {
+        index += 1;
+        continue;
+      }
+
+      const link = osc8Link(osc.content);
+      if (link !== null) {
+        flush();
+        activeLink = link;
+      }
+      index = osc.nextIndex;
+      continue;
+    }
+
+    if ((char === ESC && input[index + 1] === "[") || char === CSI_8BIT) {
+      const csi = parseCsi(input, index);
+      if (!csi) {
+        index += 1;
+        continue;
+      }
+      flush();
+      style = applySgr(csi.command, style);
+      index = csi.nextIndex;
+      continue;
+    }
+
+    if (char === ESC) {
+      flush();
+      index += 2;
+      continue;
+    }
+
+    buffer += char;
+    index += 1;
+  }
+
+  flush();
+  return spans;
+}
+
+export function terminalLineVisibleText(input: string): string {
+  return terminalLineToTextSpans(input)
+    .map((span) => span.text)
+    .join("");
 }

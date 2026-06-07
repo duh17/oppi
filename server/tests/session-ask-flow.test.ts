@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { SessionEventProcessor, type EventProcessorSessionState } from "../src/session-events.js";
 import {
-  SessionEventProcessor,
-  type EventProcessorSessionState,
+  buildPendingExtensionUIRequestMessages,
+  drainExtensionUITeardownMessages,
+  handleExtensionUIRequest,
+  respondToExtensionUIRequest,
   type ExtensionUIRequest,
-} from "../src/session-events.js";
-import { SessionUICoordinator, type SessionUIState } from "../src/session-ui.js";
+} from "../src/extension-ui-state.js";
+import type { SdkBackend } from "../src/sdk-backend.js";
 import type { Session } from "../src/types.js";
 
 function makeSession(id = "sess-1"): Session {
@@ -23,18 +26,19 @@ function makeSession(id = "sess-1"): Session {
 
 function createHarness(): {
   key: string;
-  active: EventProcessorSessionState & SessionUIState;
+  active: EventProcessorSessionState & {
+    sdkBackend: Pick<SdkBackend, "respondToExtensionUIRequest">;
+  };
   processor: SessionEventProcessor;
-  ui: SessionUICoordinator;
   broadcast: ReturnType<typeof vi.fn>;
-  sdkBackend: SessionUIState["sdkBackend"];
+  sdkBackend: Pick<SdkBackend, "respondToExtensionUIRequest">;
 } {
   const key = "sess-1";
   const broadcast = vi.fn();
 
   const sdkBackend = {
     respondToExtensionUIRequest: vi.fn(() => true),
-  } as unknown as SessionUIState["sdkBackend"];
+  } as unknown as Pick<SdkBackend, "respondToExtensionUIRequest">;
 
   const active = {
     session: makeSession(key),
@@ -48,36 +52,36 @@ function createHarness(): {
     streamingArgPreviews: new Set<string>(),
     streamingToolUpdatesSeen: new Map<string, string>(),
     sdkBackend,
-  } as unknown as EventProcessorSessionState & SessionUIState;
+  } as unknown as EventProcessorSessionState & {
+    sdkBackend: Pick<SdkBackend, "respondToExtensionUIRequest">;
+  };
 
-  const uiRef: { current: SessionUICoordinator | null } = { current: null };
   const processor = new SessionEventProcessor({
     storage: {} as never,
     mobileRenderers: {} as never,
     broadcast,
     persistSessionNow: () => {},
     markSessionDirty: () => {},
-    respondToUIRequest: (_key, response) => {
-      const coordinator = uiRef.current;
-      if (!coordinator) return false;
-      return coordinator.respondToUIRequest(_key, response);
-    },
   });
 
-  const ui = new SessionUICoordinator({
-    getActiveSession: () => active,
-    eventProcessor: processor,
-  });
-  uiRef.current = ui;
+  return { key, active, processor, broadcast, sdkBackend };
+}
 
-  return { key, active, processor, ui, broadcast, sdkBackend };
+function emitExtensionUIRequest(
+  harness: Pick<ReturnType<typeof createHarness>, "key" | "active" | "broadcast">,
+  req: ExtensionUIRequest,
+): void {
+  handleExtensionUIRequest(harness.active, req, {
+    broadcast: (message) => harness.broadcast(harness.key, message),
+  });
 }
 
 describe("direct ask flow", () => {
   it("clears terminal-only mirror status instead of surfacing it to clients", () => {
-    const { key, active, processor, broadcast } = createHarness();
+    const harness = createHarness();
+    const { key, broadcast } = harness;
 
-    processor.handleExtensionUIRequest(key, active, {
+    emitExtensionUIRequest(harness, {
       type: "extension_ui_request",
       id: "mirror-status-1",
       method: "setStatus",
@@ -101,9 +105,10 @@ describe("direct ask flow", () => {
   });
 
   it("forwards a single ask request to the phone", () => {
-    const { key, active, processor, broadcast } = createHarness();
+    const harness = createHarness();
+    const { key, active, broadcast } = harness;
 
-    processor.handleExtensionUIRequest(key, active, {
+    emitExtensionUIRequest(harness, {
       type: "extension_ui_request",
       id: "ask-1",
       method: "ask",
@@ -138,12 +143,23 @@ describe("direct ask flow", () => {
         },
       ],
     });
+    expect(buildPendingExtensionUIRequestMessages(active)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_request",
+        id: "ask-1",
+        sessionId: key,
+        method: "ask",
+        allowCustom: false,
+        timeout: 45_000,
+      }),
+    ]);
   });
 
   it("clears pending ask state when the answer arrives", () => {
-    const { key, active, processor, ui, sdkBackend } = createHarness();
+    const harness = createHarness();
+    const { active, sdkBackend } = harness;
 
-    processor.handleExtensionUIRequest(key, active, {
+    emitExtensionUIRequest(harness, {
       type: "extension_ui_request",
       id: "ask-1",
       method: "ask",
@@ -164,12 +180,115 @@ describe("direct ask flow", () => {
       id: "ask-1",
       value: JSON.stringify({ approach: "unit" }),
     };
-    const handled = ui.respondToUIRequest(key, response);
+    const handled = respondToExtensionUIRequest(active, response, {
+      deliver: (payload) => {
+        active.sdkBackend.respondToExtensionUIRequest(payload);
+        return true;
+      },
+    });
 
     expect(handled).toBe(true);
     expect(active.pendingAsk).toBeUndefined();
     expect(active.pendingUIRequests.size).toBe(0);
     expect(sdkBackend.respondToExtensionUIRequest).toHaveBeenCalledWith(response);
+  });
+
+  it("keeps a pending request when response delivery fails", () => {
+    const harness = createHarness();
+    const { active } = harness;
+
+    emitExtensionUIRequest(harness, {
+      type: "extension_ui_request",
+      id: "ask-undelivered",
+      method: "ask",
+      questions: [
+        {
+          id: "approach",
+          question: "Which testing approach?",
+          options: [{ value: "unit", label: "Unit tests" }],
+        },
+      ],
+    });
+
+    const handled = respondToExtensionUIRequest(
+      active,
+      {
+        type: "extension_ui_response",
+        id: "ask-undelivered",
+        value: JSON.stringify({ approach: "unit" }),
+      },
+      {
+        deliver: () => false,
+      },
+    );
+
+    expect(handled).toBe(false);
+    expect(active.pendingAsk?.requestId).toBe("ask-undelivered");
+    expect(active.pendingUIRequests.has("ask-undelivered")).toBe(true);
+  });
+
+  it("drains teardown messages and clears shared extension UI state", () => {
+    const harness = createHarness();
+    const { key, active } = harness;
+
+    emitExtensionUIRequest(harness, {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "agents",
+      widgetLines: ["running"],
+    });
+    emitExtensionUIRequest(harness, {
+      type: "extension_ui_request",
+      id: "thinking-label-1",
+      method: "setHiddenThinkingLabel",
+      hiddenThinkingLabel: "Private reasoning",
+    });
+    emitExtensionUIRequest(harness, {
+      type: "extension_ui_request",
+      id: "tools-expanded-1",
+      method: "setToolsExpanded",
+      toolsExpanded: true,
+    });
+    emitExtensionUIRequest(harness, {
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "ask",
+      questions: [
+        {
+          id: "approach",
+          question: "Which testing approach?",
+          options: [{ value: "unit", label: "Unit tests" }],
+        },
+      ],
+    });
+
+    expect(buildPendingExtensionUIRequestMessages(active)).toHaveLength(4);
+
+    const messages = drainExtensionUITeardownMessages(active, { cancelled: true });
+
+    expect(messages).toEqual([
+      { type: "extension_ui_settled", id: "ask-1", sessionId: key },
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "agents",
+        widgetLines: undefined,
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setHiddenThinkingLabel",
+        hiddenThinkingLabel: undefined,
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setToolsExpanded",
+        toolsExpanded: false,
+      }),
+    ]);
+    expect(active.pendingUIRequests.size).toBe(0);
+    expect(active.pendingAsk).toBeUndefined();
+    expect(active.persistentExtensionUINotifications?.size ?? 0).toBe(0);
   });
 
   it("does not synthesize ask UI from tool_execution_start", () => {

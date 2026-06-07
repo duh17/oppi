@@ -1,7 +1,8 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import type { ExtensionUIProtocolRequest } from "./extension-ui-contract.js";
 import type { AudioStreamEvent } from "./tts-provider.js";
-import type { AskQuestion, ExtensionUINativeSurface } from "./types.js";
+import type { ExtensionUINotifyType, ExtensionUIWidgetPlacement } from "./types.js";
 
 export interface PiMessageUsage {
   input?: number;
@@ -21,27 +22,13 @@ export interface PiMessage {
   model?: string;
 }
 
-export interface ExtensionUIRequestEvent {
+export interface ExtensionUIRequestEvent extends Omit<
+  ExtensionUIProtocolRequest,
+  "notifyType" | "widgetPlacement"
+> {
   type: "extension_ui_request";
-  id: string;
-  method: string;
-  title?: string;
-  options?: string[];
-  message?: string;
-  placeholder?: string;
-  prefill?: string;
-  notifyType?: "info" | "warning" | "error";
-  statusKey?: string;
-  statusText?: string;
-  widgetKey?: string;
-  widgetLines?: string[];
-  widgetPlacement?: string;
-  text?: string;
-  timeout?: number;
-  timeoutAt?: number;
-  questions?: AskQuestion[];
-  allowCustom?: boolean;
-  nativeSurface?: ExtensionUINativeSurface;
+  notifyType?: ExtensionUINotifyType;
+  widgetPlacement?: ExtensionUIWidgetPlacement;
 }
 
 export interface ExtensionUIRequestSettledEvent {
