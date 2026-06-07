@@ -153,7 +153,7 @@ describe("Storage config validation", () => {
     expect(result.config?.permissionGate).toBe(false);
   });
 
-  it("accepts extensions.subagents config with all fields", () => {
+  it("accepts extensions.subagents lifecycle config", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
       extensions: {
@@ -162,19 +162,6 @@ describe("Storage config validation", () => {
           autoStopWhenDone: false,
           startupGraceMs: 120_000,
           defaultWaitTimeoutMs: 60 * 60_000,
-          modelPolicy: {
-            approvedModels: ["openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.5"],
-            defaultModel: "openai-codex/gpt-5.5",
-            defaultThinking: "high",
-            profiles: {
-              discovery: {
-                description: "Fast discovery lane",
-                model: "openai-codex/gpt-5.4-mini",
-                thinking: "minimal",
-                guidelines: ["Prefer search before edits"],
-              },
-            },
-          },
         },
       },
     };
@@ -185,12 +172,6 @@ describe("Storage config validation", () => {
     expect(result.config?.extensions?.subagents?.autoStopWhenDone).toBe(false);
     expect(result.config?.extensions?.subagents?.startupGraceMs).toBe(120_000);
     expect(result.config?.extensions?.subagents?.defaultWaitTimeoutMs).toBe(3_600_000);
-    expect(result.config?.extensions?.subagents?.modelPolicy?.defaultModel).toBe(
-      "openai-codex/gpt-5.5",
-    );
-    expect(result.config?.extensions?.subagents?.modelPolicy?.profiles?.discovery?.model).toBe(
-      "openai-codex/gpt-5.4-mini",
-    );
   });
 
   it("rejects extensions.subagents.maxDepth < 0", () => {
@@ -234,19 +215,13 @@ describe("Storage config validation", () => {
     expect(result.config?.extensions?.subagents?.defaultWaitTimeoutMs).toBe(1_800_000);
   });
 
-  it("rejects subagent default/profile models outside approvedModels", () => {
+  it("rejects removed subagent modelPolicy config in strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
       extensions: {
         subagents: {
           modelPolicy: {
-            approvedModels: ["openai-codex/gpt-5.4-mini"],
             defaultModel: "openai-codex/gpt-5.5",
-            profiles: {
-              review: {
-                model: "openai-codex/gpt-5.5",
-              },
-            },
           },
         },
       },
@@ -255,18 +230,7 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
     expect(
-      result.errors.some((e) =>
-        e.includes(
-          "config.extensions.subagents.modelPolicy.defaultModel: must be included in approvedModels",
-        ),
-      ),
-    ).toBe(true);
-    expect(
-      result.errors.some((e) =>
-        e.includes(
-          "config.extensions.subagents.modelPolicy.profiles.review.model: must be included in approvedModels",
-        ),
-      ),
+      result.errors.some((e) => e.includes("config.extensions.subagents.modelPolicy: unknown key")),
     ).toBe(true);
   });
 

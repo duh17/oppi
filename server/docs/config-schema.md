@@ -135,20 +135,13 @@ oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 
 Controls lifecycle of child sessions spawned via `spawn_agent`.
 
-| Setting                                                        | Type     | Default   | Description                                                                                                                                 |
-| -------------------------------------------------------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `extensions.subagents.maxDepth`                                | number   | `1`       | Max spawn depth. `1` = parent can spawn children, but children cannot spawn grandchildren. `0` = spawning disabled.                         |
-| `extensions.subagents.autoStopWhenDone`                        | boolean  | `false`   | When `true`, a child that finishes its work and goes idle is stopped immediately. When `false`, children stay alive for follow-up messages. |
-| `extensions.subagents.startupGraceMs`                          | number   | `60000`   | How long to wait for a child to produce its first output before giving up. Covers VM boot, model loading, and first LLM call. 60000 = 60s.  |
-| `extensions.subagents.defaultWaitTimeoutMs`                    | number   | `1800000` | Default timeout for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`. 1800000 = 30 min.                           |
-| `extensions.subagents.modelPolicy.approvedModels`              | string[] | unset     | Optional allowlist for subagent model IDs. If set, `spawn_agent` rejects non-approved models.                                               |
-| `extensions.subagents.modelPolicy.defaultModel`                | string   | unset     | Default model for subagents when `spawn_agent` omits `model`.                                                                               |
-| `extensions.subagents.modelPolicy.defaultThinking`             | string   | unset     | Default thinking level for subagents when `spawn_agent` omits `thinking`.                                                                   |
-| `extensions.subagents.modelPolicy.profiles.<name>`             | object   | unset     | Named lane preset such as `discovery`, `coding`, `review`, or `web_research`.                                                               |
-| `extensions.subagents.modelPolicy.profiles.<name>.model`       | string   | unset     | Model override for that profile.                                                                                                            |
-| `extensions.subagents.modelPolicy.profiles.<name>.thinking`    | string   | unset     | Thinking override for that profile.                                                                                                         |
-| `extensions.subagents.modelPolicy.profiles.<name>.guidelines`  | string[] | unset     | Extra prompt guidelines injected ahead of the child task.                                                                                   |
-| `extensions.subagents.modelPolicy.profiles.<name>.activeTools` | string[] | unset     | Exact pi tool names to activate for children using this profile. Omitted means the child keeps the default active tool set.                 |
+| Setting                                     | Type    | Default   | Description                                                                                                                                 |
+| ------------------------------------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extensions.subagents.maxDepth`             | number  | `1`       | Max spawn depth. `1` = parent can spawn children, but children cannot spawn grandchildren. `0` = spawning disabled.                         |
+| `extensions.subagents.autoStopWhenDone`     | boolean | `false`   | When `true`, a child that finishes its work and goes idle is stopped immediately. When `false`, children stay alive for follow-up messages. |
+| `extensions.subagents.childIdleTimeoutMs`   | number  | `300000`  | How long completed children stay alive when `autoStopWhenDone` is `false`. 300000 = 5 min.                                                  |
+| `extensions.subagents.startupGraceMs`       | number  | `60000`   | How long to wait for a child to produce its first output before giving up. Covers VM boot, model loading, and first LLM call. 60000 = 60s.  |
+| `extensions.subagents.defaultWaitTimeoutMs` | number  | `1800000` | Default timeout for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`. 1800000 = 30 min.                           |
 
 ```json
 {
@@ -156,21 +149,9 @@ Controls lifecycle of child sessions spawned via `spawn_agent`.
     "subagents": {
       "maxDepth": 1,
       "autoStopWhenDone": false,
+      "childIdleTimeoutMs": 300000,
       "startupGraceMs": 60000,
-      "defaultWaitTimeoutMs": 1800000,
-      "modelPolicy": {
-        "approvedModels": ["openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.5"],
-        "defaultModel": "openai-codex/gpt-5.5",
-        "defaultThinking": "medium",
-        "profiles": {
-          "discovery": {
-            "model": "openai-codex/gpt-5.4-mini",
-            "thinking": "minimal",
-            "guidelines": ["Prefer search before editing"],
-            "activeTools": ["read", "grep", "find", "ls", "inspect_agent"]
-          }
-        }
-      }
+      "defaultWaitTimeoutMs": 1800000
     }
   }
 }

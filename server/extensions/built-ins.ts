@@ -1,6 +1,6 @@
 import type { Workspace } from "../src/types.js";
 
-/** Extension names implemented directly by Oppi server. */
+/** Extension names shipped by Oppi and exposed in workspace allowlists. */
 export type BuiltInExtensionName = "ask" | "subagents" | "voice" | "oppi-admin";
 
 /** Host extension names suppressed by Oppi before native pi loading. */

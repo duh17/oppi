@@ -162,50 +162,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 function makeBuiltInContext(): BuiltInExtensionContext {
   return {
     storage: {} as never,
-    subagents: {
-      context: {
-        workspaceId: "w1",
-        sessionId: "sess-test",
-        async spawnChild() {
-          throw new Error("not used");
-        },
-        async spawnDetached() {
-          throw new Error("not used");
-        },
-        listChildren() {
-          return [];
-        },
-        getSession() {
-          return undefined;
-        },
-        listWorkspaceSessions() {
-          return [];
-        },
-        subscribe() {
-          return () => {};
-        },
-        getAvailableModelIds() {
-          return [];
-        },
-        async stopSession() {
-          throw new Error("not used");
-        },
-        async resumeSession() {
-          throw new Error("not used");
-        },
-        async sendMessage() {
-          throw new Error("not used");
-        },
-      },
-      childMode: false,
-      subagentConfig: {
-        maxDepth: 1,
-        autoStopWhenDone: false,
-        childIdleTimeoutMs: 300_000,
-        startupGraceMs: 60_000,
-        defaultWaitTimeoutMs: 1_800_000,
-      },
-    },
   };
 }
 
@@ -317,7 +273,7 @@ describe("SdkBackend sandbox", () => {
 });
 
 describe("SdkBackend built-in extensions", () => {
-  it("injects explicitly enabled built-ins without file package paths", async () => {
+  it("registers explicitly enabled built-ins without file package paths", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-builtins-"));
     const backend = await SdkBackend.create({
       session: makeSession(),
@@ -345,6 +301,43 @@ describe("SdkBackend built-in extensions", () => {
         extensions.some((ext) => ext.path.startsWith("<inline:") && ext.tools.has("ask")),
       ).toBe(true);
       expect(extensions.some((ext) => ext.resolvedPath.includes("oppi-extensions"))).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads subagents through the bundled native Pi extension", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-subagents-native-"));
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "Subagents Native Test",
+        runtime: "host",
+        hostMount: cwd,
+        extensions: ["subagents"],
+      } as Workspace,
+      builtInExtensionContext: makeBuiltInContext(),
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+      const extensions = resourceLoader.getExtensions().extensions;
+      const subagents = extensions.find(
+        (ext) => ext.resolvedPath.includes("oppi-subagents") && ext.tools.has("inspect_agent"),
+      );
+
+      expect(subagents?.path).toContain("pi-extensions/oppi-subagents");
+      expect(subagents?.path).not.toContain("extension-wrappers");
+      expect(subagents?.tools.has("spawn_agent")).toBe(true);
+      expect(subagents?.tools.has("send_message")).toBe(true);
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });

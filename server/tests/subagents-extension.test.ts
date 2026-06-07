@@ -1,43 +1,8 @@
-/**
- * subagents extension tests — mock context, no real LLM.
- *
- * Exercises the tool surface and utility helpers exposed by
- * createSubagentsFactory with a mock context.
- */
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import type { Session, ServerMessage } from "../src/types.js";
-import {
-  createSubagentsFactory,
-  type SubagentsContext,
-} from "../extensions/subagents/index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-let nextSessionId = 1;
-
-function makeSession(overrides: Partial<Session> = {}): Session {
-  const id = overrides.id ?? `child-${nextSessionId++}`;
-  const now = Date.now();
-  return {
-    id,
-    workspaceId: "ws-1",
-    workspaceName: "Test",
-    status: "busy",
-    createdAt: now - 30_000,
-    lastActivity: now,
-    messageCount: 3,
-    tokens: { input: 100, output: 50, cacheRead: 20, cacheWrite: 10 },
-    cost: 0.05,
-    model: "anthropic/claude-sonnet-4-0",
-    ...overrides,
-  };
-}
+import { createOppiSubagentsExtension } from "../extensions/oppi-subagents.js";
 
 interface RegisteredTool {
   name: string;
@@ -48,1007 +13,245 @@ interface RegisteredTool {
     onUpdate?: (update: unknown) => void,
   ) => Promise<{
     content: Array<{ type: string; text: string }>;
-    details: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    isError?: boolean;
   }>;
 }
 
-/**
- * Create a mock context + pi, register tools, return tool executors.
- */
-function setup(
-  opts: {
-    sessionId?: string;
-    sessions?: Session[];
-    models?: string[];
-    subscribers?: Map<string, (msg: ServerMessage) => void>;
-  } = {},
-) {
-  const sessions = new Map<string, Session>();
-  for (const s of opts.sessions ?? []) sessions.set(s.id, s);
+interface CapturedRequest {
+  method: string;
+  path: string;
+  body: Record<string, unknown>;
+}
 
-  // Ensure the "current" session exists for depth checks
-  const parentId = opts.sessionId ?? "parent-1";
-  if (!sessions.has(parentId)) {
-    sessions.set(
-      parentId,
-      makeSession({ id: parentId, status: "busy", parentSessionId: undefined }),
-    );
-  }
+interface MockPi {
+  tools: Map<string, RegisteredTool>;
+  handlers: Map<string, Array<(event: unknown, ctx: MockExtensionContext) => unknown>>;
+  sendMessage: ReturnType<typeof vi.fn>;
+  getActiveTools: ReturnType<typeof vi.fn>;
+  setActiveTools: ReturnType<typeof vi.fn>;
+}
 
-  const subscriberCallbacks = opts.subscribers ?? new Map<string, (msg: ServerMessage) => void>();
-  const spawnChildCalls: Array<Record<string, unknown>> = [];
-  const sentMessages: Array<{
-    message: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }> = [];
-  const sessionStartHandlers: Array<(event: unknown, ctx: unknown) => void> = [];
-  const widgets = new Map<string, { content: unknown; options?: unknown }>();
-
-  const ctx: SubagentsContext = {
-    workspaceId: "ws-1",
-    sessionId: parentId,
-
-    async spawnChild(params) {
-      spawnChildCalls.push({ ...params });
-      const child = makeSession({
-        id: `child-${nextSessionId++}`,
-        name: params.name,
-        model: params.model ?? "anthropic/claude-sonnet-4-0",
-        status: "starting",
-        parentSessionId: parentId,
-      });
-      sessions.set(child.id, child);
-      return child;
-    },
-
-    async spawnDetached(params) {
-      const child = makeSession({
-        id: `detached-${nextSessionId++}`,
-        name: params.name,
-        model: params.model ?? "anthropic/claude-sonnet-4-0",
-        status: "starting",
-        // No parentSessionId — detached
-      });
-      sessions.set(child.id, child);
-      return child;
-    },
-
-    listChildren() {
-      return [...sessions.values()].filter((s) => s.parentSessionId === parentId);
-    },
-
-    getSession(id) {
-      return sessions.get(id);
-    },
-
-    listWorkspaceSessions() {
-      return [...sessions.values()].filter((s) => s.workspaceId === "ws-1");
-    },
-
-    subscribe(sessionId, callback) {
-      subscriberCallbacks.set(sessionId, callback);
-      return () => subscriberCallbacks.delete(sessionId);
-    },
-
-    getAvailableModelIds() {
-      return (
-        opts.models ?? ["anthropic/claude-sonnet-4-0", "anthropic/claude-opus-4-0", "openai/gpt-4o"]
-      );
-    },
+interface MockExtensionContext {
+  cwd: string;
+  sessionManager: {
+    getSessionId: () => string;
+    getSessionFile: () => string;
   };
+  ui: {
+    setWidget: ReturnType<typeof vi.fn>;
+    notify: ReturnType<typeof vi.fn>;
+  };
+}
 
-  // Collect registered tools
+const shutdownHandlers: Array<() => Promise<void> | void> = [];
+
+afterEach(async () => {
+  for (const shutdown of shutdownHandlers.splice(0)) await shutdown();
+});
+
+function createMockPi(
+  activeTools = ["read", "spawn_agent", "inspect_agent", "send_message"],
+): MockPi {
   const tools = new Map<string, RegisteredTool>();
-  const mockPi = {
-    registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
-      tools.set(tool.name, { name: tool.name, execute: tool.execute });
-    },
-    on(event: string, handler: (event: unknown, ctx: unknown) => void) {
-      if (event === "session_start") {
-        sessionStartHandlers.push(handler);
-      }
-    },
-    sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>) {
-      sentMessages.push({ message, options });
-    },
-  };
-
-  const factory = createSubagentsFactory(ctx);
-  factory(mockPi as never);
-
+  const handlers = new Map<string, Array<(event: unknown, ctx: MockExtensionContext) => unknown>>();
+  let currentActiveTools = [...activeTools];
   return {
-    ctx,
-    sessions,
-    subscriberCallbacks,
-    spawnChildCalls,
-    sentMessages,
-    sessionStartHandlers,
-    widgets,
-    startSession() {
-      for (const handler of sessionStartHandlers) {
-        handler({}, {
-          ui: {
-            setWidget(key: string, content: unknown, options?: unknown) {
-              widgets.set(key, { content, options });
-            },
-          },
-          sessionManager: { getBranch: () => [] },
-        });
-      }
+    tools,
+    handlers,
+    sendMessage: vi.fn(),
+    getActiveTools: vi.fn(() => currentActiveTools),
+    setActiveTools: vi.fn((names: string[]) => {
+      currentActiveTools = names;
+    }),
+    registerTool(tool: RegisteredTool) {
+      tools.set(tool.name, tool);
     },
-    spawn: tools.get("spawn_agent")!,
-    inspect: tools.get("inspect_agent")!,
-    /** Helper: set a session's status after spawn */
-    setStatus(id: string, status: string) {
-      const s = sessions.get(id);
-      if (s) (s as Record<string, unknown>).status = status;
+    on(event: string, handler: (event: unknown, ctx: MockExtensionContext) => unknown) {
+      const eventHandlers = handlers.get(event) ?? [];
+      eventHandlers.push(handler);
+      handlers.set(event, eventHandlers);
+    },
+  } as MockPi;
+}
+
+function createMockContext(): MockExtensionContext {
+  return {
+    cwd: "/workspace/project",
+    sessionManager: {
+      getSessionId: () => "pi-parent",
+      getSessionFile: () => "/tmp/pi-parent.jsonl",
+    },
+    ui: {
+      setWidget: vi.fn(),
+      notify: vi.fn(),
     },
   };
 }
 
-// ---------------------------------------------------------------------------
-// JSONL trace helpers
-// ---------------------------------------------------------------------------
-
-let tmpDir: string;
-
-beforeEach(() => {
-  nextSessionId = 1;
-  tmpDir = mkdtempSync(join(tmpdir(), "subagents-test-"));
-});
-
-afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-function writeTrace(filename: string, entries: unknown[]): string {
-  const path = join(tmpDir, filename);
-  writeFileSync(path, entries.map((e) => JSON.stringify(e)).join("\n"));
-  return path;
+async function emitSessionStart(
+  pi: MockPi,
+  ctx = createMockContext(),
+): Promise<MockExtensionContext> {
+  for (const handler of pi.handlers.get("session_start") ?? []) {
+    await handler({ reason: "startup" }, ctx);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return ctx;
 }
 
-function makeTraceEntry(role: string, content: unknown[], extra: Record<string, unknown> = {}) {
-  return { type: "message", message: { role, content, ...extra } };
+function emitSessionShutdown(pi: MockPi): void {
+  for (const handler of pi.handlers.get("session_shutdown") ?? []) {
+    handler({}, createMockContext());
+  }
 }
 
-// ---------------------------------------------------------------------------
-// spawn_agent
-// ---------------------------------------------------------------------------
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const text = Buffer.concat(chunks).toString("utf8");
+  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+}
 
-describe("spawn_agent", () => {
-  it("spawns a child session (fire-and-forget)", async () => {
-    const { spawn } = setup();
-    const result = await spawn.execute("tc-1", {
-      message: "Write tests for auth module",
-      name: "auth-tests",
-    });
+function writeJson(res: ServerResponse, status: number, value: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(value));
+}
 
-    expect(result.content[0].text).toContain('Spawned agent "auth-tests"');
-    expect(result.content[0].text).toContain("running independently");
-    expect(result.content[0].text).toContain("subagent_result");
-    expect(result.details.agentId).toBeTruthy();
-    expect(result.details.name).toBe("auth-tests");
-    expect(result.details.status).toBe("starting");
-  });
-
-  it("uses message prefix as name when name is omitted", async () => {
-    const { spawn } = setup();
-    const result = await spawn.execute("tc-1", {
-      message: "Fix the login flow for OAuth2 providers",
-    });
-
-    expect(result.details.name).toBe("Fix the login flow for OAuth2 providers");
-  });
-
-  it("uses authoritative child status when widget snapshots have stale activity", async () => {
-    const { spawn, sessions, subscriberCallbacks, startSession, widgets } = setup();
-    startSession();
-
-    const widgetFactory = widgets.get("subagents")?.content;
-    expect(typeof widgetFactory).toBe("function");
-    const component = (widgetFactory as (tui: unknown) => unknown)({ requestRender: () => {} }) as {
-      renderNative: () => {
-        blocks: Array<{ type: string; rows?: Array<{ state?: string; subtitle?: string; link?: string }> }>;
-      };
-    };
-
-    await spawn.execute("tc-1", {
-      message: "Write tests for auth module",
-      name: "auth-tests",
-    });
-
-    const childId = [...sessions.values()].find((session) => session.parentSessionId === "parent-1")!
-      .id;
-    const child = sessions.get(childId)!;
-    subscriberCallbacks.get(childId)?.({
-      type: "message_end",
-      role: "assistant",
-      content: "Finished the work",
-    } as ServerMessage);
-    (child as Record<string, unknown>).status = "ready";
-    (child as Record<string, unknown>).lastAgentReplyAt = Date.now();
-
-    const surface = component.renderNative();
-    const row = surface.blocks[0]?.rows?.[0];
-    expect(row?.state).toBe("success");
-    expect(row?.subtitle).toContain("Ready");
-    expect(row?.link).toBe(`oppi://session/${encodeURIComponent(childId)}?workspaceId=ws-1`);
-  });
-
-  it("sends subagent_result and triggers parent turn when parent is idle", async () => {
-    const { spawn, sessions, subscriberCallbacks, sentMessages } = setup();
-    sessions.set("parent-1", makeSession({ id: "parent-1", status: "ready" }));
-
-    await spawn.execute("tc-1", {
-      message: "Write tests for auth module",
-      name: "auth-tests",
-    });
-
-    const childId = [...subscriberCallbacks.keys()][0]!;
-    const child = sessions.get(childId)!;
-    (child as Record<string, unknown>).status = "stopped";
-    (child as Record<string, unknown>).lastMessage = "Finished the work";
-
-    subscriberCallbacks.get(childId)?.({ type: "session_ended", reason: "done" } as ServerMessage);
-
-    expect(sentMessages).toHaveLength(1);
-    expect(sentMessages[0].message.customType).toBe("subagent_result");
-    expect(sentMessages[0].message.content).toContain("Finished the work");
-    expect(sentMessages[0].options).toEqual({ triggerTurn: true });
-  });
-
-  it("queues subagent_result as follow-up when parent is busy", async () => {
-    const { spawn, sessions, subscriberCallbacks, sentMessages } = setup();
-    sessions.set("parent-1", makeSession({ id: "parent-1", status: "busy" }));
-
-    await spawn.execute("tc-1", {
-      message: "Write tests for auth module",
-      name: "auth-tests",
-    });
-
-    const childId = [...subscriberCallbacks.keys()][0]!;
-    const child = sessions.get(childId)!;
-    (child as Record<string, unknown>).status = "stopped";
-
-    subscriberCallbacks.get(childId)?.({ type: "state", session: child } as ServerMessage);
-
-    expect(sentMessages).toHaveLength(1);
-    expect(sentMessages[0].message.customType).toBe("subagent_result");
-    expect(sentMessages[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
-  });
-
-  it("truncates long messages to 80 chars for default name", async () => {
-    const { spawn } = setup();
-    const longMessage = "A".repeat(100);
-    const result = await spawn.execute("tc-1", { message: longMessage });
-    expect((result.details.name as string).length).toBe(80);
-  });
-
-  it("passes model to child session", async () => {
-    const { spawn } = setup();
-    const result = await spawn.execute("tc-1", {
-      message: "test",
-      model: "openai/gpt-4o",
-    });
-
-    expect(result.details.model).toBe("openai/gpt-4o");
-  });
-
-  it("rejects unsupported fork params", async () => {
-    const { spawn, spawnChildCalls } = setup();
-
-    const result = await spawn.execute("tc-1", {
-      message: "Continue from this branch",
-      fork: true,
-      entryId: "msg-user-123",
-    });
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("does not support fork");
-    expect(spawnChildCalls).toHaveLength(0);
-  });
-
-  it("rejects unknown model with available list", async () => {
-    const { spawn } = setup({ models: ["anthropic/claude-sonnet-4-0", "openai/gpt-4o"] });
-    const result = await spawn.execute("tc-1", {
-      message: "test",
-      model: "nonexistent/model-x",
-    });
-
-    expect(result.content[0].text).toContain('Unknown model "nonexistent/model-x"');
-    expect(result.content[0].text).toContain("anthropic/claude-sonnet-4-0");
-    expect(result.content[0].text).toContain("openai/gpt-4o");
-    expect(result.details.status).toBe("error");
-  });
-
-  it("skips model validation when catalog is empty", async () => {
-    const { spawn } = setup({ models: [] });
-    const result = await spawn.execute("tc-1", {
-      message: "test",
-      model: "any/model",
-    });
-
-    // Should succeed — empty catalog means no validation
-    expect(result.details.status).toBe("starting");
-  });
-
-  it("allows known model", async () => {
-    const { spawn } = setup({ models: ["anthropic/claude-sonnet-4-0"] });
-    const result = await spawn.execute("tc-1", {
-      message: "test",
-      model: "anthropic/claude-sonnet-4-0",
-    });
-
-    expect(result.details.status).toBe("starting");
-  });
-
-  describe("depth limits", () => {
-    it("allows spawn at depth 0 (root session)", async () => {
-      const { spawn } = setup({ sessionId: "root" });
-      const result = await spawn.execute("tc-1", { message: "test" });
-      expect(result.details.status).not.toBe("error");
-    });
-
-    it("rejects spawn at depth 1 (child cannot spawn grandchildren)", async () => {
-      const root = makeSession({ id: "root" });
-      const child = makeSession({ id: "child-at-depth-1", parentSessionId: "root" });
-      const { spawn } = setup({ sessionId: "child-at-depth-1", sessions: [root, child] });
-
-      const result = await spawn.execute("tc-1", { message: "test" });
-      expect(result.content[0].text).toContain("Cannot spawn: max depth reached");
-      expect(result.content[0].text).toContain("depth 1");
-      expect(result.details.status).toBe("error");
-    });
-
-    it("handles circular parentSessionId without infinite loop", async () => {
-      const a = makeSession({ id: "a", parentSessionId: "b" });
-      const b = makeSession({ id: "b", parentSessionId: "a" });
-      const { spawn } = setup({ sessionId: "a", sessions: [a, b] });
-
-      // Should not hang — circular reference guard should catch it
-      const result = await spawn.execute("tc-1", { message: "test" });
-      // May or may not allow spawn depending on where cycle breaks, but must not hang
-      expect(result).toBeTruthy();
-    });
-  });
-
-  describe("detached mode", () => {
-    it("spawns detached session with no parent link", async () => {
-      const { spawn } = setup();
-      const result = await spawn.execute("tc-1", {
-        message: "independent work",
-        detached: true,
+async function startBridgeServer(
+  handler: (req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>) => void,
+): Promise<{ baseUrl: string; requests: CapturedRequest[]; close: () => Promise<void> }> {
+  const requests: CapturedRequest[] = [];
+  const server = createServer((req, res) => {
+    void readBody(req)
+      .then((body) => {
+        const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+        requests.push({ method: req.method ?? "GET", path, body });
+        handler(req, res, body);
+      })
+      .catch((error: unknown) => {
+        writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
       });
-
-      expect(result.content[0].text).toContain("detached");
-      expect(result.content[0].text).toContain("independent session");
-      expect(result.details.detached).toBe(true);
-    });
   });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("server did not bind to a port");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
 
-  describe("wait mode", () => {
-    it("returns immediately when child is already terminal", async () => {
-      // Build a custom context where spawnChild returns an already-stopped session
-      const sessions = new Map<string, Session>();
-      const parent = makeSession({ id: "parent-1" });
-      sessions.set("parent-1", parent);
+describe("oppi-subagents native extension", () => {
+  it("registers the child-session tool subset when canSpawn is false", async () => {
+    const bridge = await startBridgeServer((_req, res) => {
+      writeJson(res, 200, { sessions: [] });
+    });
+    shutdownHandlers.push(bridge.close);
+    const pi = createMockPi();
 
-      const ctx: SubagentsContext = {
+    createOppiSubagentsExtension(pi as never, {
+      descriptor: {
+        version: 1,
+        baseUrl: bridge.baseUrl,
+        originSessionId: "child-1",
         workspaceId: "ws-1",
-        sessionId: "parent-1",
-        async spawnChild(params) {
-          const child = makeSession({
-            id: "fast-child",
-            name: params.name,
-            status: "stopped", // Already terminal!
+        canSpawn: false,
+      },
+    });
+    const ctx = await emitSessionStart(pi);
+
+    expect([...pi.tools.keys()].sort()).toEqual(["inspect_agent", "send_message"]);
+    expect(ctx.ui.setWidget).toHaveBeenCalledWith("subagents", expect.any(Function), {
+      placement: "aboveEditor",
+    });
+  });
+
+  it("spawns through the public bridge and applies built-in profiles", async () => {
+    const bridge = await startBridgeServer((req, res) => {
+      const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      if (path === "/sessions") {
+        writeJson(res, 200, { sessions: [] });
+        return;
+      }
+      if (path === "/spawn") {
+        writeJson(res, 201, {
+          session: {
+            id: "child-1",
+            name: "review auth",
+            status: "starting",
+            workspaceId: "ws-1",
             parentSessionId: "parent-1",
-            lastMessage: "I finished instantly",
-          });
-          sessions.set(child.id, child);
-          return child;
-        },
-        async spawnDetached() {
-          throw new Error("unused");
-        },
-        listChildren: () => [...sessions.values()].filter((s) => s.parentSessionId === "parent-1"),
-        getSession: (id) => sessions.get(id),
-        listWorkspaceSessions: () => [...sessions.values()].filter((s) => s.workspaceId === "ws-1"),
-        subscribe: () => () => {},
-        getAvailableModelIds: () => [],
-      };
-
-      const tools = new Map<string, RegisteredTool>();
-      const factory = createSubagentsFactory(ctx);
-      factory({
-        registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
-          tools.set(tool.name, tool as RegisteredTool);
-        },
-        on() {
-          /* no-op */
-        },
-        sendMessage() {
-          /* no-op */
-        },
-      } as never);
-
-      const result = await tools.get("spawn_agent")!.execute("tc-1", {
-        message: "quick task",
-        wait: true,
-      });
-
-      expect(result.details.waited).toBe(true);
-      expect(result.details.status).toBe("stopped");
-      // Should resolve instantly — no timeout
-    });
-
-    it("includes waited flag in details", async () => {
-      const s = setup();
-
-      const resultPromise = s.spawn.execute("tc-1", {
-        message: "quick task",
-        wait: true,
-        timeout_seconds: 5,
-      });
-
-      // Give the spawn time to register subscriber
-      await new Promise((r) => setTimeout(r, 50));
-
-      // Find the child ID from subscriber registrations
-      const childId = [...s.subscriberCallbacks.keys()][0];
-      expect(childId).toBeTruthy();
-
-      // Mark child as stopped and fire terminal event
-      s.setStatus(childId!, "stopped");
-      const cb = s.subscriberCallbacks.get(childId!);
-      cb?.({ type: "session_ended", sessionId: childId } as ServerMessage);
-
-      const result = await resultPromise;
-      expect(result.details.waited).toBe(true);
-      expect(result.content[0].text).toContain("finished");
-    });
-
-    it("times out when child never finishes", async () => {
-      const { spawn } = setup();
-
-      const result = await spawn.execute("tc-1", {
-        message: "stuck task",
-        wait: true,
-        timeout_seconds: 1, // 1 second timeout
-      });
-
-      expect(result.content[0].text).toContain("Timed out");
-      expect(result.details.waited).toBe(true);
-    }, 10_000);
-
-    it("respects abort signal", async () => {
-      const { spawn } = setup();
-      const controller = new AbortController();
-
-      const resultPromise = spawn.execute(
-        "tc-1",
-        { message: "abortable task", wait: true, timeout_seconds: 60 },
-        controller.signal,
-      );
-
-      // Abort after 100ms
-      setTimeout(() => controller.abort(), 100);
-
-      const result = await resultPromise;
-      expect(result).toBeTruthy();
-    }, 5_000);
-  });
-
-  it("handles spawnChild failure gracefully", async () => {
-    const sessions = new Map<string, Session>();
-    sessions.set("parent-1", makeSession({ id: "parent-1" }));
-
-    const ctx: SubagentsContext = {
-      workspaceId: "ws-1",
-      sessionId: "parent-1",
-      async spawnChild() {
-        throw new Error("Session limit exceeded");
-      },
-      async spawnDetached() {
-        throw new Error("Session limit exceeded");
-      },
-      listChildren: () => [],
-      getSession: (id) => sessions.get(id),
-      listWorkspaceSessions: () => [...sessions.values()].filter((s) => s.workspaceId === "ws-1"),
-      subscribe: () => () => {},
-      getAvailableModelIds: () => [],
-    };
-
-    const tools = new Map<string, RegisteredTool>();
-    const factory = createSubagentsFactory(ctx);
-    factory({
-      registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
-        tools.set(tool.name, tool as RegisteredTool);
-      },
-      on() {
-        /* no-op */
-      },
-      sendMessage() {
-        /* no-op */
-      },
-    } as never);
-
-    const result = await tools.get("spawn_agent")!.execute("tc-1", { message: "test" });
-    expect(result.content[0].text).toContain("Failed to spawn agent");
-    expect(result.content[0].text).toContain("Session limit exceeded");
-    expect(result.details.status).toBe("error");
-  });
-
-  it("sends creating progress update", async () => {
-    const { spawn } = setup();
-    const updates: unknown[] = [];
-    await spawn.execute("tc-1", { message: "test", name: "my-agent" }, undefined, (update) =>
-      updates.push(update),
-    );
-
-    expect(updates.length).toBeGreaterThanOrEqual(1);
-    const firstUpdate = updates[0] as {
-      content: Array<{ text: string }>;
-      details: Record<string, unknown>;
-    };
-    expect(firstUpdate.content[0].text).toContain('Creating session "my-agent"');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// inspect_agent
-// ---------------------------------------------------------------------------
-
-describe("inspect_agent", () => {
-  it("returns error for unknown session", async () => {
-    const { inspect } = setup();
-    const result = await inspect.execute("tc-1", { id: "nonexistent" });
-    expect(result.content[0].text).toContain("Session not found");
-  });
-
-  it("rejects session not in the workspace", async () => {
-    const other = makeSession({ id: "other-session", workspaceId: "ws-other" });
-    const { inspect } = setup({ sessions: [other] });
-
-    const result = await inspect.execute("tc-1", { id: "other-session" });
-    expect(result.content[0].text).toContain("not in this workspace");
-  });
-
-  it("allows inspection of direct children", async () => {
-    const child = makeSession({
-      id: "my-child",
-      parentSessionId: "parent-1",
-      piSessionFile: writeTrace("child.jsonl", [
-        makeTraceEntry("user", [{ type: "text", text: "hello" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "hi there" }]),
-      ]),
-    });
-    const { inspect } = setup({ sessions: [child] });
-
-    const result = await inspect.execute("tc-1", { id: "my-child" });
-    expect(result.content[0].text).toBe("hi there");
-    expect(result.details.level).toBe("response");
-  });
-
-  it("allows inspection of grandchildren in the tree", async () => {
-    const child = makeSession({ id: "my-child", parentSessionId: "parent-1" });
-    const grandchild = makeSession({
-      id: "my-grandchild",
-      parentSessionId: "my-child",
-      piSessionFile: writeTrace("gc.jsonl", [
-        makeTraceEntry("user", [{ type: "text", text: "task" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "done" }]),
-      ]),
-    });
-    const { inspect } = setup({ sessions: [child, grandchild] });
-
-    const result = await inspect.execute("tc-1", { id: "my-grandchild" });
-    expect(result.details.level).toBe("response");
-    expect(result.content[0].text).toBe("done");
-  });
-
-  it("returns error when trace file is missing", async () => {
-    const child = makeSession({ id: "my-child", parentSessionId: "parent-1" });
-    // No piSessionFile set
-    const { inspect } = setup({ sessions: [child] });
-
-    const result = await inspect.execute("tc-1", { id: "my-child" });
-    expect(result.content[0].text).toContain("No trace file available");
-  });
-
-  it("returns error when trace is empty", async () => {
-    const child = makeSession({
-      id: "my-child",
-      parentSessionId: "parent-1",
-      piSessionFile: writeTrace("empty.jsonl", []),
-    });
-    const { inspect } = setup({ sessions: [child] });
-
-    const result = await inspect.execute("tc-1", { id: "my-child" });
-    expect(result.content[0].text).toContain("Trace is empty");
-  });
-
-  describe("overview level", () => {
-    it("shows turn count, tool count, and error count", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "fix the bug" }]),
-        makeTraceEntry("assistant", [
-          { type: "toolCall", name: "read", arguments: { path: "/src/app.ts" }, id: "tc1" },
-          { type: "toolCall", name: "edit", arguments: { path: "/src/app.ts" }, id: "tc2" },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "file content" }], {
-          toolCallId: "tc1",
-        }),
-        makeTraceEntry("toolResult", [{ type: "text", text: "error: not found" }], {
-          toolCallId: "tc2",
-          isError: true,
-        }),
-        makeTraceEntry("assistant", [{ type: "text", text: "Fixed the bug." }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("trace.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", response: false });
-      const text = result.content[0].text;
-
-      expect(text).toContain("1 turns");
-      expect(text).toContain("2 tool calls");
-      expect(text).toContain("1 errors");
-      expect(result.details.turnCount).toBe(1);
-      expect(result.details.toolCount).toBe(2);
-      expect(result.details.errorCount).toBe(1);
-    });
-
-    it("shows tool breakdown and files changed", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "refactor" }]),
-        makeTraceEntry("assistant", [
-          { type: "toolCall", name: "read", arguments: { path: "/src/a.ts" }, id: "t1" },
-          { type: "toolCall", name: "read", arguments: { path: "/src/b.ts" }, id: "t2" },
-          {
-            type: "toolCall",
-            name: "write",
-            arguments: { path: "/src/c.ts", content: "new" },
-            id: "t3",
+            createdAt: 1,
+            lastActivity: 2,
+            messageCount: 0,
           },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t1" }),
-        makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t2" }),
-        makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t3" }),
-        makeTraceEntry("assistant", [{ type: "text", text: "Done" }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("tools.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
+        });
+        return;
+      }
+      writeJson(res, 404, { error: "not found" });
+    });
+    shutdownHandlers.push(bridge.close);
+    const pi = createMockPi();
 
-      const result = await inspect.execute("tc-1", { id: "my-child", response: false });
-      const text = result.content[0].text;
+    createOppiSubagentsExtension(pi as never, {
+      descriptor: {
+        version: 1,
+        baseUrl: bridge.baseUrl,
+        originSessionId: "parent-1",
+        workspaceId: "ws-1",
+        canSpawn: true,
+      },
+    });
+    await emitSessionStart(pi);
 
-      expect(text).toContain("Tools:");
-      expect(text).toContain("read:2");
-      expect(text).toContain("write:1");
-      expect(text).toContain("1 files changed");
+    const result = await pi.tools.get("spawn_agent")?.execute("tc-1", {
+      message: "Check auth changes",
+      name: "review auth",
+      profile: "review",
     });
 
-    it("shows last response preview", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "explain" }]),
-        makeTraceEntry("assistant", [
-          { type: "text", text: "Here is my detailed explanation of the system." },
-        ]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("response.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", response: false });
-      expect(result.content[0].text).toContain("Last response:");
-      expect(result.content[0].text).toContain("detailed explanation");
-    });
+    const spawnRequest = bridge.requests.find((request) => request.path === "/spawn");
+    expect(spawnRequest?.body.originSessionId).toBe("parent-1");
+    expect(spawnRequest?.body.prompt).toContain("[Subagent profile: review]");
+    expect(spawnRequest?.body.prompt).toContain("Check auth changes");
+    expect(result?.content[0].text).toContain('Spawned agent "review auth"');
   });
 
-  describe("turn detail level", () => {
-    it("shows tool list for a specific turn", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "fix it" }]),
-        makeTraceEntry("assistant", [
-          { type: "toolCall", name: "bash", arguments: { command: "npm test" }, id: "t1" },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "3 tests passed" }], {
-          toolCallId: "t1",
-        }),
-        makeTraceEntry("assistant", [{ type: "text", text: "Tests pass now." }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("turn.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", turn: 1 });
-      const text = result.content[0].text;
-
-      expect(text).toContain("Turn 1");
-      expect(text).toContain("bash:");
-      expect(text).toContain("npm test");
-      expect(result.details.level).toBe("turn");
-    });
-
-    it("returns error for invalid turn number", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "hello" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "hi" }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("turn-invalid.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", turn: 99 });
-      expect(result.content[0].text).toContain("Turn 99 not found");
-    });
-  });
-
-  describe("tool detail level", () => {
-    it("shows full args and output for a specific tool", async () => {
-      const longContent = "line1\nline2\nline3\nline4\nline5";
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "read the file" }]),
-        makeTraceEntry("assistant", [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { path: "/src/main.ts", offset: 1, limit: 50 },
-            id: "t1",
+  it("uses bridge resolution to disable spawn_agent for child sessions without wrappers", async () => {
+    const bridge = await startBridgeServer((req, res) => {
+      const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      if (path === "/resolve") {
+        writeJson(res, 200, {
+          descriptor: {
+            version: 1,
+            originSessionId: "child-1",
+            workspaceId: "ws-1",
+            runtime: "sdk",
+            canSpawn: false,
           },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: longContent }], { toolCallId: "t1" }),
-        makeTraceEntry("assistant", [{ type: "text", text: "Got it." }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("tool-detail.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", turn: 1, tool: 1 });
-      const text = result.content[0].text;
-
-      expect(text).toContain("Name: read");
-      expect(text).toContain("Arguments:");
-      expect(text).toContain("path: /src/main.ts");
-      expect(text).toContain("Output");
-      expect(text).toContain("line1");
-      expect(result.details.level).toBe("tool");
+        });
+        return;
+      }
+      if (path === "/sessions") {
+        writeJson(res, 200, { sessions: [] });
+        return;
+      }
+      writeJson(res, 404, { error: "not found" });
     });
+    shutdownHandlers.push(bridge.close);
+    const pi = createMockPi();
 
-    it("returns error for invalid tool index", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "hi" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "hello" }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("tool-invalid.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", turn: 1, tool: 5 });
-      expect(result.content[0].text).toContain("Tool [5] not found");
+    createOppiSubagentsExtension(pi as never, {
+      descriptor: { version: 1, baseUrl: bridge.baseUrl, canSpawn: true },
     });
-  });
+    await emitSessionStart(pi);
 
-  describe("response level", () => {
-    it("returns full last response with response=true", async () => {
-      const longResponse = "This is a very detailed response.\n".repeat(100);
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "explain everything" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: longResponse }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("full-response.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", response: true });
-      // Should return full text, not truncated
-      expect(result.content[0].text).toContain("This is a very detailed response.");
-      expect(result.content[0].text.length).toBeGreaterThan(100);
-    });
-
-    it("returns specific turn response with response=true and turn", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "first question" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "first answer" }]),
-        makeTraceEntry("user", [{ type: "text", text: "second question" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "second answer" }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("turn-response.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", {
-        id: "my-child",
-        turn: 1,
-        response: true,
-      });
-      expect(result.content[0].text).toBe("first answer");
-    });
-
-    it("returns error when no response text exists", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "question" }]),
-        makeTraceEntry("assistant", [
-          { type: "toolCall", name: "bash", arguments: { command: "echo hi" }, id: "t1" },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "hi" }], { toolCallId: "t1" }),
-        // No final text response
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("no-response.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child", response: true });
-      expect(result.content[0].text).toContain("No assistant response found");
-    });
-  });
-
-  describe("multi-turn traces", () => {
-    it("parses multi-turn conversation correctly", async () => {
-      const trace = [
-        makeTraceEntry("user", [{ type: "text", text: "step 1" }]),
-        makeTraceEntry("assistant", [
-          { type: "toolCall", name: "bash", arguments: { command: "ls" }, id: "t1" },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "file1 file2" }], { toolCallId: "t1" }),
-        makeTraceEntry("assistant", [{ type: "text", text: "Found files." }]),
-        makeTraceEntry("user", [{ type: "text", text: "step 2" }]),
-        makeTraceEntry("assistant", [
-          { type: "toolCall", name: "read", arguments: { path: "file1" }, id: "t2" },
-          { type: "toolCall", name: "read", arguments: { path: "file2" }, id: "t3" },
-        ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "content1" }], { toolCallId: "t2" }),
-        makeTraceEntry("toolResult", [{ type: "text", text: "content2" }], { toolCallId: "t3" }),
-        makeTraceEntry("assistant", [{ type: "text", text: "Both files read." }]),
-      ];
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: writeTrace("multi-turn.jsonl", trace),
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child" });
-      expect(result.details.turnCount).toBe(2);
-      expect(result.details.toolCount).toBe(3);
-      expect(result.details.errorCount).toBe(0);
-    });
-
-    it("handles malformed JSONL lines gracefully", async () => {
-      const path = join(tmpDir, "malformed.jsonl");
-      writeFileSync(
-        path,
-        [
-          JSON.stringify(makeTraceEntry("user", [{ type: "text", text: "hello" }])),
-          "not valid json {{{",
-          JSON.stringify(makeTraceEntry("assistant", [{ type: "text", text: "hi" }])),
-        ].join("\n"),
-      );
-
-      const child = makeSession({
-        id: "my-child",
-        parentSessionId: "parent-1",
-        piSessionFile: path,
-      });
-      const { inspect } = setup({ sessions: [child] });
-
-      const result = await inspect.execute("tc-1", { id: "my-child" });
-      // Should skip malformed line and still parse the valid ones
-      expect(result.details.turnCount).toBe(1);
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// formatToolArgs edge cases
-// ---------------------------------------------------------------------------
-
-describe("trace formatting", () => {
-  it("formats bash tool args with long commands (truncated)", async () => {
-    const trace = [
-      makeTraceEntry("user", [{ type: "text", text: "run" }]),
-      makeTraceEntry("assistant", [
-        {
-          type: "toolCall",
-          name: "bash",
-          arguments: { command: "A".repeat(200) + "\nsecond line" },
-          id: "t1",
-        },
-      ]),
-      makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t1" }),
-      makeTraceEntry("assistant", [{ type: "text", text: "done" }]),
-    ];
-    const child = makeSession({
-      id: "my-child",
-      parentSessionId: "parent-1",
-      piSessionFile: writeTrace("bash-args.jsonl", trace),
-    });
-    const { inspect } = setup({ sessions: [child] });
-
-    const result = await inspect.execute("tc-1", { id: "my-child", turn: 1 });
-    const text = result.content[0].text;
-    // Should use first line, truncated
-    expect(text).not.toContain("second line");
-  });
-
-  it("formats write tool args with line count", async () => {
-    const trace = [
-      makeTraceEntry("user", [{ type: "text", text: "write" }]),
-      makeTraceEntry("assistant", [
-        {
-          type: "toolCall",
-          name: "write",
-          arguments: { path: "/src/app.ts", content: "line1\nline2\nline3" },
-          id: "t1",
-        },
-      ]),
-      makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t1" }),
-      makeTraceEntry("assistant", [{ type: "text", text: "done" }]),
-    ];
-    const child = makeSession({
-      id: "my-child",
-      parentSessionId: "parent-1",
-      piSessionFile: writeTrace("write-args.jsonl", trace),
-    });
-    const { inspect } = setup({ sessions: [child] });
-
-    const result = await inspect.execute("tc-1", { id: "my-child", turn: 1 });
-    expect(result.content[0].text).toContain("3 lines");
-  });
-
-  it("marks error tool results with ERROR label", async () => {
-    const trace = [
-      makeTraceEntry("user", [{ type: "text", text: "deploy" }]),
-      makeTraceEntry("assistant", [
-        { type: "toolCall", name: "bash", arguments: { command: "deploy.sh" }, id: "t1" },
-      ]),
-      makeTraceEntry("toolResult", [{ type: "text", text: "Permission denied" }], {
-        toolCallId: "t1",
-        isError: true,
-      }),
-      makeTraceEntry("assistant", [{ type: "text", text: "deployment failed" }]),
-    ];
-    const child = makeSession({
-      id: "my-child",
-      parentSessionId: "parent-1",
-      piSessionFile: writeTrace("error-tool.jsonl", trace),
-    });
-    const { inspect } = setup({ sessions: [child] });
-
-    const result = await inspect.execute("tc-1", { id: "my-child", turn: 1 });
-    expect(result.content[0].text).toContain("ERROR");
-    expect(result.content[0].text).toContain("Permission denied");
+    expect(pi.tools.has("spawn_agent")).toBe(true);
+    expect(pi.setActiveTools).toHaveBeenCalledWith(["read", "inspect_agent", "send_message"]);
+    const resolveRequest = bridge.requests.find((request) => request.path === "/resolve");
+    expect(resolveRequest?.body.piSessionId).toBe("pi-parent");
+    expect(resolveRequest?.body.piSessionFile).toBe("/tmp/pi-parent.jsonl");
   });
 });

@@ -4,11 +4,11 @@ Oppi's `subagents` extension lets an agent create and manage child sessions insi
 
 ## Enabling the extension
 
-`subagents` is an Oppi built-in extension name. It is not enabled automatically.
+`subagents` is a native Pi extension shipped with Oppi. Oppi provides a small bridge API for workspace session operations; the extension owns the tools, prompt profiles, and native Pi UI.
 
-To use it in a workspace, include `subagents` in that workspace's `extensions` list.
+To use it in an Oppi SDK workspace, include `subagents` in that workspace's `extensions` list. If a workspace sets `extensions`, that list is authoritative. Omitting `subagents` disables it.
 
-If a workspace sets `extensions`, that list is authoritative. Omitting `subagents` disables it.
+For mirrored Pi TUI sessions, install or load the same extension alongside `oppi-mirror`; the repo copy is `pi-extensions/oppi-subagents/index.ts`. The extension resolves the current Pi session through the bridge after `oppi-mirror` connects. Without an active Oppi bridge, the tools report that subagents are unavailable.
 
 ## Tool surface
 
@@ -27,16 +27,16 @@ Child sessions get the non-spawning subset only:
 
 Create a new session in the current workspace.
 
-| Parameter         | Type    | Default           | Description                                                                                                                                          |
-| ----------------- | ------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`         | string  | required          | Task prompt for the child. Include the context it needs because the child does not see the parent's conversation.                                    |
-| `name`            | string  | truncated message | Display name shown in the app and session tree.                                                                                                      |
-| `profile`         | string  | none              | Optional named profile. Built-ins: `default`, `discovery`, `coding`, `review`, `research`. Workspace profiles with the same name override built-ins. |
-| `model`           | string  | inherited         | Model override for the child session.                                                                                                                |
-| `thinking`        | string  | inherited         | Thinking level override: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.                                                                         |
-| `detached`        | boolean | `false`           | Create an independent session with no parent-child link. Detached sessions can spawn their own children.                                             |
-| `wait`            | boolean | `false`           | Block until the child finishes its current task and return the result inline.                                                                        |
-| `timeout_seconds` | number  | `1800`            | Maximum wait time when `wait=true`.                                                                                                                  |
+| Parameter         | Type    | Default           | Description                                                                                                       |
+| ----------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `message`         | string  | required          | Task prompt for the child. Include the context it needs because the child does not see the parent's conversation. |
+| `name`            | string  | truncated message | Display name shown in the app and session tree.                                                                   |
+| `profile`         | string  | none              | Optional built-in profile: `default`, `discovery`, `coding`, `review`, `research`.                                |
+| `model`           | string  | inherited         | Model override for the child session.                                                                             |
+| `thinking`        | string  | inherited         | Thinking level override: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.                                      |
+| `detached`        | boolean | `false`           | Create an independent session with no parent-child link. Detached sessions can spawn their own children.          |
+| `wait`            | boolean | `false`           | Block until the child finishes its current task and return the result inline.                                     |
+| `timeout_seconds` | number  | `1800`            | Maximum wait time when `wait=true`.                                                                               |
 
 ### Built-in profiles
 
@@ -48,7 +48,7 @@ Oppi supports built-in subagent profiles through the `profile` parameter:
 - `review`: correctness and regression review
 - `research`: documentation, web/source research, and synthesis
 
-Configured profiles in `config.extensions.subagents.modelPolicy.profiles` can add new profiles or override built-ins by name. Profiles can also set `activeTools`, which Oppi enforces with pi's native active-tool API (`pi.setActiveTools`) for child sessions using that profile.
+Profiles add prompt guidance only. Model choice, thinking level, tools, and approval behavior stay with Pi and the explicit `spawn_agent` parameters.
 
 ### Fire-and-forget mode
 
@@ -142,52 +142,10 @@ Configure subagents under `config.extensions.subagents`.
   "extensions": {
     "subagents": {
       "maxDepth": 1,
-      "defaultWaitTimeoutMs": 1800000,
-      "modelPolicy": {
-        "defaultModel": "openai-codex/gpt-5.4",
-        "defaultThinking": "medium",
-        "profiles": {
-          "planning": {
-            "description": "High-quality planning and architecture analysis before implementation.",
-            "model": "openai-codex/gpt-5.5",
-            "thinking": "high",
-            "guidelines": [
-              "Do not edit files unless explicitly asked; produce concrete plans with file paths and validation steps.",
-              "Prefer reading existing code and tests before proposing new abstractions."
-            ],
-            "activeTools": ["read", "grep", "find", "ls", "inspect_agent"]
-          },
-          "review": {
-            "description": "Careful code review, risk analysis, and regression hunting.",
-            "model": "openai-codex/gpt-5.5",
-            "thinking": "high",
-            "guidelines": [
-              "Review evidence from diffs, tests, and relevant source files before giving conclusions.",
-              "Prioritize correctness, security, data loss, concurrency, and protocol drift over style nits.",
-              "Return findings with severity, confidence, file paths, and concrete fixes."
-            ]
-          },
-          "coding": {
-            "description": "Implementation work in the repo with the codex coding model.",
-            "model": "openai-codex/gpt-5.3-codex",
-            "thinking": "medium",
-            "guidelines": [
-              "Make focused code changes and validate them with the narrowest reliable checks.",
-              "Follow project AGENTS.md rules and avoid touching unrelated files."
-            ]
-          },
-          "research": {
-            "description": "Codebase discovery, documentation lookup, web research, and concise synthesis.",
-            "model": "openai-codex/gpt-5.4",
-            "thinking": "medium",
-            "guidelines": [
-              "Search broadly first, then read primary sources, documentation, or source files before summarizing.",
-              "Prefer targeted reads over exhaustive scanning; note uncertainty clearly.",
-              "Return structured handoff context with links or file paths, relevant symbols, risks, and where to start."
-            ]
-          }
-        }
-      }
+      "autoStopWhenDone": false,
+      "childIdleTimeoutMs": 300000,
+      "startupGraceMs": 60000,
+      "defaultWaitTimeoutMs": 1800000
     }
   }
 }
@@ -197,27 +155,15 @@ Configure subagents under `config.extensions.subagents`.
 
 These settings currently affect runtime behavior:
 
-| Field                                | Default   | What it does                                                                                                                |
-| ------------------------------------ | --------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `maxDepth`                           | `1`       | Maximum spawn depth for non-detached sessions. `0` disables spawning.                                                       |
-| `defaultWaitTimeoutMs`               | `1800000` | Default timeout for `spawn_agent(wait=true)` when `timeout_seconds` is omitted.                                             |
-| `modelPolicy.approvedModels`         | none      | Optional allowlist for subagent model IDs.                                                                                  |
-| `modelPolicy.defaultModel`           | none      | Default model when the caller omits `model`.                                                                                |
-| `modelPolicy.defaultThinking`        | none      | Default thinking level when the caller omits `thinking`.                                                                    |
-| `modelPolicy.profiles.*`             | none      | Named presets that can set `model`, `thinking`, prompt `guidelines`, and `activeTools`.                                     |
-| `modelPolicy.profiles.*.activeTools` | none      | Exact pi tool names to activate for children using this profile. Omitted means the child keeps the default active tool set. |
+| Field                  | Default   | What it does                                                                     |
+| ---------------------- | --------- | -------------------------------------------------------------------------------- |
+| `maxDepth`             | `1`       | Maximum spawn depth for non-detached sessions. `0` disables spawning.            |
+| `autoStopWhenDone`     | `false`   | Stop a child as soon as it finishes instead of keeping it alive for follow-up.   |
+| `childIdleTimeoutMs`   | `300000`  | How long completed children stay alive when `autoStopWhenDone` is `false`.       |
+| `startupGraceMs`       | `60000`   | How long to wait for a child to start producing output before reporting a stall. |
+| `defaultWaitTimeoutMs` | `1800000` | Default timeout for `spawn_agent(wait=true)` when `timeout_seconds` is omitted.  |
 
-### Accepted but not currently enforced
-
-The config type also accepts these fields:
-
-- `autoStopWhenDone`
-- `childIdleTimeoutMs`
-- `startupGraceMs`
-
-They are reserved for future lifecycle controls, but they do not currently change runtime behavior.
-
-Use `profile` on `spawn_agent` to select a named preset such as `research`, `coding`, or `review`.
+Use `profile` on `spawn_agent` to select a built-in preset such as `research`, `coding`, or `review`.
 
 Examples:
 
@@ -240,24 +186,13 @@ spawn_agent({
 
 ### Profile prompt style
 
-Profiles follow the same spirit as Amp's subagent prompts: keep the main thread clean by delegating bounded work into isolated context windows.
+Profiles keep the parent thread clean by adding role-specific prompt guidance to a fresh child session. They do not select models, thinking levels, tools, or approval rules.
 
-Good profile prompts are:
+Good spawned prompts are:
 
 - **Role-specific**: research gathers context and sources, coding changes files, review looks for risk.
 - **Explicit about scope**: include file areas, allowed edits, and what not to touch.
 - **Output-shaped**: ask for file paths, links, findings, validation steps, or a handoff summary.
-- **Cost-aware**: use stronger models for planning/review and faster coding/research models for focused work.
-- **Enforced when configured**: `activeTools` uses pi's native active-tool state and a `tool_call` guard, so disallowed tools are removed from the prompt and blocked if called.
-
-Recommended defaults:
-
-| Profile    | Model                        | Thinking | Use for                                                                   |
-| ---------- | ---------------------------- | -------- | ------------------------------------------------------------------------- |
-| `planning` | `openai-codex/gpt-5.5`       | `high`   | Architecture plans and complex tradeoffs.                                 |
-| `review`   | `openai-codex/gpt-5.5`       | `high`   | Code review, regression hunting, risk analysis.                           |
-| `coding`   | `openai-codex/gpt-5.3-codex` | `medium` | Focused implementation work.                                              |
-| `research` | `openai-codex/gpt-5.4`       | `medium` | Codebase discovery, documentation lookup, and source-backed web research. |
 
 ## Git safety
 

@@ -12,6 +12,7 @@ import { createTelemetryRoutes } from "./telemetry.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
 import { createProviderAuthRoutes } from "./provider-auth.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
+import { createSubagentsBridgeRoutes } from "./subagents-bridge.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -25,6 +26,7 @@ export class RouteHandler {
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
       createUploadRoutes(this.ctx, this.helpers),
+      createSubagentsBridgeRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),
       createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),

@@ -1,4 +1,4 @@
-import type { Session } from "./model-types.js";
+import type { Session } from "../../src/types.js";
 
 interface TreeContext {
   sessionId: string;

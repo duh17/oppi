@@ -40,7 +40,6 @@ import { createLogger } from "./logger.js";
 import { buildExtensionUIRequestMessage } from "./extension-ui-contract.js";
 import { buildPersistentExtensionUINotificationMessages } from "./session-events.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
-import { createSubagentToolPolicyFactory } from "../extensions/subagents/index.js";
 import type { SpawnSessionParams } from "./session-spawn-types.js";
 import {
   updateSearchIndexForSessionEvent,
@@ -79,9 +78,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server to resolve skill names to host directory paths. */
   skillPathResolver: ((skillNames: string[]) => Promise<string[]>) | null = null;
-
-  /** Injected by the server to return available model IDs for spawn_agent validation. */
-  availableModelIdsResolver: (() => string[]) | null = null;
 
   /** Injected by the server for auto-title generation on first message. */
   onFirstMessage: ((session: Session) => void) | null = null;
@@ -141,16 +137,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
-      resumeSession: (sessionId) => this.startSession(sessionId),
-      spawnChildSession: (parentSessionId, params) =>
-        this.spawnChildSession(parentSessionId, params),
-      spawnDetachedSession: (originSessionId, params) =>
-        this.spawnDetachedSession(originSessionId, params),
-      listChildSessions: (parentSessionId) => this.listChildSessions(parentSessionId),
-      subscribeToSession: (sessionId, callback) => this.subscribe(sessionId, callback),
-      getAvailableModelIds: () => this.getAvailableModelIds(),
-      sendMessage: (sessionId, message, behavior) =>
-        this.sendMessageToSession(sessionId, message, behavior),
       onFirstMessage: (session) => this.onFirstMessage?.(session),
       metrics: this.opsMetrics ?? undefined,
     });
@@ -166,10 +152,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
     this.uiCoordinator = bundle.uiCoordinator;
-  }
-
-  private getAvailableModelIds(): string[] {
-    return this.availableModelIdsResolver?.() ?? [];
   }
 
   private resolveStoredWorkspace(sessionId: string): Workspace | undefined {
@@ -334,7 +316,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    * - Busy + behavior="steer" → sendSteer (injected mid-turn after current tool calls)
    * - Busy + behavior="followUp" (default) → sendFollowUp (queued after current turn)
    *
-   * Used by the send_message tool in the spawn_agent extension.
+   * Used by bridge-backed extension tools that message workspace sessions.
    */
   async sendMessageToSession(
     sessionId: string,
@@ -654,7 +636,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /**
    * Create a child session, start it, and send its first prompt.
-   * Used by the spawn_agent extension to create fire-and-forget children.
+   * Used by the subagents bridge to create fire-and-forget children.
    */
   async spawnChildSession(parentSessionId: string, params: SpawnSessionParams): Promise<Session> {
     return this.createSpawnedSession({
@@ -671,8 +653,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /**
    * Spawn a detached session in the same workspace as the origin session.
    * Unlike spawnChildSession, does NOT set parentSessionId — the new session
-   * is fully independent and gets full capabilities (including spawn_agent)
-   * unless the selected profile applies an active-tool policy.
+   * is fully independent and can spawn its own children when the bridge allows it.
    */
   async spawnDetachedSession(
     originSessionId: string,
@@ -755,15 +736,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     workspace: Workspace,
     params: SpawnSessionParams,
   ): Promise<void> {
-    if (params.activeTools) {
-      this.setPendingExtensionFactories(session.id, [
-        createSubagentToolPolicyFactory({
-          profileName: params.profileName,
-          activeTools: params.activeTools,
-        }),
-      ]);
-    }
-
     await this.startSession(session.id, workspace);
 
     if (params.thinking) {

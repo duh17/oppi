@@ -11,13 +11,6 @@ import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
-import type {
-  ListChildSessions,
-  SendSessionMessage,
-  SpawnChildSession,
-  SpawnDetachedSession,
-  SubscribeToSession,
-} from "./session-spawn-types.js";
 
 export interface SessionStartActiveSession {
   session: Session;
@@ -61,17 +54,6 @@ export interface SessionStartCoordinatorDeps {
   persistSessionNow: (key: string, session: Session) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
-  // subagents extension support
-  spawnChildSession: SpawnChildSession;
-  spawnDetachedSession: SpawnDetachedSession;
-  listChildSessions: ListChildSessions;
-  subscribeToSession: SubscribeToSession;
-  getAvailableModelIds: () => string[];
-  stopSession: (sessionId: string) => Promise<void>;
-  /** Resume a stopped session (restart its SDK process). */
-  resumeSession: (sessionId: string) => Promise<Session>;
-  /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
-  sendMessage: SendSessionMessage;
   metrics?: ServerMetricCollector;
 }
 
@@ -100,42 +82,6 @@ export class SessionStartCoordinator {
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
         const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
 
-        // Root/detached sessions get full tools (spawn, stop, send, inspect).
-        // Child sessions get childMode (send, inspect only — no spawning).
-        const isChildSession = !!session.parentSessionId;
-        const subagentsCtx = {
-          workspaceId: identity.workspaceId,
-          sessionId: session.id,
-          spawnChild: (params: {
-            name?: string;
-            model?: string;
-            thinking?: string;
-            prompt: string;
-            activeTools?: string[];
-            profileName?: string;
-          }) => this.deps.spawnChildSession(session.id, params),
-          spawnDetached: (params: {
-            name?: string;
-            model?: string;
-            thinking?: string;
-            prompt: string;
-            activeTools?: string[];
-            profileName?: string;
-          }) => this.deps.spawnDetachedSession(session.id, params),
-          listChildren: () => this.deps.listChildSessions(session.id),
-          getSession: (id: string) => this.deps.storage.getSession(id),
-          listWorkspaceSessions: () =>
-            this.deps.storage.listSessions().filter((s) => s.workspaceId === identity.workspaceId),
-          subscribe: (id: string, callback: (msg: ServerMessage) => void) =>
-            this.deps.subscribeToSession(id, callback),
-          getAvailableModelIds: () => this.deps.getAvailableModelIds(),
-          stopSession: (id: string) => this.deps.stopSession(id),
-          resumeSession: (id: string) => this.deps.resumeSession(id),
-          sendMessage: (id: string, message: string, behavior?: "steer" | "followUp") =>
-            this.deps.sendMessage(id, message, behavior),
-        };
-        const subagentConfig = this.deps.runtimeManager.getLimits().subagents;
-
         const createStart = Date.now();
         const sdkBackend = await SdkBackend.create({
           session,
@@ -146,11 +92,6 @@ export class SessionStartCoordinator {
           skillPaths,
           builtInExtensionContext: {
             storage: this.deps.storage,
-            subagents: {
-              context: subagentsCtx,
-              childMode: isChildSession,
-              subagentConfig,
-            },
           },
           extraExtensionFactories:
             extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,

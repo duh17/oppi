@@ -41,13 +41,6 @@ import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
-import type {
-  ListChildSessions,
-  SendSessionMessage,
-  SpawnChildSession,
-  SpawnDetachedSession,
-  SubscribeToSession,
-} from "./session-spawn-types.js";
 
 export type { SessionCatchUpResponse };
 
@@ -98,15 +91,6 @@ export interface SessionCoordinatorBundleDeps {
   sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
-  resumeSession: (sessionId: string) => Promise<Session>;
-  // spawn_agent support
-  spawnChildSession: SpawnChildSession;
-  spawnDetachedSession: SpawnDetachedSession;
-  listChildSessions: ListChildSessions;
-  subscribeToSession: SubscribeToSession;
-  getAvailableModelIds: () => string[];
-  /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
-  sendMessage: SendSessionMessage;
   /** Called when a session's firstMessage is first captured. */
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
@@ -176,15 +160,6 @@ export function createSessionCoordinatorBundle(
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
-    spawnChildSession: (parentSessionId, params) => deps.spawnChildSession(parentSessionId, params),
-    spawnDetachedSession: (originSessionId, params) =>
-      deps.spawnDetachedSession(originSessionId, params),
-    listChildSessions: (parentSessionId) => deps.listChildSessions(parentSessionId),
-    subscribeToSession: (sessionId, callback) => deps.subscribeToSession(sessionId, callback),
-    getAvailableModelIds: () => deps.getAvailableModelIds(),
-    stopSession: (sessionId) => deps.stopSession(sessionId),
-    resumeSession: (sessionId) => deps.resumeSession(sessionId),
-    sendMessage: (sessionId, message, behavior) => deps.sendMessage(sessionId, message, behavior),
     metrics: deps.metrics,
   });
 

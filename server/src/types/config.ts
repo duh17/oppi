@@ -97,30 +97,6 @@ export interface ServerConfig {
   };
 }
 
-export interface SubagentModelProfileConfig {
-  /** Human-readable summary of what this profile is for. */
-  description?: string;
-  /** Model to use when this profile is selected and spawn_agent omits model. */
-  model?: string;
-  /** Thinking level to use when this profile is selected and spawn_agent omits thinking. */
-  thinking?: string;
-  /** Extra instructions injected ahead of the child prompt for this profile. */
-  guidelines?: string[];
-  /** Exact pi tool names to activate for child sessions using this profile. Omitted means inherit the default active tool set. */
-  activeTools?: string[];
-}
-
-export interface SubagentModelPolicyConfig {
-  /** Approved full model IDs for subagents. Empty/omitted means any available model. */
-  approvedModels?: string[];
-  /** Default model when spawn_agent omits model. */
-  defaultModel?: string;
-  /** Default thinking level when spawn_agent omits thinking. */
-  defaultThinking?: string;
-  /** Named presets such as discovery/research/coding/review. Overrides built-in subagent profiles by name. */
-  profiles?: Record<string, SubagentModelProfileConfig>;
-}
-
 export interface SubagentConfig {
   /** How many levels deep agents can spawn other agents.
    *  1 = parent→child only (no grandchildren). 2 = allows grandchildren.
@@ -144,7 +120,4 @@ export interface SubagentConfig {
    *  doesn't specify timeout_seconds.
    *  Default: 1800000 (30 min) */
   defaultWaitTimeoutMs: number;
-  /** Optional model governance for subagents: approved model IDs,
-   *  default model/thinking, and named usage profiles. */
-  modelPolicy?: SubagentModelPolicyConfig;
 }

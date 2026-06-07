@@ -883,26 +883,6 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
     type: "number",
     desc: "Default spawn_agent wait timeout",
   },
-  "extensions.subagents.modelPolicy": {
-    type: "json",
-    desc: "Subagent model policy JSON object",
-  },
-  "extensions.subagents.modelPolicy.approvedModels": {
-    type: "json",
-    desc: "Approved subagent models JSON array",
-  },
-  "extensions.subagents.modelPolicy.defaultModel": {
-    type: "string",
-    desc: "Default subagent model",
-  },
-  "extensions.subagents.modelPolicy.defaultThinking": {
-    type: "string",
-    desc: "Default subagent thinking level",
-  },
-  "extensions.subagents.modelPolicy.profiles": {
-    type: "json",
-    desc: "Subagent profile map JSON object",
-  },
 };
 
 function metadataForConfigPath(path: string): SettableConfigPath | undefined {

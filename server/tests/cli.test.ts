@@ -150,15 +150,10 @@ describe("oppi config", () => {
     expect(stdout.trim()).toContain("9999");
   });
 
-  it("config set updates subagent defaultModel inside extensions", () => {
-    run([
-      "config",
-      "set",
-      "extensions",
-      '{"subagents":{"modelPolicy":{"defaultModel":"anthropic/claude-sonnet-4-20250514"}}}',
-    ]);
+  it("config set updates subagent lifecycle config inside extensions", () => {
+    run(["config", "set", "extensions", '{"subagents":{"maxDepth":2}}']);
     const { stdout } = run(["config", "get", "extensions"]);
-    expect(stdout.trim()).toContain("anthropic/claude-sonnet-4-20250514");
+    expect(stdout.trim()).toContain('"maxDepth": 2');
   });
 
   it("config set/get supports nested config paths", () => {
@@ -168,16 +163,11 @@ describe("oppi config", () => {
   });
 
   it("config set preserves siblings when updating nested config paths", () => {
-    run([
-      "config",
-      "set",
-      "extensions.subagents.modelPolicy.defaultModel",
-      "anthropic/claude-sonnet-4-20250514",
-    ]);
+    run(["config", "set", "extensions.subagents.maxDepth", "2"]);
     run(["config", "set", "extensions.voice.defaultVoiceId", "warm-technical-teammate"]);
     const { stdout } = run(["config", "get", "extensions"]);
     expect(stdout).toContain("warm-technical-teammate");
-    expect(stdout).toContain("anthropic/claude-sonnet-4-20250514");
+    expect(stdout).toContain('"maxDepth": 2');
   });
 
   it("config set supports dynamic runtimeEnv keys", () => {

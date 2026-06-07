@@ -76,14 +76,6 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     }),
     resetIdleTimer: vi.fn(),
     bootstrapSessionState: vi.fn(async () => {}),
-    spawnChildSession: vi.fn(),
-    spawnDetachedSession: vi.fn(),
-    listChildSessions: vi.fn(() => []),
-    subscribeToSession: vi.fn(() => () => {}),
-    getAvailableModelIds: vi.fn(() => []),
-    stopSession: vi.fn(),
-    resumeSession: vi.fn(),
-    sendMessage: vi.fn(),
     persistedStatuses,
   };
 
