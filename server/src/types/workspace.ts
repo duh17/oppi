@@ -1,13 +1,7 @@
 // ─── Workspaces ───
 
 export type WorkspaceSystemPromptMode = "append" | "replace";
-export type WorkspaceAllowedPathAccess = "read" | "readwrite";
 export type WorkspaceRuntimeMode = "host" | "sandbox";
-
-export interface WorkspaceAllowedPath {
-  path: string;
-  access: WorkspaceAllowedPathAccess;
-}
 
 export interface WorkspaceSandboxConfig {
   /** Allowed egress hosts for network access. Omitted = Gondolin default allow-all; [] = deny all. */
@@ -23,10 +17,6 @@ export interface WorkspaceMutableConfig {
 
   // Skills — which skills to sync into the session
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
-
-  // Permissions
-  allowedPaths?: WorkspaceAllowedPath[]; // Extra dirs beyond workspace
-  allowedExecutables?: string[]; // Extra executables auto-allowed for this workspace (e.g. ["node", "python3"])
 
   // Context
   systemPrompt?: string; // Workspace prompt text (appended or replacement depending on mode)

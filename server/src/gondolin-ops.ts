@@ -24,6 +24,7 @@ import type {
  * gondolin package installed (it is a runtime-only dependency).
  */
 export interface GondolinVm {
+  fs: GondolinFs;
   exec(
     args: string[] | string,
     options?: {
@@ -34,6 +35,19 @@ export interface GondolinVm {
       stderr?: "pipe" | "buffer";
     },
   ): GondolinProcess;
+  /** Shell path detected during VM startup. Defaults to /bin/bash when absent. */
+  shellPath?: string;
+}
+
+export interface GondolinFs {
+  access(path: string): Promise<void>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  readFile(path: string, options?: { encoding?: null }): Promise<Buffer>;
+  writeFile(
+    path: string,
+    content: string | Buffer,
+    options?: { encoding?: BufferEncoding },
+  ): Promise<void>;
 }
 
 /**
@@ -60,8 +74,10 @@ export const GUEST_WORKSPACE = "/workspace";
  * Pi tools always pass absolute host paths. We compute the relative offset
  * from the workspace root and re-anchor it under GUEST_WORKSPACE.
  *
- * Paths that escape the workspace (e.g. /etc/passwd) are resolved as-is
- * inside the guest — the VM filesystem boundary provides the real guard.
+ * Paths that escape the workspace are rejected for file-tool operations. Bash
+ * commands still execute inside the VM and can inspect the guest filesystem,
+ * but pi file tools should stay within the configured workspace mount so the
+ * model never confuses guest absolute paths with host paths.
  */
 export function toGuestPath(
   localCwd: string,
@@ -71,17 +87,11 @@ export function toGuestPath(
   const resolved = resolve(localPath);
   const rel = relative(localCwd, resolved);
 
-  // Path escapes workspace — pass through to guest as absolute
   if (rel.startsWith("..") || resolve(localCwd, rel) !== resolved) {
-    return resolved;
+    throw new Error(`Path is outside the sandbox workspace: ${localPath}`);
   }
 
   return posix.join(guestWorkspace, rel.split(/[\\/]/).join("/"));
-}
-
-/** Wrap a value in single quotes, escaping embedded single quotes. */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 // ─── Bash ───
@@ -103,18 +113,14 @@ export function createGondolinBashOps(
       },
     ) {
       const guestCwd = toGuestPath(localCwd, cwd, guestWorkspace);
-      // Filter host env: keep string values, strip HOME/USER/LOGNAME to prevent
-      // host identity leaking into the VM (~ would expand to host home dir).
-      const STRIP_ENV = new Set(["HOME", "USER", "LOGNAME", "SHELL", "PATH"]);
-      const env = options.env
-        ? Object.fromEntries(
-            Object.entries(options.env).filter(
-              (e): e is [string, string] => typeof e[1] === "string" && !STRIP_ENV.has(e[0]),
-            ),
-          )
-        : undefined;
+      // Pi's bash tool passes the host shell environment by default. Do not
+      // forward it into the VM: provider credentials and host identity must
+      // stay on the trusted host side. Workspace-level sandbox env is injected
+      // at VM creation time instead.
+      const env = undefined;
+      const shellPath = vm.shellPath || "/bin/bash";
 
-      const proc = vm.exec(["/bin/bash", "-lc", command], {
+      const proc = vm.exec([shellPath, "-lc", command], {
         cwd: guestCwd,
         signal: options.signal,
         env,
@@ -142,29 +148,38 @@ export function createGondolinReadOps(
   return {
     async readFile(absolutePath: string) {
       const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
-      const result = await vm.exec(["/bin/cat", guestPath]);
-      if (!result.ok) {
-        throw new Error(`Failed to read ${guestPath}: ${result.stdout || "file not found"}`);
+      try {
+        return await vm.fs.readFile(guestPath);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "file not found";
+        throw new Error(`Failed to read ${guestPath}: ${message}`);
       }
-      return result.stdoutBuffer;
     },
 
     async access(absolutePath: string) {
       const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
-      // Use ls rather than test -r or stat — FUSE-mounted VFS may not support them reliably.
-      const result = await vm.exec(["/bin/ls", "-d", guestPath]);
-      if (!result.ok) {
+      try {
+        await vm.fs.access(guestPath);
+      } catch {
         throw new Error(`ENOENT: no such file or directory, access '${guestPath}'`);
       }
     },
 
     async detectImageMimeType(absolutePath: string) {
       const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
-      const result = await vm.exec(["/usr/bin/file", "--mime-type", "-b", guestPath]);
-      if (!result.ok) return null;
-
-      const mime = result.stdout.trim();
-      return mime.startsWith("image/") ? mime : null;
+      switch (posix.extname(guestPath).toLowerCase()) {
+        case ".png":
+          return "image/png";
+        case ".jpg":
+        case ".jpeg":
+          return "image/jpeg";
+        case ".gif":
+          return "image/gif";
+        case ".webp":
+          return "image/webp";
+        default:
+          return null;
+      }
     },
   };
 }
@@ -180,21 +195,22 @@ export function createGondolinWriteOps(
     async writeFile(absolutePath: string, content: string) {
       const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
       const dir = posix.dirname(guestPath);
-      // Base64-encode content to avoid shell quoting issues with arbitrary file content.
-      const b64 = Buffer.from(content, "utf-8").toString("base64");
-
-      const cmd = `mkdir -p ${shellQuote(dir)} && echo ${shellQuote(b64)} | base64 -d > ${shellQuote(guestPath)}`;
-      const result = await vm.exec(["/bin/bash", "-c", cmd]);
-      if (!result.ok) {
-        throw new Error(`Failed to write ${guestPath}: ${result.stdout || "write failed"}`);
+      try {
+        await vm.fs.mkdir(dir, { recursive: true });
+        await vm.fs.writeFile(guestPath, content, { encoding: "utf8" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "write failed";
+        throw new Error(`Failed to write ${guestPath}: ${message}`);
       }
     },
 
     async mkdir(dir: string) {
       const guestDir = toGuestPath(localCwd, dir, guestWorkspace);
-      const result = await vm.exec(["/bin/mkdir", "-p", guestDir]);
-      if (!result.ok) {
-        throw new Error(`Failed to mkdir ${guestDir}: ${result.stdout || "mkdir failed"}`);
+      try {
+        await vm.fs.mkdir(guestDir, { recursive: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "mkdir failed";
+        throw new Error(`Failed to mkdir ${guestDir}: ${message}`);
       }
     },
   };

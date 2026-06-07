@@ -12,7 +12,6 @@ import type {
   WorkspaceSystemPromptMode,
 } from "../src/types.js";
 
-const AccessSchema = Type.Union([Type.Literal("read"), Type.Literal("readwrite")]);
 const PromptModeSchema = Type.Union([Type.Literal("append"), Type.Literal("replace")]);
 const ThemeColorSchemeSchema = Type.Union([Type.Literal("dark"), Type.Literal("light")]);
 
@@ -70,18 +69,11 @@ const REQUIRED_THEME_COLOR_KEYS = [
 
 const THEME_HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
-const AllowedPathSchema = Type.Object({
-  path: Type.String({ description: "Path to allow" }),
-  access: AccessSchema,
-});
-
 const CreateWorkspaceParams = Type.Object({
   name: Type.String({ description: "Workspace name" }),
   description: Type.Optional(Type.String({ description: "Short workspace description" })),
   icon: Type.Optional(Type.String({ description: "Emoji or icon string" })),
   skills: Type.Array(Type.String(), { description: "Skill names to enable" }),
-  allowedPaths: Type.Optional(Type.Array(AllowedPathSchema)),
-  allowedExecutables: Type.Optional(Type.Array(Type.String())),
   systemPrompt: Type.Optional(Type.String()),
   systemPromptMode: Type.Optional(PromptModeSchema),
   hostMount: Type.Optional(Type.String()),
@@ -96,8 +88,6 @@ const UpdateWorkspaceParams = Type.Object({
   description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   icon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   skills: Type.Optional(Type.Array(Type.String())),
-  allowedPaths: Type.Optional(Type.Array(AllowedPathSchema)),
-  allowedExecutables: Type.Optional(Type.Array(Type.String())),
   systemPrompt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   systemPromptMode: Type.Optional(PromptModeSchema),
   hostMount: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -128,20 +118,6 @@ function validateExtensions(extensions: string[] | undefined): void {
   }
 }
 
-function validateAllowedPaths(
-  allowedPaths: Array<{ path: string; access: "read" | "readwrite" }> | undefined,
-): void {
-  if (!allowedPaths) return;
-  for (const entry of allowedPaths) {
-    if (!entry.path.trim()) {
-      throw new Error("allowedPaths entries require a non-empty path");
-    }
-    if (entry.access !== "read" && entry.access !== "readwrite") {
-      throw new Error("allowedPaths access must be read or readwrite");
-    }
-  }
-}
-
 function normalizeCreateRequest(params: Record<string, unknown>): CreateWorkspaceRequest {
   const req: CreateWorkspaceRequest = {
     name: String(params.name),
@@ -150,12 +126,6 @@ function normalizeCreateRequest(params: Record<string, unknown>): CreateWorkspac
 
   if (typeof params.description === "string") req.description = params.description;
   if (typeof params.icon === "string") req.icon = params.icon;
-  if (Array.isArray(params.allowedPaths)) {
-    req.allowedPaths = params.allowedPaths as CreateWorkspaceRequest["allowedPaths"];
-  }
-  if (Array.isArray(params.allowedExecutables)) {
-    req.allowedExecutables = params.allowedExecutables as string[];
-  }
   if (typeof params.systemPrompt === "string") req.systemPrompt = params.systemPrompt;
   if (params.systemPromptMode === "append" || params.systemPromptMode === "replace") {
     req.systemPromptMode = params.systemPromptMode as WorkspaceSystemPromptMode;
@@ -166,7 +136,6 @@ function normalizeCreateRequest(params: Record<string, unknown>): CreateWorkspac
   if (typeof params.gitStatusEnabled === "boolean") req.gitStatusEnabled = params.gitStatusEnabled;
 
   validateExtensions(req.extensions);
-  validateAllowedPaths(req.allowedPaths);
   return req;
 }
 
@@ -181,12 +150,6 @@ function normalizeUpdateRequest(params: Record<string, unknown>): UpdateWorkspac
     req.icon = params.icon as string | null;
   }
   if (Array.isArray(params.skills)) req.skills = params.skills as string[];
-  if (Array.isArray(params.allowedPaths)) {
-    req.allowedPaths = params.allowedPaths as UpdateWorkspaceRequest["allowedPaths"];
-  }
-  if (Array.isArray(params.allowedExecutables)) {
-    req.allowedExecutables = params.allowedExecutables as string[];
-  }
   if (typeof params.systemPrompt === "string" || params.systemPrompt === null) {
     req.systemPrompt = params.systemPrompt as string | null;
   }
@@ -203,7 +166,6 @@ function normalizeUpdateRequest(params: Record<string, unknown>): UpdateWorkspac
   if (typeof params.gitStatusEnabled === "boolean") req.gitStatusEnabled = params.gitStatusEnabled;
 
   validateExtensions(req.extensions);
-  validateAllowedPaths(req.allowedPaths);
   return req;
 }
 

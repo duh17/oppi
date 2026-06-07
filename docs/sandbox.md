@@ -41,9 +41,10 @@ Expected behavior for new sandbox sessions:
 
 - The visible cwd is `/workspace/<workspace-slug>`.
 - If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host.
-- `read`, `bash`, `edit`, and `write` operate against the VM workspace mount.
+- `read`, `edit`, and `write` use Gondolin's guest filesystem API and reject paths outside the configured workspace mount.
+- `bash` runs inside the VM with cwd mapped to the workspace mount. Shell commands can inspect the guest filesystem, but host paths remain unavailable unless explicitly mounted.
 - Model API calls run from the host process; the VM does not need provider API keys for normal agent operation.
-- Oppi/Pi provider API keys are not forwarded into the VM by default.
+- Oppi/Pi provider API keys and per-command host environment variables are not forwarded into the VM by default. Only workspace sandbox environment variables are injected.
 - Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all.
 - Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`.
 - Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model.
@@ -62,6 +63,7 @@ Sandbox workspaces separate host and guest surfaces. Configure network access de
 | Host filesystem | Only the selected workspace backing directory is mounted | Pick a project path, or leave blank for `~/sandbox/<slug>` |
 | Secret files | Common secret paths are hidden from the workspace mount, including `.env*`, `.npmrc`, `.ssh`, `.aws`, `*.pem`, and `*.key` | Keep secrets outside the mounted project when possible |
 | Network egress | Gondolin default: omitted `allowedHosts` allows all HTTP/TLS egress | Edit **Allowed Hosts** in the workspace editor; use an empty list to deny all |
+| Host environment | Per-command host env is ignored; workspace sandbox env is injected at VM creation | Configure explicit sandbox env on the workspace |
 | Provider secrets | Not injected into the VM | Future secret bridging must be explicit and scoped |
 | Tools | VM-backed `read`, `bash`, `edit`, `write` | Server/API/admin can set an authoritative tool allowlist |
 | Context | Workspace-local context is allowed; global host agent config is hidden | Put sandbox-specific instructions in the workspace or Oppi workspace prompt |
@@ -114,6 +116,8 @@ Oppi's sandbox replaces Pi's host-backed built-in tools with VM-backed versions 
 - `write`
 
 If `workspace.tools` is unset, those tools are active by default. If `workspace.tools` is set, it becomes an allowlist across built-in, custom, and extension tools.
+
+File tools are workspace-scoped. A `read`, `edit`, or `write` request for a path outside the workspace fails instead of being remapped to a guest absolute path. Use `bash` when you intentionally need to inspect the VM's own Linux filesystem, such as `/etc/os-release`.
 
 Host-side extensions are different from VM tools. Extensions such as `ask`, `subagents`, `voice`, `oppi-admin`, or installed Pi package tools run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. Enable extensions deliberately.
 
@@ -171,6 +175,7 @@ Pi's example `examples/extensions/sandbox/` uses `@anthropic-ai/sandbox-runtime`
 - **A command should not reach the network:** clear **Allowed Hosts** to deny all, or add only the required hosts.
 - **A command cannot reach an expected host:** add that host to **Allowed Hosts**, then start a new session if the VM was already running.
 - **A command cannot read `.env` or `.ssh`:** this is expected. Common secret paths are hidden from the workspace mount.
+- **A file tool cannot read `/etc/passwd` or another absolute path:** this is expected. File tools are limited to the workspace mount; use `bash` to inspect guest-only system files when needed.
 - **The session shows the wrong cwd:** stop that session and start a new one so the session picks up the sandbox cwd.
 
 ## Upstream references

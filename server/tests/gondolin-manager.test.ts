@@ -27,6 +27,12 @@ function makeWorkspace(overrides: Partial<Workspace> & { id: string } = { id: "w
 function makeMockVm(): GondolinVm & { close: ReturnType<typeof vi.fn>; stopped: boolean } {
   const vm = {
     stopped: false,
+    fs: {
+      access: vi.fn(async () => undefined),
+      mkdir: vi.fn(async () => undefined),
+      readFile: vi.fn(async () => Buffer.alloc(0)),
+      writeFile: vi.fn(async () => undefined),
+    },
     exec: vi.fn(() => ({
       exitCode: Promise.resolve(0),
       stdout: Buffer.alloc(0),
@@ -213,6 +219,12 @@ describe("stopAll", () => {
 
   it("handles stop errors gracefully", async () => {
     const factory: VmFactory = async () => ({
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.alloc(0)),
+        writeFile: vi.fn(async () => undefined),
+      },
       exec: vi.fn() as unknown as GondolinVm["exec"],
       close: vi.fn(async () => {
         throw new Error("boom");

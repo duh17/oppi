@@ -62,6 +62,12 @@ function createMockProcess(
 
 function createMockVm(): GondolinVm & { close: ReturnType<typeof vi.fn> } {
   return {
+    fs: {
+      access: vi.fn(async () => undefined),
+      mkdir: vi.fn(async () => undefined),
+      readFile: vi.fn(async () => Buffer.from("")),
+      writeFile: vi.fn(async () => undefined),
+    },
     exec: vi.fn(() => createMockProcess()),
     close: vi.fn(async () => {}),
   };
@@ -296,20 +302,33 @@ describe("Sandbox tool operations with mock VM", () => {
   });
 
   it("read ops: readFile maps host path to guest", async () => {
+    const readFile = vi.fn(async () => Buffer.from("file content"));
     const vm: GondolinVm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile,
+        writeFile: vi.fn(async () => undefined),
+      },
       exec: vi.fn(() => createMockProcess({ stdout: "file content" })),
     };
     const ops = createGondolinReadOps(vm, localCwd);
 
     const result = await ops.readFile(`${localCwd}/src/main.ts`);
     expect(result.toString()).toBe("file content");
-
-    const call = (vm.exec as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toEqual(["/bin/cat", "/workspace/src/main.ts"]);
+    expect(readFile).toHaveBeenCalledWith("/workspace/src/main.ts");
   });
 
   it("read ops: access throws on non-existent file", async () => {
     const vm: GondolinVm = {
+      fs: {
+        access: vi.fn(async () => {
+          throw new Error("missing");
+        }),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.from("")),
+        writeFile: vi.fn(async () => undefined),
+      },
       exec: vi.fn(() => createMockProcess({ exitCode: 1 })),
     };
     const ops = createGondolinReadOps(vm, localCwd);
@@ -317,19 +336,16 @@ describe("Sandbox tool operations with mock VM", () => {
     await expect(ops.access(`${localCwd}/missing.txt`)).rejects.toThrow(/ENOENT/);
   });
 
-  it("write ops: writeFile base64-encodes content", async () => {
+  it("write ops: writeFile uses Gondolin fs", async () => {
     const vm = createMockVm();
     const ops = createGondolinWriteOps(vm, localCwd);
 
     await ops.writeFile(`${localCwd}/output.txt`, "hello world");
 
-    const call = (vm.exec as ReturnType<typeof vi.fn>).mock.calls[0];
-    // Should use bash -c with base64 encoding
-    expect(call[0][0]).toBe("/bin/bash");
-    expect(call[0][1]).toBe("-c");
-    // The command should contain base64 -d and the target path
-    expect(call[0][2]).toContain("base64 -d");
-    expect(call[0][2]).toContain("/workspace/output.txt");
+    expect(vm.fs.mkdir).toHaveBeenCalledWith("/workspace", { recursive: true });
+    expect(vm.fs.writeFile).toHaveBeenCalledWith("/workspace/output.txt", "hello world", {
+      encoding: "utf8",
+    });
   });
 
   it("write ops: mkdir maps to guest path", async () => {
@@ -338,16 +354,21 @@ describe("Sandbox tool operations with mock VM", () => {
 
     await ops.mkdir(`${localCwd}/new/dir`);
 
-    const call = (vm.exec as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toEqual(["/bin/mkdir", "-p", "/workspace/new/dir"]);
+    expect(vm.fs.mkdir).toHaveBeenCalledWith("/workspace/new/dir", { recursive: true });
   });
 
   it("edit ops: readFile and writeFile delegate correctly", async () => {
-    let readCalled = false;
+    const readFile = vi.fn(async () => Buffer.from("original content"));
+    const writeFile = vi.fn(async () => undefined);
     const vm: GondolinVm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile,
+        writeFile,
+      },
       exec: vi.fn((args: string[]) => {
         if (args[0] === "/bin/cat") {
-          readCalled = true;
           return createMockProcess({ stdout: "original content" });
         }
         return createMockProcess();
@@ -356,12 +377,14 @@ describe("Sandbox tool operations with mock VM", () => {
     const ops = createGondolinEditOps(vm, localCwd);
 
     const content = await ops.readFile(`${localCwd}/file.ts`);
-    expect(readCalled).toBe(true);
+    expect(readFile).toHaveBeenCalledWith("/workspace/file.ts");
     expect(content.toString()).toBe("original content");
 
     // writeFile should work
     await ops.writeFile(`${localCwd}/file.ts`, "modified content");
-    expect((vm.exec as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1);
+    expect(writeFile).toHaveBeenCalledWith("/workspace/file.ts", "modified content", {
+      encoding: "utf8",
+    });
   });
 });
 

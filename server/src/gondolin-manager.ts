@@ -162,7 +162,10 @@ export async function defaultVmFactory(
     env: mergedEnv,
   });
 
-  return vm;
+  const shellProbe = await vm.exec(["/bin/sh", "-lc", "command -v bash || true"]);
+  const shellPath = shellProbe.stdout.trim() || "/bin/sh";
+
+  return Object.assign(vm, { shellPath });
 }
 
 const log = createLogger({ base: { component: "gondolin_manager" } });

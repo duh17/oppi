@@ -84,33 +84,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return undefined;
   }
 
-  function allowedPathsValidationError(allowedPaths: unknown): string | undefined {
-    if (allowedPaths === undefined) {
-      return undefined;
-    }
-
-    if (!Array.isArray(allowedPaths)) {
-      return "allowedPaths must be an array";
-    }
-
-    for (const item of allowedPaths) {
-      if (!item || typeof item !== "object") {
-        return "allowedPaths entries must be objects";
-      }
-
-      const candidate = item as { path?: unknown; access?: unknown };
-      if (typeof candidate.path !== "string" || candidate.path.trim().length === 0) {
-        return "allowedPaths entries require a non-empty path";
-      }
-
-      if (candidate.access !== "read" && candidate.access !== "readwrite") {
-        return "allowedPaths access must be read or readwrite";
-      }
-    }
-
-    return undefined;
-  }
-
   function systemPromptModeValidationError(mode: unknown): string | undefined {
     if (mode === undefined) {
       return undefined;
@@ -264,12 +237,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const allowedPathsError = allowedPathsValidationError(body.allowedPaths);
-    if (allowedPathsError) {
-      helpers.error(res, 400, allowedPathsError);
-      return;
-    }
-
     const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
     if (systemPromptModeError) {
       helpers.error(res, 400, systemPromptModeError);
@@ -334,12 +301,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const extensionsError = extensionValidationError(body.extensions);
     if (extensionsError) {
       helpers.error(res, 400, extensionsError);
-      return;
-    }
-
-    const allowedPathsError = allowedPathsValidationError(body.allowedPaths);
-    if (allowedPathsError) {
-      helpers.error(res, 400, allowedPathsError);
       return;
     }
 

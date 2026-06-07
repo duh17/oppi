@@ -42,8 +42,6 @@ function makeRuntime(
     id: "w1",
     name: "Workspace",
     skills: [],
-    allowedPaths: [],
-    allowedExecutables: [],
     hostMount: options.hostMount ?? "/tmp/oppi-mirror-test",
   };
   const sessions = new Map<string, Session>();

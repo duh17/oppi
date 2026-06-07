@@ -188,6 +188,12 @@ describe("SdkBackend sandbox", () => {
       ok: true,
     };
     const vm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.alloc(0)),
+        writeFile: vi.fn(async () => undefined),
+      },
       exec: vi.fn(() =>
         Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
       ),

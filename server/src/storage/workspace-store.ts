@@ -111,8 +111,6 @@ export class WorkspaceStore {
       description: normalizeOptionalString(req.description),
       icon: normalizeOptionalString(req.icon),
       skills: req.skills,
-      allowedPaths: req.allowedPaths,
-      allowedExecutables: req.allowedExecutables,
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeHostMount(req.hostMount),
@@ -151,12 +149,6 @@ export class WorkspaceStore {
       skills: Array.isArray(raw.skills)
         ? raw.skills.filter((skill): skill is string => typeof skill === "string")
         : [],
-      allowedPaths: Array.isArray(raw.allowedPaths)
-        ? (raw.allowedPaths as Workspace["allowedPaths"])
-        : undefined,
-      allowedExecutables: Array.isArray(raw.allowedExecutables)
-        ? (raw.allowedExecutables as string[])
-        : undefined,
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeHostMount(raw.hostMount),
@@ -227,9 +219,6 @@ export class WorkspaceStore {
       workspace.description = normalizeOptionalString(updates.description);
     if (updates.icon !== undefined) workspace.icon = normalizeOptionalString(updates.icon);
     if (updates.skills !== undefined) workspace.skills = updates.skills;
-    if (updates.allowedPaths !== undefined) workspace.allowedPaths = updates.allowedPaths;
-    if (updates.allowedExecutables !== undefined)
-      workspace.allowedExecutables = updates.allowedExecutables;
     if (updates.systemPrompt !== undefined)
       workspace.systemPrompt = normalizeOptionalString(updates.systemPrompt);
     if (updates.systemPromptMode !== undefined)

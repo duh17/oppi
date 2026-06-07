@@ -6,7 +6,7 @@
  *   1. Can the VM read auth.json? → NO (only subdirs mounted, not agentDir root)
  *   2. Can the VM write to readonlyMounts? → NO (ReadonlyProvider blocks)
  *   3. Can the VM read host paths outside of mounts? → NO (VFS boundary)
- *   4. Env var leakage? → STRIP_ENV strips HOME/USER/PATH; others pass through
+ *   4. Env var leakage? → per-command host env is not forwarded into the VM
  *   5. Network egress with empty allowedHosts? → NO (deny-all)
  *
  * Requires QEMU installed. Skipped automatically if not available.
@@ -131,7 +131,7 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
 
   // ─── Attack Vector 5: Env var leakage ───
 
-  it("SAFE: HOME and USER are stripped from env", async () => {
+  it("SAFE: host env is not forwarded into the VM", async () => {
     if (!qemuAvailable) return;
 
     const ops = createGondolinBashOps(vm, hostDir);
@@ -148,19 +148,21 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     });
     const env = Buffer.concat(chunks).toString();
 
-    // STRIP_ENV removes HOME, USER, LOGNAME, SHELL, PATH
+    // Per-command host env is ignored. Workspace-level sandbox env is injected
+    // at VM creation time through GondolinManager instead.
     expect(env).not.toContain("HOME=/Users/testuser");
     expect(env).not.toContain("USER=testuser");
+    expect(env).not.toContain("ANTHROPIC_API_KEY=sk-ant-real-key-12345");
+    expect(env).not.toContain("SECRET_TOKEN=super-secret");
+    expect(env).not.toContain("SAFE_VAR=this-is-fine");
   });
 
-  it("STRIP_ENV does not filter arbitrary env var names", async () => {
+  it("SAFE: arbitrary host env var names are not forwarded", async () => {
     if (!qemuAvailable) return;
 
-    // STRIP_ENV only filters HOME/USER/LOGNAME/SHELL/PATH by exact name.
-    // Any other env var passes through. In practice, oppi reads API keys
-    // from auth.json (not env vars), so the server's process.env typically
-    // has no credential env vars. But if someone runs the server with
-    // ANTHROPIC_API_KEY=... in the environment, it would leak through.
+    // Pi's bash tool supplies the host shell environment to BashOperations by
+    // default. The Gondolin implementation must ignore it unless a value was
+    // deliberately injected at VM creation time.
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("env", hostDir, {
@@ -172,8 +174,8 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     });
     const env = Buffer.concat(chunks).toString();
 
-    expect(env).toContain("custom-value");
-    expect(env).toContain("another-value");
+    expect(env).not.toContain("custom-value");
+    expect(env).not.toContain("another-value");
   });
 
   // ─── Attack Vector 6: Network egress ───
