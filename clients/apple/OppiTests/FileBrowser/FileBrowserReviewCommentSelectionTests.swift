@@ -129,6 +129,31 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
     }
 
+    @Test func treeDirectoryNavigationClearsSelectedFile() {
+        let selected = FileBrowserSelection(path: "Sources/App.swift", name: "App.swift", size: 42)
+
+        let opened = FileBrowserTreeNavigationReducer.openDirectory(
+            path: "Sources/Features/",
+            selectedFile: selected
+        )
+        let breadcrumb = FileBrowserTreeNavigationReducer.popToBreadcrumb(
+            path: "Sources/",
+            selectedFile: selected
+        )
+
+        #expect(opened.treeDirectoryPath == "Sources/Features/")
+        #expect(opened.selectedFile == nil)
+        #expect(breadcrumb.treeDirectoryPath == "Sources/")
+        #expect(breadcrumb.selectedFile == nil)
+    }
+
+    @Test func treePaneTextUsesEmbeddedFileViewerWithoutNavigationChrome() {
+        #expect(FileBrowserContentRenderingPolicy.textRenderer(for: .treePane) == .embeddedFileViewer)
+        #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .treePane) == false)
+        #expect(FileBrowserContentRenderingPolicy.textRenderer(for: .pushed) == .embeddedFileViewer)
+        #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed) == true)
+    }
+
     @Test func codeBodyNoCommentMenuWhenRouterNil() throws {
         let codeBody = NativeFullScreenCodeBody(
             content: "let answer = 42",

@@ -31,6 +31,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSessionId: String?
     var reviewCommentSourceLabel: String?
+    var showsNavigationChrome = true
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -47,9 +48,15 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         let dismissAction = dismiss
+        let presentationMode: FullScreenCodeViewController.PresentationMode
+        if showsNavigationChrome {
+            presentationMode = .embedded(onDismiss: { dismissAction() })
+        } else {
+            presentationMode = .contentOnly
+        }
         return FullScreenCodeViewController(
             content: content,
-            presentationMode: .embedded(onDismiss: { dismissAction() }),
+            presentationMode: presentationMode,
             reviewCommentSelectionContext: effectiveReviewCommentSelectionContext
         )
     }

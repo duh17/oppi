@@ -3,6 +3,28 @@ import Network
 import PDFKit
 import SwiftUI
 
+enum FileBrowserContentChromeMode {
+    case pushed
+    case treePane
+}
+
+enum FileBrowserTextRenderer: Equatable {
+    case embeddedFileViewer
+}
+
+enum FileBrowserContentRenderingPolicy {
+    static func textRenderer(for chromeMode: FileBrowserContentChromeMode) -> FileBrowserTextRenderer {
+        switch chromeMode {
+        case .pushed, .treePane:
+            return .embeddedFileViewer
+        }
+    }
+
+    static func showsNavigationChrome(for chromeMode: FileBrowserContentChromeMode) -> Bool {
+        chromeMode == .pushed
+    }
+}
+
 /// Displays the content of a workspace file in browse mode.
 ///
 /// Delegates to `FileContentView` for type-aware rendering:
@@ -23,6 +45,7 @@ struct FileBrowserContentView: View {
     let fileName: String
     /// Known file size from directory listing. Nil when opened from search results.
     var fileSize: Int?
+    var chromeMode: FileBrowserContentChromeMode = .pushed
 
     @Environment(\.apiClient) private var apiClient
     @State private var content: FileContentPhase = .loading
@@ -54,6 +77,18 @@ struct FileBrowserContentView: View {
         return false
     }
 
+    private var shouldUseEmbeddedFileViewer: Bool {
+        FileBrowserContentRenderingPolicy.textRenderer(for: chromeMode) == .embeddedFileViewer
+    }
+
+    private var shouldShowEmbeddedNavigationChrome: Bool {
+        FileBrowserContentRenderingPolicy.showsNavigationChrome(for: chromeMode)
+    }
+
+    private var shouldHideHostNavigationBar: Bool {
+        shouldShowEmbeddedNavigationChrome && isUsingFileViewer
+    }
+
     var body: some View {
         Group {
             switch content {
@@ -69,10 +104,15 @@ struct FileBrowserContentView: View {
                     description: Text(message)
                 )
             case .text(let text):
-                EmbeddedFileViewerView(
-                    content: fullScreenContent(text: text)
-                )
-                .ignoresSafeArea(edges: .top)
+                if shouldUseEmbeddedFileViewer {
+                    EmbeddedFileViewerView(
+                        content: fullScreenContent(text: text),
+                        showsNavigationChrome: shouldShowEmbeddedNavigationChrome
+                    )
+                    .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
+                } else {
+                    inlineTextView(text)
+                }
             case .image(let data):
                 imageView(data)
             case .video:
@@ -94,11 +134,11 @@ struct FileBrowserContentView: View {
             }
         }
         .background(Color.themeBg)
-        .navigationTitle(isUsingFileViewer ? "" : fileName)
+        .navigationTitle(shouldHideHostNavigationBar ? "" : fileName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
+        .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
-            if !isUsingFileViewer {
+            if chromeMode == .pushed, !isUsingFileViewer {
                 ToolbarItem(placement: .topBarTrailing) {
                     if let shareable = shareableContent() {
                         FileShareButton(content: shareable, style: .icon)
@@ -108,6 +148,20 @@ struct FileBrowserContentView: View {
         }
         .task { await loadContent() }
         .task { await checkNetworkCost() }
+    }
+
+    @ViewBuilder
+    private func inlineTextView(_ text: String) -> some View {
+        ScrollView([.vertical, .horizontal]) {
+            Text(text)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.themeFg)
+                .textSelection(.enabled)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(Color.themeBg)
     }
 
     // MARK: - Size Warning
