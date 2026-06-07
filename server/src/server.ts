@@ -358,6 +358,7 @@ export class Server {
   private sessions: SessionManager;
   private skillRegistry: SkillRegistry;
   private skillsInitialized = false;
+  private reportedMissingWorkspaceSkills = new Set<string>();
   private userSkillStore: UserSkillStore;
   private push: PushClient;
   private httpServer: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
@@ -472,7 +473,6 @@ export class Server {
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
-    this.sessions.availableModelIdsResolver = () => this.models.getAll().map((m) => m.id);
 
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
       isOppiSessionActive: (sessionId) => this.sessions.getActiveSession(sessionId) !== undefined,
@@ -1006,6 +1006,7 @@ export class Server {
   private async resolveSkillPaths(skillNames: string[]): Promise<string[]> {
     await this.ensureSkillsInitialized();
     const paths: string[] = [];
+    const newlyMissingSkills: string[] = [];
     for (const name of skillNames) {
       const builtInPath = this.skillRegistry.getPath(name);
       if (builtInPath) {
@@ -1017,7 +1018,16 @@ export class Server {
         paths.push(userPath);
         continue;
       }
-      log.warn("skills.workspace_skill_not_found", { skill: name });
+      if (!this.reportedMissingWorkspaceSkills.has(name)) {
+        this.reportedMissingWorkspaceSkills.add(name);
+        newlyMissingSkills.push(name);
+      }
+    }
+    if (newlyMissingSkills.length > 0) {
+      log.warn("skills.workspace_skills_not_found", {
+        count: newlyMissingSkills.length,
+        skills: newlyMissingSkills,
+      });
     }
     return paths;
   }
