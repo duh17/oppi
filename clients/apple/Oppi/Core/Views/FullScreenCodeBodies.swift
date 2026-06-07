@@ -450,6 +450,10 @@ extension NativeFullScreenCodeBody: FullScreenReaderConfigurable {
 }
 
 extension NativeFullScreenCodeBody: UITextViewDelegate {
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        (textView as? FullScreenReviewCommentTextView)?.reviewCommentSelectionDidChange()
+    }
+
     func textView(
         _ textView: UITextView,
         editMenuForTextIn range: NSRange,
@@ -758,6 +762,10 @@ extension NativeFullScreenDiffBody: FullScreenReaderConfigurable {
 }
 
 extension NativeFullScreenDiffBody: UITextViewDelegate {
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        (textView as? FullScreenReviewCommentTextView)?.reviewCommentSelectionDidChange()
+    }
+
     func textView(
         _ textView: UITextView,
         editMenuForTextIn range: NSRange,
@@ -1114,6 +1122,10 @@ extension NativeFullScreenTerminalBody: FullScreenReaderConfigurable {
 }
 
 extension NativeFullScreenTerminalBody: UITextViewDelegate {
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        (textView as? FullScreenReviewCommentTextView)?.reviewCommentSelectionDidChange()
+    }
+
     func textView(
         _ textView: UITextView,
         editMenuForTextIn range: NSRange,
@@ -1450,6 +1462,10 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         if wraps {
             textView.contentOffset.x = -textView.adjustedContentInset.left
         }
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        (textView as? FullScreenReviewCommentTextView)?.reviewCommentSelectionDidChange()
     }
 
     func textView(

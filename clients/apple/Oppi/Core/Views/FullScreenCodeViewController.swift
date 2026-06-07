@@ -12,6 +12,7 @@ import UIKit
 ///   Used by timeline full-screen and SwiftUI `.sheet`/`.fullScreenCover`.
 /// - `.embedded(onDismiss:)`: embedded in a SwiftUI NavigationStack. Shows a
 ///   back button (chevron.backward) that calls the provided closure.
+/// - `.contentOnly`: embedded as pane content without internal navigation chrome.
 
 final class FullScreenCodeViewController: UIViewController {
 
@@ -21,6 +22,8 @@ final class FullScreenCodeViewController: UIViewController {
         case sheet
         /// Embedded inside a SwiftUI NavigationStack — chevron.backward + closure.
         case embedded(onDismiss: @MainActor @Sendable () -> Void)
+        /// Embedded pane content without a navigation bar or dismiss affordance.
+        case contentOnly
     }
 
     private struct Presentation {
@@ -144,6 +147,9 @@ final class FullScreenCodeViewController: UIViewController {
         view.backgroundColor = UIColor(palette.bgDark)
 
         let nav = UINavigationController(rootViewController: makeContentController())
+        if case .contentOnly = presentationMode {
+            nav.setNavigationBarHidden(true, animated: false)
+        }
         // Disable internal interactive pop — this nav only has one root VC.
         // Prevents conflict with the hosting SwiftUI navigation's swipe-back
         // when in embedded mode.
@@ -165,21 +171,25 @@ final class FullScreenCodeViewController: UIViewController {
         let vc = UIViewController()
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
-        let doneIcon: String
+        let doneIcon: String?
         switch presentationMode {
         case .sheet:
             doneIcon = "chevron.down"
         case .embedded:
             doneIcon = "chevron.backward"
+        case .contentOnly:
+            doneIcon = nil
         }
-        let doneButton = UIBarButtonItem(
-            image: UIImage(systemName: doneIcon),
-            style: .plain,
-            target: self,
-            action: #selector(doneTapped)
-        )
-        doneButton.tintColor = UIColor(palette.cyan)
-        vc.navigationItem.leftBarButtonItem = doneButton
+        if let doneIcon {
+            let doneButton = UIBarButtonItem(
+                image: UIImage(systemName: doneIcon),
+                style: .plain,
+                target: self,
+                action: #selector(doneTapped)
+            )
+            doneButton.tintColor = UIColor(palette.cyan)
+            vc.navigationItem.leftBarButtonItem = doneButton
+        }
 
         contentHostController = vc
 
@@ -799,6 +809,8 @@ final class FullScreenCodeViewController: UIViewController {
             dismiss(animated: true)
         case .embedded(let onDismiss):
             onDismiss()
+        case .contentOnly:
+            break
         }
     }
 
@@ -1260,6 +1272,16 @@ private enum FullScreenViewingOptionsSymbols {
 
 #if DEBUG
 extension FullScreenCodeViewController {
+    static func makeHarnessController(
+        content: FullScreenCodeContent,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    ) -> FullScreenCodeViewController {
+        FullScreenCodeViewController(
+            content: content,
+            reviewCommentSelectionContext: reviewCommentSelectionContext
+        )
+    }
+
     var hasFloatingViewingOptionsButtonForTesting: Bool {
         floatingViewingOptionsButton != nil
     }

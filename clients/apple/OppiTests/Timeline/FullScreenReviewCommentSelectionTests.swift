@@ -35,6 +35,55 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(textView.reviewCommentSourceContext?.surface == .fullScreenCode)
     }
 
+    @Test func selectedCodeShowsCommentBarAndOpensInlineComposer() async throws {
+        let router = ReviewCommentSelectionRouter(
+            dispatchWithPresentation: { _, _ in
+                Issue.record("Full-screen code should use the inline review composer")
+            },
+            inlineSave: { _, _ in true }
+        )
+        let controller = FullScreenCodeViewController(
+            content: .code(content: "let answer = 42\nlet done = true", language: nil, filePath: "Answer.swift", startLine: 1),
+            reviewCommentSelectionContext: ReviewCommentSelectionContext(
+                dispatcher: router,
+                sessionId: "session-1",
+                sourceLabel: "Full Screen",
+                filePath: "Answer.swift",
+                languageHint: "swift"
+            )
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.loadViewIfNeeded()
+        controller.view.frame = window.bounds
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("let answer = 42")
+        } as? FullScreenReviewCommentTextView)
+        textView.becomeFirstResponder()
+        textView.selectedRange = NSRange(location: 0, length: 3)
+        controller.view.layoutIfNeeded()
+
+        let barAppeared = await waitForMainActorCondition {
+            self.hasVisibleView(identifier: "review-comment.selection-bar", in: controller.view)
+        }
+        #expect(barAppeared, "Selecting code in full-screen read mode should show the comment bar")
+
+        let commentBar = try #require(timelineAllViews(in: controller.view).first {
+            $0.accessibilityIdentifier == "review-comment.selection-bar"
+        } as? UIControl)
+        commentBar.sendActions(for: .touchUpInside)
+
+        let composerAppeared = await waitForMainActorCondition {
+            self.hasVisibleView(identifier: "review-comment.inline-composer", in: controller.view)
+        }
+        #expect(composerAppeared, "Tapping the comment bar should open the inline comment composer")
+    }
+
     @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {
         let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
         let body = NativeFullScreenCodeBody(
@@ -492,6 +541,15 @@ struct FullScreenReviewCommentSelectionTests {
             }
         }
         return result
+    }
+
+    private func hasVisibleView(identifier: String, in root: UIView) -> Bool {
+        timelineAllViews(in: root).contains {
+            $0.accessibilityIdentifier == identifier
+                && !$0.isHidden
+                && $0.alpha > 0.01
+                && $0.window != nil
+        }
     }
 
 }
