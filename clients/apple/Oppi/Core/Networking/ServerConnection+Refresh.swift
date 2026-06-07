@@ -275,10 +275,8 @@ extension ServerConnection {
         }
 
         if !streamAlive {
-            // Stash pending user-blocking UI so focusSession() can restore it
-            // locally and stream reconnect replay can restore it from the server.
-            stashActiveAskIfNeeded()
-            stashActiveExtensionDialogIfNeeded()
+            // AskCard and sheet-backed extension dialogs already live in their
+            // canonical pending stores and will restore when focus returns.
 
             do {
                 let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)

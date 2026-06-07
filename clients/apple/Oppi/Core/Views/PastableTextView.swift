@@ -520,6 +520,7 @@ struct FullSizeTextView: UIViewRepresentable {
     let suppressKeyboard: Bool
     let allowKeyboardRestoreOnTap: Bool
     let onKeyboardRestoreRequest: (() -> Void)?
+    let accessibilityIdentifier: String?
 
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
@@ -536,6 +537,7 @@ struct FullSizeTextView: UIViewRepresentable {
         textView.textContainer.lineFragmentPadding = 0
         textView.keyboardDismissMode = .interactive
         textView.alwaysBounceVertical = true
+        textView.accessibilityIdentifier = accessibilityIdentifier
 
         applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
         context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
@@ -582,6 +584,7 @@ struct FullSizeTextView: UIViewRepresentable {
         textView.onAlternateEnter = onAlternateEnter
         textView.tintColor = tintColor
         textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
+        textView.accessibilityIdentifier = accessibilityIdentifier
         context.coordinator.observedTextView = textView
 
         let traitsChanged = context.coordinator.lastAutocorrectionEnabled != autocorrectionEnabled
@@ -753,6 +756,30 @@ class PastableUITextView: UITextView {
             currentText: self.text,
             incomingText: text
         ) {
+            return
+        }
+
+        let incomingTextHasInlineStyling = clampedVolatileSuffixLength > 0 || !clampedCorrectionRanges.isEmpty
+        let renderedPlainBaseStyleMatches = renderedVolatileSuffixLengthCache == 0
+            && renderedCorrectionRangesCache.isEmpty
+            && (renderedFontCache?.isEqual(font) ?? false)
+            && (renderedBaseColorCache?.isEqual(baseColor) ?? false)
+
+        if !incomingTextHasInlineStyling,
+           renderedPlainBaseStyleMatches,
+           self.text == text {
+            typingAttributes = [
+                .font: font,
+                .foregroundColor: baseColor,
+            ]
+            renderedTextCache = text
+            renderedVolatileSuffixLengthCache = 0
+            renderedCorrectionRangesCache = []
+            renderedFontCache = font
+            renderedBaseColorCache = baseColor
+            renderedVolatileColorCache = volatileColor
+            renderedVolatileBackgroundColorCache = volatileBackgroundColor
+            renderedCorrectionUnderlineColorCache = correctionUnderlineColor
             return
         }
 

@@ -8,7 +8,6 @@ enum QuickSessionSheetLayout {
     /// dictation or typing adds lines.
     static let expandedComposerDetentHeight: CGFloat = 284
 
-    private static let sheetChromeAllowance: CGFloat = 18
     private static let detentIncrement: CGFloat = 4
 
     static func normalizedContentHeight(_ height: CGFloat) -> CGFloat {
@@ -20,7 +19,10 @@ enum QuickSessionSheetLayout {
         let contentHeight = normalizedContentHeight(height)
         guard contentHeight > 0 else { return compactDetentHeight }
 
-        let requiredHeight = contentHeight + sheetChromeAllowance
+        // `.height` detents already reserve the sheet presentation chrome/safe area.
+        // Compare against measured content directly so a two-line composer does
+        // not jump to the expanded detent and leave a blank sheet header.
+        let requiredHeight = contentHeight
         guard requiredHeight > compactDetentHeight else { return compactDetentHeight }
         guard requiredHeight > expandedComposerDetentHeight else { return expandedComposerDetentHeight }
         return requiredHeight
@@ -81,8 +83,13 @@ struct ContentView: View {
         .sheet(
             item: Binding<ExtensionUIRequest?>(
                 get: {
-                    guard liveConnection.activeExtensionDialog?.shouldPresentAsSheet == true else { return nil }
-                    return liveConnection.activeExtensionDialog
+                    guard let request = liveConnection.activeExtensionDialog else { return nil }
+                    switch request.nativePresentation {
+                    case .editorSheet, .fallbackSheet:
+                        return request
+                    case .askCard, .inlineAskCard:
+                        return nil
+                    }
                 },
                 set: { value in
                     liveConnection.activeExtensionDialog = value
@@ -91,7 +98,7 @@ struct ContentView: View {
         ) { request in
             ExtensionDialogSheet(request: request)
                 .interactiveDismissDisabled()
-                .presentationDetents(request.method == "editor" ? [.large] : [.medium, .large])
+                .presentationDetents(ExtensionSheetLayout.detents(for: request))
                 .presentationDragIndicator(.hidden)
         }
         .sheet(
@@ -278,6 +285,19 @@ private struct E2EWebSocketDiagnosticsView: View {
 }
 #endif
 
+private enum ExtensionSheetLayout {
+    static func detents(for request: ExtensionUIRequest) -> Set<PresentationDetent> {
+        switch request.nativePresentation {
+        case .editorSheet:
+            [.large]
+        case .fallbackSheet:
+            [.medium, .large]
+        case .askCard, .inlineAskCard:
+            []
+        }
+    }
+}
+
 private struct ExtensionDialogSheet: View {
     let request: ExtensionUIRequest
 
@@ -291,7 +311,7 @@ private struct ExtensionDialogSheet: View {
 
     var body: some View {
         NavigationStack {
-            nativeDialogContent
+            sheetContent
             .navigationTitle(dialogTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -300,14 +320,16 @@ private struct ExtensionDialogSheet: View {
                         cancelRequest()
                     }
                     .disabled(isSubmitting)
+                    .accessibilityIdentifier("extension.dialog.cancel")
                 }
 
-                if request.method == "confirm" || showsTextInput {
+                if request.nativePresentation == .editorSheet {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(primaryActionTitle) {
+                        Button("Submit") {
                             submitCurrentValue()
                         }
-                        .disabled(isSubmitting || (request.method == "input" && inputValue.isEmpty))
+                        .disabled(isSubmitting)
+                        .accessibilityIdentifier("extension.dialog.submit")
                     }
                 }
             }
@@ -319,17 +341,11 @@ private struct ExtensionDialogSheet: View {
     }
 
     @ViewBuilder
-    private var nativeDialogContent: some View {
-        if request.method == "editor" {
+    private var sheetContent: some View {
+        if request.nativePresentation == .editorSheet {
             extensionEditorContent
         } else {
             Form {
-                if let nativeSurface = request.nativeSurface, nativeSurface.hasVisibleContent {
-                    Section {
-                        ExtensionNativeSurfaceView(surface: nativeSurface)
-                    }
-                }
-
                 if let message = request.message, !message.isEmpty {
                     Section {
                         Text(message)
@@ -338,64 +354,12 @@ private struct ExtensionDialogSheet: View {
                     }
                 }
 
-                switch request.method {
-                case "select":
-                Section {
-                    ForEach(request.options ?? [], id: \.self) { option in
-                        Button {
-                            submitSelect(option)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text(option)
-                                    .foregroundStyle(.primary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Image(systemName: "chevron.right")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .disabled(isSubmitting)
-                    }
-                } header: {
-                    Text("Choose one")
-                }
-
-                case "confirm":
-                Section {
-                    Button {
-                        submitCurrentValue()
-                    } label: {
-                        Label(primaryActionTitle, systemImage: "checkmark.circle.fill")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isSubmitting)
-                }
-
-                case "input":
-                Section {
-                    TextField(request.placeholder ?? "Value", text: $inputValue, axis: .vertical)
-                        .lineLimit(1...4)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .submitLabel(.done)
-                        .onSubmit { submitCurrentValue() }
-                } header: {
-                    Text(request.placeholder ?? "Value")
-                }
-
-                case "editor":
-                EmptyView()
-
-                default:
                 Section {
                     ContentUnavailableView(
                         "Unsupported extension UI",
                         systemImage: "questionmark.app",
                         description: Text("This extension asked for \"\(request.method)\". Cancel and try the task another way.")
                     )
-                }
                 }
 
                 if let timeoutSummary {
@@ -411,13 +375,6 @@ private struct ExtensionDialogSheet: View {
 
     private var extensionEditorContent: some View {
         VStack(spacing: 0) {
-            if let nativeSurface = request.nativeSurface, nativeSurface.hasVisibleContent {
-                ExtensionNativeSurfaceView(surface: nativeSurface)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.themeBgDark)
-            }
-
             if let message = request.message, !message.isEmpty {
                 Text(message)
                     .font(.body)
@@ -445,7 +402,8 @@ private struct ExtensionDialogSheet: View {
                 focusRequestID: editorFocusRequestID,
                 suppressKeyboard: false,
                 allowKeyboardRestoreOnTap: true,
-                onKeyboardRestoreRequest: nil
+                onKeyboardRestoreRequest: nil,
+                accessibilityIdentifier: "extension.dialog.editor"
             )
             .background(Color.themeBg)
         }
@@ -457,10 +415,6 @@ private struct ExtensionDialogSheet: View {
             return "Extension"
         }
         return trimmedTitle
-    }
-
-    private var primaryActionTitle: String {
-        request.method == "confirm" ? "Confirm" : "Submit"
     }
 
     private var timeoutSummary: String? {
@@ -477,52 +431,34 @@ private struct ExtensionDialogSheet: View {
         return "Expires in about \(remainingSeconds) seconds"
     }
 
-    private var showsTextInput: Bool {
-        request.method == "input" || request.method == "editor"
-    }
-
-    private func submitSelect(_ option: String) {
-        guard !isSubmitting else { return }
-        isSubmitting = true
-        Task { @MainActor in
-            do {
-                try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: option)
-                dismiss()
-            } catch {
-                isSubmitting = false
-                connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
-            }
-        }
-    }
-
     private func submitCurrentValue() {
-        guard !isSubmitting else { return }
-        isSubmitting = true
-        Task { @MainActor in
-            do {
-                if request.method == "confirm" {
-                    try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, confirmed: true)
-                } else {
-                    try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: inputValue)
-                }
-                dismiss()
-            } catch {
-                isSubmitting = false
-                connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
-            }
-        }
+        submitResponsePayload(
+            ExtensionUIResponsePayload(value: inputValue),
+            failurePrefix: "Failed to respond"
+        )
     }
 
     private func cancelRequest() {
+        submitResponsePayload(.cancelled, failurePrefix: "Failed to cancel")
+    }
+
+    private func submitResponsePayload(
+        _ payload: ExtensionUIResponsePayload,
+        failurePrefix: String
+    ) {
         guard !isSubmitting else { return }
         isSubmitting = true
         Task { @MainActor in
             do {
-                try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
+                try await connection.respondToExtensionUI(
+                    id: request.id,
+                    sessionId: request.sessionId,
+                    payload: payload
+                )
                 dismiss()
             } catch {
                 isSubmitting = false
-                connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
+                connection.extensionToast = "\(failurePrefix): \(error.localizedDescription)"
             }
         }
     }

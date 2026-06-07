@@ -1,6 +1,9 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import { buildExtensionUISettledMessage } from "./extension-ui-contract.js";
+import {
+  handleExtensionUIRequest as handleExtensionUIRequestState,
+  settleExtensionUIRequest,
+} from "./extension-ui-state.js";
 import type { ExtensionAudioStreamEvent, PiMessage, SessionBackendEvent } from "./pi-events.js";
 import { createLogger } from "./logger.js";
 import {
@@ -10,11 +13,7 @@ import {
   translatePiEvent,
 } from "./session-protocol.js";
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
-import type {
-  EventProcessorSessionState,
-  ExtensionUIRequest,
-  SessionEventProcessor,
-} from "./session-events.js";
+import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
@@ -84,16 +83,17 @@ export class SessionAgentEventCoordinator {
     }
 
     if (data.type === "extension_ui_request") {
-      this.handleExtensionUIRequest(key, data);
+      handleExtensionUIRequestState(active, data, {
+        broadcast: (message) => this.deps.broadcast(key, message),
+      });
       return;
     }
 
     if (data.type === "extension_ui_request_settled") {
-      active.pendingUIRequests.delete(data.id);
-      if (active.pendingAsk?.requestId === data.id) {
-        active.pendingAsk = undefined;
-      }
-      this.deps.broadcast(key, buildExtensionUISettledMessage(active.session.id, data.id));
+      settleExtensionUIRequest(active, data.id, {
+        broadcastSettled: (message) => this.deps.broadcast(key, message),
+        broadcastIfMissing: true,
+      });
       this.deps.resetIdleTimer(key);
       return;
     }
@@ -364,15 +364,6 @@ export class SessionAgentEventCoordinator {
     if (active.session.parentSessionId) {
       this.deps.broadcast(active.session.parentSessionId, message);
     }
-  }
-
-  handleExtensionUIRequest(key: string, req: ExtensionUIRequest): void {
-    const active = this.deps.getActiveSession(key);
-    if (!active) {
-      return;
-    }
-
-    this.deps.eventProcessor.handleExtensionUIRequest(key, active, req);
   }
 
   private handleExtensionAudioStream(key: string, event: ExtensionAudioStreamEvent): void {

@@ -35,7 +35,9 @@ import {
 } from "../mirror-session-resume.js";
 import {
   type ChatAttachmentRef,
+  type ClientMessage,
   type LocalSession,
+  type ServerMessage,
   type Session,
   type SessionSummary,
   type Workspace,
@@ -60,6 +62,7 @@ import {
   pendingBlockingUIRequestCount,
   type PendingUIRequestProvider,
 } from "../session-attention.js";
+import { WsMessageHandler } from "../ws-message-handler.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
 const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
@@ -98,6 +101,10 @@ function sessionMatchesWorkspaceListFilters(
 
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const sessionFileHandlers = createSessionFileHandlers(ctx, helpers);
+  const commandHandler = new WsMessageHandler({
+    sessions: ctx.sessionRuntimes,
+    ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+  });
   /** Full-text search across session content. */
   function handleSearchSessions(url: URL, res: ServerResponse): void {
     if (!ctx.searchIndex) {
@@ -1071,6 +1078,42 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
+  async function handleSessionCommand(
+    workspaceId: string,
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!session) return;
+
+    const body = await helpers.parseBody<unknown>(req);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      helpers.error(res, 400, "Command body must be an object");
+      return;
+    }
+    const command = body as ClientMessage;
+    if (typeof (command as { type?: unknown }).type !== "string") {
+      helpers.error(res, 400, "Command type required");
+      return;
+    }
+
+    const messages: ServerMessage[] = [];
+    try {
+      await commandHandler.handleClientMessage(
+        session,
+        command,
+        (message) => messages.push(message),
+        { connId: "http-session-command" },
+      );
+    } catch (error) {
+      helpers.error(res, 500, safeErrorMessage(error));
+      return;
+    }
+
+    helpers.json(res, { messages });
+  }
+
   async function handleResumeWorkspaceSession(
     workspaceId: string,
     sessionId: string,
@@ -1698,6 +1741,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
     if (wsSessionsMatch && method === "POST") {
       await handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
+      return true;
+    }
+
+    const wsSessionCommandMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/command$/);
+    if (wsSessionCommandMatch && method === "POST") {
+      await handleSessionCommand(wsSessionCommandMatch[1], wsSessionCommandMatch[2], req, res);
       return true;
     }
 

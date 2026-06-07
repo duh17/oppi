@@ -105,7 +105,7 @@ private struct ExtensionSurfacePreview: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                ExtensionSurfacePanel(surface: Self.surface)
+                ExtensionSurfacePanel(surface: Self.surface, placement: .aboveEditor)
 
                 Spacer()
             }

@@ -142,6 +142,8 @@ export interface SessionSummary {
   thinkingLevel?: string;
   runtime?: SessionRuntimeKind;
   mirror?: PiTuiMirrorSessionMetadata;
+  /** Pi internal session UUID for generic session identity matching. */
+  piSessionId?: string;
   ephemeral?: boolean;
   parentSessionId?: string;
   /** Cold-list ask badge count; omitted outside list endpoints. */

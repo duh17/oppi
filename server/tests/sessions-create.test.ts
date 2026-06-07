@@ -70,7 +70,6 @@ interface MockRouteContext {
   sessionRuntimes: {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
-    getPendingAskMessage: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
     isSessionConnected: ReturnType<typeof vi.fn>;
     isSessionLive: ReturnType<typeof vi.fn>;
@@ -148,7 +147,6 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
       }
       return sessions.getActiveSession(sessionId);
     }),
-    getPendingAskMessage: vi.fn(() => undefined),
     getPendingUIRequestMessages: vi.fn(() => []),
     isSessionConnected: vi.fn((sessionId: string) => {
       const session = storage.getSession(sessionId) as Session | undefined;

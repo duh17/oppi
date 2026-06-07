@@ -1,6 +1,6 @@
 import type { SessionCatchUpResponse } from "./session-broadcast.js";
 import { composeModelId } from "./session-state.js";
-import type { ExtensionUIResponse } from "./session-ui.js";
+import type { ExtensionUIResponse } from "./extension-ui-state.js";
 import type {
   ChatAttachmentRef,
   MessageQueueDraftItem,
@@ -183,8 +183,7 @@ export interface AgentRuntimeEventTransport {
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void;
   getCurrentSeq(sessionId: string): number;
   getCatchUp(sessionId: string, sinceSeq: number): SessionCatchUpResponse | null;
-  getPendingAskMessage(sessionId: string): ServerMessage | undefined;
-  /** Replayable extension UI messages: persistent notifications plus pending dialogs. */
+  /** Replayable extension UI messages: persistent notifications plus pending dialogs and asks. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[];
 }
 

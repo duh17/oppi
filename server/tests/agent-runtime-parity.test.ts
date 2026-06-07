@@ -79,7 +79,6 @@ function makeManagedHarness(): {
     broadcast: (_key, message) => received.push(message),
     persistSessionNow: vi.fn(),
     markSessionDirty: vi.fn(),
-    respondToUIRequest: vi.fn(() => false),
   });
   const coordinator = new SessionAgentEventCoordinator({
     getActiveSession: vi.fn(() => active),

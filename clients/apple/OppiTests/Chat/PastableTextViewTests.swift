@@ -1,4 +1,5 @@
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("inlineComposerHeight")
@@ -42,6 +43,77 @@ struct InlineComposerHeightTests {
             maxLines: 0
         )
         #expect(height == 20) // falls back to 1 line, no negative inset
+    }
+}
+
+@Suite("PastableUITextView styled text updates")
+@MainActor
+struct PastableUITextViewStyledTextTests {
+    @Test func matchingPlainNativeEditDoesNotReassignAttributedText() {
+        let textView = CountingPastableTextView()
+        let font = UIFont.systemFont(ofSize: 17)
+        textView.applyStyledText(
+            "first",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+
+        let editedText = "first\nsecond"
+        textView.text = editedText
+        textView.selectedRange = NSRange(location: (editedText as NSString).length, length: 0)
+        let assignmentsBeforeRefresh = textView.attributedTextAssignments
+
+        textView.applyStyledText(
+            editedText,
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+
+        #expect(textView.attributedTextAssignments == assignmentsBeforeRefresh)
+        #expect(textView.selectedRange.location == (editedText as NSString).length)
+    }
+
+    @Test func volatileTextStillReassignsWhenTextMatches() {
+        let textView = CountingPastableTextView()
+        let font = UIFont.systemFont(ofSize: 17)
+        textView.applyStyledText(
+            "first",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+
+        let editedText = "first\nsecond"
+        textView.text = editedText
+        let assignmentsBeforeRefresh = textView.attributedTextAssignments
+
+        textView.applyStyledText(
+            editedText,
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 6,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2)
+        )
+
+        #expect(textView.attributedTextAssignments == assignmentsBeforeRefresh + 1)
+    }
+
+    private final class CountingPastableTextView: PastableUITextView {
+        var attributedTextAssignments = 0
+
+        override var attributedText: NSAttributedString! {
+            get { super.attributedText }
+            set {
+                attributedTextAssignments += 1
+                super.attributedText = newValue
+            }
+        }
     }
 }
 

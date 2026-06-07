@@ -3,7 +3,6 @@ import type { ServerMessage, Session } from "./types.js";
 export interface PendingUIRequestProvider {
   getActiveSessionIds(): Set<string>;
   getActiveSession(sessionId: string): Session | undefined;
-  getPendingAskMessage(sessionId: string): ServerMessage | undefined;
   getPendingUIRequestMessages(sessionId: string): ServerMessage[];
 }
 
@@ -22,11 +21,7 @@ export function pendingBlockingUIRequestCount(
   provider: PendingUIRequestProvider,
   sessionId: string,
 ): number {
-  const askCount = isPendingAskMessage(provider.getPendingAskMessage(sessionId)) ? 1 : 0;
-  const dialogCount = provider
-    .getPendingUIRequestMessages(sessionId)
-    .filter((message) => message.type === "extension_ui_request").length;
-  return askCount + dialogCount;
+  return provider.getPendingUIRequestMessages(sessionId).filter(isPendingBlockingUIRequest).length;
 }
 
 export function hasPendingBlockingUIRequest(
@@ -49,22 +44,30 @@ export function pendingAskSnapshots(
       continue;
     }
 
-    const message = provider.getPendingAskMessage(sessionId);
-    if (!isPendingAskMessage(message) || seenRequestIds.has(message.id)) {
-      continue;
-    }
-    seenRequestIds.add(message.id);
+    for (const message of provider.getPendingUIRequestMessages(sessionId)) {
+      if (!isPendingAskMessage(message) || seenRequestIds.has(message.id)) {
+        continue;
+      }
+      seenRequestIds.add(message.id);
 
-    asks.push({
-      id: message.id,
-      sessionId: message.sessionId,
-      workspaceId,
-      questions: message.questions,
-      allowCustom: message.allowCustom ?? true,
-      ...(message.timeout !== undefined ? { timeout: message.timeout } : {}),
-      ...(message.timeoutAt !== undefined ? { timeoutAt: message.timeoutAt } : {}),
-    });
+      asks.push({
+        id: message.id,
+        sessionId: message.sessionId,
+        workspaceId,
+        questions: message.questions,
+        allowCustom: message.allowCustom ?? true,
+        ...(message.timeout !== undefined ? { timeout: message.timeout } : {}),
+        ...(message.timeoutAt !== undefined ? { timeoutAt: message.timeoutAt } : {}),
+      });
+    }
   }
 
   return asks;
+}
+
+function isPendingBlockingUIRequest(message: ServerMessage): boolean {
+  if (message.type !== "extension_ui_request") {
+    return false;
+  }
+  return message.method === "ask" ? isPendingAskMessage(message) : true;
 }

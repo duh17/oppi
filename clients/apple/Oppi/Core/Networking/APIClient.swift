@@ -964,6 +964,7 @@ actor APIClient: ClientLogUploading {
         prompt: String? = nil,
         thinking: String? = nil,
         ephemeral: Bool? = nil,
+        parentSessionId: String? = nil,
         attachments: [ChatAttachmentRef]? = nil
     ) async throws -> CreateSessionResponse {
         struct Body: Encodable {
@@ -972,6 +973,7 @@ actor APIClient: ClientLogUploading {
             let prompt: String?
             let thinking: String?
             let ephemeral: Bool?
+            let parentSessionId: String?
             let attachments: [ChatAttachmentRef]?
         }
         let data = try await post(
@@ -982,6 +984,7 @@ actor APIClient: ClientLogUploading {
                 prompt: prompt,
                 thinking: thinking,
                 ephemeral: ephemeral,
+                parentSessionId: parentSessionId,
                 attachments: attachments
             )
         )

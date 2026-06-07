@@ -102,7 +102,6 @@ function makeQuickActionContext(
     sessionRuntimes: {
       getActiveSessionIds: () => new Set<string>(),
       getActiveSession: () => undefined,
-      getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: () => [],
       getSessionSnapshot: (sessionId: string) =>
         (

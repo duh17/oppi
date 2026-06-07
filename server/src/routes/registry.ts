@@ -374,6 +374,13 @@ const rawApiRouteSpecs = [
   },
   {
     method: "POST",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/command",
+    operationId: "sendWorkspaceSessionCommand",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "POST",
     path: "/workspaces/{workspaceId}/sessions/{sessionId}/stop",
     operationId: "stopWorkspaceSession",
     surface: "core",

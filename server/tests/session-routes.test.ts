@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { makeResponse } from "./harness/route-test-helpers.js";
+import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 describe("sessions module", () => {
   it("handles GET workspace sessions in isolation", async () => {
@@ -44,12 +44,10 @@ describe("sessions module", () => {
       sessions: {
         getActiveSessionIds: vi.fn(() => new Set()),
         getActiveSession: vi.fn(() => undefined),
-        getPendingAskMessage: vi.fn(() => undefined),
       },
       sessionRuntimes: {
         getActiveSessionIds: vi.fn(() => new Set()),
         getActiveSession: vi.fn(() => undefined),
-        getPendingAskMessage: vi.fn(() => undefined),
         getPendingUIRequestMessages: vi.fn(() => []),
       },
       gate: { getPendingForUser: vi.fn(() => []) },
@@ -82,6 +80,59 @@ describe("sessions module", () => {
     expect(body.stopped.map((session) => session.id)).toEqual(["stopped-1"]);
   });
 
+  it("dispatches generic session commands through the runtime command transport", async () => {
+    const session = {
+      id: "s1",
+      workspaceId: "ws-1",
+      status: "busy",
+      createdAt: 0,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const sendSteer = vi.fn(async () => undefined);
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn(() => session),
+      },
+      sessionRuntimes: {
+        sendSteer,
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/sessions/s1/command",
+      url: new URL("http://localhost/workspaces/ws-1/sessions/s1/command"),
+      req: makeRequest({ type: "steer", message: "hello", requestId: "req-1" }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(sendSteer).toHaveBeenCalledWith("s1", "hello", {
+      attachments: undefined,
+      clientTurnId: undefined,
+      requestId: "req-1",
+    });
+    expect(JSON.parse(res.body)).toEqual({
+      messages: [
+        {
+          type: "command_result",
+          command: "steer",
+          requestId: "req-1",
+          success: true,
+        },
+      ],
+    });
+  });
+
   it("merges active in-memory sessions into workspace session snapshots", async () => {
     const activeSession = {
       id: "active-1",
@@ -103,12 +154,10 @@ describe("sessions module", () => {
       sessions: {
         getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
         getActiveSession: vi.fn(() => activeSession),
-        getPendingAskMessage: vi.fn(() => undefined),
       },
       sessionRuntimes: {
         getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
         getActiveSession: vi.fn(() => activeSession),
-        getPendingAskMessage: vi.fn(() => undefined),
         getPendingUIRequestMessages: vi.fn(() => []),
       },
       gate: { getPendingForUser: vi.fn(() => []) },

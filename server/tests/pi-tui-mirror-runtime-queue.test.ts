@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -35,29 +35,68 @@ function makeRuntime(
   options: {
     hostMount?: string;
     dataDir?: string;
+    includeDefaultWorkspace?: boolean;
     isOppiSessionActive?: (sessionId: string) => boolean;
   } = {},
 ) {
-  const workspace: Workspace = {
+  const defaultWorkspace: Workspace = {
     id: "w1",
     name: "Workspace",
     skills: [],
     hostMount: options.hostMount ?? "/tmp/oppi-mirror-test",
   };
+  const workspaces = new Map<string, Workspace>();
+  if (options.includeDefaultWorkspace !== false) {
+    workspaces.set(defaultWorkspace.id, defaultWorkspace);
+  }
   const sessions = new Map<string, Session>();
   let nextId = 1;
+  let nextWorkspaceId = 2;
 
   const storage = {
-    getWorkspace: (id: string) => (id === workspace.id ? workspace : null),
-    listWorkspaces: () => [workspace],
+    getWorkspace: (id: string) => workspaces.get(id) ?? null,
+    listWorkspaces: () => Array.from(workspaces.values()),
+    createWorkspace: (req: {
+      name: string;
+      description?: string;
+      icon?: string;
+      skills: string[];
+      systemPrompt?: string;
+      systemPromptMode?: "append" | "replace";
+      hostMount?: string;
+      defaultModel?: string;
+      tools?: string[];
+      extensions?: string[];
+      gitStatusEnabled?: boolean;
+      runtime?: "host" | "sandbox";
+    }) => {
+      const now = Date.now();
+      const workspace: Workspace = {
+        id: `w${nextWorkspaceId++}`,
+        name: req.name,
+        description: req.description,
+        icon: req.icon,
+        skills: req.skills,
+        systemPrompt: req.systemPrompt,
+        systemPromptMode: req.systemPromptMode ?? "append",
+        hostMount: req.hostMount,
+        defaultModel: req.defaultModel,
+        tools: req.tools,
+        extensions: req.extensions,
+        gitStatusEnabled: req.gitStatusEnabled,
+        runtime: req.runtime,
+        createdAt: now,
+        updatedAt: now,
+      };
+      workspaces.set(workspace.id, workspace);
+      return workspace;
+    },
     listSessions: () => Array.from(sessions.values()),
     getSession: (id: string) => sessions.get(id) ?? null,
     createSession: (name?: string, model?: string) => {
       const now = Date.now();
       const session: Session = {
         id: `sess-${nextId++}`,
-        workspaceId: workspace.id,
-        workspaceName: workspace.name,
         name,
         model,
         status: "ready",
@@ -82,6 +121,7 @@ function makeRuntime(
       isOppiSessionActive: options.isOppiSessionActive,
     }),
     sessions,
+    workspaces,
   };
 }
 
@@ -91,6 +131,7 @@ function connectBridge(
     bridgeId?: string;
     cwd?: string;
     workspaceId?: string | null;
+    createWorkspace?: boolean;
     piSessionId?: string;
     sessionFile?: string | null;
     sessionName?: string;
@@ -106,6 +147,7 @@ function connectBridge(
     protocolVersion: 1,
     bridgeId: options.bridgeId ?? "bridge-1",
     ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
+    ...(options.createWorkspace ? { createWorkspace: true } : {}),
     cwd: options.cwd ?? "/tmp/oppi-mirror-test",
     state: {
       piSessionId: options.piSessionId ?? "pi-1",
@@ -149,6 +191,80 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe("w1");
   });
 
+  it("reports a missing workspace with the suggested git-root workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-missing-workspace-"));
+    const cwd = join(root, "packages", "app");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(root, ".git"), "gitdir: .git-test\n");
+    const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-1",
+      cwd,
+      state: { piSessionId: "pi-1", sessionFile: join(cwd, "session.jsonl") },
+    });
+
+    expect(ws.sent.at(-1)).toMatchObject({
+      type: "error",
+      code: "workspace_missing",
+      cwd,
+      suggestedHostMount: root,
+      suggestedName: basename(root),
+      error: expect.stringContaining("No Oppi workspace hostMount contains terminal cwd"),
+    });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(workspaces.size).toBe(0);
+  });
+
+  it("creates a mirror workspace when the terminal requests creation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-create-workspace-"));
+    const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
+
+    const { sessionId } = connectBridge(runtime, {
+      cwd: root,
+      workspaceId: null,
+      createWorkspace: true,
+      sessionFile: join(root, "session.jsonl"),
+    });
+
+    const created = Array.from(workspaces.values())[0];
+    expect(created).toMatchObject({
+      name: basename(root),
+      description: "Created from an interactive Pi terminal session.",
+      skills: [],
+      hostMount: root,
+      extensions: ["oppi-mirror"],
+      gitStatusEnabled: true,
+      runtime: "host",
+    });
+    expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe(created?.id);
+    expect(runtime.getActiveSession(sessionId)?.workspaceName).toBe(created?.name);
+  });
+
+  it("uses the nearest git root for requested mirror workspaces", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-git-workspace-"));
+    const cwd = join(root, "packages", "app");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(root, ".git"), "gitdir: .git-test\n");
+    const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
+
+    const { sessionId } = connectBridge(runtime, {
+      cwd,
+      workspaceId: null,
+      createWorkspace: true,
+      sessionFile: join(cwd, "session.jsonl"),
+    });
+
+    const created = Array.from(workspaces.values())[0];
+    expect(created?.hostMount).toBe(root);
+    expect(created?.name).toBe(basename(root));
+    expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe(created?.id);
+  });
+
   it("rejects workspaceId bridge hellos when cwd is outside the workspace mount", () => {
     const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     const ws = new FakeBridgeWebSocket();
@@ -174,26 +290,30 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   it("closes the bridge when hello registration fails", () => {
     const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     const ws = new FakeBridgeWebSocket();
+    const missingCwd = join(
+      tmpdir(),
+      `oppi-mirror-missing-cwd-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
 
     ws.receive({
       type: "hello",
       protocolVersion: 1,
       bridgeId: "bridge-1",
-      cwd: "/tmp/not-in-a-workspace",
+      cwd: missingCwd,
       state: { piSessionId: "pi-1" },
     });
 
     expect(ws.sent.at(-1)).toMatchObject({
       type: "error",
-      error: expect.stringContaining("No Oppi workspace hostMount contains terminal cwd"),
+      error: expect.stringContaining("Terminal cwd is not an existing directory"),
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1008);
   });
 
   it("does not register no-trace Pi Agent task records as openable mirror sessions", () => {
-    const { runtime, sessions } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
+    const { runtime, sessions, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
     const ws = new FakeBridgeWebSocket();
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
 
@@ -215,6 +335,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(sessions.size).toBe(0);
+    expect(workspaces.size).toBe(0);
   });
 
   it("reports oppi-runtime ownership conflicts as structured retryable bridge errors", () => {
@@ -1100,7 +1221,6 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
       widgetKey: "goal",
       widgetLines: ["Goal tick 0"],
       widgetPlacement: "belowEditor",
-      nativeSurface: undefined,
     });
     expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
       expect.objectContaining({
@@ -1129,7 +1249,7 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
         version: 1,
         id: "extension-chosen-id",
         source: "widget",
-        presentation: { style: "surfacePanel", placement: "aboveEditor", title: "Agents" },
+        presentation: { style: "surfacePanel", title: "Agents" },
         blocks: [
           {
             type: "activityList",
@@ -1159,6 +1279,93 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
         nativeSurface: expect.objectContaining({ id: "widget:subagents", source: "widget" }),
       }),
     ]);
+  });
+
+  it("drops invalid mirrored widget native surfaces while preserving line fallback", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-invalid-native",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["● Agents", "  Running Review"],
+      nativeSurface: {
+        version: 1,
+        id: "extension-chosen-id",
+        source: "widget",
+        presentation: { style: "inlineCard", title: "Agents" },
+        blocks: [],
+      },
+    });
+
+    expect(received.at(-1)).toEqual({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      message: undefined,
+      notifyType: undefined,
+      statusKey: undefined,
+      statusText: undefined,
+      title: undefined,
+      text: undefined,
+      widgetKey: "subagents",
+      widgetLines: ["● Agents", "  Running Review"],
+      widgetPlacement: undefined,
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "subagents",
+        widgetLines: ["● Agents", "  Running Review"],
+      }),
+    ]);
+    expect(runtime.getPendingUIRequestMessages(sessionId)[0]).not.toHaveProperty("nativeSurface");
+  });
+
+  it("promotes mirrored OSC-8 widget fallback links into native terminal surfaces", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-widget-osc8-link",
+      method: "setWidget",
+      widgetKey: "links",
+      widgetLines: ["Open \x1b]8;;oppi://session/child-1\x07child\x1b]8;;\x07 now"],
+    });
+
+    expect(received.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "links",
+      widgetLines: ["Open child now"],
+      nativeSurface: {
+        id: "widget:links",
+        source: "widget",
+        blocks: [
+          {
+            type: "terminal",
+            lines: [
+              [
+                { text: "Open " },
+                { text: "child", link: "oppi://session/child-1" },
+                { text: " now" },
+              ],
+            ],
+          },
+        ],
+      },
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)[0]).toMatchObject({
+      widgetLines: ["Open child now"],
+      nativeSurface: expect.objectContaining({ id: "widget:links" }),
+    });
   });
 
   it("replays mirrored clear notifications after explicit clears", () => {
@@ -1386,14 +1593,15 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
       ],
     });
 
-    expect(runtime.getPendingAskMessage(sessionId)).toMatchObject({
-      type: "extension_ui_request",
-      id: "ask-1",
-      sessionId,
-      method: "ask",
-      allowCustom: false,
-      questions: [{ id: "q1", question: "Pick one" }],
-    });
-    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_request",
+        id: "ask-1",
+        sessionId,
+        method: "ask",
+        allowCustom: false,
+        questions: [expect.objectContaining({ id: "q1", question: "Pick one" })],
+      }),
+    ]);
   });
 });

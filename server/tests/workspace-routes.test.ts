@@ -30,7 +30,6 @@ describe("workspaces module", () => {
       sessionRuntimes: {
         getActiveSessionIds: vi.fn(() => new Set<string>()),
         getActiveSession: vi.fn(() => undefined),
-        getPendingAskMessage: vi.fn(() => undefined),
         getPendingUIRequestMessages: vi.fn(() => []),
       },
     } as unknown as RouteContext;
@@ -92,7 +91,6 @@ describe("workspaces module", () => {
         getActiveSession: vi.fn((sessionId: string) =>
           sessionId === "mirror-1" ? session : undefined,
         ),
-        getPendingAskMessage: vi.fn(() => undefined),
         getPendingUIRequestMessages: vi.fn((sessionId: string) =>
           sessionId === "mirror-1"
             ? [

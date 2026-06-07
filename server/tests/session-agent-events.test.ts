@@ -90,7 +90,6 @@ describe("SessionAgentEventCoordinator", () => {
           streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
         })),
         updateSessionFromEvent,
-        handleExtensionUIRequest: vi.fn(),
       } as never,
       stopCoordinator: {
         finishPendingStopOnAgentEnd: vi.fn(),
@@ -299,7 +298,6 @@ describe("SessionAgentEventCoordinator", () => {
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
       markSessionDirty: vi.fn(),
-      respondToUIRequest: vi.fn(),
     });
     const coordinator = new SessionAgentEventCoordinator({
       getActiveSession: vi.fn(() => active),
@@ -350,7 +348,6 @@ describe("SessionAgentEventCoordinator", () => {
       broadcast: vi.fn(),
       persistSessionNow: vi.fn(),
       markSessionDirty: vi.fn(),
-      respondToUIRequest: vi.fn(),
     });
     const coordinator = new SessionAgentEventCoordinator({
       getActiveSession: vi.fn(() => active),
@@ -454,12 +451,6 @@ describe("SessionAgentEventCoordinator", () => {
     active.pendingAsk = {
       requestId: "ui-1",
       questionCount: 0,
-      broadcastMessage: {
-        type: "extension_ui_request",
-        id: "ui-1",
-        sessionId: "sess-ui",
-        method: "select",
-      },
       initiatedAt: Date.now(),
     };
     const { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent } =

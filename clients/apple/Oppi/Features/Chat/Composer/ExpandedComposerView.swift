@@ -152,7 +152,8 @@ struct ExpandedComposerView: View {
                             voiceInputManager: voiceInputManager,
                             expectedOwner: .expandedComposer
                         )
-                    }
+                    },
+                    accessibilityIdentifier: nil
                 )
 
                 if !slashSuggestions.isEmpty {

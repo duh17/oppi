@@ -90,7 +90,16 @@ struct ServerInfoTests {
           "capabilities": {
             "sessionStream": { "version": 1 },
             "dictationStream": { "version": 1 },
-            "sessionAudioStream": { "version": 1 }
+            "sessionAudioStream": { "version": 1 },
+            "extensionNativeUI": {
+              "version": 1,
+              "capabilities": [
+                "extension-native-ui:v1:text-fallback",
+                "extension-native-ui:v1:prompt-native",
+                "extension-native-ui:v1:surface-native",
+                "extension-native-ui:v1:osc8-links"
+              ]
+            }
           },
           "stats": {
             "workspaceCount": 3,
@@ -106,6 +115,13 @@ struct ServerInfoTests {
         #expect(decoded.capabilities?.sessionStream?.version == 1)
         #expect(decoded.capabilities?.dictationStream?.version == 1)
         #expect(decoded.capabilities?.sessionAudioStream?.version == 1)
+        #expect(decoded.capabilities?.extensionNativeUI?.version == 1)
+        #expect(decoded.capabilities?.extensionNativeUI?.capabilities == [
+            "extension-native-ui:v1:text-fallback",
+            "extension-native-ui:v1:prompt-native",
+            "extension-native-ui:v1:surface-native",
+            "extension-native-ui:v1:osc8-links",
+        ])
         #expect(decoded.capabilities?.hasRequiredSplitStreamCapabilities == true)
     }
 
@@ -113,7 +129,8 @@ struct ServerInfoTests {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1),
             dictationStream: nil,
-            sessionAudioStream: nil
+            sessionAudioStream: nil,
+            extensionNativeUI: nil
         )
 
         #expect(capabilities.hasRequiredSplitStreamCapabilities)
@@ -124,7 +141,8 @@ struct ServerInfoTests {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: nil,
             dictationStream: nil,
-            sessionAudioStream: .init(version: 1)
+            sessionAudioStream: .init(version: 1),
+            extensionNativeUI: nil
         )
 
         #expect(capabilities.missingRequiredSplitStreamCapabilities == [

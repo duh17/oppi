@@ -4,21 +4,21 @@ Oppi's `subagents` extension lets an agent create and manage child sessions insi
 
 ## Enabling the extension
 
-`subagents` is a native Pi extension shipped with Oppi. Oppi provides a small bridge API for workspace session operations; the extension owns the tools, prompt profiles, and native Pi UI.
+`subagents` is a native Pi extension shipped with Oppi. It uses the same workspace/session APIs as the iOS client: create a session, list workspace sessions, inspect session traces, stop/resume sessions, and send generic session commands.
 
 To use it in an Oppi SDK workspace, include `subagents` in that workspace's `extensions` list. If a workspace sets `extensions`, that list is authoritative. Omitting `subagents` disables it.
 
-For mirrored Pi TUI sessions, install or load the same extension alongside `oppi-mirror`; the repo copy is `pi-extensions/oppi-subagents/index.ts`. The extension resolves the current Pi session through the bridge after `oppi-mirror` connects. Without an active Oppi bridge, the tools report that subagents are unavailable.
+For mirrored Pi TUI sessions, install or load the same extension alongside `oppi-mirror`; the repo copy is `pi-extensions/oppi-subagents/index.ts`. The extension resolves the current Pi session by matching Pi's session UUID to Oppi's generic session summaries. Without a matching Oppi session, the tools report that subagents are unavailable.
 
 ## Tool surface
 
-Root sessions get three tools:
+Sessions below the configured spawn depth get three tools:
 
 - `spawn_agent`
 - `inspect_agent`
 - `send_message`
 
-Child sessions get the non-spawning subset only:
+Sessions at the configured spawn depth get the non-spawning subset only:
 
 - `inspect_agent`
 - `send_message`
@@ -54,12 +54,7 @@ Profiles add prompt guidance only. Model choice, thinking level, tools, and appr
 
 By default, `spawn_agent` returns immediately with the child session ID.
 
-When the child finishes, the parent receives a `subagent_result` message with:
-
-- final status
-- cost
-- changed files summary
-- the child's last response
+When the child finishes, the parent receives a `subagent_result` message with final status, cost or context usage, and the child's last response.
 
 If the parent is idle, Oppi appends that result without starting a new turn. If the parent is busy, Oppi queues it as a follow-up.
 
@@ -90,17 +85,18 @@ Works for both active and stopped sessions.
 
 Send a message to another session in the same workspace.
 
-| Parameter  | Type                    | Default   | Description                            |
-| ---------- | ----------------------- | --------- | -------------------------------------- |
-| `id`       | string                  | required  | Target session ID.                     |
-| `message`  | string                  | required  | Message content.                       |
-| `behavior` | `"steer" \| "followUp"` | `"steer"` | Delivery mode when the target is busy. |
+| Parameter  | Type                                             | Default  | Description                                                                 |
+| ---------- | ------------------------------------------------ | -------- | --------------------------------------------------------------------------- |
+| `id`       | string                                           | required | Target session ID.                                                          |
+| `message`  | string                                           | required | Message content.                                                            |
+| `behavior` | `"auto" \| "steer" \| "followUp" \| "prompt"` | `"auto"` | Delivery mode. `auto` steers busy sessions and prompts idle sessions. |
 
 Delivery rules:
 
 - **Idle**: starts a new turn
 - **Busy + `steer`**: injected after current tool calls, before the next model call
 - **Busy + `followUp`**: queued after the current turn finishes
+- **`prompt`**: starts a new turn when the target is idle
 - **Stopped**: automatically resumed, then delivered as a new prompt
 
 Oppi prepends an origin marker such as `[From agent "Name" (id)]` so the recipient knows where the message came from.
@@ -120,14 +116,9 @@ If you need a fully independent session, use `detached: true`. Detached sessions
 
 ## Visibility model
 
-A parent waiting on a child receives coarse progress updates only:
+A parent waiting on a child receives coarse progress updates only: session name, status, and cost or context usage.
 
-- status
-- message count
-- cost
-- elapsed time
-
-It does **not** receive the child's tool calls, streaming text, or full tool output.
+It does **not** receive the child's tool calls, streaming text, command snapshots, or full tool output.
 
 This is deliberate. The detailed execution history stays in the child's own trace file and is available later through `inspect_agent`.
 
@@ -142,9 +133,6 @@ Configure subagents under `config.extensions.subagents`.
   "extensions": {
     "subagents": {
       "maxDepth": 1,
-      "autoStopWhenDone": false,
-      "childIdleTimeoutMs": 300000,
-      "startupGraceMs": 60000,
       "defaultWaitTimeoutMs": 1800000
     }
   }
@@ -155,13 +143,10 @@ Configure subagents under `config.extensions.subagents`.
 
 These settings currently affect runtime behavior:
 
-| Field                  | Default   | What it does                                                                     |
-| ---------------------- | --------- | -------------------------------------------------------------------------------- |
-| `maxDepth`             | `1`       | Maximum spawn depth for non-detached sessions. `0` disables spawning.            |
-| `autoStopWhenDone`     | `false`   | Stop a child as soon as it finishes instead of keeping it alive for follow-up.   |
-| `childIdleTimeoutMs`   | `300000`  | How long completed children stay alive when `autoStopWhenDone` is `false`.       |
-| `startupGraceMs`       | `60000`   | How long to wait for a child to start producing output before reporting a stall. |
-| `defaultWaitTimeoutMs` | `1800000` | Default timeout for `spawn_agent(wait=true)` when `timeout_seconds` is omitted.  |
+| Field                  | Default   | What it does                                                                    |
+| ---------------------- | --------- | ------------------------------------------------------------------------------- |
+| `maxDepth`             | `1`       | Maximum spawn depth for non-detached sessions. `0` disables spawning.           |
+| `defaultWaitTimeoutMs` | `1800000` | Default timeout for `spawn_agent(wait=true)` when `timeout_seconds` is omitted. |
 
 Use `profile` on `spawn_agent` to select a built-in preset such as `research`, `coding`, or `review`.
 

@@ -7,9 +7,8 @@
  * - Orphan/detached behavior
  * - Session lifecycle with children (idle guard gap)
  *
- * Note: spawnChildSession/spawnDetachedSession require a full SDK
- * process and are tested via extensions/spawn-agent.test.ts (64 tests through
- * the mock context). These tests focus on the storage + query layer.
+ * New child sessions are created through the generic workspace session route.
+ * These tests focus on the storage + query layer.
  */
 
 import { existsSync, mkdirSync, rmSync } from "node:fs";

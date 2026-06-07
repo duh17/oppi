@@ -174,9 +174,6 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   getCatchUp: AgentRuntimeTransport["getCatchUp"] = (sessionId, sinceSeq) =>
     this.runtimeFor(sessionId).getCatchUp(sessionId, sinceSeq);
 
-  getPendingAskMessage: AgentRuntimeTransport["getPendingAskMessage"] = (sessionId) =>
-    this.runtimeFor(sessionId).getPendingAskMessage(sessionId);
-
   getPendingUIRequestMessages: AgentRuntimeTransport["getPendingUIRequestMessages"] = (sessionId) =>
     this.runtimeFor(sessionId).getPendingUIRequestMessages(sessionId);
 }

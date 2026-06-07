@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
+import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -143,6 +144,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // TODO(dictation): Drop this compatibility capability after deployed clients
         // no longer open the legacy session-bound ASR stream.
         sessionAudioStream: config.asr?.sttEndpoint ? { version: 1 } : undefined,
+        extensionNativeUI: {
+          version: 1,
+          capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],
+        },
       },
       stats: {
         workspaceCount: workspaces.length,

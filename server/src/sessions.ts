@@ -42,8 +42,6 @@ import {
   settleExtensionUIRequest,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
-import { resolveInitialChatModel } from "./session-model-selection.js";
-import type { SpawnSessionParams } from "./session-spawn-types.js";
 import {
   updateSearchIndexForSessionEvent,
   type SessionSearchIndex,
@@ -325,8 +323,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    * - Idle/ready → sendPrompt (starts a new turn)
    * - Busy + behavior="steer" → sendSteer (injected mid-turn after current tool calls)
    * - Busy + behavior="followUp" (default) → sendFollowUp (queued after current turn)
-   *
-   * Used by bridge-backed extension tools that message workspace sessions.
    */
   async sendMessageToSession(
     sessionId: string,
@@ -622,143 +618,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   hasPendingUIRequest(sessionId: string, requestId: string): boolean {
     return this.active.get(this.sessionKey(sessionId))?.pendingUIRequests.has(requestId) ?? false;
-  }
-
-  // ─── Spawn Agent ───
-
-  /**
-   * Create a child session, start it, and send its first prompt.
-   * Used by the subagents bridge to create fire-and-forget children.
-   */
-  async spawnChildSession(parentSessionId: string, params: SpawnSessionParams): Promise<Session> {
-    return this.createSpawnedSession({
-      sourceSessionId: parentSessionId,
-      sourceLabel: "Parent",
-      params,
-      parentSessionId,
-      refreshSourceBeforeModelSelection: true,
-      failureWarningPrefix: "Spawn failed",
-      broadcastSessionId: parentSessionId,
-    });
-  }
-
-  /**
-   * Spawn a detached session in the same workspace as the origin session.
-   * Unlike spawnChildSession, does NOT set parentSessionId — the new session
-   * is fully independent and can spawn its own children when the bridge allows it.
-   */
-  async spawnDetachedSession(
-    originSessionId: string,
-    params: SpawnSessionParams,
-  ): Promise<Session> {
-    return this.createSpawnedSession({
-      sourceSessionId: originSessionId,
-      sourceLabel: "Origin",
-      params,
-      failureWarningPrefix: "Detached spawn failed",
-    });
-  }
-
-  private async createSpawnedSession(options: {
-    sourceSessionId: string;
-    sourceLabel: "Parent" | "Origin";
-    params: SpawnSessionParams;
-    parentSessionId?: string;
-    refreshSourceBeforeModelSelection?: boolean;
-    failureWarningPrefix: string;
-    broadcastSessionId?: string;
-  }): Promise<Session> {
-    const sourceSession = this.storage.getSession(options.sourceSessionId);
-    if (!sourceSession?.workspaceId) {
-      throw new Error(
-        `${options.sourceLabel} session not found or has no workspace: ${options.sourceSessionId}`,
-      );
-    }
-
-    const workspace = this.storage.getWorkspace(sourceSession.workspaceId);
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${sourceSession.workspaceId}`);
-    }
-
-    if (options.refreshSourceBeforeModelSelection) {
-      await this.refreshSessionState(options.sourceSessionId).catch(() => null);
-    }
-    const latestSourceSession = this.storage.getSession(options.sourceSessionId) || sourceSession;
-
-    const modelSelection = resolveInitialChatModel({
-      subagentModel: options.params.model,
-      sourceSessionModel: latestSourceSession.model,
-      workspace,
-    });
-    const session = this.storage.createSession(options.params.name, modelSelection.model);
-    session.workspaceId = workspace.id;
-    session.workspaceName = workspace.name;
-    if (options.parentSessionId) {
-      session.parentSessionId = options.parentSessionId;
-    }
-    this.storage.saveSession(session);
-
-    try {
-      await this.prepareSpawnedSession(session, workspace, options.params);
-      const freshSession = this.storage.getSession(session.id) ?? session;
-      if (options.params.thinking) {
-        freshSession.thinkingLevel = options.params.thinking;
-      }
-      freshSession.firstMessage = options.params.prompt.slice(0, 200);
-      this.storage.saveSession(freshSession);
-
-      if (options.broadcastSessionId) {
-        // Broadcast child session state to the parent's subscribers so the iOS
-        // client learns about the new child immediately (enables SubagentStatusBar
-        // to appear without waiting for a session list REST poll).
-        this.broadcast(this.sessionKey(options.broadcastSessionId), {
-          type: "state",
-          session: freshSession,
-        });
-      }
-      return freshSession;
-    } catch (err: unknown) {
-      await this.markSpawnedSessionFailed(session, options.failureWarningPrefix, err);
-      throw err;
-    }
-  }
-
-  private async prepareSpawnedSession(
-    session: Session,
-    workspace: Workspace,
-    params: SpawnSessionParams,
-  ): Promise<void> {
-    await this.startSession(session.id, workspace);
-
-    if (params.thinking) {
-      await this.forwardClientCommand(session.id, {
-        type: "set_thinking_level",
-        level: params.thinking,
-      });
-    }
-
-    await this.sendPrompt(session.id, params.prompt);
-  }
-
-  private async markSpawnedSessionFailed(
-    session: Session,
-    warningPrefix: string,
-    err: unknown,
-  ): Promise<void> {
-    // Session was created but failed to start or prompt. Stop it to release the
-    // SDK process and workspace slot without masking the original error.
-    try {
-      await this.stopSession(session.id);
-    } catch {
-      // Best-effort cleanup.
-    }
-
-    const failedSession = this.storage.getSession(session.id) ?? session;
-    failedSession.status = "error";
-    failedSession.currentTurnStartedAt = undefined;
-    const msg = err instanceof Error ? err.message : String(err);
-    failedSession.warnings = [...(failedSession.warnings ?? []), `${warningPrefix}: ${msg}`];
-    this.storage.saveSession(failedSession);
   }
 
   /**

@@ -376,6 +376,19 @@ struct QuickSessionSheetLayoutTests {
         )
     }
 
+    @Test func twoLineComposerKeepsCompactDetent() {
+        let twoLineContentHeight: CGFloat = 140
+
+        #expect(
+            QuickSessionSheetLayout.detentHeight(forContentHeight: twoLineContentHeight)
+                == QuickSessionSheetLayout.compactDetentHeight
+        )
+        #expect(!QuickSessionSheetLayout.shouldApplyContentHeightChange(
+            currentContentHeight: 120,
+            incomingContentHeight: twoLineContentHeight
+        ))
+    }
+
     @Test func tallComposerUsesStableExpandedDetent() {
         #expect(QuickSessionSheetLayout.normalizedContentHeight(181) == 184)
         #expect(

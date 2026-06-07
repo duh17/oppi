@@ -26,7 +26,6 @@ const EVENT_METHODS = [
   "subscribe",
   "getCurrentSeq",
   "getCatchUp",
-  "getPendingAskMessage",
   "getPendingUIRequestMessages",
 ] as const;
 

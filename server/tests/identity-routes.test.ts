@@ -100,9 +100,24 @@ describe("identity module", () => {
     const body = JSON.parse(res.body) as {
       uploadProtocol: { version: number; maxFileBytes: number; maxTurnBytes: number };
       images: { autoResize: boolean };
+      capabilities: {
+        extensionNativeUI: {
+          version: number;
+          capabilities: string[];
+        };
+      };
     };
     expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
     expect(body.images).toEqual({ autoResize: true });
+    expect(body.capabilities.extensionNativeUI).toEqual({
+      version: 1,
+      capabilities: [
+        "extension-native-ui:v1:text-fallback",
+        "extension-native-ui:v1:prompt-native",
+        "extension-native-ui:v1:surface-native",
+        "extension-native-ui:v1:osc8-links",
+      ],
+    });
   });
 
   it("returns false for unrelated routes", async () => {

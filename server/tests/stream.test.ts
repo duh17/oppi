@@ -60,7 +60,6 @@ type RuntimeOverride = {
   getActiveSession?: (id: string) => Session | undefined;
   getCurrentSeq?: (id: string) => number;
   subscribe?: (id: string, cb: (msg: ServerMessage) => void) => () => void;
-  getPendingAskMessage?: (id: string) => ServerMessage | undefined;
   getPendingUIRequestMessages?: (id: string) => ServerMessage[];
 };
 
@@ -122,8 +121,6 @@ function createMockContext(sessions: Session[]): {
       if (session?.runtime === "pi-tui") return () => {};
       return ctx.sessions.subscribe(id, cb);
     },
-    getPendingAskMessage: (id: string) =>
-      runtimeOverride(id).getPendingAskMessage?.(id) ?? ctx.sessions.getPendingAskMessage(id),
     getPendingUIRequestMessages: (id: string) =>
       runtimeOverride(id).getPendingUIRequestMessages?.(id) ??
       ctx.sessions.getPendingUIRequestMessages(id),
@@ -147,7 +144,6 @@ function createMockContext(sessions: Session[]): {
       getActiveSession: (id: string) => sessionMap.get(id) ?? null,
       getCurrentSeq: () => 0,
       getCatchUp: () => null,
-      getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: () => [],
     } as unknown as StreamContext["sessions"],
     sessionRuntimes,
@@ -169,7 +165,6 @@ async function drain(): Promise<void> {
 
 function mirrorPendingStubs() {
   return {
-    getPendingAskMessage: () => undefined,
     getPendingUIRequestMessages: () => [],
   };
 }

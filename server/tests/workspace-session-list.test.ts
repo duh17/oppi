@@ -80,13 +80,11 @@ interface MockRouteContext {
   sessions: {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
-    getPendingAskMessage: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
   };
   sessionRuntimes: {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
-    getPendingAskMessage: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
   };
   gate: {
@@ -123,7 +121,6 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
   const sessions = {
     getActiveSessionIds: vi.fn().mockReturnValue([]),
     getActiveSession: vi.fn(),
-    getPendingAskMessage: vi.fn(),
     getPendingUIRequestMessages: vi.fn().mockReturnValue([]),
   };
 
@@ -421,22 +418,18 @@ describe("workspace session list routes", () => {
     });
     mock.gate.getPendingForUser.mockReturnValue([{ sessionId: "ws-1-row", workspaceId: "ws-1" }]);
     mock.sessions.getActiveSessionIds.mockReturnValue(["ws-2-row"]);
-    mock.sessions.getPendingAskMessage.mockImplementation((sessionId: string) =>
-      sessionId === "ws-2-row"
-        ? {
-            type: "extension_ui_request",
-            id: "ask-1",
-            sessionId,
-            method: "ask",
-            questions: [
-              { id: "q1", question: "Pick one", options: [{ value: "yes", label: "Yes" }] },
-            ],
-          }
-        : undefined,
-    );
     mock.sessions.getPendingUIRequestMessages.mockImplementation((sessionId: string) =>
       sessionId === "ws-2-row"
         ? [
+            {
+              type: "extension_ui_request",
+              id: "ask-1",
+              sessionId,
+              method: "ask",
+              questions: [
+                { id: "q1", question: "Pick one", options: [{ value: "yes", label: "Yes" }] },
+              ],
+            },
             {
               type: "extension_ui_request",
               id: "select-1",
@@ -494,7 +487,6 @@ describe("workspace session list routes", () => {
       getActiveSessionIds: () => new Set(["mirror-row"]),
       getActiveSession: (sessionId: string) =>
         sessionId === "mirror-row" ? mirrorSession : undefined,
-      getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: (sessionId: string) =>
         sessionId === "mirror-row"
           ? [

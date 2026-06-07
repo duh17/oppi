@@ -32,6 +32,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
     thinkingLevel: session.thinkingLevel,
     runtime: session.runtime,
     mirror: session.mirror,
+    piSessionId: session.piSessionId,
     ephemeral: session.ephemeral,
     parentSessionId: session.parentSessionId,
   };
