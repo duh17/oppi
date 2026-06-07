@@ -214,16 +214,24 @@ extension FullScreenImageViewController: UIScrollViewDelegate {
 extension FullScreenImageViewController {
     /// Build a large-detent sheet controller with the app's standard
     /// slide-down dismissal affordance.
-    static func makeSlideDownController(image: UIImage) -> UIViewController {
+    static func makeSlideDownController(
+        image: UIImage,
+        prefersFullScreenOverlay: Bool = false
+    ) -> UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
         let viewer = FullScreenImageViewController(image: image)
         let navigation = UINavigationController(rootViewController: viewer)
-        navigation.modalPresentationStyle = .pageSheet
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
 
-        if let sheet = navigation.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
+        if prefersFullScreenOverlay {
+            navigation.modalPresentationStyle = .overFullScreen
+            navigation.modalTransitionStyle = .coverVertical
+        } else {
+            navigation.modalPresentationStyle = .pageSheet
+            if let sheet = navigation.sheetPresentationController {
+                sheet.detents = [.large()]
+                sheet.prefersGrabberVisible = true
+            }
         }
 
         navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
@@ -232,7 +240,15 @@ extension FullScreenImageViewController {
 
     /// Present the image viewer from a specific presenter.
     static func present(image: UIImage, from presenter: UIViewController) {
-        presenter.present(makeSlideDownController(image: image), animated: true)
+        presenter.present(
+            makeSlideDownController(
+                image: image,
+                prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
+                    for: presenter.traitCollection
+                )
+            ),
+            animated: true
+        )
     }
 
     /// Present the image viewer from the topmost view controller.

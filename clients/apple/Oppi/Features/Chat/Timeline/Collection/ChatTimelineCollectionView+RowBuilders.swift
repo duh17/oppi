@@ -89,7 +89,10 @@ extension ChatTimelineCollectionHost.Controller {
 
                 let host = UIHostingController(rootView: view)
                 let navigation = UINavigationController(rootViewController: host)
-                navigation.modalPresentationStyle = .pageSheet
+                FullScreenViewerPresentationPolicy.configureLargePresentation(
+                    navigation,
+                    traitCollection: sourceView.traitCollection
+                )
                 presenter.present(navigation, animated: true)
             },
             canFork: canFork,

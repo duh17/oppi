@@ -64,6 +64,7 @@ struct ChatView: View {
     @Environment(AppNavigation.self) private var appNavigation
     @Environment(QuickCommentTemplateStore.self) private var quickCommentTemplateStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -338,11 +339,23 @@ struct ChatView: View {
 
     private var chatContent: some View {
         configuredChatContent
-            .sheet(isPresented: $showOutline) { outlineSheet }
+            .chatAuxiliaryPresentation(
+                isPresented: $showOutline,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
+            ) { outlineSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
-            .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
-            .sheet(isPresented: $showShareRedactionSheet) { shareRedactionSheet }
-            .sheet(isPresented: $showReviewCommentStash) { reviewCommentStashSheet }
+            .chatAuxiliaryPresentation(
+                isPresented: $showContextInspector,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
+            ) { contextInspectorSheet }
+            .chatAuxiliaryPresentation(
+                isPresented: $showShareRedactionSheet,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
+            ) { shareRedactionSheet }
+            .chatAuxiliaryPresentation(
+                isPresented: $showReviewCommentStash,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
+            ) { reviewCommentStashSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
             .alert("Compact Context", isPresented: $showCompactConfirmation) {
@@ -481,6 +494,10 @@ struct ChatView: View {
                 }
                 disconnectIfCurrentSession()
             }
+    }
+
+    private var prefersFullScreenChatAuxiliaryPresentation: Bool {
+        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
     }
 
     private var configuredChatContent: some View {
@@ -727,6 +744,8 @@ struct ChatView: View {
                     Image(systemName: "list.bullet")
                         .font(.subheadline)
                 }
+                .accessibilityLabel("Open session outline")
+                .accessibilityIdentifier("chat.toolbar.outline")
             }
 
             contextRingButton
@@ -749,6 +768,7 @@ struct ChatView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.toolbar.context")
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.4)
                 .onEnded { _ in
@@ -1570,7 +1590,6 @@ struct ChatView: View {
                 try await connection.getSessionTree(filterMode: filterMode)
             }
         )
-        .presentationDetents([.medium, .large])
     }
 
     private var reviewCommentStashSheet: some View {
@@ -1585,7 +1604,6 @@ struct ChatView: View {
                 focusedReviewCommentId = nil
             }
         )
-        .presentationDetents([.medium, .large])
         .onDisappear {
             focusedReviewCommentId = nil
         }
@@ -1730,7 +1748,6 @@ struct ChatView: View {
             }
         }
         .environment(\.reviewCommentSelectionScope, .activeSession(reviewCommentSelectionRouter))
-        .presentationDetents([.medium, .large])
     }
 
     private var modelPickerSheet: some View {
@@ -2193,6 +2210,24 @@ struct ExtensionSurfacePanel: View {
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func chatAuxiliaryPresentation<PresentedContent: View>(
+        isPresented: Binding<Bool>,
+        prefersFullScreen: Bool,
+        @ViewBuilder content: @escaping () -> PresentedContent
+    ) -> some View {
+        if prefersFullScreen {
+            fullScreenCover(isPresented: isPresented, content: content)
+        } else {
+            sheet(isPresented: isPresented) {
+                content()
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
 }

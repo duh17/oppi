@@ -57,6 +57,53 @@ func fullScreenAttributedCodeText(
     return mutable
 }
 
+/// UITextView variant that also contributes the review-comment action through
+/// UIResponder menu building. Some readonly full-screen text views do not
+/// reliably ask their delegate for `editMenuForTextIn` on newer iOS builds,
+/// so the delegate path below remains the testable primary path while this
+/// responder hook keeps the visible selection menu populated on-device.
+final class FullScreenReviewCommentTextView: UITextView {
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    var reviewCommentSourceContext: ReviewCommentSourceContext?
+
+    func configureReviewCommentSelection(
+        router: ReviewCommentSelectionRouter?,
+        sourceContext: ReviewCommentSourceContext?
+    ) {
+        reviewCommentSelectionRouter = router
+        reviewCommentSourceContext = sourceContext
+    }
+
+    override func buildMenu(with builder: any UIMenuBuilder) {
+        super.buildMenu(with: builder)
+
+        guard let action = reviewCommentMenuAction() else { return }
+        let menu = UIMenu(title: "", options: .displayInline, children: [action])
+        builder.insertSibling(menu, beforeMenu: .standardEdit)
+    }
+
+    private func reviewCommentMenuAction() -> UIAction? {
+        guard let router = reviewCommentSelectionRouter,
+              let sourceContext = reviewCommentSourceContext,
+              let selectedText = ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange) else {
+            return nil
+        }
+
+        return ReviewCommentSelectionMenuBuilder.commentAction(
+            selectedText: selectedText,
+            sourceContext: ReviewCommentSelectionEditMenuSupport.enrichedSourceContext(
+                sourceContext,
+                textView: self,
+                range: selectedRange
+            ),
+            router: router,
+            presentingViewController: nearestViewController(from: self),
+            textView: self,
+            selectedRange: selectedRange
+        )
+    }
+}
+
 @MainActor
 func buildFullScreenReviewCommentMenu(
     textView: UITextView,

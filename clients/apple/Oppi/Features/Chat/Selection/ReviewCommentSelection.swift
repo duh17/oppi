@@ -404,7 +404,7 @@ enum ReviewCommentSelectionEditMenuSupport {
         )
     }
 
-    private static func enrichedSourceContext(
+    static func enrichedSourceContext(
         _ sourceContext: ReviewCommentSourceContext,
         textView: UITextView,
         range: NSRange

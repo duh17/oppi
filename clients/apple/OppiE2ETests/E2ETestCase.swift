@@ -320,12 +320,16 @@ class E2ETestCase: XCTestCase {
     func navigateBackToWorkspace() {
         dismissExtensionSheetIfNeeded(timeout: 1)
 
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        if sessionList.waitForExistence(timeout: 1) {
+            return
+        }
+
         let backButton = app.navigationBars.buttons.firstMatch
         if backButton.exists && backButton.isHittable {
             tap(backButton, named: "navigation back button")
         }
 
-        let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(
             sessionList.waitForExistence(timeout: 10),
             "Session list did not reappear after navigating back"

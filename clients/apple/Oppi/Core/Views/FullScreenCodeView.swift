@@ -294,17 +294,56 @@ extension View {
         sessionId: String? = nil,
         sourceLabel: String? = nil
     ) -> some View {
-        sheet(isPresented: isPresented) {
-            FullScreenCodeView(
-                content: content,
+        modifier(
+            FullScreenViewerPresentationModifier(
+                isPresented: isPresented,
+                viewerContent: content,
                 reviewCommentSelectionContext: reviewCommentSelectionContext,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-                reviewCommentSessionId: sessionId,
-                reviewCommentSourceLabel: sourceLabel
+                sessionId: sessionId,
+                sourceLabel: sourceLabel
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+        )
+    }
+}
+
+private struct FullScreenViewerPresentationModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let viewerContent: FullScreenCodeContent
+    let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    let sessionId: String?
+    let sourceLabel: String?
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var prefersFullScreenCover: Bool {
+        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if prefersFullScreenCover {
+            content.fullScreenCover(isPresented: $isPresented) {
+                fullScreenCodeView
+            }
+        } else {
+            content.sheet(isPresented: $isPresented) {
+                fullScreenCodeView
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
         }
+    }
+
+    private var fullScreenCodeView: some View {
+        FullScreenCodeView(
+            content: viewerContent,
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSessionId: sessionId,
+            reviewCommentSourceLabel: sourceLabel
+        )
     }
 }
 

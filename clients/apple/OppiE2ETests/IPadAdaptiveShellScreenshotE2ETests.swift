@@ -5,6 +5,7 @@ import XCTest
 /// Runs against the real paired E2E server so the captured view includes the
 /// production pairing, workspace refresh, session creation, and chat timeline
 /// path instead of preview-only fixtures.
+@MainActor
 final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     private let anchorWorkspaceName = "iPad Layout Workspace"
 
@@ -37,6 +38,10 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
 
         try saveLabScreenshot(name: "ipad-main-workspace-home")
 
+        openWorkspaceCreateForm()
+        try saveLabScreenshot(name: "ipad-workspace-create-form")
+        dismissWorkspaceCreateForm()
+
         let openWorkspaceButton = app.buttons["workspace.open.\(anchorWorkspaceName)"]
         XCTAssertTrue(openWorkspaceButton.waitForExistence(timeout: 10), "iPad workspace open button missing")
         openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
@@ -45,6 +50,11 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15),
             "Workspace session-list column did not appear after selecting workspace"
         )
+
+        openWorkspaceEditForm()
+        try saveLabScreenshot(name: "ipad-workspace-edit-form")
+
+        dismissWorkspaceEditForm()
 
         createSession()
         sendMessageAndWaitForResponse(localEchoPrompt("IPAD_CHAT_TIMELINE_OK"), timeout: 240)
@@ -55,7 +65,20 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         )
 
         dismissKeyboardIfNeeded()
+        assertSplitSidebarHiddenForFullWidthChat()
         try saveLabScreenshot(name: "ipad-chat-timeline")
+
+        openSessionOutlineSurface()
+        try saveLabScreenshot(name: "ipad-session-outline-fullscreen")
+        openSessionTreeIfAvailable()
+        try saveLabScreenshot(name: "ipad-session-tree-fullscreen")
+        dismissPresentedNavigationSurface(title: "Session Outline")
+
+        openContextInspectorSurface()
+        try saveLabScreenshot(name: "ipad-context-inspector-fullscreen")
+        dismissPresentedNavigationSurface(title: "Context")
+
+        navigateBackToWorkspace()
 
         let filesButton = app.buttons["workspace.files.open"]
         XCTAssertTrue(filesButton.waitForExistence(timeout: 10), "Workspace files button missing")
@@ -65,22 +88,203 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             "File browser did not open in the iPad detail column"
         )
         try saveLabScreenshot(name: "ipad-file-browser")
+    }
 
-        openServerMenuItem("App Settings")
-        XCTAssertTrue(
-            app.navigationBars["Settings"].waitForExistence(timeout: 10)
-                || app.staticTexts["Appearance"].waitForExistence(timeout: 2),
-            "Settings did not open in the iPad detail column"
-        )
-        try saveLabScreenshot(name: "ipad-settings-detail")
+    private func openWorkspaceCreateForm() {
+        showWorkspaceHomeListIfNeeded()
+        openCurrentServerMenu()
 
-        openServerMenuItem("Manage Servers")
+        let createButton = app.buttons["workspace.create.open"]
+        if createButton.waitForExistence(timeout: 5) {
+            tap(createButton, named: "create workspace menu item", timeout: 1)
+        } else {
+            let menuItem = app.menuItems["Create Workspace"]
+            XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "Create Workspace menu item missing")
+            tap(menuItem, named: "create workspace menu item", timeout: 1)
+        }
+
+        let manualButton = app.buttons["workspace.create.manual"]
+        XCTAssertTrue(manualButton.waitForExistence(timeout: 15), "Manual create button not shown")
+        for _ in 0..<4 where !manualButton.isHittable {
+            app.swipeUp()
+        }
+        tap(manualButton, named: "manual workspace creation button")
+
         XCTAssertTrue(
-            app.buttons["7d"].waitForExistence(timeout: 10)
-                || app.staticTexts["No Servers"].waitForExistence(timeout: 2),
-            "Server view did not open in the iPad detail column"
+            app.textFields["workspace.create.name"].waitForExistence(timeout: 10),
+            "Workspace create form did not appear"
         )
-        try saveLabScreenshot(name: "ipad-server-detail")
+    }
+
+    private func dismissWorkspaceCreateForm() {
+        let cancelButton = app.buttons["Cancel"]
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Workspace create cancel button missing")
+        tap(cancelButton, named: "workspace create cancel button", timeout: 1)
+
+        XCTAssertTrue(
+            app.collectionViews["workspace.list"].waitForExistence(timeout: 10),
+            "Workspace list did not return after dismissing create form"
+        )
+    }
+
+    private func openWorkspaceEditForm() {
+        let editButton = app.buttons["workspace.edit.open"]
+        XCTAssertTrue(editButton.waitForExistence(timeout: 10), "Workspace edit button missing")
+        tap(editButton, named: "workspace edit button")
+
+        XCTAssertTrue(
+            app.textFields["workspace.edit.name"].waitForExistence(timeout: 15)
+                || app.navigationBars["Edit Workspace"].waitForExistence(timeout: 2),
+            "Workspace edit form did not appear"
+        )
+    }
+
+    private func dismissWorkspaceEditForm() {
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        if sessionList.waitForExistence(timeout: 1) {
+            return
+        }
+
+        let backButton = app.navigationBars["Edit Workspace"].buttons.firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5), "Workspace edit back button missing")
+        tap(backButton, named: "workspace edit back button", timeout: 1)
+
+        XCTAssertTrue(
+            sessionList.waitForExistence(timeout: 10),
+            "Workspace session-list column did not return after dismissing edit form"
+        )
+    }
+
+    private func assertSplitSidebarHiddenForFullWidthChat() {
+        let splitToggle = app.buttons["workspace.split.sidebarToggle"]
+        XCTAssertTrue(splitToggle.waitForExistence(timeout: 10), "Split sidebar toggle missing in chat")
+        XCTAssertTrue(
+            splitToggle.label.localizedCaseInsensitiveContains("show"),
+            "Chat should hide the split sidebar by default"
+        )
+
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertFalse(
+            sessionList.waitForExistence(timeout: 1) && sessionList.isHittable,
+            "Chat timeline should not share width with the session list"
+        )
+    }
+
+    private func openSessionOutlineSurface() {
+        let outlineButton = app.buttons["chat.toolbar.outline"]
+        XCTAssertTrue(outlineButton.waitForExistence(timeout: 10), "Session outline toolbar button missing")
+        tap(outlineButton, named: "session outline toolbar button", timeout: 1)
+
+        let outlineNavigationBar = app.navigationBars["Session Outline"]
+        XCTAssertTrue(outlineNavigationBar.waitForExistence(timeout: 10), "Session outline did not open")
+        assertNavigationSurfaceFillsScreen(outlineNavigationBar, name: "Session outline")
+    }
+
+    private func openSessionTreeIfAvailable() {
+        let treeButton = app.buttons["Tree"]
+        if treeButton.waitForExistence(timeout: 3) {
+            tap(treeButton, named: "session tree tab", timeout: 1)
+            let itemCount = app.staticTexts
+                .matching(NSPredicate(format: "label ENDSWITH %@", "items"))
+                .firstMatch
+            XCTAssertTrue(
+                itemCount.waitForExistence(timeout: 10),
+                "Session tree content did not appear"
+            )
+        }
+    }
+
+    private func openContextInspectorSurface() {
+        let contextButton = app.buttons["chat.toolbar.context"]
+        XCTAssertTrue(contextButton.waitForExistence(timeout: 10), "Context inspector toolbar button missing")
+        tap(contextButton, named: "context inspector toolbar button", timeout: 1)
+
+        let contextNavigationBar = app.navigationBars["Context"]
+        XCTAssertTrue(contextNavigationBar.waitForExistence(timeout: 10), "Context inspector did not open")
+        assertNavigationSurfaceFillsScreen(contextNavigationBar, name: "Context inspector")
+    }
+
+    private func assertNavigationSurfaceFillsScreen(_ element: XCUIElement, name: String) {
+        let minimumWidth = app.frame.width * 0.88
+        XCTAssertGreaterThanOrEqual(
+            element.frame.width,
+            minimumWidth,
+            "\(name) should present full-screen on iPad. Surface width: \(element.frame.width), app width: \(app.frame.width)"
+        )
+    }
+
+    private func dismissPresentedNavigationSurface(title: String) {
+        let navigationBar = app.navigationBars[title]
+        XCTAssertTrue(navigationBar.waitForExistence(timeout: 5), "\(title) navigation bar missing before dismissal")
+
+        let doneButton = navigationBar.buttons["Done"]
+        if doneButton.waitForExistence(timeout: 2) {
+            tap(doneButton, named: "\(title) done button", timeout: 1)
+        } else {
+            tap(app.buttons["Done"], named: "\(title) done button", timeout: 1)
+        }
+
+        let predicate = NSPredicate(format: "exists == false")
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: navigationBar)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [expectation], timeout: 8),
+            .completed,
+            "\(title) did not dismiss"
+        )
+    }
+
+    private func showWorkspaceHomeListIfNeeded() {
+        let workspaceList = app.collectionViews["workspace.list"]
+        for _ in 0..<4 {
+            revealSplitDetailSidebarIfNeeded()
+
+            if workspaceList.waitForExistence(timeout: 1) {
+                return
+            }
+
+            let showWorkspacesButton = app.buttons["workspace.sidebar.showWorkspaces"]
+            if showWorkspacesButton.waitForExistence(timeout: 1) {
+                tap(showWorkspacesButton, named: "show workspaces button", timeout: 1)
+                if workspaceList.waitForExistence(timeout: 3) {
+                    return
+                }
+            }
+
+            let backButton = app.navigationBars.buttons.firstMatch
+            guard backButton.waitForExistence(timeout: 1) else { break }
+            tap(backButton, named: "navigation back button", timeout: 1)
+        }
+
+        XCTAssertTrue(
+            workspaceList.waitForExistence(timeout: 10),
+            "Workspace list did not appear after returning to workspace sidebar"
+        )
+    }
+
+    private func revealSplitDetailSidebarIfNeeded() {
+        if app.collectionViews["workspace.list"].waitForExistence(timeout: 1)
+            || app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 1) {
+            return
+        }
+
+        let splitToggle = app.buttons["workspace.split.sidebarToggle"]
+        if splitToggle.waitForExistence(timeout: 2) {
+            if splitToggle.label.localizedCaseInsensitiveContains("show") {
+                tap(splitToggle, named: "split sidebar toggle", timeout: 1)
+            }
+            return
+        }
+
+        let showSidebarButton = app.buttons["Show Sidebar"]
+        if showSidebarButton.waitForExistence(timeout: 1) {
+            tap(showSidebarButton, named: "show sidebar button", timeout: 1)
+            return
+        }
+
+        let lowercaseShowSidebarButton = app.buttons["Show sidebar"]
+        if lowercaseShowSidebarButton.waitForExistence(timeout: 1) {
+            tap(lowercaseShowSidebarButton, named: "show sidebar button", timeout: 1)
+        }
     }
 
     private func dismissKeyboardIfNeeded() {
@@ -99,24 +303,12 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         }
     }
 
-    private func openServerMenuItem(_ label: String) {
-        revealSplitSidebarIfNeeded(in: app)
-
+    private func openCurrentServerMenu() {
         let currentServerButton = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Current server:")
         ).firstMatch
         XCTAssertTrue(currentServerButton.waitForExistence(timeout: 10), "Current server menu missing")
         tap(currentServerButton, named: "current server menu")
-
-        let button = app.buttons[label]
-        if button.waitForExistence(timeout: 5) {
-            tap(button, named: label, timeout: 1)
-            return
-        }
-
-        let menuItem = app.menuItems[label]
-        XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "Menu item \(label) missing")
-        tap(menuItem, named: label, timeout: 1)
     }
 
 }

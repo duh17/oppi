@@ -594,7 +594,10 @@ enum FullScreenImageDataPreviewPresenter {
             FullScreenImageDataPreviewViewController.makeSlideDownController(
                 data: data,
                 mimeType: mimeType,
-                title: title
+                title: title,
+                prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
+                    for: presenter.traitCollection
+                )
             ),
             animated: true
         )
@@ -724,16 +727,26 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
 }
 
 extension FullScreenImageDataPreviewViewController {
-    static func makeSlideDownController(data: Data, mimeType: String?, title: String) -> UIViewController {
+    static func makeSlideDownController(
+        data: Data,
+        mimeType: String?,
+        title: String,
+        prefersFullScreenOverlay: Bool = false
+    ) -> UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
         let viewer = FullScreenImageDataPreviewViewController(data: data, mimeType: mimeType, title: title)
         let navigation = UINavigationController(rootViewController: viewer)
-        navigation.modalPresentationStyle = .pageSheet
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
 
-        if let sheet = navigation.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
+        if prefersFullScreenOverlay {
+            navigation.modalPresentationStyle = .overFullScreen
+            navigation.modalTransitionStyle = .coverVertical
+        } else {
+            navigation.modalPresentationStyle = .pageSheet
+            if let sheet = navigation.sheetPresentationController {
+                sheet.detents = [.large()]
+                sheet.prefersGrabberVisible = true
+            }
         }
 
         navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark

@@ -123,11 +123,10 @@ final class FullScreenCodeViewController: UIViewController {
                     sourceLabel: reviewCommentSourceLabel
                 )
         )
-        controller.modalPresentationStyle = .pageSheet
-        if let sheet = controller.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
-        }
+        FullScreenViewerPresentationPolicy.configureLargePresentation(
+            controller,
+            traitCollection: presenter.traitCollection
+        )
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID()
             .preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)

@@ -65,7 +65,7 @@ final class NativeFullScreenCodeBody: UIView {
     private let contentContainer = UIView()
     private let gutterView = CodeLineNumberGutterView()
     private let separatorView = UIView()
-    private let codeTextView = UITextView()
+    private let codeTextView = FullScreenReviewCommentTextView()
     private let content: String
     private let language: String?
     private let startLine: Int
@@ -168,6 +168,10 @@ final class NativeFullScreenCodeBody: UIView {
         applyWrapMode()
         codeTextView.text = content
         codeTextView.delegate = self
+        codeTextView.configureReviewCommentSelection(
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
         contentContainer.addSubview(codeTextView)
 
         let gutterWidthConstraint = gutterView.widthAnchor.constraint(equalToConstant: gutterWidth)
@@ -469,7 +473,7 @@ final class NativeFullScreenDiffBody: UIView {
     private let subtitleLabel = UILabel()
     private let statsLabel = UILabel()
     private let scrollView = UIScrollView()
-    private let diffTextView = UITextView()
+    private let diffTextView = FullScreenReviewCommentTextView()
     private let progressView = UIActivityIndicatorView(style: .medium)
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -564,6 +568,10 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         diffTextView.delegate = self
+        diffTextView.configureReviewCommentSelection(
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
 
         let widthConstraint = diffTextView.widthAnchor.constraint(equalToConstant: 1)
         self.widthConstraint = widthConstraint
@@ -774,8 +782,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
-    private let commandView = UITextView()
-    private let outputView = UITextView()
+    private let commandView = FullScreenReviewCommentTextView()
+    private let outputView = FullScreenReviewCommentTextView()
     private let palette: ThemePalette
     private let stream: TerminalTraceStream?
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -875,6 +883,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         commandView.backgroundColor = UIColor(palette.bgHighlight)
         commandView.layer.cornerRadius = 8
         commandView.delegate = self
+        commandView.configureReviewCommentSelection(
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
 
         outputView.translatesAutoresizingMaskIntoConstraints = false
         outputView.isEditable = false
@@ -886,6 +898,10 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         outputView.font = codeFont
         outputView.textColor = UIColor(palette.fg)
         outputView.delegate = self
+        outputView.configureReviewCommentSelection(
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
         applyOutputWrapMode()
 
         addSubview(scrollView)
@@ -1308,7 +1324,7 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
 // MARK: - Source Body
 
 final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
-    private let textView = UITextView()
+    private let textView = FullScreenReviewCommentTextView()
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
@@ -1349,6 +1365,10 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
         textView.delegate = self
         textView.text = content
+        textView.configureReviewCommentSelection(
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
         applyWrapMode()
         addSubview(textView)
 

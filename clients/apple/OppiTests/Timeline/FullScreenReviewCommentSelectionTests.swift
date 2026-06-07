@@ -23,6 +23,18 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func codeBodyInstallsResponderMenuFallback() throws {
+        let controller = makeController(
+            content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
+        )
+        let textView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("let answer = 42")
+        } as? FullScreenReviewCommentTextView)
+
+        #expect(textView.reviewCommentSelectionRouter != nil)
+        #expect(textView.reviewCommentSourceContext?.surface == .fullScreenCode)
+    }
+
     @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {
         let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
         let body = NativeFullScreenCodeBody(
@@ -329,6 +341,18 @@ struct FullScreenReviewCommentSelectionTests {
 
         let commentAction = try #require(menu.children.first as? UIAction)
         #expect(commentAction.title == "Comment")
+    }
+
+    @Test func sourceBodyInstallsResponderMenuFallback() throws {
+        let controller = makeController(
+            content: .plainText(content: "raw source", filePath: "Notes.txt")
+        )
+        let textView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("raw source")
+        } as? FullScreenReviewCommentTextView)
+
+        #expect(textView.reviewCommentSelectionRouter != nil)
+        #expect(textView.reviewCommentSourceContext?.surface == .fullScreenSource)
     }
 
     @Test func liveSourceBodyPrependsCommentAction() throws {

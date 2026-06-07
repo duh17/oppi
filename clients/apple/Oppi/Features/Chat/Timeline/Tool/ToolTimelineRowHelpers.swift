@@ -52,15 +52,10 @@ enum ToolTimelineRowPresentationHelpers {
                     sourceLabel: reviewCommentSourceLabel
                 )
         )
-        // .pageSheet keeps the presenting VC in the window hierarchy (unlike
-        // .fullScreen which removes it, triggering SwiftUI onDisappear).
-        // On iPhone, .pageSheet at .large() detent is visually full-screen
-        // and gives free interactive swipe-to-dismiss.
-        controller.modalPresentationStyle = .pageSheet
-        if let sheet = controller.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
-        }
+        FullScreenViewerPresentationPolicy.configureLargePresentation(
+            controller,
+            traitCollection: sourceView.traitCollection
+        )
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)
     }
@@ -69,7 +64,12 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else { return }
         guard !isWithinFullScreenModalContext(presenter) else { return }
 
-        let controller = FullScreenImageViewController.makeSlideDownController(image: image)
+        let controller = FullScreenImageViewController.makeSlideDownController(
+            image: image,
+            prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
+                for: sourceView.traitCollection
+            )
+        )
         presenter.present(controller, animated: true)
     }
 
