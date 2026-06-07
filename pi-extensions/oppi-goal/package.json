@@ -1,0 +1,36 @@
+{
+  "name": "oppi-goal",
+  "version": "0.1.0",
+  "description": "Pi extension for pursuing durable goals with a persistent widget.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Chaos Donkey",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi",
+    "coding-agent",
+    "goal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "pi-extensions/oppi-goal"
+  },
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/oppi-goal#readme",
+  "files": [
+    "extensions/",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/oppi-goal.ts"
+    ]
+  }
+}
