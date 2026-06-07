@@ -23,7 +23,7 @@ struct SettingsView: View {
     var body: some View {
         List {
             Section("Appearance") {
-                Picker("Theme Mode", selection: Binding(
+                Picker("Theme Source", selection: Binding(
                     get: { themeStore.mode },
                     set: { themeStore.mode = $0 }
                 )) {
@@ -63,7 +63,7 @@ struct SettingsView: View {
                         .foregroundStyle(.themeComment)
                 }
 
-                NavigationLink("Import from Server") {
+                NavigationLink("Import Theme") {
                     ThemeImportView()
                 }
 
@@ -225,7 +225,7 @@ struct SettingsView: View {
             } header: {
                 Text("Text Selection")
             } footer: {
-                Text("Customize the quick comments shown after selecting text and choosing Comment.")
+                Text("Edit the quick comments shown after selecting text and choosing Comment.")
             }
 
             Section {
@@ -271,9 +271,9 @@ struct SettingsView: View {
                 Text("Voice")
             } footer: {
                 Text(
-                    "Choose whether voice replies stay manual or follow each reply's playback behavior. "
-                        + "You can still ask the agent to change this for the current session. "
-                        + "Server dictation uses your Mac's ASR model. On-device uses Apple's local dictation."
+                    "Voice replies can stay manual or follow each reply's playback behavior. "
+                        + "Session-specific changes still happen in chat. "
+                        + "Server dictation uses your Mac's ASR model; on-device dictation uses Apple's local dictation."
                 )
             }
 

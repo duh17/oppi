@@ -20,8 +20,8 @@ struct AutoTitleSettingsView: View {
     var body: some View {
         List {
             Section {
-                Picker("Provider", selection: $provider) {
-                    Text("Server Model").tag(AppPreferences.Session.AutoTitleProvider.server)
+                Picker("Title Source", selection: $provider) {
+                    Text("Server").tag(AppPreferences.Session.AutoTitleProvider.server)
                     Text("On-device").tag(AppPreferences.Session.AutoTitleProvider.onDevice)
                     Text("Off").tag(AppPreferences.Session.AutoTitleProvider.off)
                 }
@@ -91,9 +91,9 @@ struct AutoTitleSettingsView: View {
     private var footerText: String {
         switch provider {
         case .server:
-            return "The server generates a short title when a session starts. Uses the selected model."
+            return "The server creates a short title when a session starts using the selected model."
         case .onDevice:
-            return "Uses Apple's on-device language model. No network required, but quality may vary."
+            return "Apple's on-device language model creates titles without network access. Quality may vary."
         case .off:
             return "Sessions will show the first message as their title."
         }
@@ -162,7 +162,7 @@ struct AutoTitleSettingsView: View {
                 try await api.setAutoTitleConfig(config)
                 errorMessage = nil
             } catch {
-                errorMessage = "Failed to save config: \(error.localizedDescription)"
+                errorMessage = "Failed to save settings: \(error.localizedDescription)"
             }
         }
     }

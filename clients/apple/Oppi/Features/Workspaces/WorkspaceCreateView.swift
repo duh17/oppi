@@ -191,7 +191,7 @@ struct WorkspaceCreateView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Create your first workspace")
                             .font(.headline)
-                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter an existing path manually, or start blank if you just want to explore the app.")
+                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter a folder path manually, or use the server home folder if you just want to explore the app.")
                             .font(.subheadline)
                             .foregroundStyle(.themeComment)
                     }
@@ -210,13 +210,13 @@ struct WorkspaceCreateView: View {
 
             Section {
                 Button { selectManual() } label: {
-                    Label("Enter path manually", systemImage: "keyboard")
+                    Label("Enter Folder Path", systemImage: "keyboard")
                 }
                 .accessibilityIdentifier("workspace.create.manual")
 
                 if !sandboxMode {
                     Button { selectBlank() } label: {
-                        Label("Blank workspace (home folder)", systemImage: "house")
+                        Label("Use Server Home Folder", systemImage: "house")
                     }
                     .foregroundStyle(.themeComment)
                 }
@@ -235,7 +235,7 @@ struct WorkspaceCreateView: View {
                     Label(directoriesError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.themeOrange)
                     if isGuidedFirstWorkspace {
-                        Text("You can still enter an existing path manually or create a blank workspace that uses the server home folder.")
+                        Text("You can still enter an existing folder path or use the server home folder.")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
@@ -248,7 +248,7 @@ struct WorkspaceCreateView: View {
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                     if isGuidedFirstWorkspace {
-                        Text("That’s okay. Enter an existing path manually or create a blank workspace that uses the server home folder.")
+                        Text("That’s okay. Enter an existing folder path or use the server home folder.")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
@@ -296,8 +296,8 @@ struct WorkspaceCreateView: View {
                 }
             }
 
-            // Project name + path
-            Section("Project") {
+            // Workspace name + folder
+            Section("Workspace Folder") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("workspace.create.name")
@@ -322,8 +322,8 @@ struct WorkspaceCreateView: View {
 
                     Text(
                         sandboxMode
-                            ? "Leave empty to let Oppi create a sandbox folder. Network follows Gondolin’s default; edit the workspace later to restrict or deny hosts. For a custom path, use Create this folder when the path is missing."
-                            : "Leave empty to use the server home folder. If the path doesn’t exist, use Create this folder below; Oppi asks before creating one directory."
+                            ? "Leave empty to let Oppi create a sandbox folder. Network follows Gondolin’s default; edit the workspace later to restrict or deny hosts. For a custom folder, use Create this folder when the folder is missing."
+                            : "Leave empty to use the server home folder. If the folder doesn’t exist, use Create this folder below; Oppi asks before creating one directory."
                     )
                     .font(.caption)
                     .foregroundStyle(.themeComment)
@@ -401,7 +401,12 @@ struct WorkspaceCreateView: View {
 
             // Options
             Section {
-                Toggle("Git status bar", isOn: $gitStatusEnabled)
+                Toggle("Show workspace changes in chat", isOn: $gitStatusEnabled)
+                Text("Shows branch, changed files, and line stats above the chat.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            } header: {
+                Text("Workspace Changes")
             }
 
             if showAdvanced {
@@ -454,13 +459,13 @@ struct WorkspaceCreateView: View {
     private var hostMountValidationView: some View {
         if !trimmedHostMount.isEmpty {
             if isCheckingHostMount {
-                Label("Checking path…", systemImage: "clock")
+                Label("Checking folder…", systemImage: "clock")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
                       hostMountStatus.issue == "missing" {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Path doesn’t exist", systemImage: "folder.badge.plus")
+                    Label("Folder doesn’t exist", systemImage: "folder.badge.plus")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
 
@@ -512,7 +517,7 @@ struct WorkspaceCreateView: View {
                     .foregroundStyle(.themeRed)
             } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
                       hostMountStatus.isValidWorkspaceDirectory {
-                Label("Path exists", systemImage: "checkmark.circle")
+                Label("Folder exists", systemImage: "checkmark.circle")
                     .font(.caption)
                     .foregroundStyle(.themeGreen)
             }
@@ -750,7 +755,7 @@ struct WorkspaceCreateView: View {
         if !trimmedHostMount.isEmpty {
             guard let hostMountStatus, hostMountStatus.path == trimmedHostMount,
                   hostMountStatus.isValidWorkspaceDirectory else {
-                error = hostMountValidationMessage ?? "Path doesn’t exist"
+                error = hostMountValidationMessage ?? "Folder doesn’t exist"
                 return
             }
         }

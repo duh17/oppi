@@ -17,7 +17,7 @@ struct ThemeImportView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error {
                 ContentUnavailableView(
-                    "Failed to Load",
+                    "Unable to Load Themes",
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
@@ -25,7 +25,7 @@ struct ThemeImportView: View {
                 ContentUnavailableView(
                     "No Custom Themes",
                     systemImage: "paintbrush",
-                    description: Text("No themes found on server.\nAsk the agent to create one.")
+                    description: Text("Ask the agent to create a theme, then try again.")
                 )
             } else {
                 themeList

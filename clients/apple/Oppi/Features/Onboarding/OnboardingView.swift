@@ -329,7 +329,7 @@ private struct ManualEntryView: View {
                     TextField("Port", text: $port)
                         .keyboardType(.numberPad)
                 }
-                Section("Auth") {
+                Section("Authentication") {
                     SecureField("Token", text: $token)
                         .textContentType(.password)
                         .textInputAutocapitalization(.never)

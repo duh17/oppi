@@ -113,7 +113,7 @@ struct WorkspaceEditView: View {
 
     private var systemPromptEditorSummary: String {
         if systemPrompt.isEmpty {
-            return "No custom prompt"
+            return "No instructions"
         }
 
         let lineCount = systemPrompt.split(separator: "\n", omittingEmptySubsequences: false).count
@@ -122,7 +122,7 @@ struct WorkspaceEditView: View {
 
     private var systemPromptPreviewText: String {
         if systemPrompt.isEmpty {
-            return "No workspace prompt yet. Pi’s base prompt will be used as-is."
+            return "No workspace instructions added. Pi’s base prompt will be used as-is."
         }
 
         return systemPrompt
@@ -130,14 +130,14 @@ struct WorkspaceEditView: View {
 
     var body: some View {
         List {
-            Section("System Prompt") {
+            Section("Workspace Instructions") {
                 Button {
                     isShowingSystemPromptEditor = true
                 } label: {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text("Edit workspace prompt")
+                                Text("Edit Instructions")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.themeFg)
 
@@ -166,7 +166,7 @@ struct WorkspaceEditView: View {
                 }
                 .buttonStyle(.plain)
 
-                Text("Add workspace-specific instructions after Pi’s base prompt.")
+                Text("Added after Pi’s base prompt for every session in this workspace.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
@@ -219,14 +219,14 @@ struct WorkspaceEditView: View {
                 }
             }
 
-            Section("Host Working Directory") {
+            Section("Workspace Folder") {
                 TextField("~/workspace/project (must exist)", text: $hostMount)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
                     .accessibilityIdentifier("workspace.edit.hostMount")
 
-                Text("Leave empty to use the server home folder. If the path doesn’t exist, use Create this folder below; Oppi asks before creating one directory.")
+                Text("Leave empty to use the server home folder. If the folder doesn’t exist, use Create this folder below; Oppi asks before creating one directory.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
 
@@ -234,10 +234,10 @@ struct WorkspaceEditView: View {
             }
             .selectionDisabled()
 
-            Section("Git Status") {
-                Toggle("Show git status bar", isOn: $gitStatusEnabled)
+            Section("Workspace Changes") {
+                Toggle("Show workspace changes in chat", isOn: $gitStatusEnabled)
 
-                Text("Shows branch, dirty files, and change stats in chat view")
+                Text("Shows branch, changed files, and line stats above the chat.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
@@ -320,13 +320,13 @@ struct WorkspaceEditView: View {
     private var hostMountValidationView: some View {
         if !trimmedHostMount.isEmpty {
             if isCheckingHostMount {
-                Label("Checking path…", systemImage: "clock")
+                Label("Checking folder…", systemImage: "clock")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
                       hostMountStatus.issue == "missing" {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Path doesn’t exist", systemImage: "folder.badge.plus")
+                    Label("Folder doesn’t exist", systemImage: "folder.badge.plus")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
 
@@ -378,7 +378,7 @@ struct WorkspaceEditView: View {
                     .foregroundStyle(.themeRed)
             } else if let hostMountStatus, hostMountStatus.path == trimmedHostMount,
                       hostMountStatus.isValidWorkspaceDirectory {
-                Label("Path exists", systemImage: "checkmark.circle")
+                Label("Folder exists", systemImage: "checkmark.circle")
                     .font(.caption)
                     .foregroundStyle(.themeGreen)
             }
@@ -422,7 +422,7 @@ struct WorkspaceEditView: View {
             } header: {
                 Text("Pi Extensions")
             } footer: {
-                Text("From pi extension dirs and installed packages\(hostMount.isEmpty ? "" : " (including project .pi/extensions)")")
+                Text("From Pi extension directories and installed packages\(hostMount.isEmpty ? "" : " (including project .pi/extensions)")")
             }
         }
     }
@@ -646,7 +646,7 @@ struct WorkspaceEditView: View {
         if !trimmedHostMount.isEmpty {
             guard let hostMountStatus, hostMountStatus.path == trimmedHostMount,
                   hostMountStatus.isValidWorkspaceDirectory else {
-                error = hostMountValidationMessage ?? "Path doesn’t exist"
+                error = hostMountValidationMessage ?? "Folder doesn’t exist"
                 return
             }
         }
@@ -689,7 +689,7 @@ struct WorkspaceEditView: View {
     }
 }
 
-// MARK: - System Prompt Editor
+// MARK: - Workspace Instructions Editor
 
 private struct WorkspaceSystemPromptEditorView: View {
     @Binding var systemPrompt: String
@@ -701,7 +701,7 @@ private struct WorkspaceSystemPromptEditorView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.themeFg)
 
-                Text("Add workspace-specific instructions after Pi’s base prompt.")
+                Text("Added after Pi’s base prompt for every session in this workspace.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
@@ -725,7 +725,7 @@ private struct WorkspaceSystemPromptEditorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.themeBg.ignoresSafeArea())
-        .navigationTitle("Workspace Prompt")
+        .navigationTitle("Workspace Instructions")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -741,7 +741,7 @@ private struct WorkspaceSystemPromptEditorView: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
-                Text("Appended prompt")
+                Text("Added after Pi prompt")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
 
@@ -831,4 +831,3 @@ private struct SkillSelectionRow: View {
         }
     }
 }
-

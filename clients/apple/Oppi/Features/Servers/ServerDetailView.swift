@@ -118,7 +118,7 @@ struct ServerDetailView: View {
                         isProviderManagerPresented = true
                     } label: {
                         HStack {
-                            Label(connectedProviders.isEmpty ? "Show All Providers" : "Configure Providers", systemImage: "plus.circle")
+                            Label("Manage Providers", systemImage: "plus.circle")
                             Spacer()
                             Text("\(providerStatuses.count) available")
                                 .font(.caption)
@@ -174,10 +174,10 @@ struct ServerDetailView: View {
                 Button(role: .destructive) {
                     showRemoveConfirmation = true
                 } label: {
-                    Label("Remove Paired Server", systemImage: "trash")
+                    Label("Remove Server", systemImage: "trash")
                 }
             } header: {
-                Text("Danger Zone")
+                Text("Remove Server")
             } footer: {
                 Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
             }
@@ -253,7 +253,7 @@ struct ServerDetailView: View {
 
     private var removeDialogTitle: String {
         if removingLastServer {
-            return "Remove your only paired server?"
+            return "Remove only paired server?"
         }
         return "Remove \(pairedServer.name)?"
     }

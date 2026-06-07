@@ -216,7 +216,7 @@ struct ServerView: View {
                 .foregroundStyle(.themeComment)
 
             NavigationLink(value: server) {
-                Label("Connect Provider", systemImage: "plus.circle.fill")
+                Label("Manage Providers", systemImage: "plus.circle.fill")
             }
             .buttonStyle(.borderedProminent)
         }

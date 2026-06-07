@@ -62,7 +62,7 @@ struct ContextInspectorView: View {
     }
 
     /// Breaks the total context into up to 4 colored segments:
-    /// base prompt, AGENTS files, skills listing, and messages+runtime.
+    /// Pi base prompt, AGENTS files, skills index, and messages/runtime.
     private var compositionSegments: [CompositionSegment] {
         guard let total = contextSnapshot.tokens, total > 0 else { return [] }
         guard let composition = loadedStats?.contextComposition else { return [] }
@@ -77,8 +77,8 @@ struct ContextInspectorView: View {
 
         if basePrompt > 0 {
             segments.append(CompositionSegment(
-                label: "Base prompt",
-                detail: "Pi system prompt, tools, and guidelines.",
+                label: "Pi Base Prompt",
+                detail: "Pi system prompt, tools, and baseline instructions.",
                 tokens: basePrompt,
                 color: .themePurple
             ))
@@ -88,7 +88,7 @@ struct ContextInspectorView: View {
             let fileCount = composition.agentsFiles.count
             segments.append(CompositionSegment(
                 label: "AGENTS files (\(fileCount))",
-                detail: "Project context from AGENTS.md files.",
+                detail: "Workspace instructions from AGENTS.md files.",
                 tokens: agents,
                 color: .themeCyan
             ))
@@ -96,8 +96,8 @@ struct ContextInspectorView: View {
 
         if skills > 0 {
             segments.append(CompositionSegment(
-                label: "Skills listing",
-                detail: "Available skills index injected into system prompt.",
+                label: "Skills Index",
+                detail: "Available skill names and descriptions included in context.",
                 tokens: skills,
                 color: .themeYellow
             ))
@@ -105,7 +105,7 @@ struct ContextInspectorView: View {
 
         if messages > 0 {
             segments.append(CompositionSegment(
-                label: "Messages + runtime",
+                label: "Messages and Runtime",
                 detail: "Conversation history, tool calls, and results.",
                 tokens: messages,
                 color: .themeGreen
@@ -133,13 +133,13 @@ struct ContextInspectorView: View {
                 usageHeaderCard
             }
 
-            Section("Context Composition") {
+            Section("Context Breakdown") {
                 if compositionSegments.isEmpty {
                     if statsLoading {
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text("Loading composition…")
+                            Text("Loading breakdown…")
                                 .font(.caption)
                                 .foregroundStyle(.themeComment)
                         }
@@ -148,7 +148,7 @@ struct ContextInspectorView: View {
                             .font(.caption)
                             .foregroundStyle(.themeOrange)
                     } else {
-                        Text("Composition appears after stats load.")
+                        Text("Breakdown appears after stats load.")
                             .font(.subheadline)
                             .foregroundStyle(.themeComment)
                     }

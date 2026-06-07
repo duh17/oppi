@@ -24,7 +24,9 @@ struct QuickCommentsSettingsView: View {
                     store.move(from: source, to: destination)
                 }
             } header: {
-                Text("Quick comments appear on the comment sheet")
+                Text("Templates")
+            } footer: {
+                Text("Quick comments appear after selecting text and choosing Comment.")
             }
 
             Section {
@@ -80,7 +82,7 @@ struct QuickCommentsSettingsView: View {
             .presentationDetents([.medium, .large])
         }
         .confirmationDialog(
-            "Reset all quick comments to defaults?",
+            "Reset quick comments to defaults?",
             isPresented: $showResetConfirmation,
             titleVisibility: .visible
         ) {
@@ -172,11 +174,11 @@ struct QuickCommentEditorView: View {
                 }
             }
 
-            Section("Comment Text") {
+            Section("Inserted Text") {
                 TextField("Comment text (e.g. \"Fix this.\")", text: $promptPrefix)
                     .textInputAutocapitalization(.sentences)
 
-                Text("This text is inserted into the comment composer when you tap the quick comment.")
+                Text("Inserted into the comment composer when you tap the quick comment.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
