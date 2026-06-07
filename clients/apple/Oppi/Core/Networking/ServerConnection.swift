@@ -418,7 +418,7 @@ final class ServerConnection {
         ]
         pathChangeMetadata.merge(ClientLog.endpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
         pathChangeMetadata.merge(ClientLog.endpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
-        ClientLog.warning("Network", "Force stream reconnect after path change", metadata: pathChangeMetadata)
+        ClientLog.info("Network", "Force stream reconnect after path change", metadata: pathChangeMetadata)
 
         // Tear down old WS + consumption task. Per-session continuations
         // are preserved; the active endpoint will be reopened below.
@@ -826,7 +826,7 @@ final class ServerConnection {
             ]
             metadata.merge(ClientLog.endpointMetadata(previousURL, prefix: "previousStream")) { current, _ in current }
             metadata.merge(ClientLog.endpointMetadata(sessionStreamURL, prefix: "nextStream")) { current, _ in current }
-            ClientLog.warning("Network", "Focused stream endpoint changed", metadata: metadata)
+            ClientLog.info("Network", "Focused stream endpoint changed", metadata: metadata)
         }
     }
 

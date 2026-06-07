@@ -281,12 +281,17 @@ export class BoundSessionStreamMux {
 
     const send = (msg: ServerMessage): boolean => {
       if (ws.readyState !== WebSocket.OPEN) {
-        log.warn("ws.bound_session_stream_drop_message", {
+        const context = {
           connId,
           messageType: msg.type,
           readyState: ws.readyState,
           sessionId,
-        });
+        };
+        if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+          log.info("ws.bound_session_stream_drop_after_close", context);
+        } else {
+          log.warn("ws.bound_session_stream_drop_message", context);
+        }
         return false;
       }
       msgSent += 1;

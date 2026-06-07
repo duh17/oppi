@@ -452,7 +452,7 @@ final class WebSocketClient {
         var metadata = consumeReceiveErrorSuppressionMetadata()
         guard !metadata.isEmpty else { return }
         metadata["reason"] = reason
-        wsLogWarning("Suppressed WebSocket receive errors", metadata: metadata)
+        wsLogInfo("Suppressed recoverable WebSocket receive errors", metadata: metadata)
     }
 
     private func receiveFailureMetadata(for ws: URLSessionWebSocketTask, error: Error) -> [String: String] {
@@ -466,6 +466,26 @@ final class WebSocketClient {
 
     private func isNonRetryableHandshakeStatus(_ statusCode: Int) -> Bool {
         [400, 401, 403, 404, 410, 426].contains(statusCode)
+    }
+
+    private func isRecoverableReceiveError(_ error: Error, ws: URLSessionWebSocketTask) -> Bool {
+        let closeCode = ws.closeCode.rawValue
+        if closeCode == URLSessionWebSocketTask.CloseCode.normalClosure.rawValue ||
+            closeCode == URLSessionWebSocketTask.CloseCode.goingAway.rawValue {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain {
+            // Socket closed/not connected during app/network handoff. Reconnect is the signal;
+            // per-close errors are expected noise unless retries exhaust.
+            return [53, 57, 89].contains(nsError.code)
+        }
+        if nsError.domain == NSURLErrorDomain {
+            return [NSURLErrorCancelled, NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost]
+                .contains(nsError.code)
+        }
+        return false
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
@@ -561,12 +581,22 @@ final class WebSocketClient {
                             metadata: metadata
                         )
                     } else if let self, self.shouldLogReceiveError(error) {
-                        logger.error("WebSocket receive error: \(error)")
-                        self.wsLogError(
-                            "WebSocket receive error",
-                            metadata: self.receiveFailureMetadata(for: ws, error: error)
-                                .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
-                        )
+                        var metadata = self.receiveFailureMetadata(for: ws, error: error)
+                            .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
+                        if self.isRecoverableReceiveError(error, ws: ws) {
+                            metadata["recoverable"] = "true"
+                            logger.debug("WebSocket recoverable receive close: \(String(describing: error), privacy: .public)")
+                            self.wsLogInfo(
+                                "WebSocket recoverable receive close",
+                                metadata: metadata
+                            )
+                        } else {
+                            logger.error("WebSocket receive error: \(error)")
+                            self.wsLogError(
+                                "WebSocket receive error",
+                                metadata: metadata
+                            )
+                        }
                     } else {
                         logger.debug("Suppressed duplicate WebSocket receive error: \(String(describing: error), privacy: .public)")
                     }
