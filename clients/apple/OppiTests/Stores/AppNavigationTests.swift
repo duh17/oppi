@@ -175,6 +175,57 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
+    @Test func linkedFileAppendsInStackPresentationToPreserveBackNavigation() {
+        let navigation = AppNavigation()
+        let firstTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/first.md", fileName: "first.md")
+        )
+        let secondTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
+        )
+
+        navigation.openWorkspaceLinkedFile(firstTarget)
+        navigation.openWorkspaceLinkedFile(secondTarget)
+
+        #expect(navigation.workspacePath.count == 2)
+    }
+
+    @Test func linkedFileOpenedFromSessionPreservesSessionBackNavigation() {
+        let navigation = AppNavigation()
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        let fileTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
+        )
+
+        navigation.openWorkspaceSession(sessionTarget)
+        navigation.openWorkspaceLinkedFile(fileTarget)
+
+        #expect(navigation.workspacePath.count == 2)
+    }
+
+    @Test func linkedFileOpenedFromSplitSessionPreservesSessionBackNavigation() {
+        let navigation = AppNavigation()
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        let fileTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceSession(sessionTarget)
+        navigation.openWorkspaceLinkedFile(fileTarget)
+
+        #expect(navigation.splitDetailTarget == .session(sessionTarget))
+        #expect(navigation.splitDetailPath.count == 1)
+    }
+
     @Test func givenWorkspaceFileInsideHostMountWhenResolvingThenItOpensThatWorkspaceFile() {
         let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
         let payload = FileLinkPayload(

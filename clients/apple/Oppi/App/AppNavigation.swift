@@ -154,14 +154,17 @@ final class AppNavigation {
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath = NavigationPath()
             workspacePath.append(target)
         case .split:
             if let workspace {
                 splitSelectedWorkspace = workspace
             }
-            splitDetailTarget = .linkedFile(target)
-            splitDetailPath = NavigationPath()
+            if splitDetailTarget == nil {
+                splitDetailTarget = .linkedFile(target)
+                splitDetailPath = NavigationPath()
+            } else {
+                splitDetailPath.append(target)
+            }
             splitColumnVisibility = .detailOnly
         }
     }
