@@ -340,13 +340,10 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func makeFloatingViewingOptionsButton(palette: ThemePalette) -> UIButton {
-        var config = UIButton.Configuration.plain()
+        var config = UIButton.Configuration.glass()
         config.image = UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
         config.preferredSymbolConfigurationForImage = .init(pointSize: 20, weight: .semibold)
         config.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)
-        config.background.visualEffect = UIBlurEffect(style: .systemThinMaterial)
-        config.background.strokeColor = UIColor(palette.comment).withAlphaComponent(0.35)
-        config.background.strokeWidth = 1
         config.cornerStyle = .capsule
         config.baseForegroundColor = UIColor(palette.fg)
 
@@ -364,7 +361,6 @@ final class FullScreenCodeViewController: UIViewController {
     ) {
         var config = button.configuration ?? .plain()
         config.baseForegroundColor = UIColor(palette.fg)
-        config.background.strokeColor = UIColor(palette.comment).withAlphaComponent(0.35)
         button.configuration = config
         button.accessibilityValue = String(
             localized: "Text size \(Int(round(preferences.textScale * 100))) percent"

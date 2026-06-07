@@ -359,7 +359,7 @@ final class RenderableDocumentView: UIView {
     // MARK: - Floating Capsule (Document)
 
     private func makeFloatingCapsule(palette: ThemePalette) -> UIButton {
-        var config = UIButton.Configuration.plain()
+        var config = UIButton.Configuration.glass()
         config.title = self.config.sourceToggleLabels.source
         config.image = UIImage(systemName: "curlybraces")
         config.imagePadding = 4
@@ -370,7 +370,6 @@ final class RenderableDocumentView: UIView {
             return attrs
         }
         config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
-        config.background.visualEffect = UIBlurEffect(style: .systemThinMaterial)
         config.cornerStyle = .capsule
         config.baseForegroundColor = UIColor(palette.fg)
 
