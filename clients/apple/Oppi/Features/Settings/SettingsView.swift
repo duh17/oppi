@@ -245,7 +245,13 @@ struct SettingsView: View {
                 } label: {
                     Label("Quick Comments", systemImage: "text.bubble")
                 }
+            } header: {
+                Text("Text Selection")
+            } footer: {
+                Text("Edit the quick comments shown after selecting text and choosing Comment.")
+            }
 
+            Section {
                 Picker("Voice Replies", selection: $voiceReplyMode) {
                     ForEach(AppPreferences.Voice.ReplyMode.allCases) { mode in
                         Text(mode.label).tag(mode)
@@ -268,11 +274,12 @@ struct SettingsView: View {
                     AppPreferences.Voice.setEngineMode(newValue)
                 }
             } header: {
-                Text("Input")
+                Text("Voice")
             } footer: {
                 Text(
-                    "Controls text selection shortcuts, voice replies, and dictation defaults. "
-                        + "Session-specific changes still happen in chat."
+                    "Voice replies can stay manual or follow each reply's playback behavior. "
+                        + "Session-specific changes still happen in chat. "
+                        + "Server dictation uses your Mac's ASR model; on-device dictation uses Apple's local dictation."
                 )
             }
 
