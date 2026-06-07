@@ -5,6 +5,10 @@ import {
   createMirrorWidgetForwardingTui,
   MirrorQueueProjection,
   normalizeMirrorAskAnswers,
+  parseMirrorAskUIResponse,
+  parseMirrorConfirmUIResponse,
+  parseMirrorSelectUIResponse,
+  parseMirrorTextUIResponse,
   snapshotMirrorWidgetLines,
   snapshotMirrorWidgetNativeSurface,
   type MessageQueueState,
@@ -144,9 +148,124 @@ describe("mirror ask response normalization", () => {
       /Malformed ask response/,
     );
   });
+
+  it("maps phone ask responses to Pi ask results", () => {
+    expect(
+      parseMirrorAskUIResponse({
+        type: "extension_ui_response",
+        id: "ask-1",
+        value: JSON.stringify({ scope: "unit", targets: ["server", "ios"] }),
+      }),
+    ).toEqual({
+      answers: { scope: "unit", targets: ["server", "ios"] },
+      allIgnored: false,
+    });
+
+    expect(
+      parseMirrorAskUIResponse({
+        type: "extension_ui_response",
+        id: "ask-1",
+        cancelled: true,
+      }),
+    ).toEqual({ answers: {}, allIgnored: true });
+  });
+
+  it("maps phone dialog responses to Pi-compatible return values", () => {
+    expect(
+      parseMirrorSelectUIResponse({
+        type: "extension_ui_response",
+        id: "select-1",
+        value: "Allow once",
+      }),
+    ).toBe("Allow once");
+    expect(
+      parseMirrorSelectUIResponse({
+        type: "extension_ui_response",
+        id: "select-1",
+        cancelled: true,
+      }),
+    ).toBeUndefined();
+
+    expect(
+      parseMirrorConfirmUIResponse({
+        type: "extension_ui_response",
+        id: "confirm-1",
+        confirmed: true,
+      }),
+    ).toBe(true);
+    expect(
+      parseMirrorConfirmUIResponse({
+        type: "extension_ui_response",
+        id: "confirm-1",
+        cancelled: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      parseMirrorTextUIResponse({
+        type: "extension_ui_response",
+        id: "input-1",
+        value: "typed text",
+      }),
+    ).toBe("typed text");
+    expect(
+      parseMirrorTextUIResponse({
+        type: "extension_ui_response",
+        id: "input-1",
+        cancelled: true,
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("mirror session tree serialization", () => {
+  it("does not expose custom persistence identifiers in tree snapshots", () => {
+    const entries = new Map([
+      [
+        "user-1",
+        {
+          id: "user-1",
+          parentId: null,
+          type: "message",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: "Start here" },
+        },
+      ],
+      [
+        "custom-1",
+        {
+          id: "custom-1",
+          parentId: "user-1",
+          type: "custom",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          customType: "private-extension-state",
+          data: { secret: "internal" },
+        },
+      ],
+    ]);
+    const tree = [
+      {
+        entry: entries.get("user-1")!,
+        children: [{ entry: entries.get("custom-1")!, children: [] }],
+      },
+    ];
+
+    const snapshot = serializeSessionTree(
+      {
+        getTree: () => tree,
+        getLeafId: () => "custom-1",
+        getEntry: (id: string) => entries.get(id),
+      },
+      "all",
+    );
+
+    const customNode = snapshot.nodes.find((node) => node.id === "custom-1");
+    expect(customNode).toEqual(expect.objectContaining({ id: "custom-1", type: "custom" }));
+    expect(customNode).not.toHaveProperty("textPreview");
+    expect(JSON.stringify(snapshot)).not.toContain("private-extension-state");
+    expect(JSON.stringify(snapshot)).not.toContain("internal");
+  });
+
   it("serializes terminal session trees into mobile outline snapshots", () => {
     const entries = new Map([
       [

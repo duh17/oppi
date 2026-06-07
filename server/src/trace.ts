@@ -111,12 +111,9 @@ interface SessionEntry {
   provider?: string;
   modelId?: string;
   // branch_summary entries
-  // custom/custom_message entries
-  customType?: string;
+  // custom_message entries
   content?: unknown;
-  data?: unknown;
   display?: boolean;
-  details?: unknown;
   // session_info entries
   name?: string;
 }
@@ -248,21 +245,6 @@ export function buildSessionContext(
     visibleEntries = path;
   }
 
-  const visibleEntryIds = new Set(visibleEntries.map((entry) => entry.id));
-  const visibleEntryIndexes = new Map(entries.map((entry, index) => [entry.id, index]));
-  const supplementalCustomEntries = entries.filter(
-    (entry) =>
-      entry.type === "custom" &&
-      !visibleEntryIds.has(entry.id) &&
-      (entry.parentId === null || entry.parentId === undefined) &&
-      entry.display !== false,
-  );
-  if (supplementalCustomEntries.length > 0) {
-    visibleEntries = [...visibleEntries, ...supplementalCustomEntries].sort(
-      (a, b) => (visibleEntryIndexes.get(a.id) ?? 0) - (visibleEntryIndexes.get(b.id) ?? 0),
-    );
-  }
-
   const visibleEntryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
 
   // Convert visible entries to TraceEvents
@@ -338,11 +320,10 @@ export function buildSessionContext(
         }
         break;
 
-      case "custom": {
-        const event = formatCustomEntryEvent(entry, timestamp);
-        if (event) events.push(event);
+      case "custom":
+        // Pi CustomEntry records are extension persistence state from appendEntry().
+        // They do not participate in LLM context and are not timeline presentation.
         break;
-      }
 
       // Skip non-renderable types (session, label, etc.)
       default:
@@ -437,70 +418,6 @@ function collapseWhitespace(value: string): string {
 
 function truncateCustomField(value: string): string {
   return value.length <= 500 ? value : `${value.slice(0, 497)}…`;
-}
-
-function formatCustomEntryEvent(entry: SessionEntry, timestamp: string): TraceEvent | undefined {
-  if (entry.display === false) return undefined;
-  const presentation = customPresentationFromEntry(entry);
-  if (!presentation) return undefined;
-
-  return {
-    id: entry.id,
-    type: "system",
-    timestamp,
-    text: textFromPresentation(presentation),
-    presentation,
-  };
-}
-
-function customPresentationFromEntry(entry: SessionEntry): TraceEventPresentation | undefined {
-  const title = titleFromIdentifier(entry.customType || entry.type || "custom");
-  const source = entry.data ?? entry.content ?? entry.details;
-
-  if (typeof source === "string") {
-    const presentation = customPresentationFromText(source);
-    return { ...presentation, title: presentation.title || title };
-  }
-
-  const record = asRecord(source);
-  if (!record) {
-    return {
-      kind: "custom",
-      title,
-      accent: "info",
-    };
-  }
-
-  const fields = sortPresentationFields(fieldsFromRecord(record));
-  const status = firstFieldValue(fields, "Status");
-  const subtitle = [firstFieldValue(fields, "Type"), firstFieldValue(fields, "Id")]
-    .filter((value): value is string => !!value)
-    .join(" · ");
-
-  return {
-    kind: "custom",
-    title,
-    ...(subtitle ? { subtitle } : {}),
-    ...(status ? { status } : {}),
-    fields: fields.slice(0, 8),
-    accent: accentForStatus(status),
-  };
-}
-
-function fieldsFromRecord(record: Record<string, unknown>): TraceEventPresentationField[] {
-  const fields: TraceEventPresentationField[] = [];
-  for (const [key, value] of Object.entries(record)) {
-    const rendered = renderPrimitiveCustomValue(value);
-    if (!rendered) continue;
-    fields.push({ label: titleFromIdentifier(key), value: truncateCustomField(rendered) });
-  }
-  return fields;
-}
-
-function renderPrimitiveCustomValue(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return undefined;
 }
 
 function sortPresentationFields(

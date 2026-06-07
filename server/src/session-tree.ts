@@ -27,7 +27,6 @@ export interface SessionTreeEntry {
   modelId?: unknown;
   thinkingLevel?: unknown;
   label?: unknown;
-  customType?: unknown;
 }
 
 export interface SessionTreeNode {
@@ -445,13 +444,10 @@ function extractTreeNodeSnapshot(
       };
     }
 
-    case "custom": {
-      const textPreview = previewText(String(entry.customType || ""));
-      return {
-        defaultVisible,
-        ...(textPreview ? { textPreview } : {}),
-      };
-    }
+    case "custom":
+      // Pi CustomEntry records are extension persistence state. Keep tree shape,
+      // but do not surface extension identifiers or data in snapshots.
+      return { defaultVisible };
 
     default:
       return { defaultVisible };

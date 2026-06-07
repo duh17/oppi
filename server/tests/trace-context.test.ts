@@ -349,7 +349,7 @@ describe("buildSessionContext", () => {
     });
   });
 
-  it("suppresses structured custom messages when a parent custom event is visible", () => {
+  it("suppresses structured custom messages when a parent custom persistence entry exists", () => {
     const entries = [
       msg("1", null, "user", "run a subagent"),
       entry("custom", "record-1", "1", {
@@ -370,12 +370,12 @@ describe("buildSessionContext", () => {
     ];
 
     const events = buildSessionContext(entries);
-    expect(events.find((event) => event.id === "record-1")).toBeDefined();
+    expect(events.find((event) => event.id === "record-1")).toBeUndefined();
     expect(events.find((event) => event.id === "raw-xml")).toBeUndefined();
     expect(events.map((event) => event.text ?? "").join("\n")).not.toContain("<task-notification>");
   });
 
-  it("renders generic custom records as presentation-backed system events", () => {
+  it("skips custom records because appendEntry is extension persistence state", () => {
     const entries = [
       msg("1", null, "user", "run build"),
       entry("custom", "2", null, {
@@ -392,24 +392,8 @@ describe("buildSessionContext", () => {
     ];
 
     const events = buildSessionContext(entries);
-    const custom = events.find((event) => event.id === "2");
-    expect(custom).toMatchObject({
-      type: "system",
-      text: expect.stringContaining("Extension Notice"),
-      presentation: {
-        kind: "custom",
-        title: "Extension Notice",
-        subtitle: "build · notice-1",
-        status: "completed",
-        accent: "success",
-        fields: expect.arrayContaining([
-          { label: "Description", value: "Build pipeline finished" },
-          { label: "Result", value: "All checks passed" },
-        ]),
-      },
-    });
-    expect(custom?.text).toContain("Build pipeline finished");
-    expect(custom?.text).toContain("All checks passed");
+    expect(events.find((event) => event.id === "2")).toBeUndefined();
+    expect(events.map((event) => event.text ?? "").join("\n")).not.toContain("Build pipeline finished");
   });
 
   it("does not leak subagent records from an inactive branch", () => {
@@ -442,7 +426,7 @@ describe("buildSessionContext", () => {
     ];
 
     const events = buildSessionContext(entries, { leafId: "3" });
-    expect(events.find((event) => event.id === "custom-active")).toBeDefined();
+    expect(events.find((event) => event.id === "custom-active")).toBeUndefined();
     expect(events.find((event) => event.id === "custom-side")).toBeUndefined();
     expect(events.map((event) => event.text ?? event.output ?? "").join("\n")).not.toContain(
       "Stale result",
