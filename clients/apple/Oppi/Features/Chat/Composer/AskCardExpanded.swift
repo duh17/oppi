@@ -3,7 +3,7 @@ import UIKit
 
 // MARK: - AskCardExpanded
 
-/// Full-screen expanded view for ask questions.
+/// Expanded sheet view for ask questions.
 ///
 /// Presents a vertical option list with full question text, descriptions,
 /// and optional custom text input. Multi-question requests use page
@@ -220,48 +220,11 @@ struct AskCardExpanded: View {
                 }
             }
         } label: {
-            HStack(alignment: .center, spacing: 12) {
-                if question.multiSelect {
-                    Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                        .font(.body)
-                        .foregroundStyle(isSelected ? .themeBlue : .themeComment)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(option.label)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let description = option.description {
-                        Text(description)
-                            .font(.subheadline)
-                            .foregroundStyle(.themeComment)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                Spacer()
-
-                if !question.multiSelect && isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeBlue)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
-            .background(
-                isSelected ? Color.themeBlue.opacity(0.15) : Color.themeBgHighlight,
-                in: RoundedRectangle(cornerRadius: optionCornerRadius)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: optionCornerRadius)
-                    .stroke(
-                        isSelected ? Color.themeBlue.opacity(0.5) : Color.clear,
-                        lineWidth: 1.5
-                    )
+            AskOptionChoiceRow(
+                option: option,
+                isSelected: isSelected,
+                isMultiSelect: question.multiSelect,
+                density: .expanded
             )
         }
         .buttonStyle(.plain)

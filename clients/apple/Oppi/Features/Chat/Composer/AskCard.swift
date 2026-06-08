@@ -75,13 +75,8 @@ struct AskCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var isExpanded: Bool = false
+    @State private var expandedSheetDetent: PresentationDetent = .large
 
-    /// Scales option card width for accessibility Dynamic Type sizes.
-    private var optionCardWidth: CGFloat {
-        Self.optionCardWidth(for: dynamicTypeSize)
-    }
-
-    private let optionCornerRadius: CGFloat = 12
     private let cardCornerRadius: CGFloat = 14
     private let autoAdvanceDelay: Duration = .milliseconds(200)
 
@@ -137,18 +132,7 @@ struct AskCard: View {
             )
             UIAccessibility.post(notification: .announcement, argument: text)
         }
-        .overlay(alignment: .topTrailing) {
-            Button {
-                isExpanded = true
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.caption2)
-                    .foregroundStyle(.themeComment)
-                    .padding(6)
-            }
-            .buttonStyle(.plain)
-        }
-        .fullScreenCover(isPresented: $isExpanded) {
+        .sheet(isPresented: $isExpanded) {
             AskCardExpanded(
                 request: request,
                 currentPage: $currentPage,
@@ -158,6 +142,9 @@ struct AskCard: View {
                 onSubmit: onSubmit,
                 onIgnoreAll: onIgnoreAll
             )
+            .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
         }
     }
 
@@ -168,9 +155,9 @@ struct AskCard: View {
         VStack(alignment: .leading, spacing: 10) {
             questionText(question)
 
-            // Option cards — horizontal scroll
+            // Full-width option rows matching the expanded ask surface.
             if !question.options.isEmpty {
-                optionStrip(for: question)
+                optionRows(for: question)
             }
 
             if let timeoutSummary {
@@ -211,13 +198,18 @@ struct AskCard: View {
         )
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text(question.question)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.themeFg)
-                .lineLimit(usesPreview ? Self.inlineQuestionLineLimit(for: dynamicTypeSize) : nil)
-                .truncationMode(.tail)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Question: \(question.question)")
+            HStack(alignment: .top, spacing: 8) {
+                Text(question.question)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(usesPreview ? Self.inlineQuestionLineLimit(for: dynamicTypeSize) : nil)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Question: \(question.question)")
+
+                expandButton
+            }
 
             if usesPreview {
                 Button {
@@ -234,18 +226,32 @@ struct AskCard: View {
         .padding(.horizontal, 12)
     }
 
-    private func optionStrip(for question: AskQuestion) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(question.options, id: \.value) { option in
-                    optionCard(option, question: question)
-                }
-            }
-            .padding(.horizontal, 12)
+    private var expandButton: some View {
+        Button {
+            isExpanded = true
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.caption)
+                .foregroundStyle(.themeComment)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Expand ask request")
+        .accessibilityIdentifier("ask.expand")
     }
 
-    private func optionCard(_ option: AskOption, question: AskQuestion) -> some View {
+    private func optionRows(for question: AskQuestion) -> some View {
+        VStack(spacing: 8) {
+            ForEach(question.options, id: \.value) { option in
+                optionRow(option, question: question)
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private func optionRow(_ option: AskOption, question: AskQuestion) -> some View {
         let isSelected = AskCardShared.isOptionSelected(option, in: question, answers: answers)
 
         return Button {
@@ -262,43 +268,15 @@ struct AskCard: View {
                 }
             }
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .top, spacing: 4) {
-                    if question.multiSelect {
-                        Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                            .font(.caption)
-                            .foregroundStyle(isSelected ? .themeBlue : .themeComment)
-                    }
-
-                    Text(option.label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let description = option.description {
-                    Text(description)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(width: optionCardWidth, alignment: .topLeading)
-            .frame(minHeight: 56)
-            .padding(10)
-            .background(
-                isSelected ? Color.themeBlue.opacity(0.15) : Color.themeBgHighlight,
-                in: RoundedRectangle(cornerRadius: optionCornerRadius)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: optionCornerRadius)
-                    .stroke(
-                        isSelected ? Color.themeBlue.opacity(0.5) : Color.clear,
-                        lineWidth: 1.5
-                    )
+            AskOptionChoiceRow(
+                option: option,
+                isSelected: isSelected,
+                isMultiSelect: question.multiSelect,
+                density: .inline
             )
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("ask.option.\(option.value)")
     }
 
     private func questionFooter(_ question: AskQuestion) -> some View {
@@ -407,19 +385,6 @@ extension AskCard {
     /// Ask cards now use one page per question (no extra review page).
     static func pageCount(for request: AskRequest) -> Int {
         max(1, request.questions.count)
-    }
-
-    /// Option card width scaled for Dynamic Type accessibility sizes.
-    static func optionCardWidth(for size: DynamicTypeSize) -> CGFloat {
-        switch size {
-        case .accessibility1, .accessibility2, .accessibility3,
-             .accessibility4, .accessibility5:
-            return 200
-        case .xxxLarge, .xxLarge:
-            return 160
-        default:
-            return 120
-        }
     }
 
     static func inlineQuestionLineLimit(for size: DynamicTypeSize) -> Int {

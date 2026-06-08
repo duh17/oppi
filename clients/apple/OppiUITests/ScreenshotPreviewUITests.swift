@@ -46,6 +46,23 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "extension-widget")
     }
 
+    func testAskCardPreview() throws {
+        launchPreview(screen: "ask-card")
+
+        let question = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Which target kinds")).firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 5), "Ask card question not visible")
+        let firstOption = app.staticTexts["Host + sandbox only"]
+        XCTAssertTrue(firstOption.waitForExistence(timeout: 5), "First ask option row not visible")
+
+        saveScreenshot(name: "ask-card-inline")
+
+        app.terminate()
+        launchPreview(screen: "ask-card-expanded-sheet")
+        XCTAssertTrue(app.staticTexts["Or type your answer"].waitForExistence(timeout: 5), "Expanded ask sheet not visible")
+
+        saveScreenshot(name: "ask-card-expanded-sheet")
+    }
+
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 

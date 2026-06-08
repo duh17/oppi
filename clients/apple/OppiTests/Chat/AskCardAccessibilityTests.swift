@@ -6,25 +6,6 @@ import SwiftUI
 @MainActor
 struct AskCardAccessibilityTests {
 
-    // MARK: - Dynamic Type Scaling
-
-    @Test func optionCardWidthDefaultSize() {
-        #expect(AskCard.optionCardWidth(for: .large) == 120)
-        #expect(AskCard.optionCardWidth(for: .medium) == 120)
-        #expect(AskCard.optionCardWidth(for: .xSmall) == 120)
-    }
-
-    @Test func optionCardWidthLargerSizes() {
-        #expect(AskCard.optionCardWidth(for: .xxLarge) == 160)
-        #expect(AskCard.optionCardWidth(for: .xxxLarge) == 160)
-    }
-
-    @Test func optionCardWidthAccessibilitySizes() {
-        #expect(AskCard.optionCardWidth(for: .accessibility1) == 200)
-        #expect(AskCard.optionCardWidth(for: .accessibility3) == 200)
-        #expect(AskCard.optionCardWidth(for: .accessibility5) == 200)
-    }
-
     // MARK: - Page Announcements
 
     private func sampleQuestions() -> [AskQuestion] {

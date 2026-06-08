@@ -83,3 +83,108 @@ enum AskCardShared {
         }
     }
 }
+
+// MARK: - Shared Option Row
+
+struct AskOptionChoiceRow: View {
+    enum Density {
+        case inline
+        case expanded
+
+        var labelFont: Font {
+            switch self {
+            case .inline: return .subheadline.weight(.semibold)
+            case .expanded: return .body.weight(.semibold)
+            }
+        }
+
+        var descriptionFont: Font {
+            switch self {
+            case .inline: return .caption
+            case .expanded: return .subheadline
+            }
+        }
+
+        var iconFont: Font {
+            switch self {
+            case .inline: return .subheadline
+            case .expanded: return .body
+            }
+        }
+
+        var horizontalPadding: CGFloat {
+            switch self {
+            case .inline: return 12
+            case .expanded: return 16
+            }
+        }
+
+        var verticalPadding: CGFloat {
+            switch self {
+            case .inline: return 10
+            case .expanded: return 14
+            }
+        }
+
+        var minimumHeight: CGFloat {
+            switch self {
+            case .inline: return 52
+            case .expanded: return 50
+            }
+        }
+
+        var cornerRadius: CGFloat { 12 }
+    }
+
+    let option: AskOption
+    let isSelected: Bool
+    let isMultiSelect: Bool
+    let density: Density
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if isMultiSelect {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .font(density.iconFont)
+                    .foregroundStyle(isSelected ? .themeBlue : .themeComment)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(option.label)
+                    .font(density.labelFont)
+                    .foregroundStyle(.themeFg)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let description = option.description {
+                    Text(description)
+                        .font(density.descriptionFont)
+                        .foregroundStyle(.themeComment)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if !isMultiSelect && isSelected {
+                Image(systemName: "checkmark")
+                    .font(density.iconFont.weight(.semibold))
+                    .foregroundStyle(.themeBlue)
+            }
+        }
+        .padding(.horizontal, density.horizontalPadding)
+        .padding(.vertical, density.verticalPadding)
+        .frame(maxWidth: .infinity, minHeight: density.minimumHeight, alignment: .leading)
+        .background(
+            isSelected ? Color.themeBlue.opacity(0.15) : Color.themeBgHighlight,
+            in: RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
+                .stroke(
+                    isSelected ? Color.themeBlue.opacity(0.5) : Color.clear,
+                    lineWidth: 1.5
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous))
+    }
+}

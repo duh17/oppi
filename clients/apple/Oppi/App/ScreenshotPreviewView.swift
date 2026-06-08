@@ -25,6 +25,10 @@ struct ScreenshotPreviewView: View {
             SessionTimelinePreview()
         case "extension-widget":
             ExtensionSurfacePreview()
+        case "ask-card":
+            AskCardPreview()
+        case "ask-card-expanded-sheet":
+            AskCardExpandedSheetPreview()
         case "context-bar-overlap":
             ContextBarOverlapPreview()
         case "voice-message-expanded":
@@ -112,6 +116,186 @@ private struct ExtensionSurfacePreview: View {
             .padding(.horizontal, 16)
             .padding(.top, 24)
         }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Ask Card Preview
+
+private enum AskCardPreviewFixture {
+    static let request = AskRequest(
+        id: "preview-ask-card",
+        sessionId: "preview-session",
+        questions: [
+            AskQuestion(
+                id: "target-kind",
+                question: "Which target kinds should the core `POST /clankers` support in v1? This matters because `/clankers/:id/input` already handles existing sessions, so `target.kind = \"session\"` may be redundant.",
+                options: [
+                    AskOption(
+                        value: "host-sandbox",
+                        label: "Host + sandbox only",
+                        description: "Recommended: create new clankers only; existing clankers use `/clankers/:id/input`."
+                    ),
+                    AskOption(
+                        value: "sandbox",
+                        label: "Sandbox only",
+                        description: "Start safest: all generic clankers run in Gondolin; workspace host route remains compatibility only."
+                    ),
+                    AskOption(
+                        value: "host-workspace-sandbox",
+                        label: "Host workspace + sandbox",
+                        description: "Include `{kind: \"workspace\"}` as a convenience target while keeping host execution explicit."
+                    ),
+                ],
+                multiSelect: false
+            ),
+        ],
+        allowCustom: true,
+        timeout: nil,
+        customPlaceholder: "Type a custom target policy"
+    )
+}
+
+private struct AskCardPreview: View {
+    @State private var currentPage = 0
+    @State private var answers: [String: AskAnswer] = [:]
+    @State private var lastAction = "Waiting for answer"
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    WorkingSpinnerView(tintColor: .themeComment.opacity(0.8), style: .brailleDots)
+                        .frame(width: 14, height: 14)
+                    Text("working…")
+                        .font(.title2.weight(.medium))
+                        .foregroundStyle(.themeComment.opacity(0.7))
+                }
+                .padding(.horizontal, 18)
+
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 0) {
+                    AskCard(
+                        request: AskCardPreviewFixture.request,
+                        currentPage: $currentPage,
+                        answers: $answers,
+                        onSubmit: { submittedAnswers in
+                            lastAction = AskResponseEncoder.encode(submittedAnswers)
+                        },
+                        onIgnoreAll: {
+                            lastAction = "Ignored"
+                        }
+                    )
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+
+                    HStack(alignment: .center, spacing: 14) {
+                        Circle()
+                            .fill(Color.themeBgHighlight)
+                            .overlay(
+                                Image(systemName: "mic")
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(.themeFg)
+                            )
+                            .frame(width: 58, height: 58)
+                            .overlay(Circle().stroke(Color.themeComment.opacity(0.3), lineWidth: 1))
+
+                        Text("Type answer…")
+                            .font(.title2)
+                            .foregroundStyle(.themeComment)
+
+                        Spacer()
+
+                        Circle()
+                            .fill(Color.themeBgHighlight)
+                            .overlay(
+                                Image(systemName: "xmark")
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(.themeFg)
+                            )
+                            .frame(width: 58, height: 58)
+                            .overlay(Circle().stroke(Color.themeComment.opacity(0.3), lineWidth: 1))
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+
+                    HStack {
+                        Text(lastAction)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment.opacity(0.75))
+                            .lineLimit(1)
+
+                        Spacer()
+
+                        Label("gpt-5.5", systemImage: "sparkle")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.themeBgHighlight, in: Capsule())
+
+                        Text("max")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.themeBgHighlight, in: Capsule())
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 14)
+                }
+                .background(Color.themeBg.opacity(0.96), in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .stroke(Color.themeComment.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 24)
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct AskCardExpandedSheetPreview: View {
+    @State private var currentPage = 0
+    @State private var answers: [String: AskAnswer] = [:]
+    @State private var isExpanded = true
+    @State private var expandedSheetDetent: PresentationDetent = .large
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(spacing: 12) {
+                Text("Ask card")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("Expanded sheet preview")
+                    .font(.subheadline)
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .sheet(isPresented: $isExpanded) {
+            AskCardExpanded(
+                request: AskCardPreviewFixture.request,
+                currentPage: $currentPage,
+                answers: $answers,
+                isExpanded: $isExpanded,
+                onSubmit: { _ in },
+                onIgnoreAll: {}
+            )
+            .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+        }
+        .onAppear { isExpanded = true }
         .accessibilityIdentifier("screenshot.ready")
     }
 }
