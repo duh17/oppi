@@ -116,6 +116,7 @@ interface SubagentsConfig {
 const POLL_INTERVAL_MS = 2_000;
 const STARTUP_RESOLVE_RETRY_MS = 2_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 30 * 60_000;
+const RECENT_SESSION_LOOKUP_DAYS = 30;
 const MAX_HTTP_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const spawnAgentParams = Type.Object({
@@ -429,8 +430,11 @@ function pathSegment(value: string): string {
 
 async function fetchRecentSessions(
   descriptor: OppiSubagentsApiDescriptor,
+  piSessionId?: string,
 ): Promise<SessionSummary[]> {
-  const result = await requestJson<SessionsResponse>(descriptor, "/sessions/recent");
+  const search = new URLSearchParams({ recentDays: String(RECENT_SESSION_LOOKUP_DAYS) });
+  if (piSessionId) search.set("piSessionId", piSessionId);
+  const result = await requestJson<SessionsResponse>(descriptor, `/sessions/recent?${search}`);
   return result.sessions ?? [];
 }
 
@@ -829,7 +833,7 @@ export function createOppiSubagentsExtension(
     const piSessionId = getCurrentPiSessionId(ctx);
     if (!piSessionId) return undefined;
     try {
-      const sessions = await fetchRecentSessions(descriptor);
+      const sessions = await fetchRecentSessions(descriptor, piSessionId);
       const origin = sessions.find((session) => session.piSessionId === piSessionId);
       if (!origin?.workspaceId) return undefined;
       const config = readSubagentsConfig();

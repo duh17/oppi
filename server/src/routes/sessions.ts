@@ -665,6 +665,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const recentDaysParam = Number.parseInt(url.searchParams.get("recentDays") ?? "", 10);
     const recentDays =
       Number.isFinite(recentDaysParam) && recentDaysParam > 0 ? recentDaysParam : 0;
+    const piSessionIdFilter = url.searchParams.get("piSessionId")?.trim();
     const serverNow = Date.now();
 
     const projectedSessions = ctx.storage
@@ -676,13 +677,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         ).filter(isOpenableManagedListSession),
       );
     const attention = collectPendingAttentionCounts();
-    const sessions = buildManagedSessionListRows(
+    let sessions = buildManagedSessionListRows(
       mergeActiveSessionsAcrossWorkspaces(
         projectedSessions,
         recentDays > 0 ? { cutoffMs: serverNow - recentDays * 86_400_000 } : {},
       ),
       attention,
     );
+    if (piSessionIdFilter) {
+      sessions = sessions.filter((session) => session.piSessionId === piSessionIdFilter);
+    }
 
     helpers.compressedJson(req, res, { sessions });
   }

@@ -9,16 +9,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  posix,
-  relative,
-  resolve as resolvePath,
-} from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
 import {
   createAgentSession,
@@ -52,6 +43,10 @@ import {
 } from "../extensions/built-ins.js";
 import { createAskFactory } from "../extensions/ask.js";
 import { createOppiAdminFactory } from "../extensions/oppi-admin.js";
+import {
+  createOppiSubagentsExtension,
+  type OppiSubagentsApiDescriptor,
+} from "../extensions/oppi-subagents.js";
 import { createVoiceFactory } from "../extensions/voice.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Storage } from "./storage.js";
@@ -60,7 +55,7 @@ import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { extensionNameFromPath } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
-import type { Session, Workspace } from "./types.js";
+import type { ServerConfig, Session, Workspace } from "./types.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
 
@@ -328,7 +323,66 @@ export interface SdkBackendConfig {
 
 const log = createLogger({ base: { component: "sdk_backend" } });
 
+function normalizeInternalBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function localApiHost(host: string): string {
+  const trimmed = host.trim();
+  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
+    return "127.0.0.1";
+  }
+  return trimmed;
+}
+
+function managedSubagentsBaseUrl(config: ServerConfig): string {
+  const directServerUrl = (config as ServerConfig & { serverUrl?: unknown }).serverUrl;
+  if (typeof directServerUrl === "string" && directServerUrl.trim().length > 0) {
+    return normalizeInternalBaseUrl(directServerUrl);
+  }
+
+  const scheme = config.tls?.mode === "disabled" ? "http" : "https";
+  return `${scheme}://${localApiHost(config.host)}:${config.port}`;
+}
+
+function sessionDepthFromStorage(session: Session, storage: Storage): number {
+  let depth = 0;
+  let current: Session | undefined = session;
+  const seen = new Set<string>();
+  while (current?.parentSessionId && !seen.has(current.parentSessionId)) {
+    seen.add(current.parentSessionId);
+    const parent = storage.getSession(current.parentSessionId);
+    if (!parent) break;
+    depth += 1;
+    current = parent;
+  }
+  return depth;
+}
+
+function createManagedSubagentsDescriptor(
+  session: Session,
+  workspace: Workspace | undefined,
+  storage: Storage,
+): OppiSubagentsApiDescriptor | undefined {
+  const workspaceId = session.workspaceId ?? workspace?.id;
+  if (!workspaceId) return undefined;
+
+  const config = storage.getConfig();
+  const maxDepth = config.extensions?.subagents?.maxDepth ?? 1;
+  return {
+    version: 1,
+    baseUrl: managedSubagentsBaseUrl(config),
+    token: config.token,
+    originSessionId: session.id,
+    workspaceId,
+    runtime: "oppi",
+    canSpawn: sessionDepthFromStorage(session, storage) < maxDepth,
+    defaultWaitTimeoutMs: config.extensions?.subagents?.defaultWaitTimeoutMs,
+  };
+}
+
 function createBuiltInExtensionFactories(
+  session: Session,
   workspace: Workspace | undefined,
   context: BuiltInExtensionContext | undefined,
 ): ExtensionFactory[] {
@@ -346,8 +400,11 @@ function createBuiltInExtensionFactories(
       case "ask":
         factories.push(createAskFactory());
         break;
-      case "subagents":
+      case "subagents": {
+        const descriptor = createManagedSubagentsDescriptor(session, workspace, context.storage);
+        factories.push((pi) => createOppiSubagentsExtension(pi, descriptor ? { descriptor } : {}));
         break;
+      }
       case "voice":
         factories.push(createVoiceFactory(context.storage));
         break;
@@ -357,24 +414,6 @@ function createBuiltInExtensionFactories(
     }
   }
   return factories;
-}
-
-function bundledOppiSubagentsExtensionPath(): string {
-  const currentFile = fileURLToPath(import.meta.url);
-  const ext = currentFile.endsWith(".ts") ? "ts" : "js";
-  const baseDir = dirname(currentFile);
-  const candidateRelativePaths = [
-    ["..", "..", "pi-extensions", "oppi-subagents", `index.${ext}`],
-    ["..", "..", "pi-extensions", "oppi-subagents", "index.ts"],
-    ["..", "..", "..", "pi-extensions", "oppi-subagents", `index.${ext}`],
-    ["..", "..", "..", "pi-extensions", "oppi-subagents", "index.ts"],
-  ];
-  for (const parts of candidateRelativePaths) {
-    const candidate = join(baseDir, ...parts);
-    if (existsSync(candidate)) return candidate;
-  }
-
-  return join(baseDir, "..", "extensions", `oppi-subagents.${ext}`);
 }
 
 function syncSessionIdentityFromManager(session: Session, manager: PiSessionManager): void {
@@ -537,22 +576,18 @@ export class SdkBackend {
         });
       }
       extensionFactories.push(
-        ...createBuiltInExtensionFactories(workspace, config.builtInExtensionContext),
+        ...createBuiltInExtensionFactories(session, workspace, config.builtInExtensionContext),
       );
       if (config.extraExtensionFactories) {
         extensionFactories.push(...config.extraExtensionFactories);
       }
-      const subagentsExtensionPath = isWorkspaceBuiltInExtensionEnabled(workspace, "subagents")
-        ? bundledOppiSubagentsExtensionPath()
-        : undefined;
-      const additionalExtensionPaths = [permissionGateExtensionPath, subagentsExtensionPath].filter(
+      const additionalExtensionPaths = [permissionGateExtensionPath].filter(
         (path): path is string => typeof path === "string" && path.length > 0,
       );
 
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
-      // Oppi's inline built-ins are registered above; subagents is loaded as
-      // the same bundled native Pi extension used by mirrored TUI sessions.
+      // Oppi's built-ins, including managed SDK subagents, are registered above.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -611,7 +646,6 @@ export class SdkBackend {
             workspaceExtensions: allowedNames,
             permissionGateEnabled: usePermissionGate,
             permissionGatePath: permissionGateExtensionPath,
-            bundledExtensionPaths: subagentsExtensionPath ? [subagentsExtensionPath] : undefined,
           });
 
           // Debug: log extension filtering

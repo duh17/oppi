@@ -1,3 +1,4 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -159,10 +160,97 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeBuiltInContext(): BuiltInExtensionContext {
+function makeBuiltInContext(
+  storageOverrides: Record<string, unknown> = {},
+): BuiltInExtensionContext {
   return {
-    storage: {} as never,
+    storage: {
+      getConfig: () => ({
+        port: 1,
+        host: "127.0.0.1",
+        dataDir: tmpdir(),
+        sessionIdleTimeoutMs: 0,
+        workspaceIdleTimeoutMs: 0,
+        maxSessionsPerWorkspace: 10,
+        maxSessionsGlobal: 10,
+        tls: { mode: "disabled" },
+        token: "test-token",
+        extensions: {
+          subagents: {
+            maxDepth: 1,
+            autoStopWhenDone: true,
+            childIdleTimeoutMs: 300_000,
+            startupGraceMs: 60_000,
+            defaultWaitTimeoutMs: 1_800_000,
+          },
+        },
+      }),
+      getSession: () => undefined,
+      ...storageOverrides,
+    } as never,
   };
+}
+
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const text = Buffer.concat(chunks).toString("utf8");
+  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+}
+
+function writeJson(res: ServerResponse, status: number, value: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(value));
+}
+
+async function startApiServer(
+  handler: (req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>) => void,
+): Promise<{
+  baseUrl: string;
+  port: number;
+  requests: Array<{ method: string; path: string; search: string; body: Record<string, unknown> }>;
+  close: () => Promise<void>;
+}> {
+  const requests: Array<{
+    method: string;
+    path: string;
+    search: string;
+    body: Record<string, unknown>;
+  }> = [];
+  const server = createServer((req, res) => {
+    void readBody(req)
+      .then((body) => {
+        const url = new URL(req.url ?? "/", "http://127.0.0.1");
+        requests.push({
+          method: req.method ?? "GET",
+          path: url.pathname,
+          search: url.search,
+          body,
+        });
+        handler(req, res, body);
+      })
+      .catch((error: unknown) => {
+        writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("server did not bind to a port");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    port: address.port,
+    requests,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for predicate");
 }
 
 describe("SdkBackend sandbox", () => {
@@ -313,23 +401,74 @@ describe("SdkBackend built-in extensions", () => {
     }
   });
 
-  it("loads subagents through the bundled native Pi extension", async () => {
+  it("loads managed subagents with the current SDK session as origin", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-subagents-native-"));
-    const backend = await SdkBackend.create({
-      session: makeSession(),
-      workspace: {
-        id: "w1",
-        name: "Subagents Native Test",
-        runtime: "host",
-        hostMount: cwd,
-        extensions: ["subagents"],
-      } as Workspace,
-      builtInExtensionContext: makeBuiltInContext(),
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
+    const parent = {
+      ...makeSession({ id: "sess-test", workspaceId: "w1", status: "ready" }),
+      name: "Parent",
+    };
+    const child = {
+      ...makeSession({ id: "child-sdk", workspaceId: "w1", status: "starting" }),
+      name: "sdk child",
+      parentSessionId: "sess-test",
+    };
+    const api = await startApiServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/workspaces/w1/sessions/sess-test" && req.method === "GET") {
+        writeJson(res, 200, { session: parent, trace: [] });
+        return;
+      }
+      if (url.pathname === "/workspaces/w1/sessions" && req.method === "GET") {
+        writeJson(res, 200, { active: [] });
+        return;
+      }
+      if (url.pathname === "/workspaces/w1/sessions" && req.method === "POST") {
+        writeJson(res, 201, { session: child });
+        return;
+      }
+      writeJson(res, 404, { error: "not found" });
     });
+    let backend: SdkBackend | undefined;
 
     try {
+      backend = await SdkBackend.create({
+        session: makeSession({ id: "sess-test", workspaceId: "w1" }),
+        workspace: {
+          id: "w1",
+          name: "Subagents Native Test",
+          runtime: "host",
+          hostMount: cwd,
+          extensions: ["subagents"],
+        } as Workspace,
+        builtInExtensionContext: makeBuiltInContext({
+          getConfig: () => ({
+            port: api.port,
+            host: "127.0.0.1",
+            dataDir: tmpdir(),
+            sessionIdleTimeoutMs: 0,
+            workspaceIdleTimeoutMs: 0,
+            maxSessionsPerWorkspace: 10,
+            maxSessionsGlobal: 10,
+            tls: { mode: "disabled" },
+            token: "test-token",
+            extensions: {
+              subagents: {
+                maxDepth: 1,
+                autoStopWhenDone: true,
+                childIdleTimeoutMs: 300_000,
+                startupGraceMs: 60_000,
+                defaultWaitTimeoutMs: 1_800_000,
+              },
+            },
+          }),
+        }),
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      await waitUntil(() =>
+        api.requests.some((request) => request.path === "/workspaces/w1/sessions/sess-test"),
+      );
+
       const resourceLoader = (
         backend as unknown as {
           runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
@@ -337,15 +476,41 @@ describe("SdkBackend built-in extensions", () => {
       ).runtime.services.resourceLoader;
       const extensions = resourceLoader.getExtensions().extensions;
       const subagents = extensions.find(
-        (ext) => ext.resolvedPath.includes("oppi-subagents") && ext.tools.has("inspect_agent"),
+        (ext) => ext.path.startsWith("<inline:") && ext.tools.has("inspect_agent"),
       );
+      const spawn = subagents?.tools.get("spawn_agent")?.definition as
+        | {
+            execute: (
+              toolCallId: string,
+              params: Record<string, unknown>,
+              signal?: AbortSignal,
+              onUpdate?: unknown,
+              ctx?: unknown,
+            ) => Promise<{
+              content: Array<{ type: string; text?: string }>;
+              details?: Record<string, unknown>;
+              isError?: boolean;
+            }>;
+          }
+        | undefined;
 
-      expect(subagents?.path).toContain("pi-extensions/oppi-subagents");
-      expect(subagents?.path).not.toContain("extension-wrappers");
-      expect(subagents?.tools.has("spawn_agent")).toBe(true);
       expect(subagents?.tools.has("send_message")).toBe(true);
+      expect(spawn).toBeDefined();
+      const result = await spawn?.execute("tc-sdk", {
+        message: "Check SDK subagent wiring",
+        name: "sdk child",
+      });
+
+      expect(api.requests.some((request) => request.path === "/sessions/recent")).toBe(false);
+      const createRequest = api.requests.find(
+        (request) => request.method === "POST" && request.path === "/workspaces/w1/sessions",
+      );
+      expect(createRequest?.body.parentSessionId).toBe("sess-test");
+      expect(result?.isError).not.toBe(true);
+      expect(result?.details).toMatchObject({ agentId: "child-sdk" });
     } finally {
-      await backend.dispose();
+      if (backend) await backend.dispose();
+      await api.close();
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -729,8 +894,7 @@ describe("SdkBackend extension UI bridge", () => {
           typeof record.workingVisible === "boolean" ? record.workingVisible : undefined,
         hiddenThinkingLabel:
           typeof record.hiddenThinkingLabel === "string" ? record.hiddenThinkingLabel : undefined,
-        toolsExpanded:
-          typeof record.toolsExpanded === "boolean" ? record.toolsExpanded : undefined,
+        toolsExpanded: typeof record.toolsExpanded === "boolean" ? record.toolsExpanded : undefined,
         text: typeof record.text === "string" ? record.text : undefined,
       };
       requests.push(request);
