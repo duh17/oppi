@@ -57,11 +57,11 @@ func fullScreenAttributedCodeText(
     return mutable
 }
 
-/// UITextView variant that also contributes the review-comment action through
-/// UIResponder menu building. Some readonly full-screen text views do not
-/// reliably ask their delegate for `editMenuForTextIn` on newer iOS builds,
-/// so the delegate path below remains the testable primary path while this
-/// responder hook keeps the visible selection menu populated on-device.
+/// UITextView variant that shows a review-comment action near selected text.
+///
+/// The system edit menu is owned by each body view's `UITextViewDelegate` via
+/// `editMenuForTextIn`. This view only owns the separate floating selection bar
+/// so UIKit does not receive the same `Comment` action from two menu paths.
 final class FullScreenReviewCommentTextView: UITextView {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -113,14 +113,6 @@ final class FullScreenReviewCommentTextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
         scheduleSelectionBarUpdate()
-    }
-
-    override func buildMenu(with builder: any UIMenuBuilder) {
-        super.buildMenu(with: builder)
-
-        guard let action = reviewCommentMenuAction() else { return }
-        let menu = UIMenu(title: "", options: .displayInline, children: [action])
-        builder.insertSibling(menu, beforeMenu: .standardEdit)
     }
 
     private func scheduleSelectionBarUpdate() {
@@ -257,26 +249,6 @@ final class FullScreenReviewCommentTextView: UITextView {
         return anchor.integral
     }
 
-    private func reviewCommentMenuAction() -> UIAction? {
-        guard let router = reviewCommentSelectionRouter,
-              let sourceContext = reviewCommentSourceContext,
-              let selectedText = ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange) else {
-            return nil
-        }
-
-        return ReviewCommentSelectionMenuBuilder.commentAction(
-            selectedText: selectedText,
-            sourceContext: ReviewCommentSelectionEditMenuSupport.enrichedSourceContext(
-                sourceContext,
-                textView: self,
-                range: selectedRange
-            ),
-            router: router,
-            presentingViewController: nearestViewController(from: self),
-            textView: self,
-            selectedRange: selectedRange
-        )
-    }
 }
 
 private final class FullScreenReviewCommentSelectionBar: UIButton {

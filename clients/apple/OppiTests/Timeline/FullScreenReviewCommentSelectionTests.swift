@@ -23,7 +23,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
-    @Test func codeBodyInstallsResponderMenuFallback() throws {
+    @Test func codeBodyConfiguresSelectionCommentContext() throws {
         let controller = makeController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
         )
@@ -392,7 +392,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
-    @Test func sourceBodyInstallsResponderMenuFallback() throws {
+    @Test func sourceBodyConfiguresSelectionCommentContext() throws {
         let controller = makeController(
             content: .plainText(content: "raw source", filePath: "Notes.txt")
         )
