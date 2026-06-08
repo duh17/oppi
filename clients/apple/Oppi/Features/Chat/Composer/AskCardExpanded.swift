@@ -523,6 +523,13 @@ struct AskCardExpanded: View {
         )
     }
 
+    private func dictationPrefixBinding() -> Binding<String?> {
+        Binding(
+            get: { dictationPrefixText },
+            set: { dictationPrefixText = $0 ?? "" }
+        )
+    }
+
     private func commitCustomText(for question: AskQuestion) {
         let text = (customTexts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
@@ -606,10 +613,18 @@ struct AskCardExpanded: View {
         defer { clearDictationState() }
 
         if manager.isRecording {
-            let transcript = await manager.stopRecording()
-            applyDictationTranscript(transcript, for: questionId)
+            await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                manager: manager,
+                owner: .askCard,
+                text: customTextBinding(for: questionId),
+                textBeforeRecording: dictationPrefixBinding()
+            )
         } else if manager.isPreparing {
-            await manager.cancelRecording()
+            await ComposerShared.cancelOwnedVoiceInput(
+                manager: manager,
+                owner: .askCard,
+                textBeforeRecording: dictationPrefixBinding()
+            )
         }
     }
 
@@ -623,10 +638,11 @@ struct AskCardExpanded: View {
         clearDictationState()
 
         Task {
-            if ComposerShared.ownsVoiceInput(manager, owner: .askCard),
-               manager.isRecording || manager.isPreparing {
-                await manager.cancelRecording()
-            }
+            await ComposerShared.cancelOwnedVoiceInput(
+                manager: manager,
+                owner: .askCard,
+                textBeforeRecording: dictationPrefixBinding()
+            )
         }
     }
 

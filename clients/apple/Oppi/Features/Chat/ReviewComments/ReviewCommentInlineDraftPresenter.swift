@@ -506,7 +506,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         suppressKeyboard = false
         inputTextView.setKeyboardSuppressed(false)
         Task { @MainActor in
-            await manager.cancelRecording()
+            await ComposerShared.cancelOwnedVoiceInput(
+                manager: manager,
+                owner: .reviewCommentInline,
+                textBeforeRecording: recordingPrefixBinding(),
+                suppressKeyboard: suppressKeyboardBinding()
+            )
         }
     }
 
@@ -827,19 +832,13 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             updateSaveButton()
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if manager.isRecording {
-                    await ComposerShared.stopVoiceInput(
-                        manager: manager,
-                        text: textBinding(),
-                        textBeforeRecording: recordingPrefixBinding()
-                    )
-                } else {
-                    await ComposerShared.cancelVoiceInput(
-                        manager: manager,
-                        textBeforeRecording: recordingPrefixBinding(),
-                        suppressKeyboard: suppressKeyboardBinding()
-                    )
-                }
+                await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                    manager: manager,
+                    owner: .reviewCommentInline,
+                    text: textBinding(),
+                    textBeforeRecording: recordingPrefixBinding(),
+                    suppressKeyboard: suppressKeyboardBinding()
+                )
                 suppressKeyboard = false
                 inputTextView.setKeyboardSuppressed(false)
                 saveCurrentBody()

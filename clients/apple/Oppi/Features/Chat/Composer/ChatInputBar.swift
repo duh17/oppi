@@ -76,6 +76,9 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Used during voice recording to show cursor without keyboard.
     @State private var suppressKeyboard = false
 
+    /// Prevents double-submit while final dictation text is being committed.
+    @State private var isFinishingVoiceBeforeSend = false
+
     /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
     /// Updated by PastableTextView when the keyboard input mode changes.
     /// Read at mic-tap time to select the correct speech model.
@@ -155,21 +158,25 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var sendActionFillColor: Color {
-        if isSending {
+        if isSendInFlight {
             return isBusy ? .themePurple : accentColor
         }
         return canSend ? (isBusy ? .themePurple : accentColor) : .themeBgHighlight
     }
 
+    private var isSendInFlight: Bool {
+        isSending || isFinishingVoiceBeforeSend
+    }
+
     private var sendActionStrokeColor: Color {
-        if isSending {
+        if isSendInFlight {
             return sendActionFillColor.opacity(0.9)
         }
         return canSend ? sendActionFillColor.opacity(0.9) : .themeComment.opacity(0.35)
     }
 
     private var sendActionForegroundColor: Color {
-        guard canSend || isSending else { return .themeComment }
+        guard canSend || isSendInFlight else { return .themeComment }
         return ThemeColorContrast.foreground(for: sendActionFillColor)
     }
 
@@ -177,7 +184,7 @@ struct ChatInputBar<ActionRow: View>: View {
         Self.primaryActionKind(
             isBusy: isBusy,
             canSend: canSend,
-            isSending: isSending,
+            isSending: isSendInFlight,
             hasAskRequest: askRequest != nil
         )
     }
@@ -613,7 +620,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 Circle().fill(sendActionFillColor)
                 Circle().stroke(sendActionStrokeColor, lineWidth: 1)
 
-                if isSending {
+                if isSendInFlight {
                     ProgressView()
                         .controlSize(.mini)
                         .tint(sendActionForegroundColor)
@@ -626,9 +633,9 @@ struct ChatInputBar<ActionRow: View>: View {
             .frame(width: actionVisualDiameter, height: actionVisualDiameter)
         }
         .buttonStyle(.plain)
-        .disabled(!canSend || isSending)
+        .disabled(!canSend || isSendInFlight)
         .accessibilityIdentifier("chat.send")
-        .accessibilityLabel(isSending ? "Sending" : "Send")
+        .accessibilityLabel(isSendInFlight ? "Sending" : "Send")
     }
 
     private var ignoreAskActionButton: some View {
@@ -964,25 +971,21 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func handleSend() {
-        guard !isSending else { return }
+        guard !isSendInFlight else { return }
 
-        // Stop voice recording before sending. We await the stop so the final
-        // transcript (including any last active tail from dictation_final)
-        // updates the text field before onSend() captures it.
         if let manager = voiceInputManager,
            ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer),
            manager.isRecording || manager.isPreparing {
-            textBeforeRecording = nil
-            suppressKeyboard = Self.suppressKeyboardAfterSend(
-                voiceState: manager.state,
-                wasSuppressed: suppressKeyboard
-            )
-            Task {
-                if manager.isRecording {
-                    await manager.stopRecording()
-                } else {
-                    await manager.cancelRecording()
-                }
+            isFinishingVoiceBeforeSend = true
+            Task { @MainActor in
+                await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                    manager: manager,
+                    owner: .inlineComposer,
+                    text: $text,
+                    textBeforeRecording: $textBeforeRecording,
+                    suppressKeyboard: $suppressKeyboard
+                )
+                isFinishingVoiceBeforeSend = false
                 submitCurrentComposerAction()
             }
             return
@@ -1029,7 +1032,7 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func handleAlternateSend() {
-        guard !isSending else { return }
+        guard !isSendInFlight else { return }
 
         if isBusy {
             busyStreamingBehavior = .followUp

@@ -456,6 +456,49 @@ enum ComposerShared {
         suppressKeyboard.wrappedValue = false
     }
 
+    @discardableResult
+    static func finishOwnedVoiceInputBeforeSubmit(
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner,
+        text: Binding<String>,
+        textBeforeRecording: Binding<String?>,
+        suppressKeyboard: Binding<Bool>? = nil
+    ) async -> Bool {
+        guard let manager,
+              ownsVoiceInput(manager, owner: owner),
+              manager.isRecording || manager.isPreparing else { return false }
+
+        if manager.isRecording {
+            await stopVoiceInput(
+                manager: manager,
+                text: text,
+                textBeforeRecording: textBeforeRecording
+            )
+        } else {
+            await manager.cancelRecording()
+            textBeforeRecording.wrappedValue = nil
+        }
+        suppressKeyboard?.wrappedValue = false
+        return true
+    }
+
+    @discardableResult
+    static func cancelOwnedVoiceInput(
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner,
+        textBeforeRecording: Binding<String?>,
+        suppressKeyboard: Binding<Bool>? = nil
+    ) async -> Bool {
+        guard let manager,
+              ownsVoiceInput(manager, owner: owner),
+              manager.isRecording || manager.isPreparing else { return false }
+
+        await manager.cancelRecording()
+        textBeforeRecording.wrappedValue = nil
+        suppressKeyboard?.wrappedValue = false
+        return true
+    }
+
     static func handleKeyboardRestore(
         suppressKeyboard: Binding<Bool>,
         textBeforeRecording: Binding<String?>,

@@ -306,107 +306,110 @@ private struct ExtensionDialogSheet: View {
 
     @State private var inputValue: String = ""
     @State private var isSubmitting = false
-    @State private var editorKeyboardLanguage: String?
-    @State private var editorFocusRequestID = 0
+    @State private var editorTextBeforeRecording: String?
+    @State private var editorPendingAttachments: [PendingAttachment] = []
+    @State private var editorPendingRepoPointers: [PendingFileReference] = []
+    @State private var editorVoiceInputManager = VoiceInputManager()
 
     var body: some View {
-        NavigationStack {
-            sheetContent
-            .navigationTitle(dialogTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", role: .cancel) {
-                        cancelRequest()
-                    }
-                    .disabled(isSubmitting)
-                    .accessibilityIdentifier("extension.dialog.cancel")
-                }
-
-                if request.nativePresentation == .editorSheet {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Submit") {
-                            submitCurrentValue()
+        Group {
+            if request.nativePresentation == .editorSheet {
+                extensionEditorContent
+            } else {
+                NavigationStack {
+                    sheetContent
+                        .navigationTitle(dialogTitle)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Cancel", role: .cancel) {
+                                    cancelRequest()
+                                }
+                                .disabled(isSubmitting)
+                                .accessibilityIdentifier("extension.dialog.cancel")
+                            }
                         }
-                        .disabled(isSubmitting)
-                        .accessibilityIdentifier("extension.dialog.submit")
-                    }
                 }
             }
         }
         .task(id: request.id) {
             inputValue = request.prefill ?? ""
             isSubmitting = false
+            editorTextBeforeRecording = nil
+            editorPendingAttachments = []
+            editorPendingRepoPointers = []
+            configureEditorVoiceInput()
+            if ReleaseFeatures.voiceInputEnabled {
+                await editorVoiceInputManager.prewarm(source: "extension_editor_task")
+            }
         }
     }
 
-    @ViewBuilder
     private var sheetContent: some View {
-        if request.nativePresentation == .editorSheet {
-            extensionEditorContent
-        } else {
-            Form {
-                if let message = request.message, !message.isEmpty {
-                    Section {
-                        Text(message)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                }
-
+        Form {
+            if let message = request.message, !message.isEmpty {
                 Section {
-                    ContentUnavailableView(
-                        "Unsupported extension UI",
-                        systemImage: "questionmark.app",
-                        description: Text("This extension asked for \"\(request.method)\". Cancel and try the task another way.")
-                    )
-                }
-
-                if let timeoutSummary {
-                    Section {
-                        Label(timeoutSummary, systemImage: "timer")
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(message)
+                        .font(.body)
+                        .textSelection(.enabled)
                 }
             }
-            .themedListSurface()
+
+            Section {
+                ContentUnavailableView(
+                    "Unsupported extension UI",
+                    systemImage: "questionmark.app",
+                    description: Text("This extension asked for \"\(request.method)\". Cancel and try the task another way.")
+                )
+            }
+
+            if let timeoutSummary {
+                Section {
+                    Label(timeoutSummary, systemImage: "timer")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
+        .themedListSurface()
     }
 
     private var extensionEditorContent: some View {
-        VStack(spacing: 0) {
-            if let message = request.message, !message.isEmpty {
-                Text(message)
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.themeBgDark)
-            }
-
-            FullSizeTextView(
-                text: $inputValue,
-                keyboardLanguage: $editorKeyboardLanguage,
-                font: .preferredFont(forTextStyle: .body),
-                textColor: UIColor(Color.themeFg),
-                tintColor: UIColor(Color.themeBlue),
-                volatileSuffixLength: 0,
-                correctionRanges: [],
-                autocorrectionEnabled: true,
-                onPasteImages: { _ in },
-                onCommandEnter: submitCurrentValue,
-                onAlternateEnter: submitCurrentValue,
-                autoFocusOnAppear: true,
-                focusRequestID: editorFocusRequestID,
-                suppressKeyboard: false,
-                allowKeyboardRestoreOnTap: true,
-                onKeyboardRestoreRequest: nil,
-                accessibilityIdentifier: "extension.dialog.editor"
-            )
-            .background(Color.themeBg)
-        }
+        ExpandedComposerView(
+            text: $inputValue,
+            textBeforeRecording: $editorTextBeforeRecording,
+            pendingAttachments: $editorPendingAttachments,
+            pendingRepoPointers: $editorPendingRepoPointers,
+            isBusy: false,
+            busyStreamingBehavior: .followUp,
+            slashCommands: [],
+            fileSuggestions: [],
+            onFileSuggestionQuery: nil,
+            session: nil,
+            thinkingLevel: .medium,
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? editorVoiceInputManager : nil,
+            onPrepareVoiceInput: prepareEditorVoiceInput,
+            onSend: submitCurrentValue,
+            onModelTap: {},
+            onThinkingSelect: { _ in },
+            titleOverride: dialogTitle,
+            headerMessage: request.message,
+            cancelTitle: "Cancel",
+            submitTitle: "Submit",
+            showsAttachmentControls: false,
+            showsVoiceInputControl: true,
+            showsSessionToolbar: false,
+            showsCounters: true,
+            usesCommandPrefixMode: false,
+            allowsEmptySubmit: true,
+            isSubmitInFlight: isSubmitting,
+            autoFocusOnAppear: true,
+            dismissesOnCancel: false,
+            dismissesOnSubmit: false,
+            editorAccessibilityIdentifier: "extension.dialog.editor",
+            cancelAccessibilityIdentifier: "extension.dialog.cancel",
+            submitAccessibilityIdentifier: "extension.dialog.submit",
+            onCancel: cancelRequest
+        )
     }
 
     private var dialogTitle: String {
@@ -415,6 +418,19 @@ private struct ExtensionDialogSheet: View {
             return "Extension"
         }
         return trimmedTitle
+    }
+
+    private func configureEditorVoiceInput(_ manager: VoiceInputManager? = nil) {
+        let manager = manager ?? editorVoiceInputManager
+        manager.activeSessionId = request.sessionId
+        manager.setServerCredentials(connection.credentials)
+        manager.setServerConnection(connection)
+        manager.setPlaybackInterrupter(connection.audioPlayer)
+    }
+
+    private func prepareEditorVoiceInput(_ manager: VoiceInputManager) async throws {
+        configureEditorVoiceInput(manager)
+        manager.setServerDictationTarget(nil)
     }
 
     private var timeoutSummary: String? {

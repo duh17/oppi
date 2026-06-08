@@ -43,6 +43,24 @@ struct ExpandedComposerView: View {
     let onSend: () -> Void
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
+    var titleOverride: String? = nil
+    var headerMessage: String? = nil
+    var cancelTitle = "Done"
+    var submitTitle = "Send"
+    var showsAttachmentControls = true
+    var showsVoiceInputControl = true
+    var showsSessionToolbar = true
+    var showsCounters = true
+    var usesCommandPrefixMode = true
+    var allowsEmptySubmit = false
+    var isSubmitInFlight = false
+    var autoFocusOnAppear = false
+    var dismissesOnCancel = true
+    var dismissesOnSubmit = true
+    var editorAccessibilityIdentifier: String? = nil
+    var cancelAccessibilityIdentifier: String? = nil
+    var submitAccessibilityIdentifier: String? = nil
+    var onCancel: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -62,6 +80,9 @@ struct ExpandedComposerView: View {
     /// capture while hiding the keyboard until the user taps back into typing.
     @State private var suppressKeyboard = false
 
+    /// Prevents double-submit/cancel while final dictation text is being committed.
+    @State private var isHandlingVoiceLifecycle = false
+
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(
             storedText: text,
@@ -76,10 +97,15 @@ struct ExpandedComposerView: View {
     }
 
     private var canSend: Bool {
-        let hasImages = pendingAttachments.contains { $0.source == .image }
-        let hasFiles = pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty
+        let hasImages = showsAttachmentControls && pendingAttachments.contains { $0.source == .image }
+        let hasFiles = showsAttachmentControls
+            && (pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty)
         let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || hasImages || hasFiles
+    }
+
+    private var canSubmit: Bool {
+        !isSubmitInFlight && !isHandlingVoiceLifecycle && (allowsEmptySubmit || canSend)
     }
 
     private var accentColor: Color { .themeBlue }
@@ -97,9 +123,10 @@ struct ExpandedComposerView: View {
         return ComposerAutocomplete.slashSuggestions(query: query, commands: slashCommands)
     }
 
-    /// Text binding that strips the "$ " prefix for bash mode display.
+    /// Text binding that strips the "$ " prefix for bash mode display when used as the chat composer.
     private var textFieldBinding: Binding<String> {
-        ComposerShared.textFieldBinding(text: $text) { composerDisplayText }
+        guard usesCommandPrefixMode else { return $text }
+        return ComposerShared.textFieldBinding(text: $text) { composerDisplayText }
     }
 
     private var correctionRangesForDisplay: [NSRange] {
@@ -121,13 +148,45 @@ struct ExpandedComposerView: View {
     }
 
     private var expandedTitle: String {
+        if let title = titleOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
         guard isBusy else { return "Compose" }
         return busyStreamingBehavior == .steer ? "Steer Agent" : "Queue Follow-up"
+    }
+
+    private var trimmedHeaderMessage: String? {
+        guard let message = headerMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else {
+            return nil
+        }
+        return message
+    }
+
+    private var showsControlRow: Bool {
+        showsAttachmentControls
+            || (showsVoiceInputControl && ReleaseFeatures.voiceInputEnabled && voiceInputManager != nil)
+            || showsSessionToolbar
+    }
+
+    private var showsBottomBar: Bool {
+        showsControlRow
+            || showsCounters
+            || (showsAttachmentControls && (!pendingAttachments.isEmpty || !pendingRepoPointers.isEmpty))
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if let trimmedHeaderMessage {
+                    Text(trimmedHeaderMessage)
+                        .font(.body)
+                        .foregroundStyle(.themeFg)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.themeBgDark)
+                }
 
                 FullSizeTextView(
                     text: textFieldBinding,
@@ -138,10 +197,13 @@ struct ExpandedComposerView: View {
                     volatileSuffixLength: ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .expandedComposer),
                     correctionRanges: correctionRangesForDisplay,
                     autocorrectionEnabled: composerAutocorrectionEnabled,
-                    onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingAttachments) },
+                    onPasteImages: { images in
+                        guard showsAttachmentControls else { return }
+                        ComposerShared.handlePastedImages(images, into: $pendingAttachments)
+                    },
                     onCommandEnter: handleSend,
                     onAlternateEnter: handleSend,
-                    autoFocusOnAppear: false,
+                    autoFocusOnAppear: autoFocusOnAppear,
                     focusRequestID: focusRequestID,
                     suppressKeyboard: suppressKeyboard,
                     allowKeyboardRestoreOnTap: true,
@@ -153,7 +215,7 @@ struct ExpandedComposerView: View {
                             expectedOwner: .expandedComposer
                         )
                     },
-                    accessibilityIdentifier: nil
+                    accessibilityIdentifier: editorAccessibilityIdentifier
                 )
 
                 if !slashSuggestions.isEmpty {
@@ -172,9 +234,10 @@ struct ExpandedComposerView: View {
                     .padding(.bottom, 8)
                 }
 
-                Divider().overlay(Color.themeComment.opacity(0.2))
-
-                bottomBar
+                if showsBottomBar {
+                    Divider().overlay(Color.themeComment.opacity(0.2))
+                    bottomBar
+                }
             }
             .background(Color.themeBg)
             .navigationTitle(expandedTitle)
@@ -183,20 +246,23 @@ struct ExpandedComposerView: View {
             .toolbarBackground(Color.themeBgDark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
+                    Button(cancelTitle) {
+                        handleCancel()
                     }
+                    .disabled(isSubmitInFlight || isHandlingVoiceLifecycle)
                     .foregroundStyle(.themeFgDim)
+                    .accessibilityIdentifier(cancelAccessibilityIdentifier ?? "expanded.composer.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
                         handleSend()
                     } label: {
-                        Text("Send")
+                        Text(submitTitle)
                             .fontWeight(.semibold)
                     }
-                    .disabled(!canSend)
-                    .foregroundStyle(canSend ? accentColor : .themeComment)
+                    .disabled(!canSubmit)
+                    .foregroundStyle(canSubmit ? accentColor : .themeComment)
+                    .accessibilityIdentifier(submitAccessibilityIdentifier ?? "expanded.composer.submit")
                 }
             }
         }
@@ -241,48 +307,56 @@ struct ExpandedComposerView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
-            if !pendingAttachments.isEmpty {
+            if showsAttachmentControls, !pendingAttachments.isEmpty {
                 attachmentStrip
             }
 
-            if !pendingRepoPointers.isEmpty {
+            if showsAttachmentControls, !pendingRepoPointers.isEmpty {
                 filePillStrip
             }
 
-            HStack(spacing: 6) {
-                attachMenu
-
-                if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
-                    micButton(manager: manager)
-                }
-
-                Spacer(minLength: 0)
-
-                SessionToolbar(
-                    session: session,
-                    modelOverride: modelOverride,
-                    thinkingLevel: thinkingLevel,
-                    onModelTap: onModelTap,
-                    onThinkingSelect: onThinkingSelect
-                )
-            }
-            .padding(.horizontal, 16)
-
-            HStack {
-                Spacer()
-
-                if charCount > 0 {
-                    HStack(spacing: 8) {
-                        Text("\(lineCount)L")
-                        Text("\(wordCount)W")
-                        Text("\(charCount)C")
+            if showsControlRow {
+                HStack(spacing: 6) {
+                    if showsAttachmentControls {
+                        attachMenu
                     }
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.themeComment)
+
+                    if showsVoiceInputControl, ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
+                        micButton(manager: manager)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if showsSessionToolbar {
+                        SessionToolbar(
+                            session: session,
+                            modelOverride: modelOverride,
+                            thinkingLevel: thinkingLevel,
+                            onModelTap: onModelTap,
+                            onThinkingSelect: onThinkingSelect
+                        )
+                    }
                 }
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+
+            if showsCounters {
+                HStack {
+                    Spacer()
+
+                    if charCount > 0 {
+                        HStack(spacing: 8) {
+                            Text("\(lineCount)L")
+                            Text("\(wordCount)W")
+                            Text("\(charCount)C")
+                        }
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
         }
         .padding(.top, 8)
         .background(Color.themeBgDark)
@@ -399,20 +473,39 @@ struct ExpandedComposerView: View {
     // MARK: - Actions
 
     private func handleSend() {
-        // Stop voice recording setup/session before sending
-        if let manager = voiceInputManager,
-           ComposerShared.ownsVoiceInput(manager, owner: .expandedComposer),
-           manager.isRecording || manager.isPreparing {
-            textBeforeRecording = nil
-            Task {
-                if manager.isRecording {
-                    await manager.stopRecording()
-                } else {
-                    await manager.cancelRecording()
-                }
+        guard canSubmit else { return }
+        isHandlingVoiceLifecycle = true
+        Task { @MainActor in
+            await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                manager: voiceInputManager,
+                owner: .expandedComposer,
+                text: $text,
+                textBeforeRecording: $textBeforeRecording,
+                suppressKeyboard: $suppressKeyboard
+            )
+            isHandlingVoiceLifecycle = false
+            onSend()
+            if dismissesOnSubmit {
+                dismiss()
             }
         }
-        onSend()
-        dismiss()
+    }
+
+    private func handleCancel() {
+        guard !isSubmitInFlight, !isHandlingVoiceLifecycle else { return }
+        isHandlingVoiceLifecycle = true
+        Task { @MainActor in
+            await ComposerShared.cancelOwnedVoiceInput(
+                manager: voiceInputManager,
+                owner: .expandedComposer,
+                textBeforeRecording: $textBeforeRecording,
+                suppressKeyboard: $suppressKeyboard
+            )
+            isHandlingVoiceLifecycle = false
+            onCancel?()
+            if dismissesOnCancel {
+                dismiss()
+            }
+        }
     }
 }

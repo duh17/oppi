@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import Testing
 import UIKit
@@ -128,6 +129,114 @@ struct ChatInputBarTests {
         #expect(observedFocusRequestID == 1)
         #expect(!suppressKeyboard)
         #expect(textBeforeRecording == nil)
+    }
+
+    @Test("ComposerShared commits final dictation text before submit")
+    func finishOwnedVoiceInputBeforeSubmitCommitsFinalTranscript() async throws {
+        AppPreferences.Voice.setEngineMode(.onDevice)
+        defer { AppPreferences.Voice.setEngineMode(.remote) }
+
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .expandedComposer)
+        session.yieldEvent(.replaceFinalTranscript("rough draft"))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript.contains("rough") })
+
+        session.stopHandler = { @MainActor [weak session] in
+            session?.yieldEvent(.replaceFinalTranscript("final draft"))
+            session?.finishEvents()
+        }
+
+        var text = "typed rough draft"
+        var textBeforeRecording: String? = "typed "
+        var suppressKeyboard = true
+
+        let didFinish = await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+            manager: manager,
+            owner: .expandedComposer,
+            text: Binding(get: { text }, set: { text = $0 }),
+            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
+            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 })
+        )
+
+        #expect(didFinish)
+        #expect(text == "typed final draft")
+        #expect(textBeforeRecording == nil)
+        #expect(!suppressKeyboard)
+        #expect(manager.currentTranscript.isEmpty)
+    }
+
+    @Test("ComposerShared cancels owned dictation without committing transcript")
+    func cancelOwnedVoiceInputClearsRecordingStateWithoutCommittingTranscript() async throws {
+        AppPreferences.Voice.setEngineMode(.onDevice)
+        defer { AppPreferences.Voice.setEngineMode(.remote) }
+
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
+        session.yieldEvent(.replaceFinalTranscript("dictated text"))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript.contains("dictated") })
+
+        var text = "typed value"
+        var textBeforeRecording: String? = "typed "
+        var suppressKeyboard = true
+
+        let didCancel = await ComposerShared.cancelOwnedVoiceInput(
+            manager: manager,
+            owner: .inlineComposer,
+            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
+            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 })
+        )
+
+        #expect(didCancel)
+        #expect(text == "typed value")
+        #expect(textBeforeRecording == nil)
+        #expect(!suppressKeyboard)
+        #expect(manager._testState == .idle)
+        #expect(session.cancelCallCount == 1)
+    }
+
+    @Test("Feature UI code routes voice lifecycle through ComposerShared")
+    func featureUICodeRoutesVoiceLifecycleThroughComposerShared() throws {
+        let appleRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scannedRoots = [
+            appleRoot.appending(path: "Oppi/App"),
+            appleRoot.appending(path: "Oppi/Features"),
+        ]
+        let allowedDirectCallFiles: Set<String> = [
+            "Oppi/Features/Chat/Composer/ComposerShared.swift",
+        ]
+        let bannedCalls = [".stopRecording(", ".cancelRecording("]
+        let rootPath = appleRoot.standardizedFileURL.path
+        var violations: [String] = []
+
+        for root in scannedRoots {
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+                let standardized = fileURL.standardizedFileURL
+                let fullPath = standardized.path
+                let relativePath = if fullPath.hasPrefix(rootPath + "/") {
+                    String(fullPath.dropFirst(rootPath.count + 1))
+                } else {
+                    fullPath
+                }
+                guard !allowedDirectCallFiles.contains(relativePath) else { continue }
+
+                let contents = try String(contentsOf: standardized, encoding: .utf8)
+                for bannedCall in bannedCalls where contents.contains(bannedCall) {
+                    violations.append("\(relativePath) uses \(bannedCall)")
+                }
+            }
+        }
+
+        #expect(
+            violations.isEmpty,
+            "UI code must use ComposerShared.finishOwnedVoiceInputBeforeSubmit/cancelOwnedVoiceInput: \(violations.joined(separator: ", "))"
+        )
     }
 
     @Test("ComposerShared prefers live transcript over stale stored text during dictation")
@@ -523,5 +632,21 @@ struct ChatInputBarTests {
         )
 
         #expect(displayedText == "because the larger tables should download")
+    }
+
+    private func makeRecordingVoiceInputManager(
+        source: ComposerShared.VoiceInputOwner
+    ) async throws -> (VoiceInputManager, MockVoiceSession) {
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: source.rawValue)
+        return (manager, session)
     }
 }

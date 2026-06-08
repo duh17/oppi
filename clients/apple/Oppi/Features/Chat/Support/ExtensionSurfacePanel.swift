@@ -50,7 +50,7 @@ struct ExtensionNativeSurfaceView: View {
         if activeCount > 0 {
             return "\(activeCount) active"
         }
-        return "\(activityRows.count) recent"
+        return nil
     }
 
     var body: some View {
@@ -135,22 +135,13 @@ private struct ExtensionNativeBlockView: View {
             .background(Color.themeBg.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         case .activityList(_, let rows):
             ExtensionNativeActivityListView(rows: rows, onOpenURL: onOpenURL)
-        case .progress(_, let label, let value, let indeterminate):
-            HStack(spacing: 8) {
-                if indeterminate == true || value == nil {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if let value {
-                    ProgressView(value: value)
-                        .controlSize(.small)
-                }
-                if let label, !label.isEmpty {
-                    Text(label)
-                        .font(.caption)
-                        .foregroundStyle(.themeFg)
-                }
-            }
-            .frame(minHeight: 28, alignment: .leading)
+        case .progress(let base, let label, let value, let indeterminate):
+            ExtensionNativeProgressBlockView(
+                base: base,
+                label: label,
+                value: value,
+                indeterminate: indeterminate
+            )
         case .terminal(_, let lines):
             ExtensionNativeTerminalLinesView(lines: lines, onOpenURL: onOpenURL)
         case .code(_, _, let text):
@@ -170,6 +161,65 @@ private struct ExtensionNativeBlockView: View {
         case "medium": return 10
         default: return 6
         }
+    }
+}
+
+private struct ExtensionNativeProgressBlockView: View {
+    let base: ExtensionUIBlockBase
+    let label: String?
+    let value: Double?
+    let indeterminate: Bool?
+
+    private var trimmedLabel: String? {
+        label.trimmedNonEmpty
+    }
+
+    private var normalizedValue: Double? {
+        guard let value, value.isFinite else { return nil }
+        return min(max(value, 0), 1)
+    }
+
+    private var isIndeterminate: Bool {
+        indeterminate == true || normalizedValue == nil
+    }
+
+    private var accessibilityLabel: String {
+        base.accessibility?.label.trimmedNonEmpty ?? trimmedLabel ?? "Progress"
+    }
+
+    private var accessibilityValue: String {
+        if let value = base.accessibility?.value.trimmedNonEmpty {
+            return value
+        }
+        if isIndeterminate {
+            return "In progress"
+        }
+        if let normalizedValue {
+            return "\(Int(round(normalizedValue * 100))) percent"
+        }
+        return ""
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if isIndeterminate {
+                ProgressView()
+                    .controlSize(.small)
+            } else if let normalizedValue {
+                ProgressView(value: normalizedValue)
+                    .controlSize(.small)
+            }
+
+            if let trimmedLabel {
+                Text(trimmedLabel)
+                    .font(.caption)
+                    .foregroundStyle(.themeFg)
+            }
+        }
+        .frame(minHeight: trimmedLabel == nil ? 14 : 28, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
     }
 }
 
@@ -213,6 +263,15 @@ private struct ExtensionNativeTerminalLinesView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.themeComment.opacity(0.16), lineWidth: 1)
         }
+    }
+}
+
+private extension Optional where Wrapped == String {
+    var trimmedNonEmpty: String? {
+        guard let trimmed = self?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 
@@ -358,8 +417,8 @@ private struct ExtensionNativeActivityRowContent: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             stateMarker
-                .frame(width: 10, height: 12)
-                .padding(.top, 3)
+                .frame(width: 14, height: 14)
+                .padding(.top, 2)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -385,7 +444,7 @@ private struct ExtensionNativeActivityRowContent: View {
                         .truncationMode(.tail)
                 }
 
-                if let progress = row.progress {
+                if let progress = normalizedProgress {
                     ProgressView(value: progress)
                         .controlSize(.small)
                         .padding(.top, 2)
@@ -401,33 +460,46 @@ private struct ExtensionNativeActivityRowContent: View {
                     .accessibilityHidden(true)
             }
         }
-        .frame(minHeight: 44, alignment: .center)
+        .frame(minHeight: showsNavigationCue ? 44 : 30, alignment: .center)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
     }
 
     @ViewBuilder
     private var stateMarker: some View {
-        if row.state == "running" {
+        switch row.state {
+        case "running":
             Image(systemName: "bolt.fill")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.themeBlue)
-        } else {
+        case "success":
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeGreen)
+        case "warning":
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeOrange)
+        case "error":
+            Image(systemName: "xmark.circle.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeRed)
+        case "inactive":
             Circle()
-                .fill(stateColor)
+                .stroke(Color.themeComment.opacity(0.75), lineWidth: 1.2)
+                .frame(width: 8, height: 8)
+        default:
+            Circle()
+                .fill(Color.themeComment)
                 .frame(width: 8, height: 8)
         }
     }
 
-    private var stateColor: Color {
-        switch row.state {
-        case "success": return .themeGreen
-        case "warning": return .themeOrange
-        case "error": return .themeRed
-        case "queued": return .themeComment
-        default: return .themeComment
-        }
+    private var normalizedProgress: Double? {
+        guard let progress = row.progress, progress.isFinite else { return nil }
+        return min(max(progress, 0), 1)
     }
 
     private var accessibilityLabel: String {
@@ -437,6 +509,32 @@ private struct ExtensionNativeActivityRowContent: View {
                 return trimmed.isEmpty ? nil : trimmed
             }
             .joined(separator: ", ")
+    }
+
+    private var accessibilityValue: String {
+        [stateAccessibilityText, progressAccessibilityText]
+            .compactMap { value in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: ", ")
+    }
+
+    private var stateAccessibilityText: String? {
+        switch row.state {
+        case "running": return "Working"
+        case "success": return "Done"
+        case "warning": return "Warning"
+        case "error": return "Error"
+        case "queued": return "Queued"
+        case "inactive": return "Not started"
+        default: return nil
+        }
+    }
+
+    private var progressAccessibilityText: String? {
+        guard let normalizedProgress else { return nil }
+        return "\(Int(round(normalizedProgress * 100))) percent"
     }
 }
 
