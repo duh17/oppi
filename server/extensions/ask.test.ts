@@ -12,7 +12,7 @@ type RegisteredTool = {
       questions: Array<{
         id: string;
         question: string;
-        options: Array<{ value: string; label: string }>;
+        options: Array<{ value: string; label: string; description?: string }>;
         multiSelect?: boolean;
       }>;
       allowCustom?: boolean;
@@ -21,21 +21,25 @@ type RegisteredTool = {
     onUpdate?: unknown,
     ctx?: {
       hasUI: boolean;
+      mode?: "tui" | "rpc" | "json" | "print";
       ui: {
         ask?: (
           questions: Array<{
             id: string;
             question: string;
-            options: Array<{ value: string; label: string }>;
+            options: Array<{ value: string; label: string; description?: string }>;
             multiSelect?: boolean;
           }>,
           allowCustom?: boolean,
+          opts?: { signal?: AbortSignal },
         ) => Promise<{ answers: Record<string, string | string[]>; allIgnored: boolean }>;
         custom: (...args: unknown[]) => Promise<unknown>;
         select: (question: string, options: string[]) => Promise<string | undefined>;
+        input: (question: string, placeholder?: string) => Promise<string | undefined>;
       };
     },
   ) => Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
+  executionMode?: string;
   renderCall?: (
     args: Record<string, unknown>,
     theme: { fg: (token: string, text: string) => string; bold: (text: string) => string },
@@ -73,10 +77,12 @@ function createMockAPI(): {
 }
 
 describe("createAskFactory", () => {
-  it("registers the ask tool", () => {
+  it("registers the ask tool as sequential", () => {
     const api = createMockAPI();
     createAskFactory()(api as never);
-    expect(api.tools.has("ask")).toBe(true);
+    const tool = api.tools.get("ask");
+    expect(tool).toBeDefined();
+    expect(tool?.executionMode).toBe("sequential");
   });
 
   it("enforces one ask call per turn and resets on turn_start", async () => {
@@ -90,6 +96,7 @@ describe("createAskFactory", () => {
       ui: {
         custom: async () => undefined,
         select: async () => undefined,
+        input: async () => undefined,
       },
     };
 
@@ -145,6 +152,7 @@ describe("createAskFactory", () => {
           selectCalls++;
           return undefined;
         },
+        input: async () => undefined,
       },
     };
 
@@ -171,16 +179,71 @@ describe("createAskFactory", () => {
     expect(selectCalls).toBe(0);
   });
 
-  it("throws when UI exists but the direct ask primitive is missing", async () => {
+  it("uses the terminal custom dialog in TUI mode when direct ask is missing", async () => {
     const api = createMockAPI();
     createAskFactory()(api as never);
     const tool = api.tools.get("ask")!;
 
+    let customCalls = 0;
+    let selectCalls = 0;
     const ctx = {
       hasUI: true,
+      mode: "tui" as const,
       ui: {
-        custom: async () => undefined,
-        select: async () => undefined,
+        custom: async () => {
+          customCalls++;
+          return {
+            answers: { tools: ["ruff", "mypy"] },
+            allIgnored: false,
+          };
+        },
+        select: async () => {
+          selectCalls++;
+          return undefined;
+        },
+        input: async () => undefined,
+      },
+    };
+
+    const params = {
+      questions: [
+        {
+          id: "tools",
+          question: "Which linting tools?",
+          options: [
+            { value: "ruff", label: "Ruff" },
+            { value: "mypy", label: "Mypy" },
+          ],
+          multiSelect: true,
+        },
+      ],
+    };
+
+    const result = await tool.execute("tc-tui", params, undefined, undefined, ctx);
+    expect(result.details).toMatchObject({
+      answers: { tools: ["ruff", "mypy"] },
+      allIgnored: false,
+    });
+    expect(customCalls).toBe(1);
+    expect(selectCalls).toBe(0);
+  });
+
+  it("falls back to standard Pi UI when direct ask is missing outside TUI", async () => {
+    const api = createMockAPI();
+    createAskFactory()(api as never);
+    const tool = api.tools.get("ask")!;
+
+    let customCalls = 0;
+    const ctx = {
+      hasUI: true,
+      mode: "rpc" as const,
+      ui: {
+        custom: async () => {
+          customCalls++;
+          return undefined;
+        },
+        select: async (_title: string, options: string[]) => options[0],
+        input: async () => undefined,
       },
     };
 
@@ -197,9 +260,65 @@ describe("createAskFactory", () => {
       ],
     };
 
-    await expect(tool.execute("tc-missing-ask", params, undefined, undefined, ctx)).rejects.toThrow(
-      /ask UI primitive unavailable/,
+    const result = await tool.execute("tc-missing-ask", params, undefined, undefined, ctx);
+    expect(result.details).toMatchObject({
+      answers: { approach: "unit" },
+      allIgnored: false,
+    });
+    expect(customCalls).toBe(0);
+  });
+
+  it("supports multi-select through standard Pi select fallback", async () => {
+    const api = createMockAPI();
+    createAskFactory()(api as never);
+    const tool = api.tools.get("ask")!;
+
+    let selectCalls = 0;
+    const seenOptions: string[][] = [];
+    const ctx = {
+      hasUI: true,
+      mode: "rpc" as const,
+      ui: {
+        custom: async () => undefined,
+        select: async (_title: string, options: string[]) => {
+          seenOptions.push(options);
+          selectCalls++;
+          if (selectCalls === 1) return options[0];
+          if (selectCalls === 2) return options[1];
+          return options.find((option) => option.startsWith("✓ Done"));
+        },
+        input: async () => undefined,
+      },
+    };
+
+    const result = await tool.execute(
+      "tc-standard-multi",
+      {
+        questions: [
+          {
+            id: "targets",
+            question: "Which targets?",
+            options: [
+              { value: "server", label: "Server" },
+              { value: "ios", label: "iOS" },
+            ],
+            multiSelect: true,
+          },
+        ],
+        allowCustom: false,
+      },
+      undefined,
+      undefined,
+      ctx,
     );
+
+    expect(result.details).toMatchObject({
+      answers: { targets: ["server", "ios"] },
+      allIgnored: false,
+    });
+    expect(seenOptions[0][0]).toContain("[ ] 1. Server");
+    expect(seenOptions[1][0]).toContain("[x] 1. Server");
+    expect(seenOptions[2]).toContain("✓ Done (2 selected)");
   });
 
   it("rejects empty question lists without consuming the turn", async () => {
@@ -220,6 +339,7 @@ describe("createAskFactory", () => {
         },
         custom: async () => undefined,
         select: async () => undefined,
+        input: async () => undefined,
       },
     };
 

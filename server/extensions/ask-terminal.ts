@@ -34,6 +34,11 @@ type AskDialogComponent = {
   handleInput: (data: string) => void;
 };
 
+export type AskDialogOptions = {
+  signal?: AbortSignal;
+  timeout?: number;
+};
+
 export type AskCustomRunner = (
   factory: (
     tui: { requestRender: () => void },
@@ -41,12 +46,14 @@ export type AskCustomRunner = (
     kb: unknown,
     done: (result: AskDialogResult) => void,
   ) => AskDialogComponent,
+  options?: AskDialogOptions,
 ) => Promise<AskDialogResult | undefined>;
 
 export async function runTerminalAskDialog(
   custom: AskCustomRunner,
   questions: AskQuestion[],
   allowCustom: boolean,
+  options?: AskDialogOptions,
 ): Promise<AskDialogResult | undefined> {
   return custom((tui, theme, _kb, done) => {
     let currentPage = 0;
@@ -661,5 +668,5 @@ export async function runTerminalAskDialog(
       },
       handleInput,
     };
-  });
+  }, options);
 }

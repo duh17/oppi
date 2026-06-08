@@ -176,20 +176,16 @@ oppi-server` to remove. `oppi update` updates mutable runtime dependencies only.
 
 ## Built-in extensions
 
-The server ships four built-in extension names:
+The server ships one default extension name:
 
-- **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards and routes answers back.
-- **subagents** — multi-agent orchestration. Includes the `spawn_agent`, `send_message`, and `inspect_agent` tools. See [docs/sub-agents.md](docs/sub-agents.md).
-- **voice** — server-managed voice creation and playback helpers exposed through the Oppi voice tools. See [Voice replies / TTS](docs/tts.md).
-- **oppi-admin** — workspace and theme administration tools, including `build_theme`. See [Custom themes](docs/themes.md).
+- **ask** — structured Q&A between agent and user. Oppi's version supports multiple questions and multi-select options; users can still load their own Pi extension named `ask`.
 
-Oppi built-in names are `ask`, `subagents`, `voice`, and `oppi-admin`.
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
 
 Workspace extension behavior is explicit:
 
-- when `workspace.extensions` is unset, Oppi keeps normal pi discovery and does **not** auto-enable its own built-ins
-- when `workspace.extensions` is set, it becomes an authoritative allowlist for optional extensions; include `ask`, `subagents`, `voice`, and/or `oppi-admin` explicitly if you want them
+- when `workspace.extensions` is unset, Oppi keeps normal pi discovery and does **not** auto-enable `ask`
+- when `workspace.extensions` is set, it becomes an authoritative allowlist for optional extensions; include `ask` explicitly if you want an Ask tool
 
 Pi provides the core runtime and extension model. Oppi builds on top of that with the mobile client, transport, server orchestration, native rendering, and server-managed capabilities.
 

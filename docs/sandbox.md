@@ -119,7 +119,7 @@ If `workspace.tools` is unset, those tools are active by default. If `workspace.
 
 File tools are workspace-scoped. A `read`, `edit`, or `write` request for a path outside the workspace fails instead of being remapped to a guest absolute path. Use `bash` when you intentionally need to inspect the VM's own Linux filesystem, such as `/etc/os-release`.
 
-Host-side extensions are different from VM tools. Extensions such as `ask`, `subagents`, `voice`, `oppi-admin`, or installed Pi package tools run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. Enable extensions deliberately.
+Host-side extensions are different from VM tools. Oppi's default `ask` extension and installed Pi package tools run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. Enable extensions deliberately.
 
 ## Context files in sandbox workspaces
 

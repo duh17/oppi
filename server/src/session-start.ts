@@ -87,9 +87,6 @@ export class SessionStartCoordinator {
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
           permissionGate: usePermissionGate,
           skillPaths,
-          builtInExtensionContext: {
-            storage: this.deps.storage,
-          },
           extraExtensionFactories:
             extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
           metrics: this.deps.metrics,

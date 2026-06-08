@@ -134,6 +134,8 @@ Blocking prompts are not native-surface blocks. They stay Pi-shaped in `extensio
 - `select`, `confirm`, and `input` map to inline AskCard-style prompt cards.
 - `editor` maps to a native editor sheet.
 
+`ask` is an Oppi-defined request method. It exists because Pi's standard dialog API does not include a portable multi-select or multi-question form request; terminal-only extensions can use `ctx.ui.custom()`, but RPC/mobile clients need semantic fields such as `questions`, `options`, `multiSelect`, and `allowCustom`.
+
 This keeps prompt behavior compatible with Pi extension APIs and avoids a second interactive form protocol. Future native form or action support must add explicit event routing before becoming part of this contract.
 
 ### Activity lists
@@ -164,18 +166,17 @@ Recommended Apple state mapping:
 | `error`        | failed                                  | red/error indicator        |
 | `inactive`     | stopped, dismissed, or no longer active | muted indicator            |
 
-### Built-in subagents surface mapping
+### Activity-list fixture
 
-The built-in Oppi subagents extension uses this contract as a first production fixture:
+The parked Oppi subagents extension used this contract as an early fixture:
 
 - Pi API: `ctx.ui.setWidget("subagents", component, { placement: "aboveEditor" })`
-- Runtime: managed Oppi SDK runtime
 - Native surface: `source: "widget"`, `presentation.style: "surfacePanel"`
 - Native block: one `activityList` with generic rows
 - Row link: `oppi://session/<sessionId>` routed through generic app navigation
 - Fallback: terminal widget lines from `component.render(width)`
 
-Subagent status mapping is deliberately generic and aligned with the workspace context bar: `starting`, `busy`, and `stopping` map to `running`, `ready` maps to `success`, `stopped` maps to `inactive`, and `error` maps to `error`. The widget shows active rows plus a bounded set of recent inactive rows.
+The mapping stays generic: `starting`, `busy`, and `stopping` map to `running`, `ready` maps to `success`, `stopped` maps to `inactive`, and `error` maps to `error`.
 
 ### Fallback
 
@@ -372,40 +373,40 @@ Native surfaces should be viewport-independent. Apple clients decide iPhone, iPa
 
 ## Mapping from Pi extension APIs
 
-| Pi API                             | Native surface                      | Apple rendering                      | Fallback                           |
-| ---------------------------------- | ----------------------------------- | ------------------------------------ | ---------------------------------- |
-| `ctx.ui.ask()` / Oppi `ask` tool   | Pi request fields                   | AskCard inline, expanded full-screen | existing AskCard behavior          |
-| `ctx.ui.select(title, options)`    | Pi request fields                   | AskCard-style inline                 | terminal/TUI select                |
-| `ctx.ui.confirm(title, message)`   | Pi request fields                   | compact confirmation card            | terminal/TUI confirm               |
-| `ctx.ui.input()`                   | Pi request fields                   | inline text prompt                   | terminal/TUI input                 |
-| `ctx.ui.editor()`                  | Pi request fields                   | editor sheet                         | terminal/TUI editor                |
-| `ctx.ui.notify()`                  | notification fields                 | transient toast/sheet                | existing toast sheet               |
-| `ctx.ui.onTerminalInput()`         | terminal-owned input stream         | no native mapping                    | no-op unsubscribe in SDK sessions  |
-| `ctx.ui.setTitle()`                | title notification                  | extension surface heading            | terminal window/tab title          |
-| `ctx.ui.setStatus()`               | status text fields                  | generic status projection/chips      | text status                        |
-| `ctx.ui.setWidget(string[])`       | `widgetLines`                       | extension line card                  | styled line card                   |
-| `ctx.ui.setWidget(component)`      | `renderNative()` if present         | surface panel blocks                 | terminal snapshot                  |
-| `ctx.ui.custom()`                  | TUI component                       | no native mapping                    | resolves undefined in SDK sessions |
-| `ctx.ui.setFooter()`               | terminal-owned/footer text          | no native mapping                    | ignored in SDK sessions            |
-| `ctx.ui.setHeader()`               | terminal-owned/header text          | no native mapping                    | ignored in SDK sessions            |
-| `ctx.ui.setWorkingMessage()`       | working-row text                    | native timeline working row          | default working text               |
-| `ctx.ui.setWorkingVisible()`       | working-row visibility              | hide/show native working row         | visible by default                 |
-| `ctx.ui.setWorkingIndicator()`     | working indicator frames            | static/animated/hidden row indicator | default native spinner             |
-| `ctx.ui.setHiddenThinkingLabel()`  | hidden thinking label               | thinking row accessibility/source metadata | default thinking label      |
-| `ctx.ui.pasteToEditor()`           | `set_editor_text` notification      | composer text handoff                | same as `setEditorText()` in RPC   |
-| `ctx.ui.setEditorText()`           | `set_editor_text` notification      | composer text handoff                | host-owned editor text handoff     |
-| `ctx.ui.getEditorText()`           | not portable synchronously          | empty string                         | empty string in RPC                |
-| `ctx.ui.getToolsExpanded()`        | bridge-local state                  | current native tool expansion flag   | `false` by default                 |
-| `ctx.ui.setToolsExpanded()`        | tool expansion state                | expand/collapse native tool rows     | collapsed by default               |
-| `ctx.ui.setEditorComponent()`      | not portable                        | no native mapping                    | preserve factory only              |
-| `ctx.ui.getEditorComponent()`      | not portable                        | no native mapping                    | return preserved factory           |
-| `ctx.ui.addAutocompleteProvider()` | terminal-owned autocomplete         | no native mapping                    | ignored in SDK sessions            |
-| `ctx.ui.theme`                     | snapshot render theme               | terminal snapshot styling helper     | text-preserving theme shim         |
-| `ctx.ui.getAllThemes()`            | terminal-owned theme registry       | no native mapping                    | empty list in SDK sessions         |
-| `ctx.ui.getTheme()`                | terminal-owned theme registry       | no native mapping                    | undefined in SDK sessions          |
-| `ctx.ui.setTheme()`                | terminal-owned theme switching      | no native mapping                    | unsupported result in SDK sessions |
-| `renderCall` / `renderResult`      | timeline renderer output            | current mobile renderer / raw text   | current mobile renderer / raw text |
-| `registerMessageRenderer()`        | custom message text                 | current mobile renderer / raw text   | raw custom message text            |
+| Pi API                             | Native surface                 | Apple rendering                            | Fallback                           |
+| ---------------------------------- | ------------------------------ | ------------------------------------------ | ---------------------------------- |
+| `ctx.ui.ask()` / Oppi `ask` tool   | Pi request fields              | AskCard inline, expanded full-screen       | existing AskCard behavior          |
+| `ctx.ui.select(title, options)`    | Pi request fields              | AskCard-style inline                       | terminal/TUI select                |
+| `ctx.ui.confirm(title, message)`   | Pi request fields              | compact confirmation card                  | terminal/TUI confirm               |
+| `ctx.ui.input()`                   | Pi request fields              | inline text prompt                         | terminal/TUI input                 |
+| `ctx.ui.editor()`                  | Pi request fields              | editor sheet                               | terminal/TUI editor                |
+| `ctx.ui.notify()`                  | notification fields            | transient toast/sheet                      | existing toast sheet               |
+| `ctx.ui.onTerminalInput()`         | terminal-owned input stream    | no native mapping                          | no-op unsubscribe in SDK sessions  |
+| `ctx.ui.setTitle()`                | title notification             | extension surface heading                  | terminal window/tab title          |
+| `ctx.ui.setStatus()`               | status text fields             | generic status projection/chips            | text status                        |
+| `ctx.ui.setWidget(string[])`       | `widgetLines`                  | extension line card                        | styled line card                   |
+| `ctx.ui.setWidget(component)`      | `renderNative()` if present    | surface panel blocks                       | terminal snapshot                  |
+| `ctx.ui.custom()`                  | TUI component                  | no native mapping                          | resolves undefined in SDK sessions |
+| `ctx.ui.setFooter()`               | terminal-owned/footer text     | no native mapping                          | ignored in SDK sessions            |
+| `ctx.ui.setHeader()`               | terminal-owned/header text     | no native mapping                          | ignored in SDK sessions            |
+| `ctx.ui.setWorkingMessage()`       | working-row text               | native timeline working row                | default working text               |
+| `ctx.ui.setWorkingVisible()`       | working-row visibility         | hide/show native working row               | visible by default                 |
+| `ctx.ui.setWorkingIndicator()`     | working indicator frames       | static/animated/hidden row indicator       | default native spinner             |
+| `ctx.ui.setHiddenThinkingLabel()`  | hidden thinking label          | thinking row accessibility/source metadata | default thinking label             |
+| `ctx.ui.pasteToEditor()`           | `set_editor_text` notification | composer text handoff                      | same as `setEditorText()` in RPC   |
+| `ctx.ui.setEditorText()`           | `set_editor_text` notification | composer text handoff                      | host-owned editor text handoff     |
+| `ctx.ui.getEditorText()`           | not portable synchronously     | empty string                               | empty string in RPC                |
+| `ctx.ui.getToolsExpanded()`        | bridge-local state             | current native tool expansion flag         | `false` by default                 |
+| `ctx.ui.setToolsExpanded()`        | tool expansion state           | expand/collapse native tool rows           | collapsed by default               |
+| `ctx.ui.setEditorComponent()`      | not portable                   | no native mapping                          | preserve factory only              |
+| `ctx.ui.getEditorComponent()`      | not portable                   | no native mapping                          | return preserved factory           |
+| `ctx.ui.addAutocompleteProvider()` | terminal-owned autocomplete    | no native mapping                          | ignored in SDK sessions            |
+| `ctx.ui.theme`                     | snapshot render theme          | terminal snapshot styling helper           | text-preserving theme shim         |
+| `ctx.ui.getAllThemes()`            | terminal-owned theme registry  | no native mapping                          | empty list in SDK sessions         |
+| `ctx.ui.getTheme()`                | terminal-owned theme registry  | no native mapping                          | undefined in SDK sessions          |
+| `ctx.ui.setTheme()`                | terminal-owned theme switching | no native mapping                          | unsupported result in SDK sessions |
+| `renderCall` / `renderResult`      | timeline renderer output       | current mobile renderer / raw text         | current mobile renderer / raw text |
+| `registerMessageRenderer()`        | custom message text            | current mobile renderer / raw text         | raw custom message text            |
 
 ## Mapping from Pi TUI components
 

@@ -43,7 +43,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       string,
       (typeof oppiExtensions)[number] | (typeof piExtensions)[number]
     >();
-    for (const ext of [...oppiExtensions, ...piExtensions]) {
+    for (const ext of [...piExtensions, ...oppiExtensions]) {
       if (!byName.has(ext.name)) {
         byName.set(ext.name, ext);
       }

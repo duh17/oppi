@@ -1,4 +1,3 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -12,8 +11,8 @@ import {
   resolveSdkSessionCwd,
   resolveSdkSessionDisplayCwd,
   filterSdkLoadedExtensions,
+  createHotReloadingExtensionFactory,
   SdkBackend,
-  type BuiltInExtensionContext,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
@@ -101,6 +100,39 @@ describe("hostMountValidationError", () => {
   });
 });
 
+describe("createHotReloadingExtensionFactory", () => {
+  it("loads the updated module after its file changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-hot-extension-"));
+    const modulePath = join(dir, "test-extension.mjs");
+    const registered: string[] = [];
+    const writeModule = (toolName: string) => {
+      writeFileSync(
+        modulePath,
+        `export function createTestFactory() { return (pi) => pi.registerTool({ name: ${JSON.stringify(
+          toolName,
+        )}, description: "test", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [] }) }); }\n`,
+      );
+    };
+
+    try {
+      writeModule("first");
+      const factory = createHotReloadingExtensionFactory(() => modulePath, "createTestFactory");
+      await factory({
+        registerTool: (definition: { name: string }) => registered.push(definition.name),
+      } as never);
+
+      writeModule("second-after-reload");
+      await factory({
+        registerTool: (definition: { name: string }) => registered.push(definition.name),
+      } as never);
+
+      expect(registered).toEqual(["first", "second-after-reload"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("filterSdkLoadedExtensions", () => {
   function ext(path: string, resolvedPath = path): { path: string; resolvedPath: string } {
     return { path, resolvedPath };
@@ -144,6 +176,27 @@ describe("filterSdkLoadedExtensions", () => {
 
     expect(filtered).toEqual([]);
   });
+
+  it("allows package-provided index extensions by their allow-list name", () => {
+    const tintinwebSubagents =
+      "/home/user/.pi/agent/npm/node_modules/@tintinweb/pi-subagents/src/index.ts";
+    const filtered = filterSdkLoadedExtensions([ext(tintinwebSubagents)], {
+      workspaceExtensions: ["tintinweb-subagents"],
+      permissionGateEnabled: false,
+    });
+
+    expect(filtered.map((item) => item.path)).toEqual([tintinwebSubagents]);
+  });
+
+  it("allows host ask extensions to use Pi's normal extension ordering", () => {
+    const ask = "/home/user/.pi/agent/extensions/ask.ts";
+    const filtered = filterSdkLoadedExtensions([ext(ask)], {
+      workspaceExtensions: ["ask"],
+      permissionGateEnabled: false,
+    });
+
+    expect(filtered.map((item) => item.path)).toEqual([ask]);
+  });
 });
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -158,99 +211,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     cost: 0,
     ...overrides,
   };
-}
-
-function makeBuiltInContext(
-  storageOverrides: Record<string, unknown> = {},
-): BuiltInExtensionContext {
-  return {
-    storage: {
-      getConfig: () => ({
-        port: 1,
-        host: "127.0.0.1",
-        dataDir: tmpdir(),
-        sessionIdleTimeoutMs: 0,
-        workspaceIdleTimeoutMs: 0,
-        maxSessionsPerWorkspace: 10,
-        maxSessionsGlobal: 10,
-        tls: { mode: "disabled" },
-        token: "test-token",
-        extensions: {
-          subagents: {
-            maxDepth: 1,
-            autoStopWhenDone: true,
-            childIdleTimeoutMs: 300_000,
-            startupGraceMs: 60_000,
-            defaultWaitTimeoutMs: 1_800_000,
-          },
-        },
-      }),
-      getSession: () => undefined,
-      ...storageOverrides,
-    } as never,
-  };
-}
-
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  const text = Buffer.concat(chunks).toString("utf8");
-  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
-}
-
-function writeJson(res: ServerResponse, status: number, value: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(value));
-}
-
-async function startApiServer(
-  handler: (req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>) => void,
-): Promise<{
-  baseUrl: string;
-  port: number;
-  requests: Array<{ method: string; path: string; search: string; body: Record<string, unknown> }>;
-  close: () => Promise<void>;
-}> {
-  const requests: Array<{
-    method: string;
-    path: string;
-    search: string;
-    body: Record<string, unknown>;
-  }> = [];
-  const server = createServer((req, res) => {
-    void readBody(req)
-      .then((body) => {
-        const url = new URL(req.url ?? "/", "http://127.0.0.1");
-        requests.push({
-          method: req.method ?? "GET",
-          path: url.pathname,
-          search: url.search,
-          body,
-        });
-        handler(req, res, body);
-      })
-      .catch((error: unknown) => {
-        writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
-      });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("server did not bind to a port");
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    port: address.port,
-    requests,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
-  };
-}
-
-async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<void> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for predicate");
 }
 
 describe("SdkBackend sandbox", () => {
@@ -367,7 +327,7 @@ describe("SdkBackend sandbox", () => {
 });
 
 describe("SdkBackend built-in extensions", () => {
-  it("registers explicitly enabled built-ins without file package paths", async () => {
+  it("registers explicitly enabled ask without file package paths", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-builtins-"));
     const backend = await SdkBackend.create({
       session: makeSession(),
@@ -378,7 +338,6 @@ describe("SdkBackend built-in extensions", () => {
         hostMount: cwd,
         extensions: ["ask"],
       } as Workspace,
-      builtInExtensionContext: makeBuiltInContext(),
       onEvent: vi.fn(),
       onEnd: vi.fn(),
     });
@@ -400,121 +359,9 @@ describe("SdkBackend built-in extensions", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+});
 
-  it("loads managed subagents with the current SDK session as origin", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-subagents-native-"));
-    const parent = {
-      ...makeSession({ id: "sess-test", workspaceId: "w1", status: "ready" }),
-      name: "Parent",
-    };
-    const child = {
-      ...makeSession({ id: "child-sdk", workspaceId: "w1", status: "starting" }),
-      name: "sdk child",
-      parentSessionId: "sess-test",
-    };
-    const api = await startApiServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url.pathname === "/workspaces/w1/sessions/sess-test" && req.method === "GET") {
-        writeJson(res, 200, { session: parent, trace: [] });
-        return;
-      }
-      if (url.pathname === "/workspaces/w1/sessions" && req.method === "GET") {
-        writeJson(res, 200, { active: [] });
-        return;
-      }
-      if (url.pathname === "/workspaces/w1/sessions" && req.method === "POST") {
-        writeJson(res, 201, { session: child });
-        return;
-      }
-      writeJson(res, 404, { error: "not found" });
-    });
-    let backend: SdkBackend | undefined;
-
-    try {
-      backend = await SdkBackend.create({
-        session: makeSession({ id: "sess-test", workspaceId: "w1" }),
-        workspace: {
-          id: "w1",
-          name: "Subagents Native Test",
-          runtime: "host",
-          hostMount: cwd,
-          extensions: ["subagents"],
-        } as Workspace,
-        builtInExtensionContext: makeBuiltInContext({
-          getConfig: () => ({
-            port: api.port,
-            host: "127.0.0.1",
-            dataDir: tmpdir(),
-            sessionIdleTimeoutMs: 0,
-            workspaceIdleTimeoutMs: 0,
-            maxSessionsPerWorkspace: 10,
-            maxSessionsGlobal: 10,
-            tls: { mode: "disabled" },
-            token: "test-token",
-            extensions: {
-              subagents: {
-                maxDepth: 1,
-                autoStopWhenDone: true,
-                childIdleTimeoutMs: 300_000,
-                startupGraceMs: 60_000,
-                defaultWaitTimeoutMs: 1_800_000,
-              },
-            },
-          }),
-        }),
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-      await waitUntil(() =>
-        api.requests.some((request) => request.path === "/workspaces/w1/sessions/sess-test"),
-      );
-
-      const resourceLoader = (
-        backend as unknown as {
-          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
-        }
-      ).runtime.services.resourceLoader;
-      const extensions = resourceLoader.getExtensions().extensions;
-      const subagents = extensions.find(
-        (ext) => ext.path.startsWith("<inline:") && ext.tools.has("inspect_agent"),
-      );
-      const spawn = subagents?.tools.get("spawn_agent")?.definition as
-        | {
-            execute: (
-              toolCallId: string,
-              params: Record<string, unknown>,
-              signal?: AbortSignal,
-              onUpdate?: unknown,
-              ctx?: unknown,
-            ) => Promise<{
-              content: Array<{ type: string; text?: string }>;
-              details?: Record<string, unknown>;
-              isError?: boolean;
-            }>;
-          }
-        | undefined;
-
-      expect(subagents?.tools.has("send_message")).toBe(true);
-      expect(spawn).toBeDefined();
-      const result = await spawn?.execute("tc-sdk", {
-        message: "Check SDK subagent wiring",
-        name: "sdk child",
-      });
-
-      expect(api.requests.some((request) => request.path === "/sessions/recent")).toBe(false);
-      const createRequest = api.requests.find(
-        (request) => request.method === "POST" && request.path === "/workspaces/w1/sessions",
-      );
-      expect(createRequest?.body.parentSessionId).toBe("sess-test");
-      expect(result?.isError).not.toBe(true);
-      expect(result?.details).toMatchObject({ agentId: "child-sdk" });
-    } finally {
-      if (backend) await backend.dispose();
-      await api.close();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
+describe("SdkBackend session state seeding", () => {
   it("seeds the pi session thinking level from stored Oppi session state", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-thinking-seed-"));
     const backend = await SdkBackend.create({
@@ -526,7 +373,6 @@ describe("SdkBackend built-in extensions", () => {
         hostMount: cwd,
         extensions: [],
       } as Workspace,
-      builtInExtensionContext: makeBuiltInContext(),
       onEvent: vi.fn(),
       onEnd: vi.fn(),
     });
@@ -789,6 +635,35 @@ describe("Oppi queue delivery defaults", () => {
 
     expect(piSession.setSteeringMode).toHaveBeenCalledWith("all");
     expect(piSession.setFollowUpMode).toHaveBeenCalledWith("one-at-a-time");
+  });
+});
+
+describe("SdkBackend extension binding", () => {
+  it("binds managed SDK extension UI in rpc mode", async () => {
+    const backend = Object.create(SdkBackend.prototype) as SdkBackend;
+    const uiContext = {} as PiSdk.ExtensionUIContext;
+    const piSession = {
+      bindExtensions: vi.fn(async () => {}),
+      setSteeringMode: vi.fn(),
+      setFollowUpMode: vi.fn(),
+    };
+
+    const mutableBackend = backend as unknown as {
+      runtime: { session: typeof piSession };
+      createExtensionUIContext: () => PiSdk.ExtensionUIContext;
+      bindCurrentSessionExtensions: () => Promise<void>;
+    };
+    mutableBackend.runtime = { session: piSession };
+    mutableBackend.createExtensionUIContext = () => uiContext;
+
+    await mutableBackend.bindCurrentSessionExtensions();
+
+    expect(piSession.bindExtensions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uiContext,
+        mode: "rpc",
+      }),
+    );
   });
 });
 

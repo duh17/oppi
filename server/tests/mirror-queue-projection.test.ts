@@ -11,6 +11,7 @@ import {
   parseMirrorTextUIResponse,
   snapshotMirrorWidgetLines,
   snapshotMirrorWidgetNativeSurface,
+  terminalAskFallback,
   type MessageQueueState,
 } from "../../pi-extensions/oppi-mirror.ts";
 import { serializeSessionTree } from "../src/session-tree.js";
@@ -168,6 +169,44 @@ describe("mirror ask response normalization", () => {
         cancelled: true,
       }),
     ).toEqual({ answers: {}, allIgnored: true });
+  });
+
+  it("supports multi-select in terminal ask fallback for mirrored sessions", async () => {
+    let selectCalls = 0;
+    const seenOptions: string[][] = [];
+    const result = await terminalAskFallback(
+      [
+        {
+          id: "targets",
+          question: "Which targets?",
+          options: [
+            { value: "server", label: "Server" },
+            { value: "ios", label: "iOS" },
+          ],
+          multiSelect: true,
+        },
+      ],
+      false,
+      undefined,
+      {
+        select: async (_title, options) => {
+          seenOptions.push(options);
+          selectCalls++;
+          if (selectCalls === 1) return options[0];
+          if (selectCalls === 2) return options[1];
+          return options.find((option) => option.startsWith("Done"));
+        },
+        input: async () => undefined,
+      },
+    );
+
+    expect(result).toEqual({
+      answers: { targets: ["server", "ios"] },
+      allIgnored: false,
+    });
+    expect(seenOptions[0][0]).toBe("[ ] Server");
+    expect(seenOptions[1][0]).toBe("[x] Server");
+    expect(seenOptions[2]).toContain("Done (2 selected)");
   });
 
   it("maps phone dialog responses to Pi-compatible return values", () => {

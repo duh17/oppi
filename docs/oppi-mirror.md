@@ -133,6 +133,7 @@ Supported from Oppi:
 - model and thinking-level changes
 - session rename, compaction, and tree navigation
 - standard Pi extension UI such as ask, select, confirm, input, editor, notify, title, status, and simple widget text, rendered through the native contract in [`extension-native-ui.md`](extension-native-ui.md)
+- `ask` requests with multi-select questions: Oppi renders the phone AskCard, while the terminal keeps a Pi UI fallback because Pi's standard dialog API has no portable multi-select request
 
 Still terminal-only:
 

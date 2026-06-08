@@ -7,9 +7,10 @@
 
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   createAgentSession,
@@ -37,25 +38,16 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import {
   BUILT_IN_EXTENSION_NAMES,
-  isBuiltInExtensionName,
   isManagedExtensionName,
   isWorkspaceBuiltInExtensionEnabled,
 } from "../extensions/built-ins.js";
-import { createAskFactory } from "../extensions/ask.js";
-import { createOppiAdminFactory } from "../extensions/oppi-admin.js";
-import {
-  createOppiSubagentsExtension,
-  type OppiSubagentsApiDescriptor,
-} from "../extensions/oppi-subagents.js";
-import { createVoiceFactory } from "../extensions/voice.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
-import type { Storage } from "./storage.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
-import { extensionNameFromPath } from "./extension-loader.js";
+import { extensionNameForAllowlist } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
-import type { ServerConfig, Session, Workspace } from "./types.js";
+import type { Session, Workspace } from "./types.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
 
@@ -103,11 +95,10 @@ export interface SdkExtensionFilterOptions {
   workspaceExtensions?: string[];
   permissionGateEnabled: boolean;
   permissionGatePath?: string;
-  bundledExtensionPaths?: string[];
 }
 
 function getLoadedExtensionName(ext: { path: string; resolvedPath?: string }): string {
-  return extensionNameFromPath(ext.resolvedPath || ext.path);
+  return extensionNameForAllowlist(ext.resolvedPath || ext.path);
 }
 
 function resolveGlobalPermissionGateExtensionPath(agentDir: string): string | undefined {
@@ -132,18 +123,6 @@ function extensionPathMatches(ext: LoadedExtensionForFilter, targetPath: string)
   );
 }
 
-function bundledExtensionName<T extends LoadedExtensionForFilter>(
-  ext: T,
-  options: SdkExtensionFilterOptions,
-): string | undefined {
-  for (const path of options.bundledExtensionPaths ?? []) {
-    if (extensionPathMatches(ext, path)) {
-      return "subagents";
-    }
-  }
-  return undefined;
-}
-
 export function filterSdkLoadedExtensions<T extends LoadedExtensionForFilter>(
   extensions: T[],
   options: SdkExtensionFilterOptions,
@@ -152,10 +131,7 @@ export function filterSdkLoadedExtensions<T extends LoadedExtensionForFilter>(
     if (ext.path.startsWith("<inline:")) return true;
 
     const name = getLoadedExtensionName(ext);
-    if (bundledExtensionName(ext, options)) {
-      return true;
-    }
-    if (isManagedExtensionName(name) || isBuiltInExtensionName(name)) {
+    if (isManagedExtensionName(name)) {
       return false;
     }
 
@@ -179,7 +155,7 @@ export function filterSdkLoadedExtensions<T extends LoadedExtensionForFilter>(
     filtered = filtered.filter((ext) => {
       if (ext.path.startsWith("<inline:")) return true;
 
-      const name = bundledExtensionName(ext, options) ?? getLoadedExtensionName(ext);
+      const name = getLoadedExtensionName(ext);
       if (name === PERMISSION_GATE_EXTENSION_NAME && options.permissionGateEnabled) {
         return true;
       }
@@ -298,10 +274,6 @@ Guidelines:
 - Show sandbox file paths clearly when working with files.`;
 }
 
-export interface BuiltInExtensionContext {
-  storage: Storage;
-}
-
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
@@ -313,8 +285,6 @@ export interface SdkBackendConfig {
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
-  /** Session-scoped deps for Oppi built-in extensions. */
-  builtInExtensionContext?: BuiltInExtensionContext;
   /** Additional session-local extension factories. */
   extraExtensionFactories?: ExtensionFactory[];
   /** Operational metrics collector for SDK timing. */
@@ -323,73 +293,49 @@ export interface SdkBackendConfig {
 
 const log = createLogger({ base: { component: "sdk_backend" } });
 
-function normalizeInternalBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+type ExtensionFactoryModule = Record<string, unknown>;
+
+function moduleCacheKey(path: string): string {
+  const stat = statSync(path, { bigint: true });
+  return `${stat.mtimeNs}-${stat.size}`;
 }
 
-function localApiHost(host: string): string {
-  const trimmed = host.trim();
-  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
-    return "127.0.0.1";
+function hotReloadImportUrl(path: string): string {
+  const url = pathToFileURL(path);
+  url.searchParams.set("mtime", moduleCacheKey(path));
+  return url.href;
+}
+
+function resolveAskModulePath(): string {
+  const compiledPath = fileURLToPath(new URL("../extensions/ask.js", import.meta.url));
+  if (existsSync(compiledPath)) {
+    return compiledPath;
   }
-  return trimmed;
+
+  const sourcePath = compiledPath.endsWith(".js")
+    ? `${compiledPath.slice(0, -".js".length)}.ts`
+    : compiledPath;
+  return existsSync(sourcePath) ? sourcePath : compiledPath;
 }
 
-function managedSubagentsBaseUrl(config: ServerConfig): string {
-  const directServerUrl = (config as ServerConfig & { serverUrl?: unknown }).serverUrl;
-  if (typeof directServerUrl === "string" && directServerUrl.trim().length > 0) {
-    return normalizeInternalBaseUrl(directServerUrl);
-  }
+export function createHotReloadingExtensionFactory(
+  resolveModulePath: () => string,
+  createFactoryExport: string,
+): ExtensionFactory {
+  return async (pi) => {
+    const modulePath = resolveModulePath();
+    const mod = (await import(hotReloadImportUrl(modulePath))) as ExtensionFactoryModule;
+    const createFactory = mod[createFactoryExport];
+    if (typeof createFactory !== "function") {
+      throw new Error(`${modulePath} does not export ${createFactoryExport}()`);
+    }
 
-  const scheme = config.tls?.mode === "disabled" ? "http" : "https";
-  return `${scheme}://${localApiHost(config.host)}:${config.port}`;
-}
-
-function sessionDepthFromStorage(session: Session, storage: Storage): number {
-  let depth = 0;
-  let current: Session | undefined = session;
-  const seen = new Set<string>();
-  while (current?.parentSessionId && !seen.has(current.parentSessionId)) {
-    seen.add(current.parentSessionId);
-    const parent = storage.getSession(current.parentSessionId);
-    if (!parent) break;
-    depth += 1;
-    current = parent;
-  }
-  return depth;
-}
-
-function createManagedSubagentsDescriptor(
-  session: Session,
-  workspace: Workspace | undefined,
-  storage: Storage,
-): OppiSubagentsApiDescriptor | undefined {
-  const workspaceId = session.workspaceId ?? workspace?.id;
-  if (!workspaceId) return undefined;
-
-  const config = storage.getConfig();
-  const maxDepth = config.extensions?.subagents?.maxDepth ?? 1;
-  return {
-    version: 1,
-    baseUrl: managedSubagentsBaseUrl(config),
-    token: config.token,
-    originSessionId: session.id,
-    workspaceId,
-    runtime: "oppi",
-    canSpawn: sessionDepthFromStorage(session, storage) < maxDepth,
-    defaultWaitTimeoutMs: config.extensions?.subagents?.defaultWaitTimeoutMs,
+    const factory = createFactory() as ExtensionFactory;
+    await factory(pi);
   };
 }
 
-function createBuiltInExtensionFactories(
-  session: Session,
-  workspace: Workspace | undefined,
-  context: BuiltInExtensionContext | undefined,
-): ExtensionFactory[] {
-  if (!context) {
-    return [];
-  }
-
+function createBuiltInExtensionFactories(workspace: Workspace | undefined): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   for (const name of BUILT_IN_EXTENSION_NAMES) {
     if (!isWorkspaceBuiltInExtensionEnabled(workspace, name)) {
@@ -398,18 +344,9 @@ function createBuiltInExtensionFactories(
 
     switch (name) {
       case "ask":
-        factories.push(createAskFactory());
-        break;
-      case "subagents": {
-        const descriptor = createManagedSubagentsDescriptor(session, workspace, context.storage);
-        factories.push((pi) => createOppiSubagentsExtension(pi, descriptor ? { descriptor } : {}));
-        break;
-      }
-      case "voice":
-        factories.push(createVoiceFactory(context.storage));
-        break;
-      case "oppi-admin":
-        factories.push(createOppiAdminFactory(context.storage));
+        factories.push(
+          createHotReloadingExtensionFactory(resolveAskModulePath, "createAskFactory"),
+        );
         break;
     }
   }
@@ -575,9 +512,7 @@ export class SdkBackend {
           agentDir: runtimeAgentDir,
         });
       }
-      extensionFactories.push(
-        ...createBuiltInExtensionFactories(session, workspace, config.builtInExtensionContext),
-      );
+      extensionFactories.push(...createBuiltInExtensionFactories(workspace));
       if (config.extraExtensionFactories) {
         extensionFactories.push(...config.extraExtensionFactories);
       }
@@ -587,7 +522,7 @@ export class SdkBackend {
 
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
-      // Oppi's built-ins, including managed SDK subagents, are registered above.
+      // Oppi's ask built-in is registered above as an inline factory when enabled.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -820,6 +755,7 @@ export class SdkBackend {
 
     await this.piSession.bindExtensions({
       uiContext: this.createExtensionUIContext(),
+      mode: "rpc",
       onError: (error) => {
         const event: ExtensionErrorEvent = {
           type: "extension_error",

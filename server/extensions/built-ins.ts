@@ -1,18 +1,13 @@
 import type { Workspace } from "../src/types.js";
 
 /** Extension names shipped by Oppi and exposed in workspace allowlists. */
-export type BuiltInExtensionName = "ask" | "subagents" | "voice" | "oppi-admin";
+export type BuiltInExtensionName = "ask";
 
 /** Host extension names suppressed by Oppi before native pi loading. */
 export const MANAGED_EXTENSION_NAMES = [] as const;
 
 /** Built-in tools exposed in the workspace extension picker. */
-export const BUILT_IN_EXTENSION_NAMES: readonly BuiltInExtensionName[] = [
-  "ask",
-  "subagents",
-  "voice",
-  "oppi-admin",
-];
+export const BUILT_IN_EXTENSION_NAMES: readonly BuiltInExtensionName[] = ["ask"];
 
 const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);
 const BUILT_IN_EXTENSION_NAME_SET = new Set<string>(BUILT_IN_EXTENSION_NAMES);

@@ -36,9 +36,9 @@ describe("isManagedExtensionName", () => {
 describe("built-in extension names", () => {
   it("detects Oppi built-ins distinctly from managed names", () => {
     expect(isBuiltInExtensionName("ask")).toBe(true);
-    expect(isBuiltInExtensionName("subagents")).toBe(true);
-    expect(isBuiltInExtensionName("voice")).toBe(true);
-    expect(isBuiltInExtensionName("oppi-admin")).toBe(true);
+    expect(isBuiltInExtensionName("subagents")).toBe(false);
+    expect(isBuiltInExtensionName("voice")).toBe(false);
+    expect(isBuiltInExtensionName("oppi-admin")).toBe(false);
     expect(isBuiltInExtensionName("permission-gate")).toBe(false);
     expect(isBuiltInExtensionName("memory")).toBe(false);
   });
@@ -47,29 +47,20 @@ describe("built-in extension names", () => {
 describe("isWorkspaceBuiltInExtensionEnabled", () => {
   it("keeps built-ins off when no allowlist is set", () => {
     expect(isWorkspaceBuiltInExtensionEnabled(undefined, "ask")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace(undefined), "subagents")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace(undefined), "voice")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace(undefined), "oppi-admin")).toBe(false);
+    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace(undefined), "ask")).toBe(false);
   });
 
   it("treats an explicit empty allowlist as disabling built-ins", () => {
     expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace([]), "ask")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace([]), "subagents")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace([]), "voice")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(makeWorkspace([]), "oppi-admin")).toBe(false);
   });
 
   it("respects the workspace allowlist", () => {
     const workspace = makeWorkspace(["ask", "memory"]);
     expect(isWorkspaceBuiltInExtensionEnabled(workspace, "ask")).toBe(true);
-    expect(isWorkspaceBuiltInExtensionEnabled(workspace, "subagents")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(workspace, "voice")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(workspace, "oppi-admin")).toBe(false);
   });
 
   it("requires canonical extension names in workspace allowlists", () => {
-    const workspace = makeWorkspace(["spawn_agent"]);
-    expect(isWorkspaceBuiltInExtensionEnabled(workspace, "subagents")).toBe(false);
-    expect(isWorkspaceBuiltInExtensionEnabled(workspace, "voice")).toBe(false);
+    const workspace = makeWorkspace(["ask_tool"]);
+    expect(isWorkspaceBuiltInExtensionEnabled(workspace, "ask")).toBe(false);
   });
 });

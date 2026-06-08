@@ -1,4 +1,8 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionContext,
+  ExtensionFactory,
+  ExtensionUIDialogOptions,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -10,6 +14,7 @@ import {
   type AskDialogResult,
   type AskQuestion,
 } from "./ask-shared.js";
+import { runTerminalAskDialog } from "./ask-terminal.js";
 
 const AskOptionSchema = Type.Object({
   value: Type.String({ description: "Return value when selected" }),
@@ -66,14 +71,174 @@ function displayAnswer(question: AskQuestion | undefined, answer: AskAnswer): st
   return displayAnswerValue(question, answer);
 }
 
+type AskUIContext = ExtensionContext["ui"] & {
+  ask?: (
+    questions: AskQuestion[],
+    allowCustom?: boolean,
+    opts?: ExtensionUIDialogOptions,
+  ) => Promise<AskDialogResult>;
+};
+
+const CUSTOM_CHOICE = "✎ Custom answer…";
+const SKIP_CHOICE = "↷ Skip";
+
+function optionChoiceLabel(option: { label: string; description?: string }, index: number): string {
+  const label = `${index + 1}. ${singleLine(option.label)}`;
+  return option.description ? `${label} — ${singleLine(option.description)}` : label;
+}
+
+function multiOptionChoiceLabel(
+  question: AskQuestion,
+  index: number,
+  selected: Set<string>,
+): string {
+  const option = question.options[index];
+  const mark = selected.has(option.value) ? "[x]" : "[ ]";
+  return `${mark} ${optionChoiceLabel(option, index)}`;
+}
+
+async function promptForCustomAnswer(
+  ctx: ExtensionContext,
+  title: string,
+  opts: ExtensionUIDialogOptions | undefined,
+): Promise<string | undefined> {
+  const answer = await ctx.ui.input(title, "Type a custom answer", opts);
+  const trimmed = answer?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+async function runPortableSingleSelectFallback(
+  ctx: ExtensionContext,
+  question: AskQuestion,
+  allowCustom: boolean,
+  opts: ExtensionUIDialogOptions | undefined,
+): Promise<AskAnswer | undefined> {
+  const title = question.question || question.id;
+  const optionChoices = question.options.map(optionChoiceLabel);
+
+  if (optionChoices.length === 0) {
+    return allowCustom ? promptForCustomAnswer(ctx, title, opts) : undefined;
+  }
+
+  const choices = allowCustom
+    ? [...optionChoices, CUSTOM_CHOICE, SKIP_CHOICE]
+    : [...optionChoices, SKIP_CHOICE];
+  const selected = await ctx.ui.select(title, choices, opts);
+  if (!selected || selected === SKIP_CHOICE) return undefined;
+  if (selected === CUSTOM_CHOICE) return promptForCustomAnswer(ctx, title, opts);
+
+  const optionIndex = optionChoices.indexOf(selected);
+  return optionIndex >= 0 ? question.options[optionIndex].value : selected;
+}
+
+async function runPortableMultiSelectFallback(
+  ctx: ExtensionContext,
+  question: AskQuestion,
+  allowCustom: boolean,
+  opts: ExtensionUIDialogOptions | undefined,
+): Promise<AskAnswer | undefined> {
+  const title = question.question || question.id;
+  const selected = new Set<string>();
+  const customAnswers: string[] = [];
+
+  if (question.options.length === 0) {
+    const custom = allowCustom ? await promptForCustomAnswer(ctx, title, opts) : undefined;
+    return custom ? [custom] : undefined;
+  }
+
+  while (!opts?.signal?.aborted) {
+    const optionChoices = question.options.map((_, index) =>
+      multiOptionChoiceLabel(question, index, selected),
+    );
+    const selectedCount = selected.size + customAnswers.length;
+    const doneChoice = selectedCount > 0 ? `✓ Done (${selectedCount} selected)` : "✓ Done";
+    const choices = allowCustom
+      ? [...optionChoices, CUSTOM_CHOICE, doneChoice, SKIP_CHOICE]
+      : [...optionChoices, doneChoice, SKIP_CHOICE];
+
+    const choice = await ctx.ui.select(title, choices, opts);
+    if (!choice || choice === SKIP_CHOICE) return undefined;
+
+    if (choice === doneChoice) {
+      const selectedValues = question.options
+        .filter((option) => selected.has(option.value))
+        .map((option) => option.value);
+      const answers = [...selectedValues, ...customAnswers];
+      return answers.length > 0 ? answers : undefined;
+    }
+
+    if (choice === CUSTOM_CHOICE) {
+      const custom = await promptForCustomAnswer(ctx, title, opts);
+      if (custom) customAnswers.push(custom);
+      continue;
+    }
+
+    const optionIndex = optionChoices.indexOf(choice);
+    const option = optionIndex >= 0 ? question.options[optionIndex] : undefined;
+    if (!option) continue;
+
+    if (selected.has(option.value)) {
+      selected.delete(option.value);
+    } else {
+      selected.add(option.value);
+    }
+  }
+
+  return undefined;
+}
+
+async function runPortableAskFallback(
+  ctx: ExtensionContext,
+  questions: AskQuestion[],
+  allowCustom: boolean,
+  opts: ExtensionUIDialogOptions | undefined,
+): Promise<AskDialogResult> {
+  const answers: Record<string, AskAnswer> = {};
+
+  for (const question of questions) {
+    if (opts?.signal?.aborted) break;
+
+    const answer = question.multiSelect
+      ? await runPortableMultiSelectFallback(ctx, question, allowCustom, opts)
+      : await runPortableSingleSelectFallback(ctx, question, allowCustom, opts);
+    if (answer !== undefined) {
+      answers[question.id] = answer;
+    }
+  }
+
+  return { answers, allIgnored: Object.keys(answers).length === 0 };
+}
+
+async function runAskDialog(
+  ctx: ExtensionContext,
+  questions: AskQuestion[],
+  allowCustom: boolean,
+  opts: ExtensionUIDialogOptions | undefined,
+): Promise<AskDialogResult> {
+  const ui = ctx.ui as AskUIContext;
+
+  if (typeof ui.ask === "function") {
+    return ui.ask(questions, allowCustom, opts);
+  }
+
+  if (ctx.mode === "tui") {
+    const custom = ctx.ui.custom.bind(ctx.ui) as Parameters<typeof runTerminalAskDialog>[0];
+    const result = await runTerminalAskDialog(custom, questions, allowCustom, opts);
+    return result ?? { answers: {}, allIgnored: true };
+  }
+
+  return runPortableAskFallback(ctx, questions, allowCustom, opts);
+}
+
 /**
- * Oppi built-in ask extension.
+ * Oppi's default ask extension.
  *
- * Oppi intercepts ask tool execution and renders it as a native AskCard on iOS.
- * Keeping the tool definition server-owned ensures the mobile UI contract and
- * prompt guidance stay in sync even if the host's ~/.pi/agent/extensions changes.
+ * The tool supports multiple questions, multi-select options, custom answers,
+ * and native AskCard rendering on iOS. Oppi does not reserve the `ask` name:
+ * user/project Pi extensions can also register `ask`, and Pi's normal extension
+ * ordering decides which tool registration wins.
  *
- * The flow now has a clean split:
+ * The flow has a clean split:
  * - ask.ts: shared tool contract + Oppi/iOS path
  * - ask-terminal.ts: terminal-only custom dialog
  */
@@ -115,8 +280,9 @@ export function createAskFactory(): ExtensionFactory {
           "scope of a refactor, which features to include, API design tradeoffs, dependency choices.",
       ],
       parameters: AskParams,
+      executionMode: "sequential",
 
-      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params, signal, _onUpdate, ctx) {
         if (!Array.isArray(params.questions) || params.questions.length === 0) {
           throw new Error("ask requires at least one question");
         }
@@ -139,15 +305,9 @@ export function createAskFactory(): ExtensionFactory {
           };
         }
 
-        const ui = ctx.ui as typeof ctx.ui & {
-          ask?: (questions: AskQuestion[], allowCustom?: boolean) => Promise<AskDialogResult>;
-        };
-
-        if (typeof ui.ask !== "function") {
-          throw new Error("ask UI primitive unavailable");
-        }
-
-        const askResult = await ui.ask(params.questions, params.allowCustom ?? true);
+        const allowCustom = params.allowCustom ?? true;
+        const dialogOptions = signal ? { signal } : undefined;
+        const askResult = await runAskDialog(ctx, params.questions, allowCustom, dialogOptions);
         return buildAskToolResult(params.questions, askResult.answers);
       },
 

@@ -28,7 +28,7 @@ export interface WorkspaceMutableConfig {
   // Undefined = pi default tools. Defined = authoritative allowlist.
   tools?: string[]; // Tool allowlist (e.g. read/bash/edit/write + extension tools)
   // Undefined = discovered pi extensions only. Defined = authoritative allowlist.
-  extensions?: string[]; // Extension allowlist (host extensions + Oppi names like ask/subagents/voice)
+  extensions?: string[]; // Extension allowlist for host/Pi extensions plus Oppi ask
 
   // Git status
   gitStatusEnabled?: boolean; // Show git status context bar (default: true)

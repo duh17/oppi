@@ -6,8 +6,10 @@ import { describe, it, expect } from "vitest";
 
 import {
   extensionInstallName,
+  extensionNameForAllowlist,
   extensionNameFromPath,
   isValidExtensionName,
+  listConfiguredHostExtensions,
   listHostExtensions,
   resolveWorkspaceExtensions,
   type ResolvedExtension,
@@ -65,6 +67,15 @@ describe("extensionNameFromPath", () => {
 
   it("does not rewrite a top-level index.ts extension file", () => {
     expect(extensionNameFromPath("/Users/example/.pi/agent/extensions/index.ts")).toBe("index");
+  });
+
+  it("uses package identity for package-provided index extensions", () => {
+    expect(
+      extensionNameForAllowlist(
+        "/Users/example/.pi/agent/npm/node_modules/@tintinweb/pi-subagents/src/index.ts",
+        { source: "npm:@tintinweb/pi-subagents", origin: "package" },
+      ),
+    ).toBe("tintinweb-subagents");
   });
 });
 
@@ -129,6 +140,86 @@ describe("resolveWorkspaceExtensions", () => {
   });
 });
 
+// ─── listConfiguredHostExtensions ───
+
+describe("listConfiguredHostExtensions", () => {
+  it("picks up new global and project-local extension files on the next allow-list scan", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-ext-direct-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    const globalDir = join(agentDir, "extensions");
+    const localDir = join(cwd, ".pi", "extensions");
+
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+
+    const before = await listConfiguredHostExtensions({ cwd, agentDir });
+    expect(before.map((ext) => ext.name)).not.toContain("global-new");
+    expect(before.map((ext) => ext.name)).not.toContain("project-new");
+
+    mkdirSync(globalDir, { recursive: true });
+    mkdirSync(localDir, { recursive: true });
+    writeFileSync(join(globalDir, "global-new.ts"), "export default function() {}\n");
+    writeFileSync(join(localDir, "project-new.ts"), "export default function() {}\n");
+
+    const after = await listConfiguredHostExtensions({ cwd, agentDir });
+    expect(after).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "global-new",
+          path: join(globalDir, "global-new.ts"),
+          kind: "file",
+        }),
+        expect.objectContaining({
+          name: "project-new",
+          path: join(localDir, "project-new.ts"),
+          kind: "file",
+        }),
+      ]),
+    );
+  });
+
+  it("picks up newly installed package extensions on the next allow-list scan", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-ext-package-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    const packageDir = join(agentDir, "npm", "node_modules", "@tintinweb", "pi-subagents");
+    const extensionPath = join(packageDir, "src", "index.ts");
+
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+
+    const before = await listConfiguredHostExtensions({ cwd, agentDir });
+    expect(before.map((ext) => ext.name)).not.toContain("tintinweb-subagents");
+
+    mkdirSync(join(packageDir, "src"), { recursive: true });
+    writeFileSync(extensionPath, "export default function() {}\n");
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "@tintinweb/pi-subagents",
+        version: "0.0.0",
+        pi: { extensions: ["./src/index.ts"] },
+      }),
+    );
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ packages: ["npm:@tintinweb/pi-subagents"] }),
+    );
+
+    const after = await listConfiguredHostExtensions({ cwd, agentDir });
+    const names = after.map((ext) => ext.name);
+    const installed = after.find((ext) => ext.name === "tintinweb-subagents");
+
+    expect(installed).toMatchObject({
+      name: "tintinweb-subagents",
+      path: extensionPath,
+      kind: "file",
+    });
+    expect(names).not.toContain("index");
+  });
+});
+
 // ─── listHostExtensions ───
 
 describe("listHostExtensions", () => {
@@ -145,6 +236,16 @@ describe("listHostExtensions", () => {
 
     const extensions = listHostExtensions({ globalDir });
     expect(extensions.find((e) => e.name === "permission-gate")).toBeDefined();
+  });
+
+  it("lists ask as a normal host extension", () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const globalDir = join(root, "global");
+    mkdirSync(globalDir, { recursive: true });
+    writeFileSync(join(globalDir, "ask.ts"), "export default function() {}\n");
+
+    const extensions = listHostExtensions({ globalDir });
+    expect(extensions.find((e) => e.name === "ask")).toBeDefined();
   });
 
   it("does not list mobile renderers (they live in ~/.pi/agent/mobile-renderers/)", () => {

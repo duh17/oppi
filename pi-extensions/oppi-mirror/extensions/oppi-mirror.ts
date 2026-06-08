@@ -1019,7 +1019,9 @@ export function snapshotMirrorWidgetNativeSurface(
     return undefined;
   }
 
-  if (Buffer.byteLength(json, "utf8") > MIRROR_WIDGET_NATIVE_SURFACE_MAX_BYTES) {
+  if (
+    Buffer.byteLength(json, "utf8") > MIRROR_WIDGET_NATIVE_SURFACE_MAX_BYTES
+  ) {
     return undefined;
   }
 
@@ -1326,15 +1328,15 @@ function formatTerminalAskOption(option: MirrorAskOption): string {
     : option.label;
 }
 
-function parseMultiSelectText(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+function formatTerminalMultiAskOption(
+  option: MirrorAskOption,
+  selected: Set<string>,
+): string {
+  const mark = selected.has(option.value) ? "[x]" : "[ ]";
+  return `${mark} ${formatTerminalAskOption(option)}`;
 }
 
-async function terminalAskFallback(
+export async function terminalAskFallback(
   questions: MirrorAskQuestion[],
   allowCustom: boolean | undefined,
   opts: ExtensionUIDialogOptions | undefined,
@@ -1353,18 +1355,62 @@ async function terminalAskFallback(
     const options = Array.isArray(question.options) ? question.options : [];
 
     if (question.multiSelect) {
-      const optionHint = options
-        .map((option) => `${option.label} (${option.value})`)
-        .join(", ");
-      const response = await ui.input(
-        title,
-        optionHint
-          ? `Comma-separated option values: ${optionHint}`
-          : "Comma-separated answers, blank to skip",
-        opts,
-      );
-      const selected = parseMultiSelectText(response);
-      if (selected.length > 0) answers[id] = selected;
+      const selected = new Set<string>();
+      const customAnswers: string[] = [];
+
+      if (options.length === 0) {
+        if (!customAnswersAllowed) continue;
+        const custom = await ui.input(
+          title,
+          "Type an answer, blank to skip",
+          opts,
+        );
+        const trimmed = custom?.trim();
+        if (trimmed) answers[id] = [trimmed];
+        continue;
+      }
+
+      while (!opts?.signal?.aborted) {
+        const optionChoices = options.map((option) =>
+          formatTerminalMultiAskOption(option, selected),
+        );
+        const selectedCount = selected.size + customAnswers.length;
+        const doneLabel =
+          selectedCount > 0 ? `Done (${selectedCount} selected)` : "Done";
+        const customLabel = "Custom answer";
+        const skipLabel = "Skip";
+        const choices = customAnswersAllowed
+          ? [...optionChoices, customLabel, doneLabel, skipLabel]
+          : [...optionChoices, doneLabel, skipLabel];
+        const choice = await ui.select(title, choices, opts);
+        if (!choice || choice === skipLabel) break;
+
+        if (choice === doneLabel) {
+          const selectedValues = options
+            .filter((option) => selected.has(option.value))
+            .map((option) => option.value);
+          const values = [...selectedValues, ...customAnswers];
+          if (values.length > 0) answers[id] = values;
+          break;
+        }
+
+        if (choice === customLabel) {
+          const custom = await ui.input(title, "Type a custom answer", opts);
+          const trimmed = custom?.trim();
+          if (trimmed) customAnswers.push(trimmed);
+          continue;
+        }
+
+        const optionIndex = optionChoices.indexOf(choice);
+        const option = optionIndex >= 0 ? options[optionIndex] : undefined;
+        if (!option) continue;
+
+        if (selected.has(option.value)) {
+          selected.delete(option.value);
+        } else {
+          selected.add(option.value);
+        }
+      }
       continue;
     }
 

@@ -14,7 +14,7 @@ import {
   type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
 
-import { isBuiltInExtensionName, isManagedExtensionName } from "../extensions/built-ins.js";
+import { isManagedExtensionName } from "../extensions/built-ins.js";
 import { createLogger } from "./logger.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
@@ -95,12 +95,97 @@ export function extensionNameFromPath(path: string): string {
   return baseName;
 }
 
+type ExtensionResourceMetadata = Partial<ResolvedResource["metadata"]>;
+
+function sanitizeExtensionNameCandidate(value: string): string | undefined {
+  const sanitized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[._-]+/, "")
+    .replace(/[._-]+$/, "");
+
+  return isValidExtensionName(sanitized) ? sanitized : undefined;
+}
+
+function packageScopedName(scope: string | undefined, packageName: string): string | undefined {
+  const concisePackageName = packageName.startsWith("pi-")
+    ? packageName.slice("pi-".length)
+    : packageName;
+  return sanitizeExtensionNameCandidate(
+    scope ? `${scope}-${concisePackageName}` : concisePackageName,
+  );
+}
+
+export function extensionNameFromPackageSource(source: string | undefined): string | undefined {
+  if (!source?.startsWith("npm:")) {
+    return undefined;
+  }
+
+  const spec = source.slice("npm:".length).trim();
+  if (!spec) {
+    return undefined;
+  }
+
+  if (spec.startsWith("@")) {
+    const slash = spec.indexOf("/");
+    if (slash <= 1) {
+      return undefined;
+    }
+
+    const scope = spec.slice(1, slash);
+    const packageWithVersion = spec.slice(slash + 1);
+    const versionAt = packageWithVersion.lastIndexOf("@");
+    const packageName = versionAt > 0 ? packageWithVersion.slice(0, versionAt) : packageWithVersion;
+    return packageScopedName(scope, packageName);
+  }
+
+  const versionAt = spec.lastIndexOf("@");
+  const packageName = versionAt > 0 ? spec.slice(0, versionAt) : spec;
+  return packageScopedName(undefined, packageName);
+}
+
+function extensionNameFromNodeModulesPath(path: string): string | undefined {
+  const parts = path.split(/[\\/]+/);
+  const nodeModulesIndex = parts.lastIndexOf("node_modules");
+  if (nodeModulesIndex < 0) {
+    return undefined;
+  }
+
+  const first = parts[nodeModulesIndex + 1];
+  if (!first) {
+    return undefined;
+  }
+
+  if (first.startsWith("@")) {
+    const packageName = parts[nodeModulesIndex + 2];
+    return packageName ? packageScopedName(first.slice(1), packageName) : undefined;
+  }
+
+  return packageScopedName(undefined, first);
+}
+
+export function extensionNameForAllowlist(
+  path: string,
+  metadata?: ExtensionResourceMetadata,
+): string {
+  const pathName = extensionNameFromPath(path);
+  if (pathName !== "index") {
+    return pathName;
+  }
+
+  return (
+    extensionNameFromPackageSource(metadata?.origin === "package" ? metadata.source : undefined) ??
+    extensionNameFromNodeModulesPath(path) ??
+    pathName
+  );
+}
+
 /**
  * List host extensions available for workspace selection.
  *
  * Scans the global host directory (`~/.pi/agent/extensions`) and, when `cwd`
  * is provided, the project-local directory (`<cwd>/.pi/extensions`). Oppi
- * server built-in extension names are excluded.
+ * entries with invalid extension names are excluded.
  *
  * The result is deduplicated by extension name. Project-local entries win over
  * global ones because pi loads local extensions first.
@@ -201,11 +286,6 @@ export function resolveWorkspaceExtensions(
     }
 
     const normalized = normalizeName(requested);
-    if (isManagedExtensionName(normalized)) {
-      warnings.push(`Ignoring managed extension in explicit list: ${requested}`);
-      continue;
-    }
-
     const ext = resolveByName(normalized);
     if (!ext) {
       warnings.push(`Extension not found: ${requested}`);
@@ -262,7 +342,7 @@ function listFromResolvedResources(resources: ResolvedResource[]): HostExtension
       continue;
     }
 
-    const extension = toHostExtensionInfo(resource.path);
+    const extension = toHostExtensionInfo(resource.path, resource.metadata);
     if (!extension) {
       continue;
     }
@@ -277,7 +357,10 @@ function listFromResolvedResources(resources: ResolvedResource[]): HostExtension
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function toHostExtensionInfo(absPath: string): HostExtensionInfo | null {
+function toHostExtensionInfo(
+  absPath: string,
+  metadata?: ExtensionResourceMetadata,
+): HostExtensionInfo | null {
   const kind = detectKind(absPath);
   if (!kind) {
     return null;
@@ -285,8 +368,7 @@ function toHostExtensionInfo(absPath: string): HostExtensionInfo | null {
 
   const fileName = basename(absPath);
   const suffix = extname(fileName);
-  const name = extensionNameFromPath(absPath);
-
+  const name = extensionNameForAllowlist(absPath, metadata);
   if (kind === "file") {
     if (suffix !== ".ts" && suffix !== ".js") {
       return null;
@@ -298,7 +380,7 @@ function toHostExtensionInfo(absPath: string): HostExtensionInfo | null {
     }
   }
 
-  if (!isValidExtensionName(name) || isManagedExtensionName(name) || isBuiltInExtensionName(name)) {
+  if (!isValidExtensionName(name) || isManagedExtensionName(name)) {
     return null;
   }
 

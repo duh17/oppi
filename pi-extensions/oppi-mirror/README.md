@@ -67,6 +67,8 @@ pi
 
 Mirror supports prompts, steer and follow-up messages, stop, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows.
 
+For Oppi's `ask` request, Mirror supports multi-select on the phone AskCard and keeps a terminal fallback. This exists because Pi's standard dialog API has `select`, `confirm`, `input`, and `editor`, but no portable multi-select form request.
+
 Session replacement stays terminal-owned. Use terminal Pi for `/new`, `/fork`, and session switching.
 
 ## Requirements
