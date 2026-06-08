@@ -229,6 +229,14 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         )
     }
 
+    func testExtensionUIWidgetInNormalTimelineScreenshot() throws {
+        createAndEnterSession()
+        _ = waitForWebSocketConnected(timeout: 20)
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+
+        try captureNormalTimelineWidgetSurface(sessionId: sessionId)
+    }
+
     func testExtensionUIResponseActions() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
@@ -670,6 +678,113 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         ])
         waitForText("Native RPC widget ready", timeout: 10)
         try saveLabScreenshot(name: "extension-ui-01-rpc-surface-e2e")
+    }
+
+    private func captureNormalTimelineWidgetSurface(sessionId: String) throws {
+        let widgetKey = "normal-timeline-goal"
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "agent_start",
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "thinking_delta",
+            "delta": "Inspecting lifecycle for extension widget updates.",
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "tool_start",
+            "tool": "bash",
+            "toolCallId": "normal-timeline-widget-rg",
+            "args": ["command": "rg -n \"setWidget\" clients/apple/Oppi server/src"],
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "tool_output",
+            "toolCallId": "normal-timeline-widget-rg",
+            "output": "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift: widget surface rendered\nserver/src/routes/e2e-ui-harness.ts: setWidget forwarded\n",
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "tool_end",
+            "tool": "bash",
+            "toolCallId": "normal-timeline-widget-rg",
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+            "widgetLines": [
+                "1 of 4 tasks completed",
+                "Read relevant Pi extension docs and Oppi architecture files",
+                "Trace server setWidget event ingestion and lifecycle",
+                "Trace iOS rendering/ordering of widget cards",
+                "Summarize likely bug, risks, and concrete fixes",
+            ],
+            "nativeSurface": [
+                "version": 1,
+                "id": "widget:\(widgetKey)",
+                "source": "widget",
+                "presentation": [
+                    "style": "surfacePanel",
+                    "title": "1 of 4 tasks completed",
+                ],
+                "blocks": [
+                    [
+                        "type": "progress",
+                        "id": "goal-progress",
+                        "value": 0.25,
+                    ],
+                    [
+                        "type": "activityList",
+                        "id": "goal-tasks",
+                        "rows": [
+                            [
+                                "id": "read-docs",
+                                "title": "Read relevant Pi extension docs and Oppi architecture files",
+                                "state": "success",
+                            ],
+                            [
+                                "id": "trace-server",
+                                "title": "Trace server setWidget event ingestion and lifecycle",
+                                "state": "running",
+                            ],
+                            [
+                                "id": "trace-ios",
+                                "title": "Trace iOS rendering/ordering of widget cards",
+                                "state": "inactive",
+                            ],
+                            [
+                                "id": "summarize",
+                                "title": "Summarize likely bug, risks, and concrete fixes",
+                                "state": "inactive",
+                            ],
+                        ],
+                    ],
+                ],
+                "fallback": [
+                    "lines": [
+                        "1 of 4 tasks completed",
+                        "Trace server setWidget event ingestion and lifecycle",
+                    ],
+                ],
+            ],
+        ])
+
+        waitForText("Inspecting lifecycle", timeout: 10)
+        waitForText("Trace server setWidget", timeout: 10)
+        try saveLabScreenshot(name: "extension-ui-normal-timeline-widget-e2e")
+
+        let activeTaskButton = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Trace server setWidget event ingestion")
+        ).firstMatch
+        tap(activeTaskButton, named: "normal timeline active task row", timeout: 5)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        try saveLabScreenshot(name: "extension-ui-normal-timeline-widget-expanded-e2e")
+
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "agent_end",
+        ])
     }
 
     private func captureNativeDisplayBlockSurface(

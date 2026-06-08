@@ -210,13 +210,13 @@ struct ModelPickerSheet: View {
                     HStack(spacing: 4) {
                         ForEach(Array(usageBadges.indices), id: \.self) { index in
                             let badge = usageBadges[index]
-                            let badgeColor = color(for: badge.tone)
-                            Text(badge.label)
-                                .font(.caption2.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(badgeColor)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(badgeColor.opacity(0.14), in: Capsule())
+                            StatusPill(
+                                text: badge.label,
+                                tone: tone(for: badge.tone),
+                                emphasis: .tinted,
+                                size: .small,
+                                monospacedDigit: true
+                            )
                         }
                     }
                 }
@@ -258,14 +258,14 @@ struct ModelPickerSheet: View {
         codexUsage?.providerBadges(for: provider) ?? []
     }
 
-    private func color(for tone: CodexUsageInfo.BadgeTone) -> Color {
+    private func tone(for tone: CodexUsageInfo.BadgeTone) -> StatusPillTone {
         switch tone {
         case .green:
-            return .themeGreen
+            return .success
         case .orange:
-            return .themeOrange
+            return .warning
         case .red:
-            return .themeRed
+            return .danger
         }
     }
 }
@@ -353,12 +353,12 @@ private struct ModelRow: View {
                         .lineLimit(1)
 
                     if isCurrent {
-                        Text("current")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.themeBlue)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.themeBlue.opacity(0.2), in: Capsule())
+                        StatusPill(
+                            text: "current",
+                            tone: .accent,
+                            emphasis: .tinted,
+                            size: .mini
+                        )
                     }
                 }
 

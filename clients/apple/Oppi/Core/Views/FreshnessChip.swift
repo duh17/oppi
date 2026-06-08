@@ -4,16 +4,16 @@ struct FreshnessChip: View {
     let state: FreshnessState
     let label: String
 
-    private var tint: Color {
+    private var tone: StatusPillTone {
         switch state {
         case .live:
-            return .themeGreen
+            return .success
         case .syncing:
-            return .themeBlue
+            return .working
         case .offline:
-            return .themeRed
+            return .danger
         case .stale:
-            return .themeOrange
+            return .warning
         }
     }
 
@@ -36,19 +36,14 @@ struct FreshnessChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.appChip)
-                .foregroundStyle(tint)
-
-            Text(displayLabel)
-                .font(.caption2)
-                .foregroundStyle(.themeComment)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(.themeChipSubtleBg, in: Capsule())
-        .accessibilityLabel("\(state.accessibilityText). \(label)")
+        StatusPill(
+            text: displayLabel,
+            systemImage: icon,
+            tone: tone,
+            emphasis: .quiet,
+            size: .small,
+            monospacedDigit: true,
+            accessibilityLabel: "\(state.accessibilityText). \(label)"
+        )
     }
 }

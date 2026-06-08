@@ -10,8 +10,7 @@ private extension View {
                 shape.fill(
                     LinearGradient(
                         colors: [
-                            Color.themeBlue.opacity(0.08),
-                            Color.themePurple.opacity(0.05),
+                            Color.themeFg.opacity(0.04),
                             Color.clear,
                         ],
                         startPoint: .topLeading,
@@ -25,7 +24,7 @@ private extension View {
                         colors: [
                             Color.themeFg.opacity(0.18),
                             Color.themeComment.opacity(0.16),
-                            Color.themeBlue.opacity(0.20),
+                            Color.themeFg.opacity(0.08),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -62,7 +61,6 @@ private extension View {
 private struct ExtensionProgressBar: View {
     let value: Double
     var height: CGFloat = 5
-    var tint: Color = .themeBlue
 
     private var clampedValue: Double {
         min(max(value, 0), 1)
@@ -77,15 +75,8 @@ private struct ExtensionProgressBar: View {
                     .fill(Color.themeFg.opacity(0.12))
 
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [tint, Color.themePurple.opacity(0.85)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .fill(Color.themeFg.opacity(0.82))
                     .frame(width: width)
-                    .shadow(color: tint.opacity(0.28), radius: 4, x: 0, y: 0)
             }
         }
         .frame(height: height)
@@ -159,13 +150,13 @@ struct ExtensionNativeSurfaceView: View {
                     Spacer(minLength: 8)
 
                     if let summaryText {
-                        Label(summaryText, systemImage: "bolt.fill")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeBlue)
-                            .labelStyle(.titleAndIcon)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color.themeBlue.opacity(0.12), in: Capsule())
+                        StatusPill(
+                            text: summaryText,
+                            systemImage: "bolt.fill",
+                            tone: .working,
+                            emphasis: .quiet,
+                            size: .small
+                        )
                     }
 
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -488,8 +479,22 @@ private struct ExtensionNativeActivityRowView: View {
     let row: ExtensionUIActivityRow
     var onOpenURL: ((URL) -> Bool)?
 
+    @State private var isExpanded = false
+
+    private var canExpandInline: Bool {
+        guard linkedURL == nil else { return false }
+        if row.title.count > 34 || row.title.contains("\n") { return true }
+        if let subtitle = row.subtitle, subtitle.count > 32 || subtitle.contains("\n") { return true }
+        if let detail = row.detail, detail.count > 44 || detail.contains("\n") { return true }
+        return false
+    }
+
     var body: some View {
-        let content = ExtensionNativeActivityRowContent(row: row, showsNavigationCue: linkedURL != nil)
+        let content = ExtensionNativeActivityRowContent(
+            row: row,
+            showsNavigationCue: linkedURL != nil,
+            isExpanded: isExpanded
+        )
         if let url = linkedURL {
             Button {
                 if onOpenURL?(url) != true {
@@ -500,6 +505,16 @@ private struct ExtensionNativeActivityRowView: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens the related session")
+        } else if canExpandInline {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isExpanded ? "Collapse task text" : "Show full task text")
         } else {
             content
         }
@@ -518,6 +533,7 @@ private struct ExtensionNativeActivityRowView: View {
 private struct ExtensionNativeActivityRowContent: View {
     let row: ExtensionUIActivityRow
     let showsNavigationCue: Bool
+    let isExpanded: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -530,27 +546,30 @@ private struct ExtensionNativeActivityRowContent: View {
                 Text(row.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                    .lineLimit(2)
+                    .lineLimit(isExpanded ? nil : 2)
                     .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if let subtitle = row.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.caption2)
                         .foregroundStyle(.themeComment)
-                        .lineLimit(1)
+                        .lineLimit(isExpanded ? nil : 1)
                         .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let detail = row.detail, !detail.isEmpty {
                     Text(detail)
                         .font(.caption2)
                         .foregroundStyle(.themeComment)
-                        .lineLimit(2)
+                        .lineLimit(isExpanded ? nil : 2)
                         .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let progress = normalizedProgress {
-                    ExtensionProgressBar(value: progress, height: 4, tint: rowAccentColor)
+                    ExtensionProgressBar(value: progress, height: 4)
                         .padding(.top, 4)
                 }
             }
@@ -568,12 +587,12 @@ private struct ExtensionNativeActivityRowContent: View {
         .padding(.vertical, 5)
         .frame(minHeight: showsNavigationCue ? 44 : 34, alignment: .center)
         .background(
-            rowAccentColor.opacity(rowHighlightOpacity),
+            Color.themeFg.opacity(rowHighlightOpacity),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(rowAccentColor.opacity(rowBorderOpacity), lineWidth: 1)
+                .stroke(Color.themeComment.opacity(rowBorderOpacity), lineWidth: 1)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -594,16 +613,14 @@ private struct ExtensionNativeActivityRowContent: View {
 
     private var rowHighlightOpacity: Double {
         switch row.state {
-        case "running": return 0.10
-        case "warning", "error": return 0.08
+        case "running", "warning", "error": return 0.05
         default: return 0
         }
     }
 
     private var rowBorderOpacity: Double {
         switch row.state {
-        case "running": return 0.18
-        case "warning", "error": return 0.16
+        case "running", "warning", "error": return 0.16
         default: return 0
         }
     }

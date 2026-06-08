@@ -63,12 +63,13 @@ struct SkillDetailView: View {
 
     @ViewBuilder
     private func badge(_ text: String, icon: String, color: Color) -> some View {
-        Label(text, systemImage: icon)
-            .font(.caption)
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.12), in: .capsule)
+        StatusPill(
+            text: text,
+            systemImage: icon,
+            tone: .custom(color),
+            emphasis: .quiet,
+            size: .regular
+        )
     }
 
     @ViewBuilder

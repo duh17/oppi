@@ -45,12 +45,12 @@ struct ReviewFileSummaryBar: View {
                         .foregroundStyle(.themeFg)
                         .lineLimit(1)
 
-                    Text(statusLabel)
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(GitStatusColor.color(for: status).opacity(0.12), in: Capsule())
-                        .foregroundStyle(GitStatusColor.color(for: status))
+                    StatusPill(
+                        text: statusLabel,
+                        tone: .custom(GitStatusColor.color(for: status)),
+                        emphasis: .tinted,
+                        size: .mini
+                    )
                 }
 
                 if let parentPath = path.parentPathForDisplay {
