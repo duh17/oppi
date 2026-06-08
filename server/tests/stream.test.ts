@@ -208,6 +208,38 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
+  it("tags replayed extension UI notifications with the bound session id", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+    const pendingReplay: ServerMessage = {
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: ["0 of 4 tasks completed"],
+      widgetPlacement: "aboveEditor",
+    };
+    (
+      ctx.sessions as unknown as {
+        getPendingUIRequestMessages: (sessionId: string) => ServerMessage[];
+      }
+    ).getPendingUIRequestMessages = vi.fn(() => [pendingReplay]);
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    expect(ws.sentOfType("extension_ui_notification", "sess-bound")).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        sessionId: "sess-bound",
+        widgetKey: "goal",
+        widgetLines: ["0 of 4 tasks completed"],
+      }),
+    ]);
+  });
+
   it("does not auto-start a terminal mirror session when a client attaches", async () => {
     const session = { ...makeSession("sess-mirror", "w1"), runtime: "pi-tui" as const };
     const { ctx, runtimeOverrides } = createMockContext([session]);

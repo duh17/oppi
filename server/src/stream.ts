@@ -378,7 +378,7 @@ export class BoundSessionStreamMux {
 
       const pendingUIMsgs = this.ctx.sessionRuntimes.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
-        send(pendingUIMsg);
+        sendForSession(pendingUIMsg);
       }
       const pendingUIDialogCount = pendingUIMsgs.filter(
         (message) => message.type === "extension_ui_request",
