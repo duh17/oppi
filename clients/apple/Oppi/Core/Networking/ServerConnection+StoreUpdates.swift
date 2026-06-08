@@ -284,7 +284,7 @@ extension ServerConnection {
                 workspaceIds.insert(workspaceId)
             }
         }
-        for request in pendingExtensionDialogs.values {
+        for request in pendingExtensionDialogRequests {
             if let workspaceId = attentionWorkspaceId(explicitWorkspaceId: nil, sessionId: request.sessionId) {
                 workspaceIds.insert(workspaceId)
             }
@@ -302,7 +302,7 @@ extension ServerConnection {
             ask.workspaceId == workspaceId
                 || (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
         }
-        let hasPendingExtensionDialog = pendingExtensionDialogs.values.contains { request in
+        let hasPendingExtensionDialog = pendingExtensionDialogRequests.contains { request in
             workspaceSessionIds.contains(request.sessionId)
         }
         let hasListAttention = workspaceSessions.contains { session in
@@ -353,14 +353,20 @@ extension ServerConnection {
                 .map(\.id)
         )
 
-        let removedAskSessionIds = askRequestStore.applyWorkspaceSnapshot(
+        let changedAskSessionIds = askRequestStore.applyWorkspaceSnapshot(
             workspaceId: workspaceId,
             asks: response.attention.asks,
             workspaceSessionIds: workspaceSessionIds
         )
-        for sessionId in removedAskSessionIds {
-            if ReleaseFeatures.localAttentionNotificationsEnabled {
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            for sessionId in changedAskSessionIds {
                 AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+                if let nextAsk = askRequestStore.pending(for: sessionId) {
+                    AttentionNotificationService.shared.notifyAskIfNeeded(
+                        nextAsk,
+                        activeSessionId: focusedSessionId
+                    )
+                }
             }
         }
 

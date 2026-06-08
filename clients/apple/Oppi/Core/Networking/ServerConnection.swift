@@ -195,19 +195,33 @@ final class ServerConnection {
     var activeExtensionDialog: ExtensionUIRequest? {
         get {
             guard let focusedSessionId else { return nil }
-            return pendingExtensionDialogs[focusedSessionId]
+            return pendingExtensionDialogQueues[focusedSessionId]?.first
         }
         set {
             if let newValue {
-                pendingExtensionDialogs[newValue.sessionId] = newValue
-            } else if let focusedSessionId {
-                pendingExtensionDialogs.removeValue(forKey: focusedSessionId)
+                replaceActiveExtensionDialog(newValue, for: newValue.sessionId)
             }
+            // Sheet dismissal is a view lifecycle event, not authoritative
+            // settlement. Responses and server settled messages clear by id.
         }
     }
-    /// Sheet-backed generic extension dialogs keyed by session id.
-    /// The active dialog is the entry for the focused session.
-    var pendingExtensionDialogs: [String: ExtensionUIRequest] = [:]
+    /// Queued sheet-backed generic extension dialogs keyed by session id.
+    var pendingExtensionDialogQueues: [String: [ExtensionUIRequest]] = [:]
+    /// Visible sheet-backed dialog per session, kept for existing callers/tests.
+    var pendingExtensionDialogs: [String: ExtensionUIRequest] {
+        get {
+            Dictionary(uniqueKeysWithValues: pendingExtensionDialogQueues.compactMap { entry in
+                guard let first = entry.value.first else { return nil }
+                return (entry.key, first)
+            })
+        }
+        set {
+            pendingExtensionDialogQueues = newValue.mapValues { [$0] }
+        }
+    }
+    var pendingExtensionDialogRequests: [ExtensionUIRequest] {
+        pendingExtensionDialogQueues.values.flatMap { $0 }
+    }
     var extensionToast: String?
     var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
 
@@ -990,7 +1004,7 @@ final class ServerConnection {
             ?? fallbackWorkspaceId
         focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
         // Reset per-connection chat state for the new focused session.
-        // Sheet-backed extension dialogs are derived from pendingExtensionDialogs.
+        // Sheet-backed extension dialogs are derived from pendingExtensionDialogQueues.
         chatState.resetSessionState()
 
         syncActiveAskWorkspaceSummary()
@@ -1112,8 +1126,8 @@ final class ServerConnection {
             ),
             sessionIdOverride: sessionId
         )
-        clearExtensionDialog(for: sessionId)
-        clearAskState(for: sessionId)
+        clearExtensionDialog(id: id)
+        clearAskRequest(id: id)
     }
 
     func _setActiveSessionIdForTesting(_ sessionId: String?) {

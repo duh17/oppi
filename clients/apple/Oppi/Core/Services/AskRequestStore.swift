@@ -2,82 +2,172 @@ import Foundation
 
 /// Observable store for pending AskCard prompts (agent questions to the user).
 ///
-/// Each session can have at most one pending ask at a time.
+/// A session can have multiple blocking extension UI requests pending at once
+/// when Pi runs sibling tools in parallel. The client renders one AskCard per
+/// session at a time and reveals the next request after the current request is
+/// answered or settled.
 ///
 /// This is the canonical pending ask projection for composer rendering,
 /// cross-session restore, workspace attention snapshots, and session list badges.
 @MainActor @Observable
 final class AskRequestStore {
-    // Per-server backing storage
-    private var serverPending: [String: [String: AskRequest]] = [:]
+    // Per-server backing storage: server id -> session id -> queued asks.
+    private var serverPending: [String: [String: [AskRequest]]] = [:]
 
     /// Which server's asks are currently active.
     private(set) var activeServerId: String?
 
+    private var activeServerKey: String { activeServerId ?? "" }
+
+    private var activePendingQueues: [String: [AskRequest]] {
+        get { serverPending[activeServerKey] ?? [:] }
+        set { serverPending[activeServerKey] = newValue }
+    }
+
     // MARK: - Active server API
 
-    /// All pending ask requests for the currently active server.
+    /// The visible pending ask request for each session on the active server.
     var pending: [String: AskRequest] {
-        get { serverPending[activeServerId ?? ""] ?? [:] }
-        set { serverPending[activeServerId ?? ""] = newValue }
+        Dictionary(uniqueKeysWithValues: activePendingQueues.compactMap { entry in
+            guard let first = entry.value.first else { return nil }
+            return (entry.key, first)
+        })
     }
 
-    /// Total pending count for the active server.
-    var count: Int { pending.count }
-
-    /// Set a pending ask for a session (replaces any existing).
-    func set(_ ask: AskRequest, for sessionId: String) {
-        var dict = pending
-        dict[sessionId] = ask
-        pending = dict
+    /// Total queued pending asks for the active server.
+    var count: Int {
+        activePendingQueues.values.reduce(0) { $0 + $1.count }
     }
 
-    /// Remove the pending ask for a session.
+    /// Append a pending ask for a session, or update an existing request with the same id.
+    ///
+    /// Returns `true` when this is a new queued request, and `false` for an idempotent replay/update.
+    @discardableResult
+    func set(_ ask: AskRequest, for sessionId: String) -> Bool {
+        var queues = activePendingQueues
+        var queue = queues[sessionId] ?? []
+        let inserted: Bool
+
+        if let existingIndex = queue.firstIndex(where: { $0.id == ask.id }) {
+            queue[existingIndex] = ask
+            inserted = false
+        } else {
+            queue.append(ask)
+            inserted = true
+        }
+
+        queues[sessionId] = queue
+        activePendingQueues = queues
+        return inserted
+    }
+
+    /// Remove every pending ask for a session.
     func remove(for sessionId: String) {
-        var dict = pending
-        dict.removeValue(forKey: sessionId)
-        pending = dict
+        var queues = activePendingQueues
+        queues.removeValue(forKey: sessionId)
+        activePendingQueues = queues
     }
 
-    /// Get the pending ask for a specific session, if any.
+    /// Remove one request by id, preserving other queued requests for the same session.
+    @discardableResult
+    func remove(id requestId: String) -> [(sessionId: String, request: AskRequest)] {
+        var queues = activePendingQueues
+        var removed: [(sessionId: String, request: AskRequest)] = []
+
+        for sessionId in Array(queues.keys) {
+            guard var queue = queues[sessionId] else { continue }
+            var sessionRemoved: [AskRequest] = []
+            queue.removeAll { ask in
+                guard ask.id == requestId else { return false }
+                sessionRemoved.append(ask)
+                return true
+            }
+            guard !sessionRemoved.isEmpty else { continue }
+            removed.append(contentsOf: sessionRemoved.map { (sessionId: sessionId, request: $0) })
+            if queue.isEmpty {
+                queues.removeValue(forKey: sessionId)
+            } else {
+                queues[sessionId] = queue
+            }
+        }
+
+        activePendingQueues = queues
+        return removed
+    }
+
+    /// Get the visible pending ask for a specific session, if any.
     func pending(for sessionId: String) -> AskRequest? {
-        pending[sessionId]
+        activePendingQueues[sessionId]?.first
     }
 
-    /// Check whether a session has a pending ask.
+    /// Get all queued asks for a session in display order.
+    func pendingRequests(for sessionId: String) -> [AskRequest] {
+        activePendingQueues[sessionId] ?? []
+    }
+
+    /// Check whether a session has any pending ask.
     func hasPending(for sessionId: String) -> Bool {
-        pending[sessionId] != nil
+        !(activePendingQueues[sessionId]?.isEmpty ?? true)
     }
 
     /// Apply an authoritative workspace-scoped HTTP attention snapshot.
     ///
-    /// Returns session IDs whose pending ask was removed.
+    /// Returns session IDs where a snapshot-managed ask was removed.
     @discardableResult
     func applyWorkspaceSnapshot(
         workspaceId: String,
         asks: [AskRequest],
         workspaceSessionIds: Set<String>
     ) -> [String] {
-        let incomingSessionIds = Set(asks.map(\.sessionId))
-        var dict = pending
-        let removedSessionIds = dict.values
-            .filter { ask in
-                ask.workspaceId == workspaceId ||
-                    (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
-            }
-            .filter { !incomingSessionIds.contains($0.sessionId) }
-            .map(\.sessionId)
-
-        for sessionId in removedSessionIds {
-            dict.removeValue(forKey: sessionId)
-        }
-
+        var queues = activePendingQueues
+        var incomingById: [String: AskRequest] = [:]
         for ask in asks {
-            dict[ask.sessionId] = ask
+            incomingById[ask.id] = ask
+        }
+        var retainedIncomingIds = Set<String>()
+        var removedSessionIds = Set<String>()
+
+        for sessionId in Array(queues.keys) {
+            guard let queue = queues[sessionId] else { continue }
+            var nextQueue: [AskRequest] = []
+
+            for ask in queue {
+                guard Self.isWorkspaceSnapshotManagedAsk(
+                    ask,
+                    workspaceId: workspaceId,
+                    workspaceSessionIds: workspaceSessionIds
+                ) else {
+                    nextQueue.append(ask)
+                    continue
+                }
+
+                if let refreshedAsk = incomingById[ask.id] {
+                    nextQueue.append(refreshedAsk)
+                    retainedIncomingIds.insert(ask.id)
+                } else {
+                    removedSessionIds.insert(sessionId)
+                }
+            }
+
+            if nextQueue.isEmpty {
+                queues.removeValue(forKey: sessionId)
+            } else {
+                queues[sessionId] = nextQueue
+            }
         }
 
-        pending = dict
-        return removedSessionIds
+        for ask in asks where !retainedIncomingIds.contains(ask.id) {
+            var queue = queues[ask.sessionId] ?? []
+            if let existingIndex = queue.firstIndex(where: { $0.id == ask.id }) {
+                queue[existingIndex] = ask
+            } else {
+                queue.append(ask)
+            }
+            queues[ask.sessionId] = queue
+        }
+
+        activePendingQueues = queues
+        return Array(removedSessionIds).sorted()
     }
 
     // MARK: - Server switching
@@ -97,5 +187,15 @@ final class AskRequestStore {
         if activeServerId == serverId {
             activeServerId = nil
         }
+    }
+
+    private static func isWorkspaceSnapshotManagedAsk(
+        _ ask: AskRequest,
+        workspaceId: String,
+        workspaceSessionIds: Set<String>
+    ) -> Bool {
+        ask.responseEncoding == .ask
+            && (ask.workspaceId == workspaceId
+                || (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId)))
     }
 }

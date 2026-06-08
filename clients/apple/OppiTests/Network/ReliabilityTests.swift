@@ -197,7 +197,7 @@ struct ReliabilityTests {
         #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
     }
 
-    @Test func extensionDialogReplacedByNewRequest() {
+    @Test func extensionDialogQueuesNewRequestBehindActiveRequest() {
         let (conn, pipe) = makeTestConnection()
 
         let req1 = ExtensionUIRequest(
@@ -210,7 +210,34 @@ struct ReliabilityTests {
             id: "ext2", sessionId: "s1", method: "futureForm", title: "Second"
         )
         pipe.handle(.extensionUIRequest(req2), sessionId: "s1")
-        #expect(conn.activeExtensionDialog?.id == "ext2", "New request should replace old")
+        #expect(conn.activeExtensionDialog?.id == "ext1", "New request should wait behind active request")
+
+        conn.clearExtensionDialog(id: "ext1")
+
+        #expect(conn.activeExtensionDialog?.id == "ext2", "Settling the active request should reveal the next queued request")
+    }
+
+    @Test func extensionUIResponseClearsOnlyAnsweredSheetDialog() async throws {
+        let (conn, pipe) = makeTestConnection()
+        conn._sendMessageForTesting = { _ in }
+
+        let req1 = ExtensionUIRequest(
+            id: "ext1", sessionId: "s1", method: "editor", title: "First", timeout: 30
+        )
+        let req2 = ExtensionUIRequest(
+            id: "ext2", sessionId: "s1", method: "editor", title: "Second"
+        )
+        pipe.handle(.extensionUIRequest(req1), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(req2), sessionId: "s1")
+        #expect(conn.activeExtensionDialog?.id == "ext1")
+
+        try await conn.respondToExtensionUI(
+            id: "ext1",
+            sessionId: "s1",
+            payload: ExtensionUIResponsePayload(value: "done")
+        )
+
+        #expect(conn.activeExtensionDialog?.id == "ext2")
     }
 
     @Test func extensionDialogDoesNotAutoDismissBeforeServerSettlement() async throws {

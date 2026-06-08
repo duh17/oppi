@@ -646,7 +646,7 @@ struct AskRequestTests {
         #expect(conn.askRequestStore.pending(for: "s2") == nil)
     }
 
-    @Test @MainActor func secondAskReplacesFirst() {
+    @Test @MainActor func secondAskWaitsBehindFirst() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -672,7 +672,44 @@ struct AskRequestTests {
             allowCustom: false
         )
         conn.handleActiveSessionUI(.extensionUIRequest(second), sessionId: "s1")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
+
+        conn.clearAskRequest(id: "ask-1")
+
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-2")
         #expect(conn.askRequestStore.pending(for: "s1")?.allowCustom == false)
+    }
+
+    @Test @MainActor func extensionUIResponseClearsOnlyAnsweredInlineAsk() async throws {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn._sendMessageForTesting = { _ in }
+
+        let first = ExtensionUIRequest(
+            id: "select-1",
+            sessionId: "s1",
+            method: "select",
+            title: "First URL",
+            options: ["Approve once", "Deny"]
+        )
+        let second = ExtensionUIRequest(
+            id: "select-2",
+            sessionId: "s1",
+            method: "select",
+            title: "Second URL",
+            options: ["Approve once", "Deny"]
+        )
+
+        conn.handleActiveSessionUI(.extensionUIRequest(first), sessionId: "s1")
+        conn.handleActiveSessionUI(.extensionUIRequest(second), sessionId: "s1")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "select-1")
+
+        try await conn.respondToExtensionUI(
+            id: "select-1",
+            sessionId: "s1",
+            payload: ExtensionUIResponsePayload(value: "Approve once")
+        )
+
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "select-2")
     }
 }
