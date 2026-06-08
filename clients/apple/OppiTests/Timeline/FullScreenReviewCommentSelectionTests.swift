@@ -35,7 +35,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(textView.reviewCommentSourceContext?.surface == .fullScreenCode)
     }
 
-    @Test func selectedCodeShowsCommentBarAndOpensInlineComposer() async throws {
+    @Test func selectedCodeUsesSystemMenuActionAndNoStandaloneCommentBar() async throws {
         let router = ReviewCommentSelectionRouter(
             dispatchWithPresentation: { _, _ in
                 Issue.record("Full-screen code should use the inline review composer")
@@ -68,20 +68,24 @@ struct FullScreenReviewCommentSelectionTests {
         textView.selectedRange = NSRange(location: 0, length: 3)
         controller.view.layoutIfNeeded()
 
-        let barAppeared = await waitForMainActorCondition {
-            self.hasVisibleView(identifier: "review-comment.selection-bar", in: controller.view)
-        }
-        #expect(barAppeared, "Selecting code in full-screen read mode should show the comment bar")
+        #expect(!hasVisibleView(identifier: "review-comment.selection-bar", in: controller.view))
 
-        let commentBar = try #require(timelineAllViews(in: controller.view).first {
-            $0.accessibilityIdentifier == "review-comment.selection-bar"
-        } as? UIControl)
-        commentBar.sendActions(for: .touchUpInside)
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
+
+        let button = UIButton(type: .system)
+        button.addAction(commentAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
 
         let composerAppeared = await waitForMainActorCondition {
             self.hasVisibleView(identifier: "review-comment.inline-composer", in: controller.view)
         }
-        #expect(composerAppeared, "Tapping the comment bar should open the inline comment composer")
+        #expect(composerAppeared, "The native menu Comment action should open the inline comment composer")
     }
 
     @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {

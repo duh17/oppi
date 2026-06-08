@@ -57,17 +57,13 @@ func fullScreenAttributedCodeText(
     return mutable
 }
 
-/// UITextView variant that shows a review-comment action near selected text.
+/// UITextView variant that carries review-comment routing context.
 ///
 /// The system edit menu is owned by each body view's `UITextViewDelegate` via
-/// `editMenuForTextIn`. This view only owns the separate floating selection bar
-/// so UIKit does not receive the same `Comment` action from two menu paths.
+/// `editMenuForTextIn`; this view must not add separate comment chrome.
 final class FullScreenReviewCommentTextView: UITextView {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSourceContext: ReviewCommentSourceContext?
-
-    private weak var reviewCommentSelectionBar: FullScreenReviewCommentSelectionBar?
-    private var pendingSelectionBarUpdate = false
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -76,229 +72,12 @@ final class FullScreenReviewCommentTextView: UITextView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        reviewCommentSelectionBar?.removeFromSuperview()
-    }
-
-    override var selectedRange: NSRange {
-        get { super.selectedRange }
-        set {
-            super.selectedRange = newValue
-            scheduleSelectionBarUpdate()
-        }
-    }
-
-    func reviewCommentSelectionDidChange() {
-        scheduleSelectionBarUpdate()
-    }
-
     func configureReviewCommentSelection(
         router: ReviewCommentSelectionRouter?,
         sourceContext: ReviewCommentSourceContext?
     ) {
         reviewCommentSelectionRouter = router
         reviewCommentSourceContext = sourceContext
-        scheduleSelectionBarUpdate()
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window == nil {
-            dismissReviewCommentSelectionBar()
-        } else {
-            scheduleSelectionBarUpdate()
-        }
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        scheduleSelectionBarUpdate()
-    }
-
-    private func scheduleSelectionBarUpdate() {
-        guard !pendingSelectionBarUpdate else { return }
-        pendingSelectionBarUpdate = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            pendingSelectionBarUpdate = false
-            updateReviewCommentSelectionBar()
-        }
-    }
-
-    private func updateReviewCommentSelectionBar() {
-        guard window != nil,
-              let router = reviewCommentSelectionRouter,
-              let sourceContext = reviewCommentSourceContext,
-              let selectedText = ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange),
-              let hostView = nearestViewController(from: self)?.view else {
-            dismissReviewCommentSelectionBar()
-            return
-        }
-
-        let range = selectedRange
-        let enrichedSourceContext = ReviewCommentSelectionEditMenuSupport.enrichedSourceContext(
-            sourceContext,
-            textView: self,
-            range: range
-        )
-        let request = ReviewCommentSelectionRequest(
-            selectedText: selectedText,
-            source: enrichedSourceContext
-        )
-        let anchorRect = selectionAnchorRect(for: range)
-            ?? CGRect(x: bounds.midX, y: min(bounds.midY, bounds.minY + 180), width: 1, height: 1)
-        let anchorInHost = convert(anchorRect, to: hostView)
-
-        let bar: FullScreenReviewCommentSelectionBar
-        if let existing = reviewCommentSelectionBar {
-            bar = existing
-        } else {
-            let newBar = FullScreenReviewCommentSelectionBar()
-            reviewCommentSelectionBar = newBar
-            bar = newBar
-        }
-
-        if bar.superview !== hostView {
-            bar.removeFromSuperview()
-            hostView.addSubview(bar)
-        }
-        bar.onComment = { [weak self, weak router] in
-            guard let self, let router else { return }
-            self.handleReviewCommentSelectionBarTap(
-                router: router,
-                request: request,
-                selectedRange: range
-            )
-        }
-        bar.isHidden = false
-        bar.alpha = 1
-        bar.sizeToFit()
-        bar.frame = selectionBarFrame(anchor: anchorInHost, hostView: hostView)
-        hostView.bringSubviewToFront(bar)
-    }
-
-    private func handleReviewCommentSelectionBarTap(
-        router: ReviewCommentSelectionRouter,
-        request: ReviewCommentSelectionRequest,
-        selectedRange: NSRange
-    ) {
-        dismissReviewCommentSelectionBar()
-        if router.supportsInlineCommentComposer,
-           request.source.surface.usesInlineCommentWidget {
-            ReviewCommentInlineDraftPresenter.present(
-                textView: self,
-                selectedRange: selectedRange,
-                request: request,
-                router: router
-            )
-        } else {
-            router.dispatch(request, presentingViewController: nearestViewController(from: self))
-            let collapseLocation = max(0, min(selectedRange.location, textStorage.length))
-            self.selectedRange = NSRange(location: collapseLocation, length: 0)
-            resignFirstResponder()
-        }
-    }
-
-    private func dismissReviewCommentSelectionBar() {
-        reviewCommentSelectionBar?.removeFromSuperview()
-        reviewCommentSelectionBar = nil
-    }
-
-    private func selectionBarFrame(anchor: CGRect, hostView: UIView) -> CGRect {
-        let size = FullScreenReviewCommentSelectionBar.preferredSize
-        let safeInsets = hostView.safeAreaInsets
-        var safeFrame = hostView.bounds.inset(by: safeInsets).insetBy(dx: 12, dy: 12)
-        if safeFrame.width <= 0 || safeFrame.height <= 0 {
-            safeFrame = hostView.bounds.insetBy(dx: 12, dy: 12)
-        }
-
-        var x = anchor.midX - size.width / 2
-        x = min(max(x, safeFrame.minX), safeFrame.maxX - size.width)
-        if !x.isFinite { x = safeFrame.minX }
-
-        let aboveY = anchor.minY - size.height - 8
-        let belowY = anchor.maxY + 8
-        var y = aboveY >= safeFrame.minY ? aboveY : belowY
-        y = min(max(y, safeFrame.minY), safeFrame.maxY - size.height)
-        if !y.isFinite { y = safeFrame.minY }
-
-        return CGRect(origin: CGPoint(x: x, y: y), size: size).integral
-    }
-
-    private func selectionAnchorRect(for range: NSRange) -> CGRect? {
-        guard range.location != NSNotFound,
-              range.length > 0,
-              NSMaxRange(range) <= textStorage.length else {
-            return nil
-        }
-
-        layoutManager.ensureLayout(for: textContainer)
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        guard glyphRange.location != NSNotFound, glyphRange.length > 0 else { return nil }
-
-        var rect: CGRect?
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, stop in
-            rect = usedRect
-            stop.pointee = true
-        }
-
-        guard var anchor = rect else { return nil }
-        anchor.origin.x += textContainerInset.left
-        anchor.origin.y += textContainerInset.top
-        anchor = anchor.offsetBy(dx: -contentOffset.x, dy: -contentOffset.y)
-        return anchor.integral
-    }
-
-}
-
-private final class FullScreenReviewCommentSelectionBar: UIButton {
-    static let preferredSize = CGSize(width: 136, height: 44)
-
-    var onComment: (() -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setup()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override var intrinsicContentSize: CGSize {
-        Self.preferredSize
-    }
-
-    private func setup() {
-        accessibilityIdentifier = "review-comment.selection-bar"
-        accessibilityLabel = "Comment on selection"
-
-        let palette = ThemeRuntimeState.currentPalette()
-        var config = UIButton.Configuration.glass()
-        config.title = "Comment"
-        config.image = UIImage(systemName: "text.bubble")
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        config.imagePadding = 6
-        config.baseForegroundColor = UIColor(palette.fg)
-        config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 16, weight: .semibold)
-            return outgoing
-        }
-        configuration = config
-        titleLabel?.adjustsFontForContentSizeCategory = false
-        titleLabel?.numberOfLines = 1
-        titleLabel?.lineBreakMode = .byTruncatingTail
-
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.18
-        layer.shadowRadius = 12
-        layer.shadowOffset = CGSize(width: 0, height: 6)
-
-        addAction(UIAction { [weak self] _ in
-            self?.onComment?()
-        }, for: .touchUpInside)
     }
 }
 

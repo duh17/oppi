@@ -41,7 +41,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
 
     private let diagnosticsStack = UIStackView()
     private let readyLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "harness.ready")
-    private let selectionBarLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.reviewComment.selectionBar")
     private let inlineComposerLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.reviewComment.inlineComposer")
     private let selectButton = UIButton(type: .system)
     private var codeController: FullScreenCodeViewController?
@@ -61,7 +60,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
 
     func updateDiagnostics() {
         setDiagnostic(readyLabel, value: 1)
-        setDiagnostic(selectionBarLabel, value: hasVisibleView(identifier: "review-comment.selection-bar") ? 1 : 0)
         setDiagnostic(inlineComposerLabel, value: hasVisibleView(identifier: "review-comment.inline-composer") ? 1 : 0)
     }
 
@@ -121,7 +119,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         diagnosticsStack.translatesAutoresizingMaskIntoConstraints = false
         diagnosticsStack.isAccessibilityElement = false
         diagnosticsStack.alpha = 0.02
-        [readyLabel, selectionBarLabel, inlineComposerLabel].forEach(diagnosticsStack.addArrangedSubview)
+        [readyLabel, inlineComposerLabel].forEach(diagnosticsStack.addArrangedSubview)
         view.addSubview(diagnosticsStack)
 
         NSLayoutConstraint.activate([

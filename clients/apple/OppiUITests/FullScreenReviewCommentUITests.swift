@@ -15,7 +15,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         app = nil
     }
 
-    func testFullScreenCodeSelectionShowsCommentBarAndComposer() throws {
+    func testFullScreenCodeSelectionDoesNotShowStandaloneCommentBar() throws {
         app = XCUIApplication()
         app.launchArguments.append(contentsOf: [
             "--fullscreen-review-comment-harness",
@@ -35,23 +35,11 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         selectButton.tap()
 
         let commentBar = app.buttons["review-comment.selection-bar"]
-        XCTAssertTrue(
-            commentBar.waitForExistence(timeout: 5),
-            "Selecting code in the full-screen read view did not show the comment bar"
+        XCTAssertFalse(
+            commentBar.waitForExistence(timeout: 1),
+            "Full-screen text selection should use the native edit menu only, not a standalone Comment bar"
         )
-
-        saveScreenshot(name: "fullscreen-review-comment-selection-bar")
-        if commentBar.isHittable {
-            commentBar.tap()
-        } else {
-            commentBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
-
-        XCTAssertTrue(
-            app.descendants(matching: .any)["review-comment.inline-composer"].waitForExistence(timeout: 5),
-            "Tapping the comment bar did not open the inline comment composer"
-        )
-        saveScreenshot(name: "fullscreen-review-comment-inline-composer")
+        saveScreenshot(name: "fullscreen-review-comment-native-menu")
     }
 
     private func saveScreenshot(name: String) {
