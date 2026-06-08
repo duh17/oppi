@@ -390,6 +390,45 @@ describe("SessionManager extension UI", () => {
     ]);
   });
 
+  it("replays widget replacements in Pi TUI order", () => {
+    const { manager } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-1",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents active"],
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-goal-1",
+      method: "setWidget",
+      widgetKey: "goal",
+      widgetLines: ["Goal active"],
+    });
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-2",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents updated"],
+    });
+
+    const pendingWidgets = manager
+      .getPendingUIRequestMessages("s1")
+      .filter(
+        (message): message is Extract<ServerMessage, { type: "extension_ui_notification" }> =>
+          message.type === "extension_ui_notification",
+      );
+    expect(pendingWidgets.map((message) => message.widgetKey)).toEqual(["goal", "subagents"]);
+    expect(pendingWidgets.at(-1)).toMatchObject({
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents updated"],
+    });
+  });
+
   it("replays explicit clears for persistent fire-and-forget surfaces", () => {
     const { manager } = makeManagerHarness();
 

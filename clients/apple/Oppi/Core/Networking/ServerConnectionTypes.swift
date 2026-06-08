@@ -121,11 +121,14 @@ struct ExtensionWidgetState: Equatable, Sendable {
     let key: String
     var lines: [String]
     var placement: String?
+    var order: Int = 0
 }
 
 struct ExtensionNativeSurfaceState: Equatable, Sendable, Identifiable {
+    let key: String
     let surface: ExtensionUINativeSurface
     var placement: String?
+    var order: Int = 0
 
     var id: String { surface.id }
 
@@ -151,6 +154,7 @@ struct ExtensionSurfaceState: Equatable, Sendable {
     var statuses: [String: String]
     var widgets: [String: ExtensionWidgetState]
     var nativeSurfaces: [String: ExtensionNativeSurfaceState]
+    var widgetOrderCursor: Int
     var working: ExtensionWorkingState?
     var hiddenThinkingLabel: String?
     var toolsExpanded: Bool?
@@ -160,6 +164,7 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         statuses: [String: String] = [:],
         widgets: [String: ExtensionWidgetState] = [:],
         nativeSurfaces: [String: ExtensionNativeSurfaceState] = [:],
+        widgetOrderCursor: Int = 0,
         working: ExtensionWorkingState? = nil,
         hiddenThinkingLabel: String? = nil,
         toolsExpanded: Bool? = nil
@@ -168,6 +173,7 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         self.statuses = statuses
         self.widgets = widgets
         self.nativeSurfaces = nativeSurfaces
+        self.widgetOrderCursor = widgetOrderCursor
         self.working = working
         self.hiddenThinkingLabel = hiddenThinkingLabel
         self.toolsExpanded = toolsExpanded
@@ -186,6 +192,11 @@ struct ExtensionSurfaceState: Equatable, Sendable {
             || working?.isDefault == false
             || !(hiddenThinkingLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
             || toolsExpanded != nil
+    }
+
+    mutating func nextWidgetOrder() -> Int {
+        widgetOrderCursor += 1
+        return widgetOrderCursor
     }
 }
 

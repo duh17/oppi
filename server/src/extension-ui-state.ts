@@ -141,6 +141,9 @@ export function updatePersistentExtensionUINotifications(
 
   const store = (active.persistentExtensionUINotifications ??= new Map());
   if (hasPersistentNotificationContent(req)) {
+    if (req.method === "setWidget") {
+      store.delete(key);
+    }
     store.set(key, req);
     return;
   }

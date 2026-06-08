@@ -1,5 +1,98 @@
 import SwiftUI
 
+private extension View {
+    func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .background {
+                shape.fill(.regularMaterial)
+                shape.fill(Color.themeBg.opacity(0.84))
+                shape.fill(
+                    LinearGradient(
+                        colors: [
+                            Color.themeBlue.opacity(0.08),
+                            Color.themePurple.opacity(0.05),
+                            Color.clear,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            }
+            .overlay {
+                shape.stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.themeFg.opacity(0.18),
+                            Color.themeComment.opacity(0.16),
+                            Color.themeBlue.opacity(0.20),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+            }
+            .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 10)
+    }
+
+    func extensionGlassInset(cornerRadius: CGFloat = 12) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .background {
+                shape.fill(.thinMaterial)
+                shape.fill(Color.themeBg.opacity(0.82))
+            }
+            .overlay {
+                shape.stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.themeFg.opacity(0.10),
+                            Color.themeComment.opacity(0.12),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+            }
+    }
+}
+
+private struct ExtensionProgressBar: View {
+    let value: Double
+    var height: CGFloat = 5
+    var tint: Color = .themeBlue
+
+    private var clampedValue: Double {
+        min(max(value, 0), 1)
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(0, min(proxy.size.width, proxy.size.width * CGFloat(clampedValue)))
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.themeFg.opacity(0.12))
+
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [tint, Color.themePurple.opacity(0.85)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: width)
+                    .shadow(color: tint.opacity(0.28), radius: 4, x: 0, y: 0)
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct ExtensionWidgetLinesView: View {
     let lines: [String]
 
@@ -12,11 +105,7 @@ private struct ExtensionWidgetLinesView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.themeBg.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.themeComment.opacity(0.16), lineWidth: 1)
-        }
+        .extensionGlassInset(cornerRadius: 12)
     }
 }
 
@@ -54,30 +143,39 @@ struct ExtensionNativeSurfaceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) {
                     isExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Text(titleText)
-                        .font(.caption.weight(.semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
                     Spacer(minLength: 8)
 
                     if let summaryText {
-                        Text(summaryText)
-                            .font(.caption2)
-                            .foregroundStyle(.themeComment)
+                        Label(summaryText, systemImage: "bolt.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeBlue)
+                            .labelStyle(.titleAndIcon)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.themeBlue.opacity(0.12), in: Capsule())
                     }
 
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(.themeComment)
+                        .frame(width: 24, height: 24)
+                        .background(Color.themeFg.opacity(0.06), in: Circle())
                         .accessibilityHidden(true)
                 }
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -132,7 +230,7 @@ private struct ExtensionNativeBlockView: View {
                 }
             }
             .padding(10)
-            .background(Color.themeBg.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .extensionGlassInset(cornerRadius: 12)
         case .activityList(_, let rows):
             ExtensionNativeActivityListView(rows: rows, onOpenURL: onOpenURL)
         case .progress(let base, let label, let value, let indeterminate):
@@ -201,22 +299,33 @@ private struct ExtensionNativeProgressBlockView: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        Group {
             if isIndeterminate {
-                ProgressView()
-                    .controlSize(.small)
-            } else if let normalizedValue {
-                ProgressView(value: normalizedValue)
-                    .controlSize(.small)
-            }
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.themeBlue)
 
-            if let trimmedLabel {
-                Text(trimmedLabel)
-                    .font(.caption)
-                    .foregroundStyle(.themeFg)
+                    if let trimmedLabel {
+                        Text(trimmedLabel)
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                    }
+                }
+                .frame(minHeight: trimmedLabel == nil ? 18 : 28, alignment: .leading)
+            } else if let normalizedValue {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let trimmedLabel {
+                        Text(trimmedLabel)
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                    }
+
+                    ExtensionProgressBar(value: normalizedValue)
+                }
+                .frame(minHeight: trimmedLabel == nil ? 10 : 30, alignment: .leading)
             }
         }
-        .frame(minHeight: trimmedLabel == nil ? 14 : 28, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue)
@@ -258,11 +367,7 @@ private struct ExtensionNativeTerminalLinesView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.themeBg.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.themeComment.opacity(0.16), lineWidth: 1)
-        }
+        .extensionGlassInset(cornerRadius: 12)
     }
 }
 
@@ -415,13 +520,13 @@ private struct ExtensionNativeActivityRowContent: View {
     let showsNavigationCue: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             stateMarker
-                .frame(width: 14, height: 14)
-                .padding(.top, 2)
+                .frame(width: 22, height: 22)
+                .padding(.top, 1)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(row.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeFg)
@@ -445,9 +550,8 @@ private struct ExtensionNativeActivityRowContent: View {
                 }
 
                 if let progress = normalizedProgress {
-                    ProgressView(value: progress)
-                        .controlSize(.small)
-                        .padding(.top, 2)
+                    ExtensionProgressBar(value: progress, height: 4, tint: rowAccentColor)
+                        .padding(.top, 4)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -460,40 +564,100 @@ private struct ExtensionNativeActivityRowContent: View {
                     .accessibilityHidden(true)
             }
         }
-        .frame(minHeight: showsNavigationCue ? 44 : 30, alignment: .center)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .frame(minHeight: showsNavigationCue ? 44 : 34, alignment: .center)
+        .background(
+            rowAccentColor.opacity(rowHighlightOpacity),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(rowAccentColor.opacity(rowBorderOpacity), lineWidth: 1)
+        }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue)
     }
 
+    private var rowAccentColor: Color {
+        switch row.state {
+        case "running": return .themeBlue
+        case "success": return .themeGreen
+        case "warning": return .themeOrange
+        case "error": return .themeRed
+        case "queued": return .themePurple
+        default: return .themeComment
+        }
+    }
+
+    private var rowHighlightOpacity: Double {
+        switch row.state {
+        case "running": return 0.10
+        case "warning", "error": return 0.08
+        default: return 0
+        }
+    }
+
+    private var rowBorderOpacity: Double {
+        switch row.state {
+        case "running": return 0.18
+        case "warning", "error": return 0.16
+        default: return 0
+        }
+    }
+
+    private var markerFillOpacity: Double {
+        row.state == "inactive" ? 0.04 : 0.14
+    }
+
+    private var markerStrokeOpacity: Double {
+        row.state == "inactive" ? 0.42 : 0.26
+    }
+
     @ViewBuilder
     private var stateMarker: some View {
+        ZStack {
+            Circle()
+                .fill(rowAccentColor.opacity(markerFillOpacity))
+            Circle()
+                .stroke(rowAccentColor.opacity(markerStrokeOpacity), lineWidth: 1)
+            markerGlyph
+        }
+    }
+
+    @ViewBuilder
+    private var markerGlyph: some View {
         switch row.state {
         case "running":
             Image(systemName: "bolt.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.themeBlue)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(rowAccentColor)
         case "success":
-            Image(systemName: "checkmark.circle.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.themeGreen)
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(rowAccentColor)
         case "warning":
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.themeOrange)
+            Image(systemName: "exclamationmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(rowAccentColor)
         case "error":
-            Image(systemName: "xmark.circle.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.themeRed)
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(rowAccentColor)
+        case "queued":
+            Image(systemName: "clock.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(rowAccentColor)
         case "inactive":
             Circle()
-                .stroke(Color.themeComment.opacity(0.75), lineWidth: 1.2)
-                .frame(width: 8, height: 8)
+                .stroke(rowAccentColor.opacity(0.80), lineWidth: 1.4)
+                .frame(width: 9, height: 9)
         default:
             Circle()
-                .fill(Color.themeComment)
-                .frame(width: 8, height: 8)
+                .fill(rowAccentColor)
+                .frame(width: 7, height: 7)
         }
     }
 
@@ -606,17 +770,106 @@ enum ExtensionSurfacePlacementGroup {
     }
 }
 
+enum ExtensionSurfacePanelEntry: Equatable, Identifiable {
+    case native(ExtensionNativeSurfaceState)
+    case widget(ExtensionWidgetState)
+
+    var id: String {
+        switch self {
+        case .native(let nativeSurface): return "native:\(nativeSurface.key)"
+        case .widget(let widget): return "widget:\(widget.key)"
+        }
+    }
+
+    var order: Int {
+        switch self {
+        case .native(let nativeSurface): return nativeSurface.order
+        case .widget(let widget): return widget.order
+        }
+    }
+
+    var sortKey: String {
+        switch self {
+        case .native(let nativeSurface): return nativeSurface.key
+        case .widget(let widget): return widget.key
+        }
+    }
+}
+
 extension ExtensionSurfaceState {
+    func widgetEntries(in placement: ExtensionSurfacePlacementGroup) -> [ExtensionSurfacePanelEntry] {
+        let nativeEntries = nativeSurfaces.values
+            .filter { placement.includes(widgetPlacement: $0.placement) && $0.hasVisibleContent }
+            .map(ExtensionSurfacePanelEntry.native)
+        let textEntries = widgets.values
+            .filter { placement.includes(widgetPlacement: $0.placement) && !$0.lines.isEmpty }
+            .map(ExtensionSurfacePanelEntry.widget)
+
+        return (nativeEntries + textEntries).sorted { lhs, rhs in
+            if lhs.order != rhs.order { return lhs.order < rhs.order }
+            return lhs.sortKey.localizedCaseInsensitiveCompare(rhs.sortKey) == .orderedAscending
+        }
+    }
+
+    func hasVisibleMetadata(in placement: ExtensionSurfacePlacementGroup) -> Bool {
+        guard placement.showsChrome else { return false }
+        let hasTitle = !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        return hasTitle || !statuses.isEmpty
+    }
+
     func hasVisibleContent(in placement: ExtensionSurfacePlacementGroup) -> Bool {
-        let hasTitle = placement.showsChrome && !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        let hasStatuses = placement.showsChrome && !statuses.isEmpty
-        let hasWidgets = widgets.values.contains {
-            placement.includes(widgetPlacement: $0.placement) && !$0.lines.isEmpty
+        hasVisibleMetadata(in: placement) || !widgetEntries(in: placement).isEmpty
+    }
+}
+
+private struct ExtensionSurfaceMetadataCard: View {
+    let title: String?
+    let statuses: [(key: String, text: String)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let title,
+               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+            }
+
+            ForEach(statuses, id: \.key) { status in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(status.key)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                    Text(status.text)
+                        .font(.caption)
+                        .foregroundStyle(.themeFg)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
-        let hasNativeSurfaces = nativeSurfaces.values.contains {
-            placement.includes(widgetPlacement: $0.placement) && $0.hasVisibleContent
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .extensionGlassPanel(cornerRadius: 18)
+    }
+}
+
+private struct ExtensionWidgetCard: View {
+    let widget: ExtensionWidgetState
+    let showsKey: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if showsKey {
+                Text(widget.key)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+            }
+            ExtensionWidgetLinesView(lines: widget.lines)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .extensionGlassPanel(cornerRadius: 18)
     }
 }
 
@@ -631,69 +884,34 @@ struct ExtensionSurfacePanel: View {
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
     }
 
-    private var sortedWidgets: [ExtensionWidgetState] {
-        surface.widgets
-            .values
-            .filter { placement.includes(widgetPlacement: $0.placement) }
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
-    }
-
-    private var sortedNativeSurfaces: [ExtensionNativeSurfaceState] {
-        surface.nativeSurfaces
-            .values
-            .filter { placement.includes(widgetPlacement: $0.placement) }
-            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+    private var entries: [ExtensionSurfacePanelEntry] {
+        surface.widgetEntries(in: placement)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if placement.showsChrome,
-               let title = surface.title,
-               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
+            if surface.hasVisibleMetadata(in: placement) {
+                ExtensionSurfaceMetadataCard(
+                    title: surface.title,
+                    statuses: sortedStatuses
+                )
             }
 
-            if placement.showsChrome {
-                ForEach(sortedStatuses, id: \.key) { status in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(status.key)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeComment)
-                        Text(status.text)
-                            .font(.caption)
-                            .foregroundStyle(.themeFg)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+            ForEach(entries) { entry in
+                switch entry {
+                case .native(let nativeSurface):
+                    ExtensionNativeSurfaceView(surface: nativeSurface.surface, onOpenURL: onOpenURL)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .extensionGlassPanel(cornerRadius: 18)
+                case .widget(let widget):
+                    ExtensionWidgetCard(
+                        widget: widget,
+                        showsKey: entries.count > 1
+                    )
                 }
             }
-
-            ForEach(sortedNativeSurfaces) { nativeSurface in
-                ExtensionNativeSurfaceView(surface: nativeSurface.surface, onOpenURL: onOpenURL)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            ForEach(sortedWidgets, id: \.key) { widget in
-                if !widget.lines.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if sortedWidgets.count > 1 {
-                            Text(widget.key)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.themeComment)
-                        }
-                        ExtensionWidgetLinesView(lines: widget.lines)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
         }
     }
 }

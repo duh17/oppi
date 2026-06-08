@@ -251,30 +251,35 @@ extension ServerConnection {
         case "setWidget":
             guard let widgetKey else { return }
             var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            let nativeSurfaceId = nativeSurface?.id ?? "widget:\(widgetKey)"
             if let nativeSurface, nativeSurface.hasVisibleContent {
                 surface.widgets.removeValue(forKey: widgetKey)
+                removeNativeWidgetSurfaces(widgetKey: widgetKey, from: &surface)
+                let order = surface.nextWidgetOrder()
                 surface.nativeSurfaces[nativeSurface.id] = ExtensionNativeSurfaceState(
+                    key: widgetKey,
                     surface: nativeSurface,
-                    placement: widgetPlacement
+                    placement: widgetPlacement,
+                    order: order
                 )
             } else if let widgetLines {
-                surface.nativeSurfaces.removeValue(forKey: nativeSurfaceId)
+                removeNativeWidgetSurfaces(widgetKey: widgetKey, from: &surface)
                 let normalizedLines = widgetLines
                     .map { $0.trimmingCharacters(in: .newlines) }
                     .filter { !$0.isEmpty }
                 if normalizedLines.isEmpty {
                     surface.widgets.removeValue(forKey: widgetKey)
                 } else {
+                    let order = surface.nextWidgetOrder()
                     surface.widgets[widgetKey] = ExtensionWidgetState(
                         key: widgetKey,
                         lines: normalizedLines,
-                        placement: widgetPlacement
+                        placement: widgetPlacement,
+                        order: order
                     )
                 }
             } else {
                 surface.widgets.removeValue(forKey: widgetKey)
-                surface.nativeSurfaces.removeValue(forKey: nativeSurfaceId)
+                removeNativeWidgetSurfaces(widgetKey: widgetKey, from: &surface)
             }
             storeExtensionSurface(surface, for: sessionId)
 
@@ -307,6 +312,13 @@ extension ServerConnection {
     func clearExtensionSurface(for sessionId: String) {
         extensionSurfaceBySession.removeValue(forKey: sessionId)
         clearExtensionDialog(for: sessionId)
+    }
+
+    private func removeNativeWidgetSurfaces(widgetKey: String, from surface: inout ExtensionSurfaceState) {
+        let canonicalSurfaceId = "widget:\(widgetKey)"
+        surface.nativeSurfaces = surface.nativeSurfaces.filter { entry in
+            entry.key != canonicalSurfaceId && entry.value.key != widgetKey
+        }
     }
 
     // MARK: - Connected / State

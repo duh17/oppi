@@ -541,6 +541,181 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaceBySession["s1"]?.widgets["below"] == nil)
     }
 
+    @Test func routeMixedNativeAndTextWidgetsPreservesPiTUIOrder() throws {
+        let (conn, pipe) = makeTestConnection()
+        let nativeSurface = ExtensionUINativeSurface(
+            version: 1,
+            id: "widget:subagents",
+            source: "widget",
+            presentation: ExtensionUINativePresentation(
+                style: "surfacePanel",
+                title: "Agents",
+                subtitle: nil
+            ),
+            blocks: [
+                .text(
+                    base: ExtensionUIBlockBase(id: "agents-body", accessibility: nil),
+                    spans: [ExtensionUITextSpan(text: "Agents active", role: nil, traits: nil, link: nil)]
+                ),
+            ],
+            fallback: nil
+        )
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWidget",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: "subagents",
+                    widgetLines: ["Agents active"],
+                    widgetPlacement: nil,
+                    nativeSurface: nativeSurface
+                )
+            ),
+            sessionId: "s1"
+        )
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWidget",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: "goal",
+                    widgetLines: ["Goal active"],
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        let surface = try #require(conn.extensionSurfaceBySession["s1"])
+        #expect(surface.nativeSurfaces["widget:subagents"]?.key == "subagents")
+        #expect(surface.nativeSurfaces["widget:subagents"]?.order == 1)
+        #expect(surface.widgets["goal"]?.order == 2)
+        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["native:subagents", "widget:goal"])
+    }
+
+    @Test func routeReplacingWidgetMovesItToLatestPiTUIPosition() throws {
+        let (conn, pipe) = makeTestConnection()
+        let nativeSurface = ExtensionUINativeSurface(
+            version: 1,
+            id: "widget:subagents",
+            source: "widget",
+            presentation: ExtensionUINativePresentation(
+                style: "surfacePanel",
+                title: "Agents",
+                subtitle: nil
+            ),
+            blocks: [
+                .text(
+                    base: ExtensionUIBlockBase(id: "agents-body", accessibility: nil),
+                    spans: [ExtensionUITextSpan(text: "Agents active", role: nil, traits: nil, link: nil)]
+                ),
+            ],
+            fallback: nil
+        )
+
+        for notification in [
+            ExtensionUINotification(
+                method: "setWidget",
+                message: nil,
+                notifyType: nil,
+                statusKey: nil,
+                statusText: nil,
+                title: nil,
+                text: nil,
+                widgetKey: "subagents",
+                widgetLines: ["Agents active"],
+                widgetPlacement: nil,
+                nativeSurface: nativeSurface
+            ),
+            ExtensionUINotification(
+                method: "setWidget",
+                message: nil,
+                notifyType: nil,
+                statusKey: nil,
+                statusText: nil,
+                title: nil,
+                text: nil,
+                widgetKey: "goal",
+                widgetLines: ["Goal active"],
+                widgetPlacement: nil
+            ),
+            ExtensionUINotification(
+                method: "setWidget",
+                message: nil,
+                notifyType: nil,
+                statusKey: nil,
+                statusText: nil,
+                title: nil,
+                text: nil,
+                widgetKey: "subagents",
+                widgetLines: ["Agents updated"],
+                widgetPlacement: nil,
+                nativeSurface: nativeSurface
+            ),
+        ] {
+            pipe.handle(.extensionUINotification(notification), sessionId: "s1")
+        }
+
+        let surface = try #require(conn.extensionSurfaceBySession["s1"])
+        #expect(surface.nativeSurfaces["widget:subagents"]?.order == 3)
+        #expect(surface.widgets["goal"]?.order == 2)
+        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal", "native:subagents"])
+    }
+
+    @Test func routeStatusDoesNotBecomeWidgetEntry() throws {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setStatus",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: "subagents",
+                    statusText: "1 running agent",
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWidget",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: "goal",
+                    widgetLines: ["Goal active"],
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        let surface = try #require(conn.extensionSurfaceBySession["s1"])
+        #expect(surface.hasVisibleMetadata(in: .aboveEditor))
+        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal"])
+    }
+
     @Test func routeChildTerminalStateKeepsParentExtensionSurface() {
         let (conn, pipe) = makeTestConnection(sessionId: "parent")
         conn.extensionSurfaceBySession["parent"] = ExtensionSurfaceState(

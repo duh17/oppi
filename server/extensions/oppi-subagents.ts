@@ -979,13 +979,7 @@ export function createOppiSubagentsExtension(
           source: "widget",
           presentation: {
             style: "surfacePanel",
-            placement: "aboveEditor",
             title: "Agents",
-          },
-          lifecycle: {
-            kind: "persistent",
-            updateMode: "replace",
-            clearOn: ["explicitClear", "sessionEnd", "sessionDelete", "runtimeDispose"],
           },
           blocks: [
             {
