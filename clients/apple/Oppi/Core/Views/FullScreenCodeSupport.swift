@@ -280,7 +280,7 @@ final class FullScreenReviewCommentTextView: UITextView {
 }
 
 private final class FullScreenReviewCommentSelectionBar: UIButton {
-    static let preferredSize = CGSize(width: 148, height: 40)
+    static let preferredSize = CGSize(width: 136, height: 44)
 
     var onComment: (() -> Void)?
 
@@ -300,15 +300,15 @@ private final class FullScreenReviewCommentSelectionBar: UIButton {
         accessibilityIdentifier = "review-comment.selection-bar"
         accessibilityLabel = "Comment on selection"
 
-        var config = UIButton.Configuration.filled()
+        let palette = ThemeRuntimeState.currentPalette()
+        var config = UIButton.Configuration.glass()
         config.title = "Comment"
         config.image = UIImage(systemName: "text.bubble")
         config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
         config.imagePadding = 6
-        config.baseForegroundColor = UIColor(ThemeRuntimeState.currentPalette().bgDark)
-        config.baseBackgroundColor = UIColor(ThemeRuntimeState.currentPalette().cyan)
+        config.baseForegroundColor = UIColor(palette.fg)
         config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
             outgoing.font = .systemFont(ofSize: 16, weight: .semibold)
@@ -320,9 +320,9 @@ private final class FullScreenReviewCommentSelectionBar: UIButton {
         titleLabel?.lineBreakMode = .byTruncatingTail
 
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.24
-        layer.shadowRadius = 14
-        layer.shadowOffset = CGSize(width: 0, height: 8)
+        layer.shadowOpacity = 0.18
+        layer.shadowRadius = 12
+        layer.shadowOffset = CGSize(width: 0, height: 6)
 
         addAction(UIAction { [weak self] _ in
             self?.onComment?()
