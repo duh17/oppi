@@ -132,6 +132,7 @@ function connectBridge(
     cwd?: string;
     workspaceId?: string | null;
     createWorkspace?: boolean;
+    takeoverConfirmationSessionId?: string;
     piSessionId?: string;
     sessionFile?: string | null;
     sessionName?: string;
@@ -148,6 +149,9 @@ function connectBridge(
     bridgeId: options.bridgeId ?? "bridge-1",
     ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
     ...(options.createWorkspace ? { createWorkspace: true } : {}),
+    ...(options.takeoverConfirmationSessionId
+      ? { takeoverConfirmation: { sessionId: options.takeoverConfirmationSessionId } }
+      : {}),
     cwd: options.cwd ?? "/tmp/oppi-mirror-test",
     state: {
       piSessionId: options.piSessionId ?? "pi-1",
@@ -336,6 +340,79 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(sessions.size).toBe(0);
     expect(workspaces.size).toBe(0);
+  });
+
+  it("requires terminal confirmation before taking over a stopped Oppi session", () => {
+    const { runtime, sessions } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
+    sessions.set("oppi-1", {
+      id: "oppi-1",
+      workspaceId: "w1",
+      workspaceName: "Workspace",
+      name: "Research WWDC Announcements",
+      runtime: "oppi",
+      status: "ready",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      piSessionId: "pi-1",
+      piSessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+    });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-1",
+      workspaceId: "w1",
+      cwd: "/tmp/oppi-mirror-test",
+      state: {
+        piSessionId: "pi-1",
+        sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+      },
+    });
+
+    expect(ws.sent).toHaveLength(1);
+    expect(ws.sent[0]).toMatchObject({
+      type: "error",
+      code: "oppi_takeover_confirmation_required",
+      sessionId: "oppi-1",
+      sessionName: "Research WWDC Announcements",
+      sessionStatus: "ready",
+      error: expect.stringContaining("Confirm taking over Oppi session oppi-1"),
+    });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(sessions.get("oppi-1")?.runtime).toBe("oppi");
+  });
+
+  it("promotes a stopped Oppi session after terminal confirmation", () => {
+    const { runtime, sessions } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
+    sessions.set("oppi-1", {
+      id: "oppi-1",
+      workspaceId: "w1",
+      workspaceName: "Workspace",
+      runtime: "oppi",
+      status: "ready",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      piSessionId: "pi-1",
+      piSessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+    });
+
+    const { sessionId } = connectBridge(runtime, {
+      takeoverConfirmationSessionId: "oppi-1",
+      piSessionId: "pi-1",
+      sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+    });
+
+    expect(sessionId).toBe("oppi-1");
+    expect(sessions.get("oppi-1")?.runtime).toBe("pi-tui");
+    expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
   it("reports oppi-runtime ownership conflicts as structured retryable bridge errors", () => {

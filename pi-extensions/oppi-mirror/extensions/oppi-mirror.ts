@@ -1475,6 +1475,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
   let createWorkspaceOnNextConnect = false;
   let workspaceCreationPromptActive = false;
+  let takeoverConfirmationSessionId: string | null = null;
+  let takeoverPromptActive = false;
   let lastOppiRuntimeConflictSessionId: string | null = null;
   let lastOppiRuntimeConflictNotifiedAt = 0;
 
@@ -2211,7 +2213,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     );
   }
 
-  function parkBridgeForWorkspaceDecision() {
+  function parkBridgeForUserDecision(reason: string) {
     manualStop = true;
     connectionSerial += 1;
     clearTimers();
@@ -2223,8 +2225,12 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       (socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING)
     ) {
-      socket.close(1000, "Waiting for workspace creation decision");
+      socket.close(1000, reason);
     }
+  }
+
+  function parkBridgeForWorkspaceDecision() {
+    parkBridgeForUserDecision("Waiting for workspace creation decision");
   }
 
   async function handleWorkspaceMissingError(
@@ -2300,6 +2306,76 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     connect(ctx);
   }
 
+  async function handleOppiTakeoverConfirmationRequired(
+    ctx: ExtensionContext,
+    err: Record<string, unknown>,
+  ) {
+    const sessionId = typeof err.sessionId === "string" ? err.sessionId : "";
+    const sessionName =
+      typeof err.sessionName === "string" && err.sessionName.trim()
+        ? err.sessionName.trim()
+        : undefined;
+    const sessionStatus =
+      typeof err.sessionStatus === "string" && err.sessionStatus.trim()
+        ? err.sessionStatus.trim()
+        : undefined;
+
+    takeoverConfirmationSessionId = null;
+    nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+    setIndicatorMode("blocked");
+    parkBridgeForUserDecision("Waiting for Oppi takeover confirmation");
+    writeMirrorLog("warn", "oppi_takeover_confirmation_required", {
+      sessionId,
+      sessionName,
+      sessionStatus,
+    });
+
+    if (!sessionId) {
+      notify(
+        ctx,
+        "Oppi Mirror needs takeover confirmation, but the server did not name a session.",
+        "warning",
+      );
+      stopIndicator(ctx);
+      return;
+    }
+
+    if (takeoverPromptActive) return;
+    takeoverPromptActive = true;
+    let confirmed = false;
+    try {
+      const label = sessionName ? `${sessionName} (${sessionId})` : sessionId;
+      const statusLine = sessionStatus
+        ? `\nCurrent Oppi status: ${sessionStatus}`
+        : "";
+      confirmed = await withSuppressedUIForwarding(() =>
+        ctx.ui.confirm(
+          "Take over Oppi session?",
+          `This Pi session is currently owned by Oppi as ${label}.${statusLine}\n\nTake it over from this terminal? Oppi will treat the live runtime as pi-tui until the terminal mirror stops.`,
+        ),
+      );
+    } catch (error) {
+      logCallbackError("takeover confirmation prompt failed", error);
+    } finally {
+      takeoverPromptActive = false;
+    }
+
+    if (!runtimeActive) return;
+    if (!confirmed) {
+      notify(
+        ctx,
+        "Oppi Mirror stopped; session takeover was not confirmed.",
+        "info",
+      );
+      stopIndicator(ctx);
+      return;
+    }
+
+    takeoverConfirmationSessionId = sessionId;
+    manualStop = false;
+    connect(ctx);
+  }
+
   function connect(ctx: ExtensionContext) {
     if (!runtimeActive) return;
     latestCtx = ctx;
@@ -2369,6 +2445,13 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           hostname: hostname(),
           cwd: ctx.cwd,
           ...(shouldCreateWorkspace ? { createWorkspace: true } : {}),
+          ...(takeoverConfirmationSessionId
+            ? {
+                takeoverConfirmation: {
+                  sessionId: takeoverConfirmationSessionId,
+                },
+              }
+            : {}),
           capabilities: OPPI_MIRROR_CAPABILITIES,
           state: stateSnapshot(pi, ctx),
         });
@@ -2493,6 +2576,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
         createWorkspaceOnNextConnect = false;
         workspaceCreationPromptActive = false;
+        takeoverConfirmationSessionId = null;
+        takeoverPromptActive = false;
         lastOppiRuntimeConflictSessionId = null;
         lastOppiRuntimeConflictNotifiedAt = 0;
         writeMirrorLog("info", "bridge_connected", {
@@ -2520,6 +2605,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           error?: string;
           retryAfterMs?: number;
           sessionId?: string;
+          sessionName?: string;
+          sessionStatus?: string;
           cwd?: string;
           suggestedHostMount?: string;
           suggestedName?: string;
@@ -2527,6 +2614,10 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         const errorText = err.error ?? "unknown";
         if (err.code === "workspace_missing") {
           await handleWorkspaceMissingError(ctx, err);
+          return;
+        }
+        if (err.code === "oppi_takeover_confirmation_required") {
+          await handleOppiTakeoverConfirmationRequired(ctx, err);
           return;
         }
         if (
@@ -2539,6 +2630,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
             Number.isFinite(err.retryAfterMs)
               ? Math.max(DEFAULT_RECONNECT_DELAY_MS, err.retryAfterMs)
               : 10_000;
+          takeoverConfirmationSessionId = null;
+          takeoverPromptActive = false;
           setIndicatorMode("blocked");
 
           const now = Date.now();

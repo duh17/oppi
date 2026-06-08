@@ -115,6 +115,7 @@ interface PiBridgeHelloMessage {
   cwd?: string;
   workspaceId?: string;
   createWorkspace?: boolean;
+  takeoverConfirmation?: { sessionId?: string };
   capabilities?: string[];
   state?: PiBridgeStateSnapshot;
 }
@@ -965,7 +966,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       );
     }
     const workspace = this.resolveWorkspace(hello);
-    const session = this.resolveOrCreateSession(workspace, state);
+    const session = this.resolveOrCreateSession(workspace, state, hello);
     const active = this.ensureActive(session);
 
     const existingSameBridge = this.bridges.get(bridgeId);
@@ -1398,7 +1399,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return workspace;
   }
 
-  private resolveOrCreateSession(workspace: Workspace, state: PiBridgeStateSnapshot): Session {
+  private resolveOrCreateSession(
+    workspace: Workspace,
+    state: PiBridgeStateSnapshot,
+    hello: PiBridgeHelloMessage,
+  ): Session {
     const piSessionFile = canonicalSessionFilePath(state.sessionFile);
     const piSessionId = state.piSessionId?.trim();
     const existing = this.storage.listSessions().find((session) => {
@@ -1410,16 +1415,34 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       );
     });
 
-    if (
-      existing &&
-      existing.runtime !== "pi-tui" &&
-      this.options.isOppiSessionActive?.(existing.id)
-    ) {
-      throw new BridgeRegistrationError(
-        `Session ${existing.id} is already owned by the oppi runtime; stop it before mirroring this pi-tui session`,
-        "oppi_runtime_active",
-        { sessionId: existing.id, retryAfterMs: OPPI_RUNTIME_CONFLICT_RETRY_MS },
-      );
+    if (existing && existing.runtime !== "pi-tui") {
+      if (this.options.isOppiSessionActive?.(existing.id)) {
+        throw new BridgeRegistrationError(
+          `Session ${existing.id} is already owned by the oppi runtime; stop it before mirroring this pi-tui session`,
+          "oppi_runtime_active",
+          { sessionId: existing.id, retryAfterMs: OPPI_RUNTIME_CONFLICT_RETRY_MS },
+        );
+      }
+
+      if (hello.takeoverConfirmation?.sessionId !== existing.id) {
+        throw new BridgeRegistrationError(
+          `Confirm taking over Oppi session ${existing.id} from this Pi terminal before mirroring it`,
+          "oppi_takeover_confirmation_required",
+          {
+            sessionId: existing.id,
+            sessionName: meaningfulSessionName(existing.name, existing.id),
+            sessionStatus: existing.status,
+            workspaceId: existing.workspaceId,
+          },
+        );
+      }
+
+      log.info("mirror_bridge.oppi_session_takeover_confirmed", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        sessionId: existing.id,
+        workspaceId: existing.workspaceId,
+        status: existing.status,
+      });
     }
 
     const model = normalizeModelId(state.model);
