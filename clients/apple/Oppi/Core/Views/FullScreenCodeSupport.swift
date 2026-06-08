@@ -57,20 +57,40 @@ func fullScreenAttributedCodeText(
     return mutable
 }
 
-/// UITextView variant that carries review-comment routing context.
+/// UITextView variant that carries review-comment routing context and presents
+/// the native edit menu after a non-empty selection.
 ///
-/// The system edit menu is owned by each body view's `UITextViewDelegate` via
-/// `editMenuForTextIn`; this view must not add separate comment chrome.
+/// Some read-only full-screen code views show selection handles without asking
+/// their delegate to present an edit menu. This view owns a `UIEditMenuInteraction`
+/// so selected code reliably gets the same native action bar as other selectable
+/// text: `Comment`, `Copy`, and the system-provided actions.
 final class FullScreenReviewCommentTextView: UITextView {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSourceContext: ReviewCommentSourceContext?
 
+    private lazy var reviewCommentEditMenuInteraction = UIEditMenuInteraction(delegate: self)
+    private var pendingEditMenuPresentation = false
+    private var currentEditMenuTargetRect: CGRect?
+
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
+        addInteraction(reviewCommentEditMenuInteraction)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override var selectedRange: NSRange {
+        get { super.selectedRange }
+        set {
+            super.selectedRange = newValue
+            scheduleReviewCommentEditMenuPresentation()
+        }
+    }
+
+    func reviewCommentSelectionDidChange() {
+        scheduleReviewCommentEditMenuPresentation()
+    }
 
     func configureReviewCommentSelection(
         router: ReviewCommentSelectionRouter?,
@@ -78,6 +98,111 @@ final class FullScreenReviewCommentTextView: UITextView {
     ) {
         reviewCommentSelectionRouter = router
         reviewCommentSourceContext = sourceContext
+        scheduleReviewCommentEditMenuPresentation()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            reviewCommentEditMenuInteraction.dismissMenu()
+        } else {
+            scheduleReviewCommentEditMenuPresentation()
+        }
+    }
+
+    private func scheduleReviewCommentEditMenuPresentation() {
+        guard !pendingEditMenuPresentation else { return }
+        pendingEditMenuPresentation = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard let self else { return }
+            pendingEditMenuPresentation = false
+            presentReviewCommentEditMenuIfNeeded()
+        }
+    }
+
+    private func presentReviewCommentEditMenuIfNeeded() {
+        guard window != nil,
+              reviewCommentSelectionRouter != nil,
+              reviewCommentSourceContext != nil,
+              ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange) != nil else {
+            currentEditMenuTargetRect = nil
+            reviewCommentEditMenuInteraction.dismissMenu()
+            return
+        }
+
+        if !isFirstResponder {
+            becomeFirstResponder()
+        }
+
+        let targetRect = selectionAnchorRect(for: selectedRange)
+            ?? CGRect(x: bounds.midX, y: min(bounds.midY, bounds.minY + 180), width: 1, height: 1)
+        currentEditMenuTargetRect = targetRect.integral
+        let sourcePoint = CGPoint(x: targetRect.midX, y: targetRect.minY)
+        let configuration = UIEditMenuConfiguration(
+            identifier: "review-comment-selection" as NSString,
+            sourcePoint: sourcePoint
+        )
+        reviewCommentEditMenuInteraction.presentEditMenu(with: configuration)
+    }
+
+    private func selectionAnchorRect(for range: NSRange) -> CGRect? {
+        guard range.location != NSNotFound,
+              range.length > 0,
+              NSMaxRange(range) <= textStorage.length else {
+            return nil
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard glyphRange.location != NSNotFound, glyphRange.length > 0 else { return nil }
+
+        var rect: CGRect?
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, stop in
+            rect = usedRect
+            stop.pointee = true
+        }
+
+        guard var anchor = rect else { return nil }
+        anchor.origin.x += textContainerInset.left
+        anchor.origin.y += textContainerInset.top
+        anchor = anchor.offsetBy(dx: -contentOffset.x, dy: -contentOffset.y)
+        return anchor.integral
+    }
+
+}
+
+extension FullScreenReviewCommentTextView: @preconcurrency UIEditMenuInteractionDelegate {
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        guard let router = reviewCommentSelectionRouter,
+              let sourceContext = reviewCommentSourceContext,
+              let selectedText = ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange) else {
+            return nil
+        }
+
+        return ReviewCommentSelectionMenuBuilder.editMenu(
+            suggestedActions: suggestedActions,
+            selectedText: selectedText,
+            sourceContext: ReviewCommentSelectionEditMenuSupport.enrichedSourceContext(
+                sourceContext,
+                textView: self,
+                range: selectedRange
+            ),
+            router: router,
+            presentingViewController: nearestViewController(from: self),
+            textView: self,
+            selectedRange: selectedRange
+        )
+    }
+
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+    ) -> CGRect {
+        currentEditMenuTargetRect ?? .null
     }
 }
 
