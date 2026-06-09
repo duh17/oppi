@@ -625,13 +625,7 @@ struct ChatView: View {
                         updateFileSuggestions(query: query)
                     },
                     onSend: sendComposerAction,
-                    onStop: {
-                        actionHandler.stop(
-                            connection: connection, reducer: reducer,
-                            sessionStore: sessionStore, sessionManager: sessionManager,
-                            sessionId: sessionId
-                        )
-                    },
+                    onStop: stopTurn,
                     onForceStop: {
                         actionHandler.forceStop(
                             connection: connection, reducer: reducer,
@@ -884,6 +878,36 @@ struct ChatView: View {
         } else {
             sendPrompt()
         }
+    }
+
+    private func stopTurn() {
+        restoreQueuedMessagesToComposerBeforeStop()
+        actionHandler.stop(
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionManager: sessionManager,
+            sessionId: sessionId
+        )
+    }
+
+    @discardableResult
+    private func restoreQueuedMessagesToComposerBeforeStop() -> Bool {
+        guard connection.isFocusedSession(sessionId),
+              let plan = MessageQueueComposerRestore.plan(
+                  queue: messageQueueState,
+                  currentText: inputText
+              ) else {
+            return false
+        }
+
+        inputText = plan.text
+        composerTextBeforeRecording = nil
+        messageQueueStore.apply(plan.clearedQueue, for: sessionId)
+        if !showComposer {
+            composerExternalFocusRequestID &+= 1
+        }
+        return true
     }
 
     private func sendActiveReviewComment() {
