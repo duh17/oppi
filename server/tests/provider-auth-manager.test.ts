@@ -86,13 +86,15 @@ function makeProvider(
   };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+async function waitFor(predicate: () => boolean, attempts = 20): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (predicate()) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await Promise.resolve();
+  }
+  if (predicate()) {
+    return;
   }
   throw new Error("Timed out waiting for condition");
 }
