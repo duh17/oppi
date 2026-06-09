@@ -1,5 +1,15 @@
 import UIKit
 
+private final class CodeBlockHeaderButton: UIButton {
+    private static let minimumHitTarget: CGFloat = 44
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let horizontalInset = min(0, (bounds.width - Self.minimumHitTarget) / 2)
+        let verticalInset = min(0, (bounds.height - Self.minimumHitTarget) / 2)
+        return bounds.insetBy(dx: horizontalInset, dy: verticalInset).contains(point)
+    }
+}
+
 /// Code block container with language badge, copy button, and syntax highlighting.
 ///
 /// Renders a code block with language badge, copy button, and
@@ -21,8 +31,31 @@ final class NativeCodeBlockView: UIView {
     private let languageLabel: UILabel = {
         let l = UILabel()
         l.font = AppFont.mono
+        l.lineBreakMode = .byTruncatingTail
+        l.accessibilityIdentifier = "markdown.codeBlock.language"
         l.translatesAutoresizingMaskIntoConstraints = false
+        l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return l
+    }()
+
+    private let wrapButton: UIButton = {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: CodeWrapControl.symbolName)
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+            pointSize: 12, weight: .regular
+        )
+        config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
+        let button = CodeBlockHeaderButton(type: .system)
+        button.configuration = config
+        button.accessibilityIdentifier = "markdown.codeBlock.wrap"
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 28),
+            button.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        return button
     }()
 
     private let copyButton: UIButton = {
@@ -32,8 +65,15 @@ final class NativeCodeBlockView: UIView {
             pointSize: 10, weight: .regular
         )
         config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
-        let button = UIButton(configuration: config)
+        let button = CodeBlockHeaderButton(type: .system)
+        button.configuration = config
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 28),
+            button.heightAnchor.constraint(equalToConstant: 28),
+        ])
         return button
     }()
 
@@ -56,6 +96,7 @@ final class NativeCodeBlockView: UIView {
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.backgroundColor = .clear
+        tv.accessibilityIdentifier = "markdown.codeBlock.text"
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.setContentCompressionResistancePriority(.required, for: .horizontal)
         return tv
@@ -64,10 +105,16 @@ final class NativeCodeBlockView: UIView {
     private let headerBackground = UIView()
     private var currentCode: String = ""
     private var highlightedText: NSAttributedString?
+    private var currentPalette: ThemePalette?
+    private var isLineWrappingEnabled = false
+    private var measuredUnwrappedCodeWidth: CGFloat = 0
 
-    /// Explicit width constraint for the label, updated in `apply()` to the
-    /// measured content width so UIScrollView knows the content is wider than
-    /// the frame and enables horizontal scrolling.
+    /// Horizontal padding around the text view inside `codeScrollView`.
+    private static let codeHorizontalPadding: CGFloat = 24
+
+    /// Explicit width constraint for the label. In the default unwrapped mode it
+    /// is the measured code width so the scroll view can pan horizontally. In
+    /// wrap mode it tracks the visible viewport width so TextKit wraps lines.
     private var codeLabelWidthConstraint: NSLayoutConstraint?
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
@@ -83,6 +130,7 @@ final class NativeCodeBlockView: UIView {
     required init?(coder: NSCoder) { nil }
 
     private func setupViews() {
+        accessibilityIdentifier = "markdown.codeBlock"
         layer.cornerRadius = 8
         layer.borderWidth = 1
         clipsToBounds = true
@@ -95,14 +143,17 @@ final class NativeCodeBlockView: UIView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         headerStack.addArrangedSubview(languageLabel)
         headerStack.addArrangedSubview(spacer)
+        headerStack.addArrangedSubview(wrapButton)
         headerStack.addArrangedSubview(copyButton)
 
         addSubview(codeScrollView)
         codeScrollView.addSubview(codeLabel)
 
+        wrapButton.addTarget(self, action: #selector(wrapTapped), for: .touchUpInside)
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
         codeLabel.delegate = self
         codeScrollView.addGestureRecognizer(longPressCopyGesture)
+        updateWrapButton()
 
         let widthConstraint = codeLabel.widthAnchor.constraint(equalToConstant: 0)
         codeLabelWidthConstraint = widthConstraint
@@ -142,8 +193,20 @@ final class NativeCodeBlockView: UIView {
         longPressCopyGesture.isEnabled = !selectionEnabled
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard isLineWrappingEnabled else { return }
+
+        let width = wrappedCodeWidth()
+        if abs((codeLabelWidthConstraint?.constant ?? 0) - width) > 0.5 {
+            codeLabelWidthConstraint?.constant = width
+            codeLabel.invalidateIntrinsicContentSize()
+        }
+    }
+
     // periphery:ignore:parameters isOpen
     func apply(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
+        currentPalette = palette
         backgroundColor = UIColor(palette.bgDark)
         headerBackground.backgroundColor = UIColor(palette.bgHighlight)
         layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
@@ -151,12 +214,14 @@ final class NativeCodeBlockView: UIView {
         languageLabel.text = language ?? "code"
         languageLabel.textColor = UIColor(palette.comment)
         copyButton.tintColor = UIColor(palette.fgDim)
+        updateWrapButton()
 
         let font = AppFont.monoMedium
 
         if code == currentCode, let highlighted = highlightedText {
             codeLabel.attributedText = highlighted
-                return
+            applyCurrentLineWrapping(resetHorizontalOffset: false)
+            return
         }
 
         currentCode = code
@@ -167,10 +232,7 @@ final class NativeCodeBlockView: UIView {
         codeLabel.attributedText = nil
         codeLabel.text = code
 
-        let attrText = NSAttributedString(string: code, attributes: [.font: font])
-        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
-        codeLabelWidthConstraint?.constant = ceil(boundingRect.width)
+        updateMeasuredCodeWidth(NSAttributedString(string: code, attributes: [.font: font]))
     }
 
     func applyHighlightedCode(_ highlighted: NSAttributedString) {
@@ -181,11 +243,16 @@ final class NativeCodeBlockView: UIView {
         codeLabel.attributedText = mutable
         highlightedText = mutable
 
-        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        let boundingRect = mutable.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
-        codeLabelWidthConstraint?.constant = ceil(boundingRect.width)
+        updateMeasuredCodeWidth(mutable)
     }
 
+
+    @objc private func wrapTapped() {
+        isLineWrappingEnabled.toggle()
+        updateWrapButton()
+        applyCurrentLineWrapping(resetHorizontalOffset: true)
+        invalidateTimelineLayout()
+    }
 
     @objc private func copyTapped() {
         copyCodeAndShowFeedback()
@@ -207,6 +274,59 @@ final class NativeCodeBlockView: UIView {
             try? await Task.sleep(for: .seconds(1.5))
             self.copyButton.configuration?.image = UIImage(systemName: "doc.on.doc")
         }
+    }
+
+    private func updateMeasuredCodeWidth(_ text: NSAttributedString) {
+        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        let boundingRect = text.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
+        measuredUnwrappedCodeWidth = max(1, ceil(boundingRect.width))
+        applyCurrentLineWrapping(resetHorizontalOffset: false)
+    }
+
+    private func applyCurrentLineWrapping(resetHorizontalOffset: Bool) {
+        codeLabel.textContainer.lineBreakMode = isLineWrappingEnabled ? .byCharWrapping : .byClipping
+        codeScrollView.isScrollEnabled = !isLineWrappingEnabled
+        codeScrollView.alwaysBounceHorizontal = false
+        codeScrollView.showsHorizontalScrollIndicator = false
+        codeLabelWidthConstraint?.constant = isLineWrappingEnabled ? wrappedCodeWidth() : measuredUnwrappedCodeWidth
+
+        if resetHorizontalOffset {
+            codeScrollView.setContentOffset(.zero, animated: false)
+        }
+
+        codeLabel.invalidateIntrinsicContentSize()
+        codeScrollView.invalidateIntrinsicContentSize()
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+        superview?.setNeedsLayout()
+    }
+
+    private func wrappedCodeWidth() -> CGFloat {
+        let availableWidth = [codeScrollView.bounds.width, bounds.width, superview?.bounds.width ?? 0]
+            .first(where: { $0 > Self.codeHorizontalPadding }) ?? 320
+        return max(1, availableWidth - Self.codeHorizontalPadding)
+    }
+
+    private func updateWrapButton() {
+        let palette = currentPalette ?? ThemeRuntimeState.currentPalette()
+        var config = wrapButton.configuration ?? .plain()
+        config.title = nil
+        config.image = UIImage(systemName: CodeWrapControl.symbolName)
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+            pointSize: 12, weight: .regular
+        )
+        config.baseForegroundColor = isLineWrappingEnabled ? UIColor(palette.blue) : UIColor(palette.fgDim)
+        config.background.backgroundColor = isLineWrappingEnabled
+            ? UIColor(palette.blue).withAlphaComponent(0.14)
+            : .clear
+        config.background.cornerRadius = 8
+        wrapButton.configuration = config
+        wrapButton.accessibilityLabel = isLineWrappingEnabled ? "Unwrap code lines" : "Wrap code lines"
+        wrapButton.accessibilityValue = isLineWrappingEnabled ? "On" : "Off"
+    }
+
+    private func invalidateTimelineLayout() {
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     private func showCopiedFlash() {

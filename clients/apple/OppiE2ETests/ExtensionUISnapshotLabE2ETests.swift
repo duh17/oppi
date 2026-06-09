@@ -249,6 +249,87 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         try assertEditorResponse(sessionId: sessionId)
     }
 
+    func testMarkdownCodeBlockWrapChromeUsesIconAndCompactHeader() throws {
+        createAndEnterSession()
+        _ = waitForWebSocketConnected(timeout: 20)
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        let requestId = "markdown-code-block-wrap-chrome"
+        let command = "cd /tmp/oppi-wrap-proof && printf 'force delete fixture with enough width for wrap proof'"
+
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_request",
+            "id": requestId,
+            "method": "ask",
+            "allowCustom": false,
+            "questions": [
+                [
+                    "id": "approval",
+                    "question": """
+                    Force delete
+
+                    Force delete bypasses normal safety checks.
+
+                    ### Command
+
+                    ```bash
+                    \(command)
+                    ```
+
+                    Allow this tool call?
+                    """,
+                    "multiSelect": false,
+                    "options": [
+                        ["value": "allow-once", "label": "Allow once", "description": "Run this tool call now"],
+                        ["value": "deny", "label": "Deny", "description": "Block the tool call"],
+                    ],
+                ],
+            ],
+        ])
+
+        let inlineTitle = waitForText("Force delete", timeout: 10)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: app.frame.maxX - 36, dy: inlineTitle.frame.midY))
+            .tap()
+
+        let wrapButton = app.buttons["markdown.codeBlock.wrap"]
+        XCTAssertTrue(wrapButton.waitForExistence(timeout: 10), "Markdown code-block wrap button did not appear")
+        XCTAssertEqual(wrapButton.label, "Wrap code lines")
+        XCTAssertEqual(wrapButton.value as? String, "Off")
+        XCTAssertLessThanOrEqual(
+            wrapButton.frame.width,
+            32,
+            "Wrap control should be compact icon chrome, got width \(wrapButton.frame.width)"
+        )
+        XCTAssertLessThanOrEqual(
+            wrapButton.frame.height,
+            32,
+            "Wrap control should not increase header height, got height \(wrapButton.frame.height)"
+        )
+        XCTAssertFalse(app.buttons["Wrap"].exists, "Wrap must not render as a text button")
+
+        let languageBadge = app.staticTexts["markdown.codeBlock.language"]
+        XCTAssertTrue(languageBadge.waitForExistence(timeout: 5), "Code block language badge did not appear")
+        XCTAssertEqual(languageBadge.label, "bash")
+        XCTAssertLessThan(
+            abs(wrapButton.frame.midY - languageBadge.frame.midY),
+            8,
+            "Wrap icon should sit on the language badge baseline, not stretch the header"
+        )
+
+        let codeText = app.textViews["markdown.codeBlock.text"]
+        XCTAssertTrue(codeText.waitForExistence(timeout: 5), "Code block body text did not appear")
+        XCTAssertLessThan(
+            codeText.frame.minY - languageBadge.frame.maxY,
+            64,
+            "Code body should sit directly below a compact header, not after an expanded blank header"
+        )
+
+        let screenshotURL = try saveLabScreenshot(name: "markdown-code-block-wrap-chrome-e2e")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: screenshotURL.path))
+
+        try settleRequest(sessionId: sessionId, requestId: requestId)
+    }
+
     func testExtensionUISheetDismissesWhenSessionEnds() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)

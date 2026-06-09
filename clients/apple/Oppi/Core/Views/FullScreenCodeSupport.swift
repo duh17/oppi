@@ -28,6 +28,10 @@ enum FullScreenViewerChrome {
     // Grep for `FullScreenViewerChrome` to find all adopters.
 }
 
+enum CodeWrapControl {
+    static let symbolName = "text.alignleft"
+}
+
 enum FullScreenCodeTypography {
     static let codeFont = AppFont.monoMedium
 

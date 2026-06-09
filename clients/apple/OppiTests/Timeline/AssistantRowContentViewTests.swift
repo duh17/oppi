@@ -149,6 +149,47 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func codeBlockWrapButtonTogglesSoftWrap() throws {
+        let longLine = "curl --request POST https://example.com/" + String(repeating: "very-long-path-segment/", count: 12)
+        let text = "```bash\n\(longLine)\n```"
+        let containerWidth: CGFloat = 300
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .make(content: text, isStreaming: false, themeID: ThemeRuntimeState.currentThemeID()))
+        _ = fittedTimelineSize(for: mdView, width: containerWidth)
+
+        let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
+        let scrollView = try #require(timelineAllScrollViews(in: codeBlockView).first)
+        let codeTextView = try #require(timelineAllTextViews(in: scrollView).first)
+        let wrapButton = try #require(
+            timelineAllViews(in: codeBlockView)
+                .compactMap { $0 as? UIButton }
+                .first { $0.accessibilityIdentifier == "markdown.codeBlock.wrap" }
+        )
+
+        codeBlockView.layoutIfNeeded()
+        #expect(codeTextView.textContainer.lineBreakMode == .byClipping)
+        #expect(scrollView.contentSize.width > scrollView.frame.width)
+        #expect(wrapButton.configuration?.title == nil)
+        #expect(wrapButton.configuration?.image != nil)
+        #expect(wrapButton.bounds.height <= 32)
+        #expect(wrapButton.accessibilityLabel == "Wrap code lines")
+        #expect(wrapButton.accessibilityValue == "Off")
+
+        wrapButton.sendActions(for: .touchUpInside)
+        codeBlockView.setNeedsLayout()
+        codeBlockView.layoutIfNeeded()
+        scrollView.layoutIfNeeded()
+
+        #expect(codeTextView.textContainer.lineBreakMode == .byCharWrapping)
+        #expect(!scrollView.isScrollEnabled)
+        #expect(scrollView.contentSize.width <= scrollView.frame.width + 1)
+        #expect(abs(scrollView.contentOffset.x) < 0.5)
+        #expect(wrapButton.accessibilityLabel == "Unwrap code lines")
+        #expect(wrapButton.accessibilityValue == "On")
+    }
+
+    @MainActor
     @Test func codeBlockMultiLineLongLinesScrollHorizontally() throws {
         // Multi-line code block with long lines must also scroll horizontally.
         let line1 = "func reallyLongFunctionName(parameterOne: String, parameterTwo: Int, parameterThree: Bool, parameterFour: Double) -> String {"
