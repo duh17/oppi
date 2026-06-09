@@ -93,6 +93,13 @@ function mockInstallFailure(stderr: string, stdout = ""): void {
   );
 }
 
+function npmVersionResponse(version: string): Response {
+  return new Response(JSON.stringify({ version }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 // ── Test setup ──
 
 let savedArgv1: string;
@@ -105,10 +112,7 @@ beforeEach(() => {
   savedHome = process.env.HOME;
   savedRuntimeBin = process.env.OPPI_RUNTIME_BIN;
   savedFetch = global.fetch;
-  global.fetch = vi.fn(async () => ({
-    ok: true,
-    json: async () => ({ version: "0.62.0" }),
-  })) as typeof global.fetch;
+  global.fetch = vi.fn(async () => npmVersionResponse("0.62.0")) as typeof global.fetch;
   mockExecFile.mockReset();
 });
 
@@ -196,10 +200,7 @@ describe("RuntimeUpdateManager", () => {
     });
 
     it("reports update availability from npm registry", async () => {
-      global.fetch = vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ version: "0.63.0" }),
-      })) as typeof global.fetch;
+      global.fetch = vi.fn(async () => npmVersionResponse("0.63.0")) as typeof global.fetch;
 
       const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
       const status = await manager.getStatus({ force: true });
@@ -354,10 +355,7 @@ describe("RuntimeUpdateManager", () => {
 
       try {
         pointResolverAt(dir);
-        global.fetch = vi.fn(async () => ({
-          ok: true,
-          json: async () => ({ version: "0.63.0" }),
-        })) as typeof global.fetch;
+        global.fetch = vi.fn(async () => npmVersionResponse("0.63.0")) as typeof global.fetch;
         mockInstallSuccess(() => {
           writeFileSync(
             join(dir, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
@@ -400,10 +398,7 @@ describe("RuntimeUpdateManager", () => {
 
       try {
         pointResolverAt(dir);
-        global.fetch = vi.fn(async () => ({
-          ok: true,
-          json: async () => ({ version: "0.75.4" }),
-        })) as typeof global.fetch;
+        global.fetch = vi.fn(async () => npmVersionResponse("0.75.4")) as typeof global.fetch;
         mockInstallSuccess(() => {
           for (const name of [
             "@earendil-works/pi-coding-agent",
@@ -446,10 +441,7 @@ describe("RuntimeUpdateManager", () => {
 
       try {
         pointResolverAt(dir);
-        global.fetch = vi.fn(async () => ({
-          ok: true,
-          json: async () => ({ version: "0.62.0" }),
-        })) as typeof global.fetch;
+        global.fetch = vi.fn(async () => npmVersionResponse("0.62.0")) as typeof global.fetch;
         mockInstallSuccess(() => {
           mkdirSync(join(dir, "node_modules", "@earendil-works", "pi-coding-agent"), {
             recursive: true,

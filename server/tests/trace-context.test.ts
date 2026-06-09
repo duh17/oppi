@@ -6,7 +6,7 @@ import {
   findLatestForkableUserEntryIdFromContent,
   findLatestForkableUserEntryIdFromFile,
 } from "../src/trace.js";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -51,18 +51,22 @@ describe("findLatestForkableUserEntryId", () => {
   });
 
   it("reads the latest forkable user entry from a session file", () => {
-    const path = join(tmpdir(), `fork-entry-${Date.now()}.jsonl`);
-    writeFileSync(
-      path,
-      toJsonl([
-        msg("u1", null, "user", "hello"),
-        msg("a1", "u1", "assistant", "hi"),
-        msg("u2", "a1", "user", "fork here"),
-      ]),
-    );
+    const dir = mkdtempSync(join(tmpdir(), "fork-entry-"));
+    const path = join(dir, "session.jsonl");
+    try {
+      writeFileSync(
+        path,
+        toJsonl([
+          msg("u1", null, "user", "hello"),
+          msg("a1", "u1", "assistant", "hi"),
+          msg("u2", "a1", "user", "fork here"),
+        ]),
+      );
 
-    expect(findLatestForkableUserEntryIdFromFile(path)).toBe("u2");
-    rmSync(path, { force: true });
+      expect(findLatestForkableUserEntryIdFromFile(path)).toBe("u2");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -533,8 +537,7 @@ describe("findToolOutput", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = join(tmpdir(), `trace-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    mkdirSync(tmpDir, { recursive: true });
+    tmpDir = mkdtempSync(join(tmpdir(), "trace-test-"));
   });
 
   afterEach(() => {

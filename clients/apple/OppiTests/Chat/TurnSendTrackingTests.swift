@@ -76,10 +76,9 @@ struct TurnSendTrackingTests {
             try await waiter.wait()
         }
 
-        // Give the wait a moment to register
-        try await Task.sleep(for: .milliseconds(10))
+        // Let the waiting task register before resolving.
+        await Task.yield()
 
-        // Resolve
         waiter.resolve(.success(()))
 
         // Should complete without error

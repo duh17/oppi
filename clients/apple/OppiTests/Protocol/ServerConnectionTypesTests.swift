@@ -12,8 +12,8 @@ struct ServerConnectionTypesTests {
     func waiterResolveSuccess() async throws {
         let waiter = CommandResultWaiter()
 
-        Task {
-            try await Task.sleep(for: .milliseconds(10))
+        Task { @MainActor in
+            await Task.yield()
             waiter.resolve(.success(CommandResultPayload(data: .string("hello"))))
         }
 
