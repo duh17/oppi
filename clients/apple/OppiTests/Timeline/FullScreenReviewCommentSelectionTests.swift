@@ -88,6 +88,45 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(composerAppeared, "The native menu Comment action should open the inline comment composer")
     }
 
+    @Test func inlineCommentComposerStaysAboveKeyboardWhenAnchorIsBehindKeyboard() throws {
+        let hostController = UIViewController()
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        hostController.loadViewIfNeeded()
+        hostController.view.frame = window.bounds
+        let keyboardFrame = CGRect(
+            x: window.bounds.minX,
+            y: window.bounds.maxY - 320,
+            width: window.bounds.width,
+            height: 320
+        )
+        hostController.view.setNeedsLayout()
+        hostController.view.layoutIfNeeded()
+
+        let sourceView = UIView(frame: window.bounds)
+        hostController.view.addSubview(sourceView)
+        let composer = ReviewCommentInlineDraftView(
+            request: ReviewCommentSelectionRequest(
+                selectedText: "server path",
+                source: ReviewCommentSourceContext(sessionId: "session-1", surface: .fullScreenMarkdown)
+            ),
+            router: ReviewCommentSelectionRouter(dispatch: { _ in }, inlineSave: { _, _ in true }),
+            quickComments: [],
+            sourceView: sourceView,
+            anchorRect: CGRect(x: 24, y: window.bounds.maxY - 96, width: 1, height: 24)
+        )
+        composer.present(in: hostController.view)
+
+        let convertedKeyboardFrame = hostController.view.convert(keyboardFrame, from: nil)
+        composer.setKeyboardFrameInHostForTesting(convertedKeyboardFrame)
+        hostController.view.layoutIfNeeded()
+
+        let keyboardTopInHost = convertedKeyboardFrame.minY
+        #expect(composer.frame.maxY <= keyboardTopInHost - 10, "Inline composer must stay above a docked iPad keyboard")
+    }
+
     @Test func nativeFullscreenEditMenuSuppressesFallbackPresentationForSameSelection() throws {
         let textView = FullScreenReviewCommentTextView()
         textView.text = "let answer = 42\nlet done = true"

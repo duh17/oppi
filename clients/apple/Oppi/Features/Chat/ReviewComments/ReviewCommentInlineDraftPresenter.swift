@@ -242,11 +242,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             cancelVoiceInputIfOwned()
         }
         if isObservingKeyboard {
-            NotificationCenter.default.removeObserver(
-                self,
-                name: UIResponder.keyboardWillChangeFrameNotification,
-                object: nil
-            )
+            removeKeyboardObservers()
             isObservingKeyboard = false
         }
         NotificationCenter.default.removeObserver(self)
@@ -539,18 +535,35 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func observeKeyboard() {
         guard !isObservingKeyboard else { return }
         isObservingKeyboard = true
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleKeyboardNotification(_:)),
-            name: UIResponder.keyboardWillChangeFrameNotification,
-            object: nil
-        )
+        for name in keyboardNotificationNames {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleKeyboardNotification(_:)),
+                name: name,
+                object: nil
+            )
+        }
+    }
+
+    private func removeKeyboardObservers() {
+        for name in keyboardNotificationNames {
+            NotificationCenter.default.removeObserver(self, name: name, object: nil)
+        }
+    }
+
+    private var keyboardNotificationNames: [NSNotification.Name] {
+        [
+            UIResponder.keyboardWillShowNotification,
+            UIResponder.keyboardWillHideNotification,
+            UIResponder.keyboardWillChangeFrameNotification,
+        ]
     }
 
     @objc private func handleKeyboardNotification(_ notification: Notification) {
-        guard !suppressKeyboard else {
+        guard !suppressKeyboard,
+              notification.name != UIResponder.keyboardWillHideNotification else {
             keyboardFrameInHost = nil
-            updateFrame(animated: false)
+            updateFrame(animated: notification.name == UIResponder.keyboardWillHideNotification)
             return
         }
 
@@ -561,12 +574,25 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             return
         }
 
-        keyboardFrameInHost = hostView.convert(frame, from: nil)
+        let nextFrame = hostView.convert(frame, from: nil)
+        if let currentFrame = keyboardFrameInHost,
+           currentFrame.intersects(hostView.bounds),
+           nextFrame.intersects(hostView.bounds),
+           notification.name != UIResponder.keyboardWillHideNotification {
+            keyboardFrameInHost = nextFrame.minY < currentFrame.minY ? nextFrame : currentFrame
+        } else {
+            keyboardFrameInHost = nextFrame
+        }
         let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.22
         let curveValue = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
         let options = UIView.AnimationOptions(rawValue: curveValue << 16)
             .union([.allowUserInteraction, .beginFromCurrentState])
         updateFrame(animated: true, duration: duration, options: options)
+    }
+
+    func setKeyboardFrameInHostForTesting(_ frame: CGRect?) {
+        keyboardFrameInHost = frame
+        updateFrame(animated: false)
     }
 
     private func updateFrame(
@@ -618,7 +644,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         var y: CGFloat
         if belowY + height <= bottomLimit {
             y = belowY
-        } else if aboveY >= safeFrame.minY {
+        } else if aboveY >= safeFrame.minY, aboveY + height <= bottomLimit {
             y = aboveY
         } else {
             y = max(safeFrame.minY, bottomLimit - height)
