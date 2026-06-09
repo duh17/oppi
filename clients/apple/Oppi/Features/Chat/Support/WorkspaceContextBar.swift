@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Scoping logic (testable)
 
@@ -169,6 +172,7 @@ struct WorkspaceContextBar: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
     @Environment(AskRequestStore.self) private var askRequestStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var isExpanded = false
     @State private var selectedFile: GitFileStatus?
@@ -301,15 +305,28 @@ struct WorkspaceContextBar: View {
         (gitStatus?.recentCommits ?? []) + additionalCommits
     }
 
+    private var usesIPadTypography: Bool {
+        guard horizontalSizeClass == .regular else { return false }
+#if canImport(UIKit)
+        return UIDevice.current.userInterfaceIdiom == .pad
+#else
+        return false
+#endif
+    }
+
+    private func gitBarFont(compact: Font, iPad: Font) -> Font {
+        usesIPadTypography ? iPad : compact
+    }
+
     /// Dynamic max height for the scrollable content area.
     /// Estimates row heights to hug content; capped at 480.
     /// Note: selectionActionBar is outside the ScrollView — not counted here.
     private func expandedMaxHeight(displayFiles: [GitFileStatus], sharedEditPaths: Set<String>) -> CGFloat {
-        let fileRows = CGFloat(displayFiles.count) * 26
-        let commitRows = CGFloat(allCommits.count) * 17
-        let loadMoreRow: CGFloat = hasMoreCommits ? 24 : 0
-        let sectionHeaders: CGFloat = 24
-        let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : 22
+        let fileRows = CGFloat(displayFiles.count) * (usesIPadTypography ? 28 : 26)
+        let commitRows = CGFloat(allCommits.count) * (usesIPadTypography ? 20 : 17)
+        let loadMoreRow: CGFloat = hasMoreCommits ? (usesIPadTypography ? 28 : 24) : 0
+        let sectionHeaders: CGFloat = usesIPadTypography ? 28 : 24
+        let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : (usesIPadTypography ? 24 : 22)
         let chrome: CGFloat = 20
         return min(fileRows + commitRows + loadMoreRow + sectionHeaders + overlapHint + chrome, 480)
     }
@@ -407,9 +424,12 @@ struct WorkspaceContextBar: View {
                     if let branch = gitStatus?.branch {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.branch")
-                                .font(.caption2.weight(.semibold))
+                                .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
                             Text(branch)
-                                .font(.caption.monospaced().weight(.medium))
+                                .font(gitBarFont(
+                                    compact: .caption.monospaced().weight(.medium),
+                                    iPad: .footnote.monospaced().weight(.medium)
+                                ))
                                 .lineLimit(1)
                         }
                         .foregroundStyle(.themeCyan)
@@ -417,7 +437,10 @@ struct WorkspaceContextBar: View {
 
                     if displayFileCount > 0 {
                         Text("\(SessionFormatting.compactCount(displayFileCount)) changed")
-                            .font(.caption.monospaced().weight(.semibold))
+                            .font(gitBarFont(
+                                compact: .caption.monospaced().weight(.semibold),
+                                iPad: .footnote.monospaced().weight(.semibold)
+                            ))
                             .foregroundStyle(dirtyColor)
                             .lineLimit(1)
                     }
@@ -426,14 +449,14 @@ struct WorkspaceContextBar: View {
                         HStack(spacing: 4) {
                             if displayAddedLines > 0 {
                                 Text("+\(SessionFormatting.compactCount(displayAddedLines))")
-                                    .font(.caption2.monospaced().bold())
+                                    .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
                                     .foregroundStyle(.themeDiffAdded)
                                     .lineLimit(1)
                                     .fixedSize(horizontal: true, vertical: false)
                             }
                             if displayRemovedLines > 0 {
                                 Text("-\(SessionFormatting.compactCount(displayRemovedLines))")
-                                    .font(.caption2.monospaced().bold())
+                                    .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
                                     .foregroundStyle(.themeDiffRemoved)
                                     .lineLimit(1)
                                     .fixedSize(horizontal: true, vertical: false)
@@ -449,14 +472,14 @@ struct WorkspaceContextBar: View {
                             HStack(spacing: 4) {
                                 if ahead > 0 {
                                     Text("\u{2191}\(SessionFormatting.compactCount(ahead))")
-                                        .font(.caption2.monospaced())
+                                        .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                                         .foregroundStyle(.themeDiffAdded)
                                         .lineLimit(1)
                                         .fixedSize(horizontal: true, vertical: false)
                                 }
                                 if behind > 0 {
                                     Text("\u{2193}\(SessionFormatting.compactCount(behind))")
-                                        .font(.caption2.monospaced())
+                                        .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                                         .foregroundStyle(.themeOrange)
                                         .lineLimit(1)
                                         .fixedSize(horizontal: true, vertical: false)
@@ -467,7 +490,7 @@ struct WorkspaceContextBar: View {
 
 
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.appTagBold)
+                        .font(gitBarFont(compact: .appTagBold, iPad: .caption2.weight(.bold)))
                         .foregroundStyle(.themeComment)
                 }
                 .padding(.horizontal, 12)
@@ -490,7 +513,7 @@ struct WorkspaceContextBar: View {
                     }
                 } label: {
                     Text(isSelecting ? "Cancel" : "Select")
-                        .font(.caption2.weight(.semibold))
+                        .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
                         .foregroundStyle(isSelecting ? .themeOrange : .themePurple)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -543,7 +566,7 @@ struct WorkspaceContextBar: View {
                         }
                     } label: {
                         Text(allFilesSelected ? "Deselect All" : "Select All")
-                            .font(.caption2.weight(.semibold))
+                            .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
                             .foregroundStyle(.themePurple)
                     }
                     .buttonStyle(.plain)
@@ -552,7 +575,7 @@ struct WorkspaceContextBar: View {
 
                     if !selectedPaths.isEmpty {
                         Text("\(selectedPaths.count) selected")
-                            .font(.caption2.monospaced())
+                            .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                             .foregroundStyle(.themeFg)
                     }
                 }
@@ -568,9 +591,9 @@ struct WorkspaceContextBar: View {
                     if !sharedEditPaths.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "rectangle.on.rectangle")
-                                .font(.caption2.weight(.semibold))
+                                .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
                             Text("\(sharedEditPaths.count) file\(sharedEditPaths.count == 1 ? "" : "s") touched in another session")
-                                .font(.caption2.weight(.medium))
+                                .font(gitBarFont(compact: .caption2.weight(.medium), iPad: .caption.weight(.medium)))
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                         }
@@ -595,7 +618,7 @@ struct WorkspaceContextBar: View {
 
                     if sessionId == nil, let gitStatus, gitStatus.totalFiles > gitStatus.files.count {
                         Text("... and \(gitStatus.totalFiles - gitStatus.files.count) more")
-                            .font(.caption2)
+                            .font(gitBarFont(compact: .caption2, iPad: .caption))
                             .foregroundStyle(.themeComment)
                             .padding(.horizontal, 12)
                             .padding(.top, 4)
@@ -628,15 +651,15 @@ struct WorkspaceContextBar: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Text(commit.sha)
-                                    .font(.caption2.monospaced())
+                                    .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                                     .foregroundStyle(.themeComment)
                                 Text(commit.message)
-                                    .font(.caption2)
+                                    .font(gitBarFont(compact: .caption2, iPad: .caption))
                                     .foregroundStyle(.themeFgDim)
                                     .lineLimit(1)
                                 Spacer(minLength: 4)
                                 Image(systemName: "chevron.right")
-                                    .font(.appBadgeLight)
+                                    .font(gitBarFont(compact: .appBadgeLight, iPad: .caption2.weight(.semibold)))
                                     .foregroundStyle(.themeComment.opacity(0.5))
                             }
                         }
@@ -651,7 +674,7 @@ struct WorkspaceContextBar: View {
                                 ProgressView().scaleEffect(0.6)
                             } else {
                                 Text("Load more")
-                                    .font(.caption2.weight(.semibold))
+                                    .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
                                     .foregroundStyle(.themePurple)
                             }
                         }
@@ -663,7 +686,7 @@ struct WorkspaceContextBar: View {
                     if let gitStatus, gitStatus.stashCount > 0 {
                         HStack(spacing: 8) {
                             Text("\(gitStatus.stashCount) stash")
-                                .font(.caption2.monospaced())
+                                .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                                 .foregroundStyle(.themePurple)
                         }
                     }
@@ -676,19 +699,19 @@ struct WorkspaceContextBar: View {
                 HStack(spacing: 8) {
                     if let sha = gitStatus.headSha {
                         Text(sha)
-                            .font(.caption2.monospaced())
+                            .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                             .foregroundStyle(.themeComment)
                     }
                     if let msg = gitStatus.lastCommitMessage {
                         Text(msg)
-                            .font(.caption2)
+                            .font(gitBarFont(compact: .caption2, iPad: .caption))
                             .foregroundStyle(.themeFgDim)
                             .lineLimit(1)
                     }
                     if gitStatus.stashCount > 0 {
                         Spacer(minLength: 0)
                         Text("\(gitStatus.stashCount) stash")
-                            .font(.caption2.monospaced())
+                            .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                             .foregroundStyle(.themePurple)
                     }
                 }
@@ -715,7 +738,7 @@ struct WorkspaceContextBar: View {
             HStack(spacing: 6) {
                 if isSelecting {
                     Image(systemName: selectedPaths.contains(file.path) ? "checkmark.circle.fill" : "circle")
-                        .font(.appLabel)
+                        .font(gitBarFont(compact: .appLabel, iPad: .caption))
                         .foregroundStyle(selectedPaths.contains(file.path) ? .themePurple : .themeComment)
                         .frame(width: 16)
                 }
@@ -723,7 +746,7 @@ struct WorkspaceContextBar: View {
                 icon.iconView(size: 16, font: .appChip)
 
                 Text(file.path.shortenedPath)
-                    .font(.caption2.monospaced())
+                    .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -732,7 +755,7 @@ struct WorkspaceContextBar: View {
 
                 if isSharedEdit {
                     Image(systemName: "rectangle.on.rectangle")
-                        .font(.appBadgeLight)
+                        .font(gitBarFont(compact: .appBadgeLight, iPad: .caption2.weight(.semibold)))
                         .foregroundStyle(.themeOrange)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -742,23 +765,23 @@ struct WorkspaceContextBar: View {
 
                 if let added = file.addedLines, added > 0 {
                     Text("+\(added)")
-                        .font(.caption2.monospaced().bold())
+                        .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
                         .foregroundStyle(.themeDiffAdded)
                 }
                 if let removed = file.removedLines, removed > 0 {
                     Text("-\(removed)")
-                        .font(.caption2.monospaced().bold())
+                        .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
                         .foregroundStyle(.themeDiffRemoved)
                 }
 
                 if !isSelecting, canTap {
                     Image(systemName: "chevron.right")
-                        .font(.appBadgeLight)
+                        .font(gitBarFont(compact: .appBadgeLight, iPad: .caption2.weight(.semibold)))
                         .foregroundStyle(.themeComment.opacity(0.5))
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.vertical, usesIPadTypography ? 5 : 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -775,19 +798,19 @@ struct WorkspaceContextBar: View {
                     ProgressView()
                         .scaleEffect(0.7)
                     Text(launchActionInFlightTitle)
-                        .font(.caption2)
+                        .font(gitBarFont(compact: .caption2, iPad: .caption))
                         .foregroundStyle(.themeComment)
                     Spacer()
                 } else {
                     Text("\(selectedPaths.count) file\(selectedPaths.count == 1 ? "" : "s")")
-                        .font(.caption2.monospaced())
+                        .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                         .foregroundStyle(selectedPaths.isEmpty ? .themeComment : .themeFg)
 
                     Spacer()
 
                     if selectedFileQuickActions.isEmpty {
                         Text(isLoadingQuickActions ? "Loading templates…" : "No prompt templates")
-                            .font(.caption2)
+                            .font(gitBarFont(compact: .caption2, iPad: .caption))
                             .foregroundStyle(.themeComment)
                     } else {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -896,16 +919,16 @@ struct WorkspaceContextBar: View {
     private func quickActionButtonLabel(option: WorkspaceQuickActionOption) -> some View {
         return HStack(spacing: 6) {
             Image(systemName: SlashCommand.Source.prompt.iconName)
-                .font(.caption2)
+                .font(gitBarFont(compact: .caption2, iPad: .caption))
                 .foregroundStyle(quickActionSourceColor(option.sourceScope))
                 .frame(width: 13)
 
             Text("/\(option.commandName)")
-                .font(.caption2.monospaced().weight(.medium))
+                .font(gitBarFont(compact: .caption2.monospaced().weight(.medium), iPad: .caption.monospaced().weight(.medium)))
                 .foregroundStyle(.themeBlue)
 
             Text(quickActionSourceLabel(option.sourceScope))
-                .font(.caption2.monospaced())
+                .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
                 .foregroundStyle(.themeComment)
         }
         .accessibilityLabel(option.title)
