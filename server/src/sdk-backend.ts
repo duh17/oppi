@@ -733,8 +733,7 @@ export class SdkBackend {
       throw new Error("Session backend is disposed");
     }
 
-    await this.runtime.services.resourceLoader.reload();
-    await this.refreshRuntimeSessionBindings();
+    await this.piSession.reload();
     return { success: true };
   }
 

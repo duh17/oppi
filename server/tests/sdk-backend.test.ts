@@ -670,6 +670,24 @@ describe("SdkBackend extension binding", () => {
       }),
     );
   });
+
+  it("reloads the live agent session instead of only reloading the resource loader", async () => {
+    const backend = Object.create(SdkBackend.prototype) as SdkBackend;
+    const piSession = {
+      reload: vi.fn(async () => {}),
+    };
+
+    const mutableBackend = backend as unknown as {
+      disposed: boolean;
+      runtime: { session: typeof piSession };
+      reloadResources: () => Promise<{ success: true }>;
+    };
+    mutableBackend.disposed = false;
+    mutableBackend.runtime = { session: piSession };
+
+    await expect(mutableBackend.reloadResources()).resolves.toEqual({ success: true });
+    expect(piSession.reload).toHaveBeenCalledOnce();
+  });
 });
 
 describe("SdkBackend extension UI bridge", () => {
