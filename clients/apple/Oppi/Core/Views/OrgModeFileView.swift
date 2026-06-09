@@ -25,7 +25,6 @@ struct OrgModeFileView: View {
                         content: markdownContent,
                         stream: nil,
                         palette: ThemeRuntimeState.currentThemeID().palette,
-                        plainTextFallbackThreshold: nil,
                         reviewCommentSelectionRouter: nil,
                         reviewCommentSourceContext: nil
                     )
@@ -38,7 +37,6 @@ struct OrgModeFileView: View {
                     isStreaming: false,
                     themeID: ThemeRuntimeState.currentThemeID(),
                     textSelectionEnabled: true,
-                    plainTextFallbackThreshold: AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold
                 ))
                 return view
             }

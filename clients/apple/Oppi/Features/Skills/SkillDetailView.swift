@@ -78,7 +78,6 @@ struct SkillDetailView: View {
             Divider()
             MarkdownContentViewWrapper(
                 content: content,
-                plainTextFallbackThreshold: nil
             )
             .allowsFullScreenExpansion(false)
         }

@@ -207,7 +207,6 @@ private struct OrgSectionView: View {
                     MarkdownContentViewWrapper(
                         content: md,
                         textSelectionEnabled: true,
-                        plainTextFallbackThreshold: nil
                     )
                 }
             }

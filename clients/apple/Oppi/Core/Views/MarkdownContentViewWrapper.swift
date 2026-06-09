@@ -6,7 +6,6 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     let content: String
     var isStreaming = false
     var textSelectionEnabled = true
-    var plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold
     var reviewCommentSourceContext: ReviewCommentSourceContext? = nil
     var workspaceID: String?
     var serverBaseURL: URL?
@@ -29,7 +28,6 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
             isStreaming: isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: textSelectionEnabled,
-            plainTextFallbackThreshold: plainTextFallbackThreshold,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
             workspaceID: workspaceID,

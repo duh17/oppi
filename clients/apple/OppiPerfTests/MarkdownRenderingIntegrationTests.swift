@@ -34,7 +34,6 @@ struct MarkdownRenderingIntegrationTests {
             isStreaming: false,
             themeID: .light,
             textSelectionEnabled: false,
-            plainTextFallbackThreshold: nil,
             renderingMode: renderingMode
         ))
 
@@ -71,7 +70,6 @@ struct MarkdownRenderingIntegrationTests {
             isStreaming: false,
             themeID: .light,
             textSelectionEnabled: false,
-            plainTextFallbackThreshold: nil,
             renderingMode: .live
         ))
 
@@ -389,7 +387,6 @@ struct MarkdownRenderingIntegrationTests {
             isStreaming: false,
             themeID: .light,
             textSelectionEnabled: false,
-            plainTextFallbackThreshold: nil,
             workspaceID: "test-ws",
             serverBaseURL: URL(string: "https://example.com/api")!,
             sourceFilePath: "docs/readme.md",
@@ -524,7 +521,6 @@ struct MarkdownRenderingIntegrationTests {
             content: "![Chart](images/chart.png)",
             stream: nil,
             palette: ThemeID.dark.palette,
-            plainTextFallbackThreshold: nil,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
             workspaceID: "test-ws",
@@ -569,7 +565,6 @@ struct MarkdownRenderingIntegrationTests {
             isStreaming: false,
             themeID: .light,
             textSelectionEnabled: false,
-            plainTextFallbackThreshold: nil,
             renderingMode: .export
         ))
 
