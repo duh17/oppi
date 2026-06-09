@@ -98,11 +98,11 @@ describe("Storage.createWorkspace", () => {
   it("keeps explicit extension names as provided", () => {
     const ws = storage.createWorkspace(
       createReq({
-        extensions: ["spawn_agent", "ask"],
+        extensions: ["custom-tool", "ask"],
       }),
     );
 
-    expect(ws.extensions).toEqual(["spawn_agent", "ask"]);
+    expect(ws.extensions).toEqual(["custom-tool", "ask"]);
   });
 
   it("filters deprecated review extension from workspace config", () => {
@@ -334,10 +334,10 @@ describe("Storage.updateWorkspace", () => {
   it("normalizes, deduplicates, and updates extensions", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
-      extensions: [" spawn_agent ", "subagents", "ask", "spawn_agent"],
+      extensions: [" custom-tool ", "review-helper", "ask", "custom-tool"],
     });
 
-    expect(updated!.extensions).toEqual(["spawn_agent", "subagents", "ask"]);
+    expect(updated!.extensions).toEqual(["custom-tool", "review-helper", "ask"]);
   });
 
   it("updates defaultModel", () => {

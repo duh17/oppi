@@ -151,9 +151,9 @@ struct SessionActivitySummaryTests {
     }
 
     @Test func formatToolActivity_unknownTool() {
-        let activity = SessionActivityStore.Activity(toolName: "spawn_agent", keyArg: "worker-1")
+        let activity = SessionActivityStore.Activity(toolName: "custom_tool", keyArg: "worker-1")
         let result = SessionActivitySummary.formatToolActivity(activity)
-        #expect(result == "spawn_agent worker-1")
+        #expect(result == "custom_tool worker-1")
     }
 
     @Test func formatToolActivity_shortPathNotTruncated() {

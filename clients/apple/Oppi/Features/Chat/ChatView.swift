@@ -86,7 +86,7 @@ struct ChatView: View {
     @State private var showOutline = false
     @State private var showModelPicker = false
     @State private var showComposer = false
-    @State private var childSessionToOpen: ChildSessionRoute?
+    @State private var sessionRouteToOpen: SessionRoute?
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var forkedSessionToOpen: ForkRoute?
@@ -129,7 +129,7 @@ struct ChatView: View {
         let workspaceId: String?
     }
 
-    private struct ChildSessionRoute: Identifiable, Hashable {
+    private struct SessionRoute: Identifiable, Hashable {
         let id: String
         let workspaceId: String?
     }
@@ -179,21 +179,10 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == workspaceId }
     }
 
-    /// Child sessions spawned by this session.
-    private var childSessions: [Session] {
-        SessionTreeHelper.sortedChildSessions(of: sessionId, in: sessionStore.sessions)
-    }
-
     private var hasShareSlashCommand: Bool {
         chatState.slashCommands.contains { command in
             command.name.caseInsensitiveCompare("share") == .orderedSame
         }
-    }
-
-    /// Parent session (when this is a spawned child).
-    private var parentSession: Session? {
-        guard let parentId = session?.parentSessionId else { return nil }
-        return sessionStore.sessions.first { $0.id == parentId }
     }
 
     private var sessionDisplayName: String {
@@ -292,14 +281,6 @@ struct ChatView: View {
                     isLoading: gitStatusStore.isLoading,
                     workspaceId: session?.workspaceId,
                     sessionId: sessionId,
-                    childSessions: childSessions,
-                    onSelectChild: { childId in
-                        // Prime focus/transport before the push animation so the
-                        // parent session can't reclaim the shared WS first.
-                        let childWorkspaceId = sessionStore.workspaceId(for: childId) ?? session?.workspaceId
-                        connection.prepareForSessionReentry(childId, workspaceIdHint: childWorkspaceId)
-                        childSessionToOpen = ChildSessionRoute(id: childId, workspaceId: childWorkspaceId)
-                    },
                     onReviewInCurrentSession: { prompt, files in
                         stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
                     },
@@ -529,7 +510,7 @@ struct ChatView: View {
             .navigationDestination(item: $forkedSessionToOpen) { route in
                 Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
-            .navigationDestination(item: $childSessionToOpen) { route in
+            .navigationDestination(item: $sessionRouteToOpen) { route in
                 Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
     }
@@ -810,18 +791,6 @@ struct ChatView: View {
 
     private var sessionTitleLabel: some View {
         VStack(spacing: 1) {
-            if let parent = parentSession {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.turn.left.up")
-                        .font(.system(size: 8, weight: .semibold))
-                    Text(parent.displayTitle)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .font(.caption2)
-                .foregroundStyle(.themeComment)
-            }
-
             HStack(spacing: 6) {
                 Text(sessionDisplayName)
                     .font(.subheadline.weight(.semibold))
@@ -1037,7 +1006,7 @@ struct ChatView: View {
         }
 
         connection.prepareForSessionReentry(link.sessionId, workspaceIdHint: link.workspaceId)
-        childSessionToOpen = ChildSessionRoute(id: link.sessionId, workspaceId: link.workspaceId)
+        sessionRouteToOpen = SessionRoute(id: link.sessionId, workspaceId: link.workspaceId)
         return true
     }
 
@@ -1117,7 +1086,7 @@ struct ChatView: View {
 
         if shouldReconnectStoppedSession {
             // A visible session can enter as stopped, then become busy when a
-            // child/subagent result resumes the parent turn. The stopped entry
+            // external session link resumes the current turn. The stopped entry
             // path intentionally avoided WSS; restart the connect task now so
             // live parent output is subscribed. Queue sync runs after the
             // stream reconnects, so skip the pre-reconnect get_queue request.

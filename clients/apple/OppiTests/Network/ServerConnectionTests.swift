@@ -545,7 +545,7 @@ struct ServerConnectionTests {
         let (conn, pipe) = makeTestConnection()
         let nativeSurface = ExtensionUINativeSurface(
             version: 1,
-            id: "widget:subagents",
+            id: "widget:jobs",
             source: "widget",
             presentation: ExtensionUINativePresentation(
                 style: "surfacePanel",
@@ -571,7 +571,7 @@ struct ServerConnectionTests {
                     statusText: nil,
                     title: nil,
                     text: nil,
-                    widgetKey: "subagents",
+                    widgetKey: "jobs",
                     widgetLines: ["Agents active"],
                     widgetPlacement: nil,
                     nativeSurface: nativeSurface
@@ -598,17 +598,17 @@ struct ServerConnectionTests {
         )
 
         let surface = try #require(conn.extensionSurfaceBySession["s1"])
-        #expect(surface.nativeSurfaces["widget:subagents"]?.key == "subagents")
-        #expect(surface.nativeSurfaces["widget:subagents"]?.order == 1)
+        #expect(surface.nativeSurfaces["widget:jobs"]?.key == "jobs")
+        #expect(surface.nativeSurfaces["widget:jobs"]?.order == 1)
         #expect(surface.widgets["goal"]?.order == 2)
-        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["native:subagents", "widget:goal"])
+        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["native:jobs", "widget:goal"])
     }
 
     @Test func routeReplacingWidgetMovesItToLatestPiTUIPosition() throws {
         let (conn, pipe) = makeTestConnection()
         let nativeSurface = ExtensionUINativeSurface(
             version: 1,
-            id: "widget:subagents",
+            id: "widget:jobs",
             source: "widget",
             presentation: ExtensionUINativePresentation(
                 style: "surfacePanel",
@@ -633,7 +633,7 @@ struct ServerConnectionTests {
                 statusText: nil,
                 title: nil,
                 text: nil,
-                widgetKey: "subagents",
+                widgetKey: "jobs",
                 widgetLines: ["Agents active"],
                 widgetPlacement: nil,
                 nativeSurface: nativeSurface
@@ -658,7 +658,7 @@ struct ServerConnectionTests {
                 statusText: nil,
                 title: nil,
                 text: nil,
-                widgetKey: "subagents",
+                widgetKey: "jobs",
                 widgetLines: ["Agents updated"],
                 widgetPlacement: nil,
                 nativeSurface: nativeSurface
@@ -668,9 +668,9 @@ struct ServerConnectionTests {
         }
 
         let surface = try #require(conn.extensionSurfaceBySession["s1"])
-        #expect(surface.nativeSurfaces["widget:subagents"]?.order == 3)
+        #expect(surface.nativeSurfaces["widget:jobs"]?.order == 3)
         #expect(surface.widgets["goal"]?.order == 2)
-        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal", "native:subagents"])
+        #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal", "native:jobs"])
     }
 
     @Test func routeStatusDoesNotBecomeWidgetEntry() throws {
@@ -682,7 +682,7 @@ struct ServerConnectionTests {
                     method: "setStatus",
                     message: nil,
                     notifyType: nil,
-                    statusKey: "subagents",
+                    statusKey: "jobs",
                     statusText: "1 running agent",
                     title: nil,
                     text: nil,
@@ -716,9 +716,9 @@ struct ServerConnectionTests {
         #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal"])
     }
 
-    @Test func routeChildTerminalStateKeepsParentExtensionSurface() {
-        let (conn, pipe) = makeTestConnection(sessionId: "parent")
-        conn.extensionSurfaceBySession["parent"] = ExtensionSurfaceState(
+    @Test func routeDefocusedTerminalStateKeepsFocusedExtensionSurface() {
+        let (conn, pipe) = makeTestConnection(sessionId: "focused")
+        conn.extensionSurfaceBySession["focused"] = ExtensionSurfaceState(
             widgets: [
                 "goal": ExtensionWidgetState(
                     key: "goal",
@@ -727,12 +727,11 @@ struct ServerConnectionTests {
                 )
             ]
         )
-        var child = makeTestSession(id: "child", status: .stopped)
-        child.parentSessionId = "parent"
+        let other = makeTestSession(id: "other", status: .stopped)
 
-        pipe.handle(.state(session: child), sessionId: "parent")
+        pipe.handle(.state(session: other), sessionId: "focused")
 
-        #expect(conn.extensionSurfaceBySession["parent"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
+        #expect(conn.extensionSurfaceBySession["focused"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
     @Test func routeReadyStateKeepsPersistentExtensionSurface() {
@@ -1735,23 +1734,22 @@ struct ForegroundRecoveryTests {
             status: .stopped,
             lastActivity: Date(timeIntervalSince1970: 1_700_000_200)
         )
-        var childError = makeTestSession(
-            id: "child-error",
+        let errorSession = makeTestSession(
+            id: "error-session",
             workspaceId: "w1",
             status: .error,
             lastActivity: Date(timeIntervalSince1970: 1_700_000_300)
         )
-        childError.parentSessionId = "root-busy"
 
-        conn.sessionStore.applyServerSnapshot([rootBusy, rootStopped, childError])
+        conn.sessionStore.applyServerSnapshot([rootBusy, rootStopped, errorSession])
         conn.syncWorkspaceSummary(workspaceId: "w1")
 
         let summary = conn.workspaceStore.workspaceSummaries["w1"]
-        #expect(summary?.activeCount == 1)
+        #expect(summary?.activeCount == 2)
         #expect(summary?.stoppedCount == 1)
-        #expect(summary?.hasAttention == false)
-        #expect(summary?.hasErrorRoot == false)
-        #expect(summary?.latestActivity == childError.lastActivity)
+        #expect(summary?.hasAttention == true)
+        #expect(summary?.hasErrorRoot == true)
+        #expect(summary?.latestActivity == errorSession.lastActivity)
     }
 
     @Test func syncWorkspaceSummaryPreservesStoredCountsAndUsesLiveAttentionOverlay() {
@@ -1842,13 +1840,6 @@ struct ForegroundRecoveryTests {
                 latestActivity: Date(timeIntervalSince1970: 1_700_000_000)
             )
         ])
-
-        let root = makeTestSession(id: "root", workspaceId: "w1", status: .ready)
-        var childError = makeTestSession(id: "child", workspaceId: "w1", status: .error)
-        childError.parentSessionId = "root"
-        conn.sessionStore.applyServerSnapshot([root, childError])
-        conn.syncWorkspaceSummary(workspaceId: "w1")
-        #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == false)
 
         let rootError = makeTestSession(id: "root", workspaceId: "w1", status: .error)
         conn.sessionStore.applyServerSnapshot([rootError])

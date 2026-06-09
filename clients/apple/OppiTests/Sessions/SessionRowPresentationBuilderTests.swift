@@ -7,7 +7,6 @@ struct SessionRowPresentationBuilderTests {
     private func makeSession(
         id: String,
         status: SessionStatus = .stopped,
-        parentSessionId: String? = nil,
         model: String? = "openai/gpt-5.5",
         cost: Double = 1,
         filesChanged: Int = 0,
@@ -38,8 +37,7 @@ struct SessionRowPresentationBuilderTests {
             contextWindow: nil,
             firstMessage: "hello",
             lastMessage: nil,
-            thinkingLevel: nil,
-            parentSessionId: parentSessionId
+            thinkingLevel: nil
         )
     }
 
@@ -51,27 +49,10 @@ struct SessionRowPresentationBuilderTests {
         #expect(presentation.session.changeStats?.filesChanged == 3)
     }
 
-    @Test func childSummaryAggregatesParentAndDescendantMetrics() {
-        let parent = makeSession(id: "parent", cost: 2, filesChanged: 4, compactions: 1)
-        let child = makeSession(id: "child", status: .ready, parentSessionId: "parent", cost: 3, filesChanged: 5, compactions: 2)
-
-        let summary = SessionRowPresentationBuilder.childSummary(for: parent, descendants: [child])
-
-        #expect(summary?.childCount == 1)
-        #expect(summary?.aggregateCost == 5)
-        #expect(summary?.aggregateFilesChanged == 9)
-        #expect(summary?.aggregateCompactionCount == 3)
-        #expect(summary?.statusCounts.ready == 1)
-    }
-
-    @Test func attentionCountsIncludeDescendants() {
-        let child = makeSession(id: "child", parentSessionId: "parent")
-        let grandchild = makeSession(id: "grandchild", parentSessionId: "child")
-
+    @Test func attentionCountsUseSessionPendingCount() {
         let counts = SessionRowPresentationBuilder.attentionCounts(
-            sessionId: "parent",
-            descendants: [child, grandchild],
-            pendingAskCountForSession: { $0 == "child" ? 1 : 0 }
+            sessionId: "session-1",
+            pendingAskCountForSession: { $0 == "session-1" ? 1 : 0 }
         )
 
         #expect(counts.askCount == 1)

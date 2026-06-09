@@ -150,10 +150,10 @@ describe("oppi config", () => {
     expect(stdout.trim()).toContain("9999");
   });
 
-  it("config set updates subagent lifecycle config inside extensions", () => {
-    run(["config", "set", "extensions", '{"subagents":{"maxDepth":2}}']);
+  it("config set updates extension config", () => {
+    run(["config", "set", "extensions", '{"voice":{"defaultVoiceId":"warm"}}']);
     const { stdout } = run(["config", "get", "extensions"]);
-    expect(stdout.trim()).toContain('"maxDepth": 2');
+    expect(stdout.trim()).toContain('"defaultVoiceId": "warm"');
   });
 
   it("config set/get supports nested config paths", () => {
@@ -162,12 +162,10 @@ describe("oppi config", () => {
     expect(stdout.trim()).toBe("http://127.0.0.1:7936");
   });
 
-  it("config set preserves siblings when updating nested config paths", () => {
-    run(["config", "set", "extensions.subagents.maxDepth", "2"]);
+  it("config set supports nested extension config paths", () => {
     run(["config", "set", "extensions.voice.defaultVoiceId", "warm-technical-teammate"]);
     const { stdout } = run(["config", "get", "extensions"]);
     expect(stdout).toContain("warm-technical-teammate");
-    expect(stdout).toContain('"maxDepth": 2');
   });
 
   it("config set supports dynamic runtimeEnv keys", () => {

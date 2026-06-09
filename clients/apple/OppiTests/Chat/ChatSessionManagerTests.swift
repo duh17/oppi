@@ -171,9 +171,9 @@ struct ChatSessionManagerTests {
     }
 
     @Test func defocusedStreamExitDoesNotScheduleReconnect() async {
-        let parentId = "defocused-parent"
-        let childId = "defocused-child"
-        let manager = ChatSessionManager(sessionId: parentId)
+        let focusedId = "focused-session"
+        let otherId = "other-session"
+        let manager = ChatSessionManager(sessionId: focusedId)
         let streams = ScriptedStreamFactory()
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
@@ -182,23 +182,21 @@ struct ChatSessionManagerTests {
         _ = connection.configure(credentials: makeTestCredentials())
 
         let sessionStore = connection.sessionStore
-        sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
-        var child = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
-        child.parentSessionId = parentId
-        sessionStore.upsert(child)
+        sessionStore.upsert(makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
+        sessionStore.upsert(makeTestSession(id: otherId, workspaceId: "w1", status: .busy))
 
         let connectTask = Task { @MainActor in
             await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1")))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: focusedId, workspaceId: "w1")))
 
         #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { manager.entryState == .streaming }
         })
 
-        connection.focusSession(childId)
+        connection.focusSession(otherId)
         streams.finish(index: 0)
         await connectTask.value
         try? await Task.sleep(for: .milliseconds(400))

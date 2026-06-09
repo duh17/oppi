@@ -479,10 +479,10 @@ struct ServerMessageTests {
         {
           "type": "extension_ui_notification",
           "method": "setWidget",
-          "widgetKey": "subagents",
+          "widgetKey": "jobs",
           "nativeSurface": {
             "version": 1,
-            "id": "widget:subagents",
+            "id": "widget:jobs",
             "source": "widget",
             "presentation": { "style": "surfacePanel", "title": "Agents" },
             "blocks": [
@@ -509,7 +509,7 @@ struct ServerMessageTests {
             Issue.record("Expected .extensionUINotification")
             return
         }
-        #expect(notification.nativeSurface?.id == "widget:subagents")
+        #expect(notification.nativeSurface?.id == "widget:jobs")
         guard case .activityList(_, let rows)? = notification.nativeSurface?.blocks.first else {
             Issue.record("Expected native activityList block")
             return

@@ -753,35 +753,18 @@ struct WorkspaceHomeView: View {
         guard !workspaceSessions.isEmpty else { return [] }
 
         let activeSessions = workspaceSessions.filter { $0.status != .stopped }
-        let activeRoots = SessionTreeHelper.rootSessions(from: activeSessions, allSessions: activeSessions)
-        let activeChildIndex = SessionTreeHelper.ChildIndex(sessions: activeSessions)
-        let allChildIndex = SessionTreeHelper.ChildIndex(sessions: workspaceSessions)
         var attentionBySessionId: [String: SessionListAttentionCounts] = [:]
         var yourTurn: [Session] = []
         var working: [Session] = []
 
-        for session in activeRoots {
-            let descendants = activeChildIndex.allDescendants(of: session.id)
+        for session in activeSessions {
             let attention = SessionRowPresentationBuilder.attentionCounts(
                 sessionId: session.id,
-                descendants: descendants,
                 pendingAskCountForSession: { pendingAskCount(for: $0, connection: connection) }
             )
             attentionBySessionId[session.id] = attention
 
-            let hasWorkingDescendant = descendants.contains { descendant in
-                if descendant.isAwaitingFirstPrompt { return false }
-                switch descendant.status {
-                case .starting, .busy, .stopping: return true
-                case .ready, .stopped, .error: return false
-                }
-            }
-
-            switch SessionListPresentation.activeSectionKind(
-                for: session,
-                attention: attention,
-                hasWorkingDescendant: hasWorkingDescendant
-            ) {
+            switch SessionListPresentation.activeSectionKind(for: session, attention: attention) {
             case .yourTurn:
                 yourTurn.append(session)
             case .working:
@@ -806,7 +789,6 @@ struct WorkspaceHomeView: View {
             previewRow(
                 session: $0,
                 attention: attentionBySessionId[$0.id] ?? .none,
-                childIndex: allChildIndex,
                 connection: connection
             )
         }
@@ -814,8 +796,7 @@ struct WorkspaceHomeView: View {
 
         let remainingRecentSlots = max(0, maxPreviewRows - previews.count)
         if remainingRecentSlots > 0 {
-            let stoppedSessions = workspaceSessions.filter { $0.status == .stopped }
-            let recentStopped = SessionTreeHelper.rootSessions(from: stoppedSessions, allSessions: workspaceSessions)
+            let recentStopped = workspaceSessions.filter { $0.status == .stopped }
                 .sorted { lhs, rhs in
                     if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
                     return lhs.id < rhs.id
@@ -825,7 +806,6 @@ struct WorkspaceHomeView: View {
                     previewRow(
                         session: $0,
                         attention: .none,
-                        childIndex: allChildIndex,
                         connection: connection
                     )
                 }
@@ -846,14 +826,11 @@ struct WorkspaceHomeView: View {
     private func previewRow(
         session: Session,
         attention: SessionListAttentionCounts,
-        childIndex: SessionTreeHelper.ChildIndex,
         connection: ServerConnection
     ) -> WorkspaceHomeSessionPreview {
-        let descendants = childIndex.allDescendants(of: session.id)
-        return WorkspaceHomeSessionPreview(
+        WorkspaceHomeSessionPreview(
             presentation: SessionRowPresentationBuilder.make(
                 session: session,
-                descendants: descendants,
                 pendingAskCount: attention.askCount,
                 pendingAsk: connection.askRequestStore.pending(for: session.id),
                 activity: connection.activityStore.lastActivity(for: session.id)

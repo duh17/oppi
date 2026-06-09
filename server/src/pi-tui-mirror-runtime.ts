@@ -960,7 +960,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const state = { ...hello.state, cwd: hello.state?.cwd ?? hello.cwd };
     if (isPiTuiTaskRecordBridgeState(state)) {
       throw new BridgeRegistrationError(
-        "Pi subagent task records are not openable mirror sessions because no trace file was reported",
+        "Pi task records are not openable mirror sessions because no trace file was reported",
         "pi_tui_task_record_not_openable",
         { sessionName: state.sessionName },
       );

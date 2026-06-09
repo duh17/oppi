@@ -1,8 +1,11 @@
-import type { Session } from "../../src/types.js";
+interface SessionLike {
+  id: string;
+  parentSessionId?: string;
+}
 
 interface TreeContext {
   sessionId: string;
-  getSession(sessionId: string): Session | undefined;
+  getSession(sessionId: string): SessionLike | undefined;
 }
 
 export function getSpawnDepth(ctx: TreeContext): number {
@@ -32,8 +35,8 @@ export function getRootSessionId(ctx: TreeContext): string {
   }
 }
 
-export function getDescendants(rootId: string, allSessions: Session[]): Session[] {
-  const descendants: Session[] = [];
+export function getDescendants(rootId: string, allSessions: SessionLike[]): SessionLike[] {
+  const descendants: SessionLike[] = [];
   const visited = new Set<string>([rootId]);
   const queue = [rootId];
   while (queue.length > 0) {

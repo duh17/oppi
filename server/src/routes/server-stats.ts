@@ -25,7 +25,6 @@ export interface StatsActiveSession {
   firstMessage?: string;
   workspaceName?: string;
   thinkingLevel?: string;
-  parentSessionId?: string;
   contextTokens?: number;
   contextWindow?: number;
   createdAt: number;
@@ -206,7 +205,6 @@ export function getActiveSessions(
       firstMessage: s.firstMessage,
       workspaceName: s.workspaceName,
       thinkingLevel: s.thinkingLevel,
-      parentSessionId: s.parentSessionId,
       contextTokens: s.contextTokens,
       contextWindow: s.contextWindow,
       createdAt: s.createdAt,

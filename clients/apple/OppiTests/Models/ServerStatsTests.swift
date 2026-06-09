@@ -33,8 +33,7 @@ struct ServerStatsTests {
               "firstMessage": "Fix the login flow",
               "workspaceName": "oppi",
               "thinkingLevel": "high",
-              "parentSessionId": null,
-              "contextTokens": 12000,
+                  "contextTokens": 12000,
               "contextWindow": 200000,
               "createdAt": 1711100000000
             }
@@ -116,7 +115,6 @@ struct ServerStatsTests {
         #expect(session.thinkingLevel == "high")
         #expect(session.contextTokens == 12000)
         #expect(session.contextWindow == 200000)
-        #expect(session.parentSessionId == nil)
 
         // Daily
         #expect(stats.daily.count == 2)
@@ -155,7 +153,6 @@ struct ServerStatsTests {
         #expect(session.firstMessage == nil)
         #expect(session.workspaceName == nil)
         #expect(session.thinkingLevel == nil)
-        #expect(session.parentSessionId == nil)
         #expect(session.contextTokens == nil)
         #expect(session.contextWindow == nil)
         #expect(session.createdAt == nil)
@@ -172,7 +169,6 @@ struct ServerStatsTests {
           "firstMessage": null,
           "workspaceName": null,
           "thinkingLevel": null,
-          "parentSessionId": null,
           "contextTokens": null,
           "contextWindow": null,
           "createdAt": null

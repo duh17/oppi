@@ -2,8 +2,8 @@ import Foundation
 
 /// Host extension metadata from `GET /extensions`.
 ///
-/// The server returns oppi first-party extensions (ask, subagents) and
-/// pi extensions resolved from auto-discovered directories plus installed
+/// The server returns Oppi first-party extensions and Pi extensions resolved
+/// from auto-discovered directories plus installed
 /// packages/settings paths.
 struct ExtensionInfo: Codable, Identifiable, Sendable, Equatable {
     let name: String

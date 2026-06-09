@@ -308,10 +308,9 @@ extension ServerConnection {
         let hasListAttention = workspaceSessions.contains { session in
             sessionStore.listPendingAskCount(for: session.id) > 0
         }
-        let rootSessions = workspaceRootSessions(workspaceSessions)
-        let hasLiveErrorRoot = rootSessions.contains { $0.status == .error }
+        let hasLiveErrorRoot = workspaceSessions.contains { $0.status == .error }
 
-        guard !rootSessions.isEmpty
+        guard !workspaceSessions.isEmpty
             || hasPendingAsk
             || hasPendingExtensionDialog
             || hasListAttention else {
@@ -321,8 +320,8 @@ extension ServerConnection {
         let latestActivity = workspaceSessions.map(\.lastActivity).max()
         return WorkspaceListSummary(
             workspaceId: workspaceId,
-            activeCount: rootSessions.filter { $0.status != .stopped }.count,
-            stoppedCount: rootSessions.filter { $0.status == .stopped }.count,
+            activeCount: workspaceSessions.filter { $0.status != .stopped }.count,
+            stoppedCount: workspaceSessions.filter { $0.status == .stopped }.count,
             hasAttention: hasLiveErrorRoot
                 || hasPendingAsk
                 || hasPendingExtensionDialog
@@ -330,14 +329,6 @@ extension ServerConnection {
             hasErrorRoot: hasLiveErrorRoot,
             latestActivity: latestActivity
         )
-    }
-
-    private func workspaceRootSessions(_ sessions: [Session]) -> [Session] {
-        let workspaceSessionIds = Set(sessions.map(\.id))
-        return sessions.filter { session in
-            guard let parentSessionId = session.parentSessionId else { return true }
-            return !workspaceSessionIds.contains(parentSessionId)
-        }
     }
 
     /// Apply an authoritative workspace-scoped attention snapshot fetched over HTTP.

@@ -66,7 +66,6 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   lastMessage: TEST_SESSION.lastMessage,
   thinkingLevel: TEST_SESSION.thinkingLevel,
   ephemeral: TEST_SESSION.ephemeral,
-  parentSessionId: TEST_SESSION.parentSessionId,
 };
 
 // ── Every ServerMessage variant ──

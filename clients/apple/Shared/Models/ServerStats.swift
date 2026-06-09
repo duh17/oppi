@@ -20,7 +20,6 @@ struct StatsActiveSession: Codable, Sendable {
     let firstMessage: String?
     let workspaceName: String?
     let thinkingLevel: String?
-    let parentSessionId: String?
     let contextTokens: Int?
     let contextWindow: Int?
     let createdAt: Double?  // epoch ms from server

@@ -21,7 +21,6 @@ private func makeStats(
             firstMessage: nil,
             workspaceName: nil,
             thinkingLevel: nil,
-            parentSessionId: nil,
             contextTokens: nil,
             contextWindow: nil,
             createdAt: nil

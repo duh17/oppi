@@ -131,32 +131,6 @@ oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 }
 ```
 
-### Subagents
-
-Controls lifecycle of child sessions spawned via `spawn_agent`.
-
-| Setting                                     | Type    | Default   | Description                                                                                                                                 |
-| ------------------------------------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `extensions.subagents.maxDepth`             | number  | `1`       | Max spawn depth. `1` = parent can spawn children, but children cannot spawn grandchildren. `0` = spawning disabled.                         |
-| `extensions.subagents.autoStopWhenDone`     | boolean | `false`   | When `true`, a child that finishes its work and goes idle is stopped immediately. When `false`, children stay alive for follow-up messages. |
-| `extensions.subagents.childIdleTimeoutMs`   | number  | `300000`  | How long completed children stay alive when `autoStopWhenDone` is `false`. 300000 = 5 min.                                                  |
-| `extensions.subagents.startupGraceMs`       | number  | `60000`   | How long to wait for a child to produce its first output before giving up. Covers VM boot, model loading, and first LLM call. 60000 = 60s.  |
-| `extensions.subagents.defaultWaitTimeoutMs` | number  | `1800000` | Default timeout for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`. 1800000 = 30 min.                           |
-
-```json
-{
-  "extensions": {
-    "subagents": {
-      "maxDepth": 1,
-      "autoStopWhenDone": false,
-      "childIdleTimeoutMs": 300000,
-      "startupGraceMs": 60000,
-      "defaultWaitTimeoutMs": 1800000
-    }
-  }
-}
-```
-
 ### ASR / Dictation
 
 Configures server-side dictation routing to an external STT backend.
@@ -189,10 +163,7 @@ Controls client-side preprocessing for image attachments before upload.
   "runtimeEnv": {},
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
-  "images": { "autoResize": false },
-  "extensions": {
-    "subagents": { "maxDepth": 1, "autoStopWhenDone": true }
-  }
+  "images": { "autoResize": false }
 }
 ```
 

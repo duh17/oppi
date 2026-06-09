@@ -21,7 +21,6 @@ struct DisplayTitleTests {
             firstMessage: firstMessage,
             workspaceName: nil,
             thinkingLevel: nil,
-            parentSessionId: nil,
             contextTokens: nil,
             contextWindow: nil,
             createdAt: nil
@@ -91,7 +90,6 @@ struct IsBusyTests {
             firstMessage: nil,
             workspaceName: nil,
             thinkingLevel: nil,
-            parentSessionId: nil,
             contextTokens: nil,
             contextWindow: nil,
             createdAt: nil
@@ -135,7 +133,6 @@ struct ServerStatsCodableTests {
                     "firstMessage": "Hello",
                     "workspaceName": "oppi",
                     "thinkingLevel": "high",
-                    "parentSessionId": null,
                     "contextTokens": 5000,
                     "contextWindow": 200000,
                     "createdAt": 1711234567890
@@ -203,7 +200,6 @@ struct ServerStatsCodableTests {
         #expect(session.isBusy)
         #expect(session.displayTitle == "Test Agent")
         #expect(session.model == "claude-sonnet-4-20250514")
-        #expect(session.parentSessionId == nil)
         #expect(session.contextTokens == 5000)
 
         // Daily
@@ -251,8 +247,7 @@ struct ServerStatsCodableTests {
             "firstMessage": null,
             "workspaceName": null,
             "thinkingLevel": null,
-            "parentSessionId": null,
-            "contextTokens": null,
+              "contextTokens": null,
             "contextWindow": null,
             "createdAt": null
         }

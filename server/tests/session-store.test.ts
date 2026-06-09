@@ -282,28 +282,6 @@ describe("workspace session snapshots", () => {
     }
   });
 
-  it("includes ancestors for returned child rows", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-snapshot-ancestors-"));
-
-    try {
-      const now = 1_700_000_000_000;
-      const old = now - 10 * 86_400_000;
-      const storage = new Storage(dataDir);
-      storage.saveSession(baseSession("parent", "ws-1", old));
-      storage.saveSession({
-        ...baseSession("child", "ws-1", now),
-        status: "busy",
-        parentSessionId: "parent",
-      });
-
-      const sessions = storage.listRecentWorkspaceSessionSnapshots("ws-1", 3, now);
-
-      expect(sessions.map((session) => session.id)).toEqual(["child", "parent"]);
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
   it("filters stopped sessions by explicit time range while keeping active sessions", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-snapshot-range-"));
 
@@ -338,7 +316,6 @@ describe("workspace session summary snapshots", () => {
     workspaceId: string,
     status: Session["status"],
     lastActivity: number,
-    parentSessionId?: string,
   ): Session {
     return {
       id,
@@ -349,26 +326,25 @@ describe("workspace session summary snapshots", () => {
       messageCount: 0,
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
-      ...(parentSessionId ? { parentSessionId } : {}),
     };
   }
 
-  it("counts only root sessions while preserving latest child activity", () => {
+  it("counts workspace sessions and preserves latest activity", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-summary-"));
 
     try {
       const storage = new Storage(dataDir);
-      storage.saveSession(summarySession("root-stopped", "ws-1", "stopped", 100));
-      storage.saveSession(summarySession("child-error", "ws-1", "error", 500, "root-stopped"));
-      storage.saveSession(summarySession("root-ready", "ws-1", "ready", 300));
+      storage.saveSession(summarySession("stopped", "ws-1", "stopped", 100));
+      storage.saveSession(summarySession("error", "ws-1", "error", 500));
+      storage.saveSession(summarySession("ready", "ws-1", "ready", 300));
 
       const summaries = storage.listWorkspaceSessionSummarySnapshots();
       expect(summaries).toEqual([
         {
           workspaceId: "ws-1",
-          activeCount: 1,
+          activeCount: 2,
           stoppedCount: 1,
-          hasErrorRoot: false,
+          hasErrorRoot: true,
           latestActivity: 500,
         },
       ]);

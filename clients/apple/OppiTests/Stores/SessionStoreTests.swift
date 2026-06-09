@@ -474,23 +474,6 @@ struct SessionStorePartitioningTests {
         #expect(store.activeSessionId == "open-archive")
     }
 
-    @Test func workspaceRecentSnapshotPreservesExistingAncestors() {
-        let store = SessionStore()
-        store.switchServer(to: "srv1")
-        let now = Date(timeIntervalSince1970: 1_700_100_000)
-        store.upsert(makeTestSession(id: "parent", workspaceId: "w1", status: .stopped, lastActivity: now.addingTimeInterval(-5 * 86_400)))
-        var child = makeTestSession(id: "child", workspaceId: "w1", status: .ready, lastActivity: now)
-        child.parentSessionId = "parent"
-
-        store.applyWorkspaceRecentSnapshot(
-            workspaceId: "w1",
-            summaries: [SessionSummary(from: child)],
-            requestStartedAt: now
-        )
-
-        #expect(Set(store.sessions.map(\.id)) == Set(["parent", "child"]))
-    }
-
     @Test func workspaceRecentSnapshotPreservesRecentOptimisticLocalRows() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

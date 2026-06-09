@@ -58,7 +58,12 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     reserveSessionStart: vi.fn(),
     markSessionReady: vi.fn(),
     releaseSession: vi.fn(),
-    getLimits: vi.fn(() => ({ subagents: undefined })),
+    getLimits: vi.fn(() => ({
+      maxSessionsPerWorkspace: 20,
+      maxSessionsGlobal: 40,
+      sessionIdleTimeoutMs: 600_000,
+      workspaceIdleTimeoutMs: 1_800_000,
+    })),
   } as unknown as WorkspaceRuntime;
 
   const deps: SessionStartCoordinatorDeps & { persistedStatuses: Session["status"][] } = {

@@ -254,7 +254,6 @@ interface TuiSessionCatalogRow {
   last_modified: number;
   size_bytes: number;
   mtime_ms: number;
-  is_subagent: number;
 }
 
 export interface LocalSessionCatalogSnapshot {
@@ -314,7 +313,7 @@ class TuiSessionCatalog {
       .all() as TuiSessionCatalogRow[];
   }
 
-  upsert(session: LocalSession, sizeBytes: number, mtimeMs: number, isSubagent: boolean): void {
+  upsert(session: LocalSession, sizeBytes: number, mtimeMs: number): void {
     this.db
       .prepare(
         `INSERT INTO tui_session_files (
@@ -329,9 +328,8 @@ class TuiSessionCatalog {
           last_modified,
           size_bytes,
           mtime_ms,
-          is_subagent,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(path) DO UPDATE SET
           pi_session_id = excluded.pi_session_id,
           cwd = excluded.cwd,
@@ -343,7 +341,6 @@ class TuiSessionCatalog {
           last_modified = excluded.last_modified,
           size_bytes = excluded.size_bytes,
           mtime_ms = excluded.mtime_ms,
-          is_subagent = excluded.is_subagent,
           updated_at = excluded.updated_at`,
       )
       .run(
@@ -358,7 +355,6 @@ class TuiSessionCatalog {
         session.lastModified,
         sizeBytes,
         mtimeMs,
-        isSubagent ? 1 : 0,
         Date.now(),
       );
   }
@@ -414,7 +410,6 @@ class TuiSessionCatalog {
         last_modified INTEGER NOT NULL,
         size_bytes INTEGER NOT NULL,
         mtime_ms REAL NOT NULL,
-        is_subagent INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
       );
 
@@ -482,7 +477,7 @@ async function refreshTuiSessionCatalog(
 
         const metadata = await extractSessionMetadata(realFile, size);
         const session = buildLocalSession(realFile, mtimeMs, header, metadata);
-        catalog.upsert(session, size, mtimeMs, isSubagentLocalSession(session));
+        catalog.upsert(session, size, mtimeMs);
       }),
     );
   }
@@ -508,14 +503,6 @@ async function refreshInMemoryLocalSessionCache(
       }),
     );
   }
-}
-
-function isSubagentPrompt(text: string | undefined): boolean {
-  return /^\[Subagent profile: [^\]]+\]\s*\n/.test(text?.trimStart() ?? "");
-}
-
-function isSubagentLocalSession(session: LocalSession): boolean {
-  return isSubagentPrompt(session.firstMessage) || isSubagentPrompt(session.name);
 }
 
 /** Invalidate the cache (call after importing a session). */
@@ -547,7 +534,7 @@ export function listCatalogedLocalSessions(
     return {
       sessions: catalog
         .listRows()
-        .filter((row) => row.is_subagent === 0 && !isKnownLocalSession(row, knownPiSessions))
+        .filter((row) => !isKnownLocalSession(row, knownPiSessions))
         .map(rowToLocalSession),
       ...(lastScannedAt !== undefined ? { lastScannedAt } : {}),
     };
@@ -642,7 +629,7 @@ export async function discoverLocalSessions(
 
       return catalog
         .listRows()
-        .filter((row) => row.is_subagent === 0 && !isKnownLocalSession(row, knownPiSessions))
+        .filter((row) => !isKnownLocalSession(row, knownPiSessions))
         .map(rowToLocalSession);
     } finally {
       catalog.close();
@@ -671,7 +658,6 @@ export async function discoverLocalSessions(
   const results: LocalSession[] = [];
   for (const { session } of metadataCache.values()) {
     if (isKnownLocalSessionValue(session, knownPiSessions)) continue;
-    if (isSubagentLocalSession(session)) continue;
     results.push(session);
   }
 

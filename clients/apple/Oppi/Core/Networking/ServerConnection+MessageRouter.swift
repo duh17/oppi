@@ -338,8 +338,6 @@ extension ServerConnection {
     /// before `applySharedStoreUpdate` upserts the session into the store.
     func handleState(_ session: Session, previousWorkspaceId: String? = nil) {
         // Active-session-only: thinking level, slash commands.
-        // Skip for child sessions whose state arrives via the parent's broadcast key —
-        // they should not overwrite the active session's UI state.
         guard isFocusedSession(session.id) else { return }
 
         syncThinkingLevel(from: session)

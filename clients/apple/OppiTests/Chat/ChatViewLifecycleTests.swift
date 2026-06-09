@@ -13,7 +13,7 @@ struct ChatViewLifecycleTests {
 
         connection.sessionStore.upsert(makeTestSession(id: parentId, status: .ready))
 
-        // Simulate the child session having been torn down during navigation.
+        // Simulate the session having been torn down during navigation.
         connection.disconnectSession()
         connection.wsClient?._setStatusForTesting(.disconnected)
         connection.streamConsumptionTask = nil
@@ -31,7 +31,7 @@ struct ChatViewLifecycleTests {
             await MainActor.run { preparedSessionIds == [parentId] }
         }
 
-        #expect(prepared, "Expected ChatView.onAppear to prepare session re-entry for the parent session")
+        #expect(prepared, "Expected ChatView.onAppear to prepare session re-entry")
         #expect(connection.focusedSessionId == parentId)
 
         host.teardown()

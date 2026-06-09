@@ -7,7 +7,6 @@ export interface PiTuiSessionLike {
   name?: string;
   piSessionFile?: string;
   piSessionFiles?: string[];
-  parentSessionId?: string;
 }
 
 export interface PiTuiBridgeStateLike {
@@ -17,7 +16,6 @@ export interface PiTuiBridgeStateLike {
 
 export function isPiTuiTaskRecordSession(session: PiTuiSessionLike): boolean {
   if (session.runtime !== "pi-tui") return false;
-  if (session.parentSessionId) return false;
   if (hasTraceFile(session.piSessionFile, session.piSessionFiles)) return false;
   return isPiAgentTaskSessionName(session.name);
 }

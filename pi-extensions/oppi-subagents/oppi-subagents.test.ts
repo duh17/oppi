@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createOppiSubagentsExtension } from "../extensions/oppi-subagents.js";
+import { createOppiSubagentsExtension } from "./oppi-subagents.js";
 
 interface RegisteredTool {
   name: string;
@@ -339,7 +339,7 @@ describe("oppi-subagents native extension", () => {
   });
 
   it("does not register the retired subagents bridge route module", () => {
-    const routesIndex = readFileSync(new URL("../src/routes/index.ts", import.meta.url), "utf8");
+    const routesIndex = readFileSync(new URL("../../server/src/routes/index.ts", import.meta.url), "utf8");
 
     expect(routesIndex).not.toContain("subagents-bridge");
     expect(routesIndex).not.toContain("createSubagentsBridgeRoutes");

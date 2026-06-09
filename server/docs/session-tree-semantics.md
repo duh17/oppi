@@ -1,6 +1,6 @@
 # Session tree and fork semantics
 
-Oppi intentionally keeps two tree concepts separate.
+Oppi uses Pi's in-file tree navigation and treats timeline forks as separate sessions.
 
 ## Pi entry tree
 
@@ -12,10 +12,4 @@ Oppi exposes this through `get_session_tree` and `navigate_tree`. After `navigat
 
 Pi `fork()` creates a new Pi session file containing the selected branch/path. Pi records file-level ancestry in the new JSONL header as `parentSession`, pointing to the previous Pi session file.
 
-Oppi maps timeline forks to independent root sessions. The REST fork route creates a new Oppi `Session`, points it at the source Pi trace, starts it, and then runs Pi `fork`. It must not copy the source session's `parentSessionId` and must not set `parentSessionId` on the forked session.
-
-## Oppi parent/child session tree
-
-`Session.parentSessionId` is reserved for spawned subagent sessions created by `spawn_agent` without `detached: true`. Those sessions appear under the parent session in the Apple UI and receive parent-stream lifecycle broadcasts.
-
-Detached sessions and timeline forks are independent root sessions in the workspace list.
+Oppi maps timeline forks to independent sessions. The REST fork route creates a new Oppi `Session`, points it at the source Pi trace, starts it, and then runs Pi `fork`.

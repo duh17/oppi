@@ -79,11 +79,6 @@ struct Session: Identifiable, Sendable, Equatable {
     // Privacy / persistence
     var ephemeral: Bool?
 
-    // Parent-child tree (spawn_agent)
-    var parentSessionId: String?
-
-
-
     /// Display title: name, first message preview, or session ID prefix.
     var displayTitle: String {
         if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
@@ -174,7 +169,6 @@ struct SessionSummary: Sendable, Equatable {
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var piSessionId: String? = nil
     var ephemeral: Bool?
-    var parentSessionId: String?
     var pendingAskCount: Int
 
     var attentionCounts: SessionSummaryAttentionCounts {
@@ -205,8 +199,7 @@ struct SessionSummary: Sendable, Equatable {
             runtime: runtime,
             mirror: mirror,
             piSessionId: piSessionId,
-            ephemeral: ephemeral,
-            parentSessionId: parentSessionId
+            ephemeral: ephemeral
         )
     }
 }
@@ -236,7 +229,6 @@ extension SessionSummary {
         self.mirror = session.mirror
         self.piSessionId = session.piSessionId
         self.ephemeral = session.ephemeral
-        self.parentSessionId = session.parentSessionId
         self.pendingAskCount = 0
     }
 }
@@ -246,7 +238,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, piSessionId, ephemeral, parentSessionId
+    case thinkingLevel, runtime, mirror, piSessionId, ephemeral
     case pendingAskCount
 }
 
@@ -274,7 +266,6 @@ private struct DecodedSessionWireFields {
     let mirror: PiTuiMirrorSessionMetadata?
     let piSessionId: String?
     let ephemeral: Bool?
-    let parentSessionId: String?
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
         id = try container.decode(String.self, forKey: .id)
@@ -300,7 +291,6 @@ private struct DecodedSessionWireFields {
         mirror = try container.decodeIfPresent(PiTuiMirrorSessionMetadata.self, forKey: .mirror)
         piSessionId = try container.decodeIfPresent(String.self, forKey: .piSessionId)
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
-        parentSessionId = try container.decodeIfPresent(String.self, forKey: .parentSessionId)
     }
 }
 
@@ -329,8 +319,7 @@ private extension DecodedSessionWireFields {
             runtime: runtime,
             mirror: mirror,
             piSessionId: piSessionId,
-            ephemeral: ephemeral,
-            parentSessionId: parentSessionId
+            ephemeral: ephemeral
         )
     }
 
@@ -393,7 +382,6 @@ extension Session: Codable {
         try c.encodeIfPresent(mirror, forKey: .mirror)
         try c.encodeIfPresent(piSessionId, forKey: .piSessionId)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
-        try c.encodeIfPresent(parentSessionId, forKey: .parentSessionId)
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)

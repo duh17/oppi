@@ -33,7 +33,7 @@ A Pi extension can always provide terminal output through `render(width): string
 - Oppi is not a terminal emulator.
 - Oppi does not promise pixel-perfect ANSI or box-drawing reproduction.
 - Third-party extensions cannot ship arbitrary native Swift views.
-- This contract does not add subagent-specific UI.
+- This contract does not add extension-specific native UI.
 - This contract does not replace Pi TUI in terminal mode.
 
 ## Surface model
@@ -153,7 +153,7 @@ export interface ExtensionUIActivityRow {
 }
 ```
 
-Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling. The model is generic and must not encode extension-specific concepts such as subagents in the protocol.
+Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling. The model is generic and must not encode extension-specific concepts in the protocol.
 
 Recommended Apple state mapping:
 
@@ -165,18 +165,6 @@ Recommended Apple state mapping:
 | `warning`      | completed with caveat                   | orange/warning indicator   |
 | `error`        | failed                                  | red/error indicator        |
 | `inactive`     | stopped, dismissed, or no longer active | muted indicator            |
-
-### Activity-list fixture
-
-The parked Oppi subagents extension used this contract as an early fixture:
-
-- Pi API: `ctx.ui.setWidget("subagents", component, { placement: "aboveEditor" })`
-- Native surface: `source: "widget"`, `presentation.style: "surfacePanel"`
-- Native block: one `activityList` with generic rows
-- Row link: `oppi://session/<sessionId>` routed through generic app navigation
-- Fallback: terminal widget lines from `component.render(width)`
-
-The mapping stays generic: `starting`, `busy`, and `stopping` map to `running`, `ready` maps to `success`, `stopped` maps to `inactive`, and `error` maps to `error`.
 
 ### Fallback
 
@@ -659,7 +647,6 @@ Implementation should validate at least these fixtures:
 - activity row links through generic `oppi://session/<id>` navigation
 - component widget with `renderNative()`
 - component widget without `renderNative()` terminal fallback
-- tintinweb `pi-subagents` as a terminal-first compatibility fixture
 - managed runtime and mirrored runtime paths
 - iPhone and iPad screenshots for native prompt, surface panel, and fallback terminal card
 
@@ -706,25 +693,25 @@ Defer anything that requires arbitrary client-side execution, nested modal navig
 ```json
 {
   "version": 1,
-  "id": "widget:agents",
+  "id": "widget:jobs",
   "source": "widget",
   "presentation": {
     "style": "surfacePanel",
-    "title": "Agents"
+    "title": "Jobs"
   },
   "blocks": [
     {
       "type": "activityList",
-      "id": "agents",
+      "id": "jobs",
       "rows": [
         {
-          "id": "child-1",
+          "id": "job-1",
           "title": "Review",
           "subtitle": "Running",
           "state": "running"
         },
         {
-          "id": "child-2",
+          "id": "job-2",
           "title": "Tests",
           "subtitle": "Queued",
           "state": "queued"

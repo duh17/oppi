@@ -60,7 +60,7 @@ enum SessionModelSummaryBuilder {
 /// ```
 /// Title (bold if needs attention)                [time]
 /// model summary activity
-/// ▬ 25% · $27.45 · [doc] 4  [status pill] [child badge if any]
+/// ▬ 25% · $27.45 · [doc] 4  [status pill]
 /// ```
 ///
 /// Activity summary is passed in by the caller (computed from
@@ -71,25 +71,14 @@ struct SessionRow: View {
     let pendingAskCount: Int
     let activitySummary: String?
     let lineageHint: String?
-    let children: ChildSummary?
     let modelSummaries: [SessionModelSummary]
     let searchSnippet: AttributedString?
-
-    /// Summary of spawned child sessions, shown as a badge on parent rows.
-    struct ChildSummary {
-        let childCount: Int
-        let statusCounts: SessionTreeHelper.StatusCounts
-        let aggregateCost: Double
-        let aggregateCompactionCount: Int
-        let aggregateFilesChanged: Int
-    }
 
     init(
         session: Session,
         pendingAskCount: Int = 0,
         activitySummary: String? = nil,
         lineageHint: String? = nil,
-        children: ChildSummary? = nil,
         modelSummaries: [SessionModelSummary] = [],
         searchSnippet: AttributedString? = nil
     ) {
@@ -97,7 +86,6 @@ struct SessionRow: View {
         self.pendingAskCount = pendingAskCount
         self.activitySummary = activitySummary
         self.lineageHint = lineageHint
-        self.children = children
         self.modelSummaries = modelSummaries
         self.searchSnippet = searchSnippet
     }
@@ -125,11 +113,11 @@ struct SessionRow: View {
     }
 
     private var displayCompactionCount: Int {
-        children?.aggregateCompactionCount ?? session.changeStats?.compactionCount ?? 0
+        session.changeStats?.compactionCount ?? 0
     }
 
     private var displayFilesChanged: Int {
-        children?.aggregateFilesChanged ?? session.changeStats?.filesChanged ?? 0
+        session.changeStats?.filesChanged ?? 0
     }
 
     private var isIncognito: Bool {
@@ -181,7 +169,7 @@ struct SessionRow: View {
                     .lineLimit(2)
             }
 
-            // Row 2: model + child badge + activity summary
+            // Row 2: model + activity summary
             HStack(spacing: 6) {
                 if let firstModel = visibleModelSummaries.first {
                     modelSummaryView(firstModel)
@@ -190,10 +178,6 @@ struct SessionRow: View {
 
                 if displayCompactionCount > 0 {
                     compactionBadgeView(displayCompactionCount)
-                }
-
-                if let children {
-                    childBadge(children: children)
                 }
 
                 if let activitySummary, !activitySummary.isEmpty {
@@ -221,9 +205,8 @@ struct SessionRow: View {
                     incognitoBadge
                 }
 
-                let displayCost = children?.aggregateCost ?? session.cost
-                if displayCost > 0 {
-                    Text(costString(displayCost))
+                if session.cost > 0 {
+                    Text(costString(session.cost))
                         .monospacedDigit()
                 }
 
@@ -298,32 +281,6 @@ struct SessionRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-    }
-
-    // MARK: - Child Badge
-
-    @ViewBuilder
-    private func childBadge(children: ChildSummary) -> some View {
-        HStack(spacing: 3) {
-            let counts = children.statusCounts
-            if counts.working > 0 {
-                Text("\u{1F527}\(counts.working)")
-                    .foregroundStyle(.themeOrange)
-            }
-            let done = counts.ready + counts.stopped
-            if done > 0 {
-                Text("\u{2713}\(done)")
-                    .foregroundStyle(.themeGreen)
-            }
-            if counts.error > 0 {
-                Text("\u{2717}\(counts.error)")
-                    .foregroundStyle(.themeRed)
-            }
-        }
-        .font(.caption2.weight(.medium))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 1)
-        .background(Color.themeCyan.opacity(0.1), in: Capsule())
     }
 
     // MARK: - Helpers

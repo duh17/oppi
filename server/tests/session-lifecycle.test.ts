@@ -139,10 +139,9 @@ describe("SessionManager startSession", () => {
       updatedAt: now,
     };
     const session = makeSession({
-      id: "child-1",
+      id: "session-1",
       workspaceId: workspace.id,
       workspaceName: workspace.name,
-      parentSessionId: "parent-1",
       status: "stopped",
     });
     const storage = {
@@ -1829,7 +1828,7 @@ describe("updateSessionFromEvent", () => {
 
 function makeLifecycleSession(overrides?: Partial<Session>): Session {
   return {
-    id: "child-1",
+    id: "session-1",
     status: "ready",
     createdAt: Date.now(),
     lastActivity: Date.now(),
@@ -1840,10 +1839,7 @@ function makeLifecycleSession(overrides?: Partial<Session>): Session {
   };
 }
 
-function makeLifecycleActiveSession(
-  overrides?: Partial<Session>,
-  extraState?: { outputTokensAtStart?: number },
-): SessionLifecycleSessionState {
+function makeLifecycleActiveSession(overrides?: Partial<Session>): SessionLifecycleSessionState {
   const session = makeLifecycleSession(overrides);
   return {
     session,
@@ -1854,7 +1850,6 @@ function makeLifecycleActiveSession(
     } as never,
     workspaceId: "ws-1",
     pendingUIRequests: new Map(),
-    outputTokensAtStart: extraState?.outputTokensAtStart ?? 0,
   };
 }
 
@@ -1871,10 +1866,6 @@ function makeLifecycleDeps(
     releaseSession: vi.fn(),
     stopSession: vi.fn(async () => {}),
     getSessionIdleTimeoutMs: () => 300_000,
-    getChildAutoStopWhenDone: () => true,
-    getChildStartupGraceMs: () => 60_000,
-    getChildIdleTimeoutMs: () => 300_000,
-    hasActiveChildren: vi.fn(() => false),
     ...overrides,
   };
 }
@@ -1905,27 +1896,9 @@ describe("SessionLifecycleCoordinator.handleSessionEnd", () => {
     expect(deps.removeActiveSession).toHaveBeenCalledWith("key");
     expect(deps.releaseSession).toHaveBeenCalledWith({
       workspaceId: "ws-1",
-      sessionId: "child-1",
+      sessionId: "session-1",
     });
     expect(order).toEqual(["dispose", "broadcast"]);
-  });
-
-  it("mirrors a child stop to the parent session key", async () => {
-    const active = makeLifecycleActiveSession({ parentSessionId: "parent-1", status: "ready" });
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    await coordinator.handleSessionEnd("child-1", "stopped");
-
-    expect(active.session.status).toBe("stopped");
-    expect(deps.broadcast).toHaveBeenCalledWith("parent-1", {
-      type: "state",
-      session: active.session,
-    });
-    expect(deps.broadcast).toHaveBeenCalledWith("child-1", {
-      type: "session_ended",
-      reason: "stopped",
-    });
   });
 });
 
@@ -1938,312 +1911,33 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     vi.useRealTimers();
   });
 
-  it("does NOT immediately kill a child with messageCount>0 but no output tokens", () => {
-    // This is the exact bug: sendPrompt increments messageCount before the SDK
-    // processes the prompt, so resetIdleTimer sees messageCount > 0 while the
-    // agent hasn't started yet.
-    const active = makeLifecycleActiveSession({
-      parentSessionId: "parent-1",
-      status: "ready",
-      messageCount: 2,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    });
+  it("stops idle sessions after the configured timeout", () => {
+    const active = makeLifecycleActiveSession();
     const deps = makeLifecycleDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.resetIdleTimer("key");
 
-    // Immediate setTimeout(0) must NOT fire
-    vi.advanceTimersByTime(0);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Should still be alive after 30 seconds
-    vi.advanceTimersByTime(30_000);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Grace period (60s) expires → stop
-    vi.advanceTimersByTime(30_000);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("immediately stops a child that has produced output tokens since start", () => {
-    const active = makeLifecycleActiveSession(
-      {
-        parentSessionId: "parent-1",
-        status: "ready",
-        messageCount: 4,
-        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
-      },
-      { outputTokensAtStart: 0 },
-    );
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    vi.advanceTimersByTime(0);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("does NOT auto-stop a resumed child that has not done new work", () => {
-    // Child had 500 output tokens before being stopped, then was resumed.
-    // outputTokensAtStart matches current output — no new work done yet.
-    const active = makeLifecycleActiveSession(
-      {
-        parentSessionId: "parent-1",
-        status: "ready",
-        messageCount: 4,
-        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
-      },
-      { outputTokensAtStart: 500 },
-    );
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Should NOT immediately stop — no new work since resume
-    vi.advanceTimersByTime(0);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Should use grace period instead
-    vi.advanceTimersByTime(59_999);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("auto-stops a resumed child after it completes new work", () => {
-    // Child had 500 output tokens at resume, now has 800 — did new work.
-    const active = makeLifecycleActiveSession(
-      {
-        parentSessionId: "parent-1",
-        status: "ready",
-        messageCount: 6,
-        tokens: { input: 2000, output: 800, cacheRead: 0, cacheWrite: 0 },
-      },
-      { outputTokensAtStart: 500 },
-    );
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    vi.advanceTimersByTime(0);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("uses 60s grace for a child with messageCount=0", () => {
-    const active = makeLifecycleActiveSession({
-      parentSessionId: "parent-1",
-      status: "ready",
-      messageCount: 0,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    });
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    vi.advanceTimersByTime(59_999);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("does NOT auto-stop a busy child", () => {
-    const active = makeLifecycleActiveSession({
-      parentSessionId: "parent-1",
-      status: "busy",
-      messageCount: 2,
-      tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
-    });
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Should fall through to the normal idle timeout path
-    vi.advanceTimersByTime(60_000);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Normal idle timeout (300s from makeLifecycleDeps) eventually fires
-    vi.advanceTimersByTime(240_000);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("does NOT auto-stop a non-child session on idle", () => {
-    const active = makeLifecycleActiveSession({
-      status: "ready",
-      messageCount: 5,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    });
-    // No parentSessionId
-    const deps = makeLifecycleDeps(active);
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Should use normal idle timeout, not the child auto-stop
-    vi.advanceTimersByTime(60_000);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(240_000);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("does NOT auto-stop a completed child when autoStopWhenDone is false", () => {
-    const active = makeLifecycleActiveSession(
-      {
-        parentSessionId: "parent-1",
-        status: "ready",
-        messageCount: 4,
-        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
-      },
-      { outputTokensAtStart: 0 },
-    );
-    const deps = makeLifecycleDeps(active, {
-      getChildAutoStopWhenDone: () => false,
-    });
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Should NOT immediately stop — autoStopWhenDone is false
-    vi.advanceTimersByTime(0);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Should use childIdleTimeoutMs (300s from makeLifecycleDeps)
     vi.advanceTimersByTime(299_999);
     expect(deps.stopSession).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("uses configured childIdleTimeoutMs for completed children", () => {
-    const active = makeLifecycleActiveSession(
-      {
-        parentSessionId: "parent-1",
-        status: "ready",
-        messageCount: 4,
-        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
-      },
-      { outputTokensAtStart: 0 },
-    );
-    const deps = makeLifecycleDeps(active, {
-      getChildAutoStopWhenDone: () => false,
-      getChildIdleTimeoutMs: () => 120_000, // 2 min
-    });
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Should NOT stop at 119s
-    vi.advanceTimersByTime(119_999);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Should stop at 120s
-    vi.advanceTimersByTime(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("uses configured startupGraceMs instead of hardcoded 60s", () => {
-    const active = makeLifecycleActiveSession({
-      parentSessionId: "parent-1",
-      status: "ready",
-      messageCount: 0,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    });
-    const deps = makeLifecycleDeps(active, {
-      getChildStartupGraceMs: () => 30_000, // 30s instead of 60s
-    });
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Should NOT stop at 29s
-    vi.advanceTimersByTime(29_999);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Should stop at 30s
-    vi.advanceTimersByTime(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
   it("clears previous timer on reset", () => {
-    const active = makeLifecycleActiveSession({
-      parentSessionId: "parent-1",
-      status: "ready",
-      messageCount: 0,
-    });
+    const active = makeLifecycleActiveSession();
     const deps = makeLifecycleDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
 
-    // Set first timer
+    coordinator.resetIdleTimer("key");
+    vi.advanceTimersByTime(200_000);
     coordinator.resetIdleTimer("key");
 
-    // Advance 50s, then reset
-    vi.advanceTimersByTime(50_000);
+    vi.advanceTimersByTime(200_000);
     expect(deps.stopSession).not.toHaveBeenCalled();
 
-    coordinator.resetIdleTimer("key");
-
-    // Another 50s — old timer would have fired at 60s, but was cleared
-    vi.advanceTimersByTime(50_000);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // 10 more seconds → new timer's 60s expires
-    vi.advanceTimersByTime(10_000);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
-  });
-
-  it("defers idle timeout when parent has active children", () => {
-    const active = makeLifecycleActiveSession({
-      status: "ready",
-      messageCount: 10,
-      tokens: { input: 5000, output: 2000, cacheRead: 0, cacheWrite: 0 },
-    });
-    // No parentSessionId — this is a root session
-    const deps = makeLifecycleDeps(active, {
-      hasActiveChildren: vi.fn(() => true),
-    });
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // Normal idle timeout (300s) fires but should be deferred
-    vi.advanceTimersByTime(300_000);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-    expect(deps.hasActiveChildren).toHaveBeenCalledWith("child-1");
-  });
-
-  it("stops parent after children finish", () => {
-    const active = makeLifecycleActiveSession({
-      status: "ready",
-      messageCount: 10,
-      tokens: { input: 5000, output: 2000, cacheRead: 0, cacheWrite: 0 },
-    });
-    // No parentSessionId — root session
-    let childrenActive = true;
-    const deps = makeLifecycleDeps(active, {
-      hasActiveChildren: vi.fn(() => childrenActive),
-    });
-    const coordinator = new SessionLifecycleCoordinator(deps);
-
-    coordinator.resetIdleTimer("key");
-
-    // First timeout fires → children active → deferred
-    vi.advanceTimersByTime(300_000);
-    expect(deps.stopSession).not.toHaveBeenCalled();
-
-    // Children finish
-    childrenActive = false;
-
-    // Second timeout fires → no children → stops
-    vi.advanceTimersByTime(300_000);
-    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+    vi.advanceTimersByTime(100_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 });

@@ -886,7 +886,6 @@ export class Server {
 
   private healOrphanedSessions(): void {
     const sessions = this.storage.listSessions();
-    const statusById = new Map(sessions.map((s) => [s.id, s.status]));
     let healed = 0;
 
     for (const s of sessions) {
@@ -897,19 +896,6 @@ export class Server {
         this.storage.saveSession(s);
         healed++;
         continue;
-      }
-
-      // Error children whose parent is stopped — these are unactionable
-      // and inflate attention indicators on the iOS workspace list.
-      if (
-        s.status === "error" &&
-        s.parentSessionId &&
-        statusById.get(s.parentSessionId) === "stopped"
-      ) {
-        s.status = "stopped";
-        s.currentTurnStartedAt = undefined;
-        this.storage.saveSession(s);
-        healed++;
       }
     }
 

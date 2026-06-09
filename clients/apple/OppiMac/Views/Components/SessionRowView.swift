@@ -8,15 +8,6 @@ struct SessionRowView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 5) {
-            // Child-agent indent marker
-            if session.parentSessionId != nil {
-                Text("↳")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 10)
-                    .padding(.top, 2)
-            }
-
             StatusIndicatorView(status: session.status)
                 .padding(.top, 2)
 

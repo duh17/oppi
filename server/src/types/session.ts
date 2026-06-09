@@ -63,7 +63,7 @@ export interface SessionChangeStats extends SessionSummaryChangeStats {
 
 export interface Session {
   id: string;
-  workspaceId?: string; // which workspace spawned this session
+  workspaceId?: string; // workspace that owns this session
   workspaceName?: string; // denormalized for display
   name?: string;
   status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";
@@ -108,9 +108,6 @@ export interface Session {
 
   // Privacy / persistence
   ephemeral?: boolean; // true for in-memory pi sessions (incognito mode)
-
-  // Parent-child tree (spawn_agent)
-  parentSessionId?: string; // set when spawned by another session
 }
 
 /**
@@ -145,7 +142,6 @@ export interface SessionSummary {
   /** Pi internal session UUID for generic session identity matching. */
   piSessionId?: string;
   ephemeral?: boolean;
-  parentSessionId?: string;
   /** Cold-list ask badge count; omitted outside list endpoints. */
   pendingAskCount?: number;
 }

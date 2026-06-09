@@ -15,8 +15,7 @@
  *    from ServerConfig.
  */
 
-import type { ServerConfig, SubagentConfig } from "./types.js";
-import { defaultSubagentConfig } from "./storage/config-store.js";
+import type { ServerConfig } from "./types.js";
 
 // ─── Mutex ───
 
@@ -81,7 +80,6 @@ export interface RuntimeLimits {
   maxSessionsGlobal: number;
   sessionIdleTimeoutMs: number;
   workspaceIdleTimeoutMs: number;
-  subagents: SubagentConfig;
 }
 
 const DEFAULTS: RuntimeLimits = {
@@ -89,7 +87,6 @@ const DEFAULTS: RuntimeLimits = {
   maxSessionsGlobal: 40,
   sessionIdleTimeoutMs: 10 * 60_000, // 10 min
   workspaceIdleTimeoutMs: 30 * 60_000, // 30 min
-  subagents: defaultSubagentConfig(),
 };
 
 /** Extract runtime limits from ServerConfig, applying defaults. */
@@ -99,7 +96,6 @@ export function resolveRuntimeLimits(config: ServerConfig): RuntimeLimits {
     maxSessionsGlobal: config.maxSessionsGlobal ?? DEFAULTS.maxSessionsGlobal,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs ?? DEFAULTS.sessionIdleTimeoutMs,
     workspaceIdleTimeoutMs: config.workspaceIdleTimeoutMs ?? DEFAULTS.workspaceIdleTimeoutMs,
-    subagents: config.extensions?.subagents ?? DEFAULTS.subagents,
   };
 }
 

@@ -55,7 +55,6 @@ interface SessionProjectionRow {
   pi_session_files_json: string | null;
   pi_session_id: string | null;
   ephemeral: number;
-  parent_session_id: string | null;
 }
 
 interface SessionIdRow {
@@ -120,8 +119,7 @@ const SESSION_PROJECTION_COLUMNS = `
   pi_session_file,
   pi_session_files_json,
   pi_session_id,
-  ephemeral,
-  parent_session_id
+  ephemeral
 `;
 
 const SESSION_COLUMN_DEFINITIONS = [
@@ -153,7 +151,6 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["pi_session_files_json", "TEXT"],
   ["pi_session_id", "TEXT"],
   ["ephemeral", "INTEGER NOT NULL DEFAULT 0"],
-  ["parent_session_id", "TEXT"],
   ["session_json", "TEXT NOT NULL DEFAULT ''"],
   ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
 ] as const;
@@ -261,7 +258,6 @@ export class SessionSqliteStore {
       normalized.piSessionFiles ? JSON.stringify(normalized.piSessionFiles) : null,
       normalized.piSessionId ?? null,
       normalized.ephemeral ? 1 : 0,
-      normalized.parentSessionId ?? null,
       json,
       Date.now(),
     );
@@ -349,13 +345,10 @@ export class SessionSqliteStore {
         `SELECT
            s.workspace_id AS workspace_id,
            MAX(s.last_activity) AS latest_activity,
-           SUM(CASE WHEN parent.id IS NULL AND s.status <> 'stopped' THEN 1 ELSE 0 END) AS active_count,
-           SUM(CASE WHEN parent.id IS NULL AND s.status = 'stopped' THEN 1 ELSE 0 END) AS stopped_count,
-           MAX(CASE WHEN parent.id IS NULL AND s.status = 'error' THEN 1 ELSE 0 END) AS has_error_root
+           SUM(CASE WHEN s.status <> 'stopped' THEN 1 ELSE 0 END) AS active_count,
+           SUM(CASE WHEN s.status = 'stopped' THEN 1 ELSE 0 END) AS stopped_count,
+           MAX(CASE WHEN s.status = 'error' THEN 1 ELSE 0 END) AS has_error_root
          FROM session_state_sessions s
-         LEFT JOIN session_state_sessions parent
-           ON parent.id = s.parent_session_id
-          AND parent.workspace_id = s.workspace_id
          WHERE s.workspace_id IS NOT NULL
          GROUP BY s.workspace_id
          ORDER BY latest_activity DESC, s.workspace_id ASC`,
@@ -565,7 +558,6 @@ export class SessionSqliteStore {
         pi_session_files_json TEXT,
         pi_session_id TEXT,
         ephemeral INTEGER NOT NULL DEFAULT 0,
-        parent_session_id TEXT,
         session_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -596,9 +588,6 @@ export class SessionSqliteStore {
 
       CREATE INDEX IF NOT EXISTS session_state_sessions_status_activity_idx
         ON session_state_sessions (status, last_activity DESC, id ASC);
-
-      CREATE INDEX IF NOT EXISTS session_state_sessions_parent_idx
-        ON session_state_sessions (parent_session_id);
 
       CREATE TABLE IF NOT EXISTS session_state_schema (
         key TEXT PRIMARY KEY,
@@ -671,11 +660,10 @@ export class SessionSqliteStore {
         pi_session_files_json,
         pi_session_id,
         ephemeral,
-        parent_session_id,
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -705,7 +693,6 @@ export class SessionSqliteStore {
         pi_session_files_json = excluded.pi_session_files_json,
         pi_session_id = excluded.pi_session_id,
         ephemeral = excluded.ephemeral,
-        parent_session_id = excluded.parent_session_id,
         session_json = excluded.session_json,
         updated_at = excluded.updated_at
     `);
@@ -831,46 +818,7 @@ export class SessionSqliteStore {
       )
       .all(...params) as SessionProjectionRow[];
 
-    return this.includeProjectedAncestors(workspaceId, this.parseProjectedRows(rows));
-  }
-
-  private getProjectedSessionById(workspaceId: string, sessionId: string): Session | undefined {
-    const row = this.db
-      .prepare(
-        `SELECT ${SESSION_PROJECTION_COLUMNS}
-         FROM session_state_sessions
-         WHERE workspace_id = ? AND id = ?`,
-      )
-      .get(workspaceId, sessionId) as SessionProjectionRow | undefined;
-    return row ? buildProjectedSession(row) : undefined;
-  }
-
-  private includeProjectedAncestors(workspaceId: string, sessions: Session[]): Session[] {
-    const byId = new Map(sessions.map((session) => [session.id, session]));
-    const pending = sessions.flatMap((session) =>
-      session.parentSessionId ? [session.parentSessionId] : [],
-    );
-    let remainingLookups = 256;
-
-    while (pending.length > 0 && remainingLookups > 0) {
-      remainingLookups -= 1;
-      const parentId = pending.pop();
-      if (!parentId || byId.has(parentId)) {
-        continue;
-      }
-
-      const parent = this.getProjectedSessionById(workspaceId, parentId);
-      if (!parent) {
-        continue;
-      }
-
-      byId.set(parent.id, parent);
-      if (parent.parentSessionId) {
-        pending.push(parent.parentSessionId);
-      }
-    }
-
-    return sortSessions(Array.from(byId.values()));
+    return this.parseProjectedRows(rows);
   }
 }
 
@@ -921,7 +869,6 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   if (row.pi_session_file !== null) session.piSessionFile = row.pi_session_file;
   if (row.pi_session_id !== null) session.piSessionId = row.pi_session_id;
   if (row.ephemeral !== 0) session.ephemeral = true;
-  if (row.parent_session_id !== null) session.parentSessionId = row.parent_session_id;
 
   const changeStats = parseJsonValue<Session["changeStats"]>(
     row.change_stats_json,
@@ -1081,9 +1028,6 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.ephemeral === true) {
     normalized.ephemeral = true;
-  }
-  if (session.parentSessionId !== undefined && session.parentSessionId !== null) {
-    normalized.parentSessionId = session.parentSessionId;
   }
 
   backfillCostFromTokens(normalized);

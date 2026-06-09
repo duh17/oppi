@@ -159,8 +159,6 @@ struct WorkspaceContextBar: View {
     let workspaceId: String?
     let sessionId: String?
     let showCleanWorkspace: Bool
-    let childSessions: [Session]
-    var onSelectChild: ((String) -> Void)?
     var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
     /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
@@ -183,7 +181,6 @@ struct WorkspaceContextBar: View {
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var quickActionOptionsWorkspaceId: String?
     @State private var isLoadingQuickActions = false
-    @State private var stoppingAgentIds: Set<String> = []
 
     // Commit pagination state
     @State private var additionalCommits: [GitCommitSummary] = []
@@ -202,8 +199,6 @@ struct WorkspaceContextBar: View {
         sessionId: String? = nil,
         showCleanWorkspace: Bool = false,
         initialExpanded: Bool = false,
-        childSessions: [Session] = [],
-        onSelectChild: ((String) -> Void)? = nil,
         onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
         fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil,
         collapseToken: Int = 0,
@@ -216,8 +211,6 @@ struct WorkspaceContextBar: View {
         self.sessionId = sessionId
         self.showCleanWorkspace = showCleanWorkspace
         _isExpanded = State(initialValue: initialExpanded)
-        self.childSessions = childSessions
-        self.onSelectChild = onSelectChild
         self.onReviewInCurrentSession = onReviewInCurrentSession
         self.fileDetailReviewCommentScope = fileDetailReviewCommentScope
         self.collapseToken = collapseToken

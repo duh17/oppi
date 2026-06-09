@@ -447,7 +447,6 @@ final class SessionStore {
 
         let incomingIds = Set(incomingById.keys)
         let currentById = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
-        let ancestorIds = ancestorIdsForVisibleRows(incomingForWorkspaces, currentById: currentById)
         var nextById: [String: Session] = [:]
 
         for existing in current {
@@ -464,8 +463,7 @@ final class SessionStore {
             if shouldPreserveMissingWorkspaceRecentRow(
                 existing,
                 requestStartedAt: requestStartedAt,
-                preserveRecentWindow: preserveRecentWindow,
-                ancestorIds: ancestorIds
+                preserveRecentWindow: preserveRecentWindow
             ) {
                 nextById[existing.id] = existing
             }
@@ -626,11 +624,8 @@ final class SessionStore {
     private func shouldPreserveMissingWorkspaceRecentRow(
         _ session: Session,
         requestStartedAt: Date,
-        preserveRecentWindow: TimeInterval,
-        ancestorIds: Set<String>
+        preserveRecentWindow: TimeInterval
     ) -> Bool {
-        if ancestorIds.contains(session.id) { return true }
-
         if isRecentOptimisticLocal(
             session,
             requestStartedAt: requestStartedAt,
@@ -652,25 +647,6 @@ final class SessionStore {
     ) -> Bool {
         if session.createdAt >= requestStartedAt { return true }
         return requestStartedAt.timeIntervalSince(session.createdAt) <= preserveRecentWindow
-    }
-
-    private func ancestorIdsForVisibleRows(
-        _ visibleRows: [Session],
-        currentById: [String: Session]
-    ) -> Set<String> {
-        var ancestors: Set<String> = []
-        var pending = visibleRows.compactMap(\.parentSessionId)
-
-        while let parentId = pending.popLast() {
-            guard !ancestors.contains(parentId) else { continue }
-            guard let parent = currentById[parentId] else { continue }
-            ancestors.insert(parentId)
-            if let grandparentId = parent.parentSessionId {
-                pending.append(grandparentId)
-            }
-        }
-
-        return ancestors
     }
 
     private func mergePreservingContext(existing: Session, incoming: Session) -> Session {

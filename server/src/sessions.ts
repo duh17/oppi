@@ -207,16 +207,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
     const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
 
-    // Notify the parent session's subscribers so the iOS context bar updates.
-    // When a child is stopped, iOS unsubscribes from its event stream. On
-    // resume, the per-session subscription callback is gone, so the child's
-    // state transitions (stopped → ready → busy) never reach the client.
-    // Broadcasting on the parent's key ensures the context bar sees it.
-    if (session.parentSessionId) {
-      const parentKey = this.sessionKey(session.parentSessionId);
-      this.broadcast(parentKey, { type: "state", session });
-    }
-
     return session;
   }
 
@@ -618,13 +608,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   hasPendingUIRequest(sessionId: string, requestId: string): boolean {
     return this.active.get(this.sessionKey(sessionId))?.pendingUIRequests.has(requestId) ?? false;
-  }
-
-  /**
-   * List child sessions spawned by a given parent session.
-   */
-  listChildSessions(parentSessionId: string): Session[] {
-    return this.storage.listSessions().filter((s) => s.parentSessionId === parentSessionId);
   }
 
   // ─── Idle Management ───

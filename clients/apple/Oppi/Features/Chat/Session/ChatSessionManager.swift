@@ -45,8 +45,8 @@ final class ChatSessionManager {
     let sessionId: String
 
     /// Per-session timeline pipeline — each ChatSessionManager owns its own
-    /// reducer, coalescer, and correlator so parent/child sessions maintain
-    /// independent timeline state across NavigationStack back-navigation.
+    /// reducer, coalescer, and correlator so sessions maintain independent
+    /// timeline state across NavigationStack back-navigation.
     let reducer = TimelineReducer()
     let coalescer = DeltaCoalescer()
     let toolCallCorrelator = ToolCallCorrelator()
@@ -809,9 +809,8 @@ final class ChatSessionManager {
     /// Route a server message to the per-session timeline pipeline.
     ///
     /// This handles all coalescer/reducer mutations for the active session.
-    /// Each ChatSessionManager owns
-    /// its own coalescer + reducer, so parent/child sessions maintain
-    /// independent timelines across NavigationStack navigation.
+    /// Each ChatSessionManager owns its own coalescer + reducer, so sessions
+    /// maintain independent timelines across NavigationStack navigation.
     private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
         for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
             coalescer.receive(event)

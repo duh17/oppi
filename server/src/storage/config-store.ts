@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
-import type { ServerConfig, SubagentConfig } from "../types.js";
+import type { ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -35,16 +35,6 @@ function defaultRuntimePathEntries(): string[] {
   ];
 }
 
-export function defaultSubagentConfig(): SubagentConfig {
-  return {
-    maxDepth: 1,
-    autoStopWhenDone: false,
-    childIdleTimeoutMs: 5 * 60_000,
-    startupGraceMs: 60_000,
-    defaultWaitTimeoutMs: 30 * 60_000,
-  };
-}
-
 function createDefaultConfig(dataDir: string): ServerConfig {
   return {
     configVersion: CONFIG_VERSION,
@@ -69,9 +59,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
       maxFileBytes: 50 * 1024 * 1024,
       maxTurnBytes: 100 * 1024 * 1024,
       unusedTtlMs: 24 * 60 * 60 * 1000,
-    },
-    extensions: {
-      subagents: defaultSubagentConfig(),
     },
   };
 }
@@ -548,100 +535,11 @@ function normalizeConfig(
     }
   }
 
-  const parseSubagentConfig = (value: unknown, pathPrefix: string): SubagentConfig | undefined => {
-    if (!isRecord(value)) {
-      if (value !== undefined) {
-        errors.push(`${pathPrefix}: expected object`);
-        changed = true;
-      }
-      return undefined;
-    }
-
-    const sa = value;
-    const defaults = defaultSubagentConfig();
-    const subagents: SubagentConfig = { ...defaults };
-
-    const allowedSubagentKeys = new Set([
-      "maxDepth",
-      "autoStopWhenDone",
-      "childIdleTimeoutMs",
-      "startupGraceMs",
-      "defaultWaitTimeoutMs",
-    ]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(sa)) {
-        if (!allowedSubagentKeys.has(key)) {
-          errors.push(`${pathPrefix}.${key}: unknown key`);
-        }
-      }
-    }
-
-    if ("maxDepth" in sa) {
-      if (typeof sa.maxDepth === "number" && Number.isInteger(sa.maxDepth) && sa.maxDepth >= 0) {
-        subagents.maxDepth = sa.maxDepth;
-      } else {
-        errors.push(`${pathPrefix}.maxDepth: expected non-negative integer`);
-        changed = true;
-      }
-    }
-
-    if ("autoStopWhenDone" in sa) {
-      if (typeof sa.autoStopWhenDone === "boolean") {
-        subagents.autoStopWhenDone = sa.autoStopWhenDone;
-      } else {
-        errors.push(`${pathPrefix}.autoStopWhenDone: expected boolean`);
-        changed = true;
-      }
-    }
-
-    if ("childIdleTimeoutMs" in sa) {
-      if (
-        typeof sa.childIdleTimeoutMs === "number" &&
-        Number.isInteger(sa.childIdleTimeoutMs) &&
-        sa.childIdleTimeoutMs >= 1
-      ) {
-        subagents.childIdleTimeoutMs = sa.childIdleTimeoutMs;
-      } else {
-        errors.push(`${pathPrefix}.childIdleTimeoutMs: expected positive integer`);
-        changed = true;
-      }
-    }
-
-    if ("startupGraceMs" in sa) {
-      if (
-        typeof sa.startupGraceMs === "number" &&
-        Number.isInteger(sa.startupGraceMs) &&
-        sa.startupGraceMs >= 1
-      ) {
-        subagents.startupGraceMs = sa.startupGraceMs;
-      } else {
-        errors.push(`${pathPrefix}.startupGraceMs: expected positive integer`);
-        changed = true;
-      }
-    }
-
-    if ("defaultWaitTimeoutMs" in sa) {
-      if (
-        typeof sa.defaultWaitTimeoutMs === "number" &&
-        Number.isInteger(sa.defaultWaitTimeoutMs) &&
-        sa.defaultWaitTimeoutMs >= 1
-      ) {
-        subagents.defaultWaitTimeoutMs = sa.defaultWaitTimeoutMs;
-      } else {
-        errors.push(`${pathPrefix}.defaultWaitTimeoutMs: expected positive integer`);
-        changed = true;
-      }
-    }
-
-    return subagents;
-  };
-
   // Extension configuration
   if ("extensions" in obj && isRecord(obj.extensions)) {
     const extensions = obj.extensions;
     const extensionConfig: NonNullable<ServerConfig["extensions"]> = {};
-    const allowedExtensionKeys = new Set(["voice", "subagents"]);
+    const allowedExtensionKeys = new Set(["voice"]);
 
     if (strictUnknown) {
       for (const key of Object.keys(extensions)) {
@@ -679,14 +577,6 @@ function normalizeConfig(
         errors.push("config.extensions.voice: expected object");
         changed = true;
       }
-    }
-
-    const nestedSubagents = parseSubagentConfig(
-      extensions.subagents,
-      "config.extensions.subagents",
-    );
-    if (nestedSubagents) {
-      extensionConfig.subagents = nestedSubagents;
     }
 
     if (Object.keys(extensionConfig).length > 0) {

@@ -400,21 +400,6 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, undefined);
   });
 
-  it("inherits parent session model before workspace default", async () => {
-    const mock = createMockContext(makeWorkspace({ defaultModel: "ds4/deepseek-v4-flash" }));
-    mock.storage.getSession.mockReturnValue(
-      makeSession({
-        id: "parent-1",
-        workspaceId: "ws-1",
-        model: "openai-codex/gpt-5.5",
-      }),
-    );
-
-    await dispatchCreate(mock, { prompt: "hello", parentSessionId: "parent-1" });
-
-    expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "openai-codex/gpt-5.5");
-  });
-
   it("passes workspace to startSession", async () => {
     const ws = makeWorkspace({ id: "ws-42" });
     const mock = createMockContext(ws);
@@ -539,61 +524,6 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.responses).toHaveLength(0);
   });
 
-  it("persists parentSessionId when the parent belongs to the workspace", async () => {
-    const mock = createMockContext();
-    mock.storage.getSession.mockReturnValue(makeSession({ id: "parent-abc", workspaceId: "ws-1" }));
-
-    await dispatchCreate(mock, { prompt: "child task", parentSessionId: "parent-abc" });
-
-    // First saveSession is the initial create (with parentSessionId set)
-    const firstSave = mock.storage.saveSession.mock.calls[0]![0] as Session;
-    expect(firstSave.parentSessionId).toBe("parent-abc");
-
-    // Response should include the session
-    expect(mock.responses).toHaveLength(1);
-    expect(mock.responses[0]!.status).toBe(201);
-  });
-
-  it("omits parentSessionId when not provided", async () => {
-    const mock = createMockContext();
-
-    await dispatchCreate(mock, { prompt: "standalone task" });
-
-    const firstSave = mock.storage.saveSession.mock.calls[0]![0] as Session;
-    expect(firstSave.parentSessionId).toBeUndefined();
-  });
-
-  it("persists parentSessionId on session without prompt when the parent belongs to the workspace", async () => {
-    const mock = createMockContext();
-    mock.storage.getSession.mockReturnValue(makeSession({ id: "parent-xyz", workspaceId: "ws-1" }));
-
-    await dispatchCreate(mock, { name: "child", parentSessionId: "parent-xyz" });
-
-    expect(mock.storage.saveSession).toHaveBeenCalledTimes(1);
-    const savedSession = mock.storage.saveSession.mock.calls[0]![0] as Session;
-    expect(savedSession.parentSessionId).toBe("parent-xyz");
-
-    // Should NOT start or prompt
-    expect(mock.sessions.startSession).not.toHaveBeenCalled();
-    expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
-  });
-
-  it("rejects parentSessionId from another workspace", async () => {
-    const mock = createMockContext();
-    mock.storage.getSession.mockReturnValue(
-      makeSession({ id: "parent-foreign", workspaceId: "ws-2" }),
-    );
-
-    await dispatchCreate(mock, { name: "child", parentSessionId: "parent-foreign" });
-
-    expect(mock.errors).toEqual([
-      { status: 400, message: "Parent session does not belong to this workspace" },
-    ]);
-    expect(mock.storage.saveSession).not.toHaveBeenCalled();
-    expect(mock.sessions.startSession).not.toHaveBeenCalled();
-    expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
-  });
-
   it("coalesces local JSONL import with an existing Oppi session identity", async () => {
     const root = getPiSessionsRoot();
     const dir = mkdtempSync(join(root, "oppi-import-coalesce-"));
@@ -692,7 +622,7 @@ describe("POST /workspaces/:id/sessions/:sessionId/fork", () => {
     });
   }
 
-  it("creates timeline forks as independent root sessions, not child sessions", async () => {
+  it("creates timeline forks as independent sessions", async () => {
     const mock = createMockContext();
     const source = makeSession({
       id: "source-1",
@@ -701,7 +631,6 @@ describe("POST /workspaces/:id/sessions/:sessionId/fork", () => {
       name: "Original",
       piSessionFile: "/tmp/source.jsonl",
       piSessionFiles: ["/tmp/older.jsonl", "/tmp/source.jsonl"],
-      parentSessionId: "spawn-parent",
       thinkingLevel: "medium",
       contextWindow: 200_000,
     });
@@ -727,7 +656,6 @@ describe("POST /workspaces/:id/sessions/:sessionId/fork", () => {
     expect(savedFork.piSessionFiles).toEqual(["/tmp/older.jsonl", "/tmp/source.jsonl"]);
     expect(savedFork.thinkingLevel).toBe("medium");
     expect(savedFork.contextWindow).toBe(200_000);
-    expect(savedFork.parentSessionId).toBeUndefined();
 
     expect(mock.responses).toHaveLength(1);
     expect(mock.responses[0]!.status).toBe(201);

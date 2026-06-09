@@ -840,7 +840,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       piSessionFile?: string;
       prompt?: string;
       thinking?: string;
-      parentSessionId?: string;
       ephemeral?: boolean;
       attachments?: ChatAttachmentRef[];
       images?: unknown;
@@ -944,32 +943,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     // ── Standard new session ──
-    const parentSessionId = body.parentSessionId?.trim();
-    let parentSession: Session | undefined;
-    if (parentSessionId) {
-      parentSession = ctx.storage.getSession(parentSessionId);
-      if (!parentSession) {
-        helpers.error(res, 404, "Parent session not found");
-        return;
-      }
-      if (parentSession.workspaceId !== workspace.id) {
-        helpers.error(res, 400, "Parent session does not belong to this workspace");
-        return;
-      }
-    }
-
     const modelSelection = resolveInitialChatModel({
       requestModel: requestedModel,
-      sourceSessionModel: parentSession?.model,
       workspace,
     });
     const session = ctx.storage.createSession(body.name, modelSelection.model);
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
-    if (parentSessionId) {
-      session.parentSessionId = parentSessionId;
-    }
     if (body.ephemeral === true) {
       session.ephemeral = true;
     }
@@ -1234,9 +1215,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const forkSession = ctx.storage.createSession(forkName, forkModelSelection.model);
 
     // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
-    // Do not map that to Oppi `parentSessionId`: in Oppi, parent/child session
-    // trees are reserved for spawned subagents. Timeline forks are independent
-    // root sessions in the workspace list.
+    // Timeline forks stay independent root sessions in the workspace list.
     forkSession.workspaceId = workspace.id;
     forkSession.workspaceName = workspace.name;
     forkSession.piSessionFile = sourceSessionFile;

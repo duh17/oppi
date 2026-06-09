@@ -23,7 +23,6 @@ describe("isManagedExtensionName", () => {
   it("does not reserve permission-gate away from native Pi loading", () => {
     expect(isManagedExtensionName("permission-gate")).toBe(false);
     expect(isManagedExtensionName("ask")).toBe(false);
-    expect(isManagedExtensionName("subagents")).toBe(false);
     expect(isManagedExtensionName("voice")).toBe(false);
   });
 
@@ -36,7 +35,6 @@ describe("isManagedExtensionName", () => {
 describe("built-in extension names", () => {
   it("detects Oppi built-ins distinctly from managed names", () => {
     expect(isBuiltInExtensionName("ask")).toBe(true);
-    expect(isBuiltInExtensionName("subagents")).toBe(false);
     expect(isBuiltInExtensionName("voice")).toBe(false);
     expect(isBuiltInExtensionName("oppi-admin")).toBe(false);
     expect(isBuiltInExtensionName("permission-gate")).toBe(false);

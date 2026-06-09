@@ -9,8 +9,6 @@ export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
   sdkBackend: SdkBackend;
   workspaceId: string;
-  /** Output tokens when this activation started. Used to detect new work vs. prior-life tokens. */
-  outputTokensAtStart: number;
 }
 
 export interface SessionLifecycleCoordinatorDeps {
@@ -22,13 +20,6 @@ export interface SessionLifecycleCoordinatorDeps {
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
   stopSession: (sessionId: string) => Promise<void>;
   getSessionIdleTimeoutMs: () => number;
-  /** Whether children automatically stop after completing work. */
-  getChildAutoStopWhenDone: () => boolean;
-  /** Grace period (ms) for a child that hasn't produced output yet. */
-  getChildStartupGraceMs: () => number;
-  /** Idle timeout (ms) for a child that completed work (when autoStopWhenDone is false). */
-  getChildIdleTimeoutMs: () => number;
-  hasActiveChildren: (sessionId: string) => boolean;
   metrics?: ServerMetricCollector;
 }
 
@@ -70,13 +61,6 @@ export class SessionLifecycleCoordinator {
     active.session.currentTurnStartedAt = undefined;
     this.deps.persistSessionNow(key, active.session);
 
-    if (active.session.parentSessionId) {
-      this.deps.broadcast(active.session.parentSessionId, {
-        type: "state",
-        session: active.session,
-      });
-    }
-
     clearExtensionUIState(active);
 
     if (!active.sdkBackend.isDisposed) {
@@ -96,86 +80,10 @@ export class SessionLifecycleCoordinator {
   resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
 
-    // Auto-stop child sessions after they complete their work.
-    // Children are ephemeral — they do one task and exit.
-    // Give a grace period so the prompt has time to dispatch (especially
-    // in sandbox mode where VM boot adds latency before the first turn).
-    const active = this.deps.getActiveSession(key);
-    if (active?.session.parentSessionId && active.session.status === "ready") {
-      // Has the child produced NEW LLM output since this activation started?
-      // Compare against outputTokensAtStart to distinguish fresh work from
-      // tokens inherited from a previous activation (i.e. before stop+resume).
-      // messageCount alone is unreliable — sendPrompt increments it before the
-      // SDK processes the prompt, so a resetIdleTimer call from sendCommand
-      // sees messageCount > 0 while the agent hasn't started yet.
-      const hasCompletedWork = active.session.tokens.output > active.outputTokensAtStart;
-
-      if (hasCompletedWork && this.deps.getChildAutoStopWhenDone()) {
-        log.info("session_lifecycle.child_auto_stop_when_done", {
-          sessionId: active.session.id,
-          parentSessionId: active.session.parentSessionId,
-        });
-        this.pendingIdleTimeoutKeys.add(key);
-        setTimeout(() => {
-          void this.deps.stopSession(active.session.id);
-        }, 0);
-        return;
-      }
-
-      // If auto-stop is disabled and work is done, use childIdleTimeoutMs
-      // (typically matches prompt-cache TTL) so follow-ups reuse cached context.
-      if (hasCompletedWork) {
-        const childIdleMs = this.deps.getChildIdleTimeoutMs();
-        const timer = setTimeout(() => {
-          const current = this.deps.getActiveSession(key);
-          if (current?.session.parentSessionId && current.session.status === "ready") {
-            log.info("session_lifecycle.child_idle_timeout_post_work", {
-              sessionId: current.session.id,
-              parentSessionId: current.session.parentSessionId,
-              timeoutMs: childIdleMs,
-            });
-            this.pendingIdleTimeoutKeys.add(key);
-            void this.deps.stopSession(current.session.id);
-          }
-        }, childIdleMs);
-        this.idleTimers.set(key, timer);
-        return;
-      } else {
-        // Child hasn't produced output yet — either still initializing,
-        // waiting for the LLM, or in sandbox VM boot. Give it time.
-        const graceMs = this.deps.getChildStartupGraceMs();
-        const timer = setTimeout(() => {
-          const current = this.deps.getActiveSession(key);
-          if (current?.session.parentSessionId && current.session.status === "ready") {
-            log.info("session_lifecycle.child_startup_grace_expired", {
-              sessionId: current.session.id,
-              parentSessionId: current.session.parentSessionId,
-              timeoutMs: graceMs,
-            });
-            this.pendingIdleTimeoutKeys.add(key);
-            void this.deps.stopSession(current.session.id);
-          }
-        }, graceMs);
-        this.idleTimers.set(key, timer);
-        return;
-      }
-    }
-
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
       const active = this.deps.getActiveSession(key);
       if (!active) {
-        return;
-      }
-
-      // Don't idle-stop a parent while any of its children are still active.
-      // The parent needs to stay alive to receive child results and coordinate.
-      if (this.deps.hasActiveChildren(active.session.id)) {
-        log.info("session_lifecycle.idle_timeout_deferred_active_children", {
-          sessionId: active.session.id,
-        });
-        // Re-arm the timer so we check again later.
-        this.resetIdleTimer(key);
         return;
       }
 

@@ -34,7 +34,6 @@ export function buildSessionSummary(session: Session): SessionSummary {
     mirror: session.mirror,
     piSessionId: session.piSessionId,
     ephemeral: session.ephemeral,
-    parentSessionId: session.parentSessionId,
   };
 }
 

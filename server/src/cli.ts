@@ -869,20 +869,6 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   },
   "extensions.voice": { type: "json", desc: "Voice extension config JSON object" },
   "extensions.voice.defaultVoiceId": { type: "string", desc: "Default saved voice ID" },
-  "extensions.subagents": { type: "json", desc: "Subagent config JSON object" },
-  "extensions.subagents.maxDepth": { type: "number", desc: "Max subagent depth" },
-  "extensions.subagents.autoStopWhenDone": {
-    type: "boolean",
-    desc: "Stop child sessions after completion",
-  },
-  "extensions.subagents.startupGraceMs": {
-    type: "number",
-    desc: "Subagent startup grace period",
-  },
-  "extensions.subagents.defaultWaitTimeoutMs": {
-    type: "number",
-    desc: "Default spawn_agent wait timeout",
-  },
 };
 
 function metadataForConfigPath(path: string): SettableConfigPath | undefined {

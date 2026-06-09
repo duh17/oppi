@@ -2,7 +2,6 @@ import type { Workspace } from "./types.js";
 
 export type InitialChatModelSource =
   | "request"
-  | "subagent"
   | "sourceSession"
   | "workspaceDefault"
   | "piSettings";
@@ -17,9 +16,7 @@ export interface InitialChatModelSelection {
 export interface InitialChatModelInput {
   /** Direct client/tool override. Highest precedence. */
   requestModel?: string | null;
-  /** Effective subagent model after profile/model-policy resolution. */
-  subagentModel?: string | null;
-  /** Model inherited from a parent, origin, selected, or fork source session. */
+  /** Model inherited from an origin, selected, or fork source session. */
   sourceSessionModel?: string | null;
   /** Workspace whose default should apply when no explicit/source model wins. */
   workspace?: Pick<Workspace, "defaultModel"> | null;
@@ -43,9 +40,6 @@ export function normalizeInitialModelId(value: string | null | undefined): strin
 export function resolveInitialChatModel(input: InitialChatModelInput): InitialChatModelSelection {
   const requested = normalizeInitialModelId(input.requestModel);
   if (requested) return { model: requested, source: "request" };
-
-  const subagent = normalizeInitialModelId(input.subagentModel);
-  if (subagent) return { model: subagent, source: "subagent" };
 
   const sourceSession = normalizeInitialModelId(input.sourceSessionModel);
   if (sourceSession) return { model: sourceSession, source: "sourceSession" };

@@ -360,10 +360,6 @@ export class SessionAgentEventCoordinator {
 
     const message: ServerMessage = { type: "session_summary", summary };
     this.deps.broadcast(key, message);
-
-    if (active.session.parentSessionId) {
-      this.deps.broadcast(active.session.parentSessionId, message);
-    }
   }
 
   private handleExtensionAudioStream(key: string, event: ExtensionAudioStreamEvent): void {

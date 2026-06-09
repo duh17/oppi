@@ -105,8 +105,8 @@ describe("SessionAgentEventCoordinator", () => {
     return { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent };
   }
 
-  it("mirrors child ready summaries to the parent session key", () => {
-    const active = makeActiveSession({ parentSessionId: "parent-1", status: "busy" });
+  it("broadcasts ready summaries to the session key", () => {
+    const active = makeActiveSession({ status: "busy" });
     const { broadcast, coordinator } = makeCoordinator(active);
 
     coordinator.handlePiEvent(active.session.id, {
@@ -118,11 +118,7 @@ describe("SessionAgentEventCoordinator", () => {
     const summaryBroadcasts = broadcast.mock.calls.filter(
       ([, message]) => message.type === "session_summary",
     );
-    expect(summaryBroadcasts).toHaveLength(2);
-    expect(summaryBroadcasts).toEqual([
-      ["child-1", { type: "session_summary", summary }],
-      ["parent-1", { type: "session_summary", summary }],
-    ]);
+    expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
   it("does not broadcast cold summaries for hot timeline events", () => {
@@ -287,7 +283,7 @@ describe("SessionAgentEventCoordinator", () => {
   });
 
   it("broadcasts edit/write summaries after real change stats update", () => {
-    const active = makeActiveSession({ parentSessionId: "parent-1", status: "busy" });
+    const active = makeActiveSession({ status: "busy" });
     const broadcast = vi.fn();
     const eventProcessor = new SessionEventProcessor({
       storage: {} as never,
@@ -330,14 +326,11 @@ describe("SessionAgentEventCoordinator", () => {
     const summaryBroadcasts = broadcast.mock.calls.filter(
       ([, message]) => message.type === "session_summary",
     );
-    expect(summaryBroadcasts).toEqual([
-      ["child-1", { type: "session_summary", summary }],
-      ["parent-1", { type: "session_summary", summary }],
-    ]);
+    expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
   it("broadcasts summaries for namespaced edit patch tools after change stats update", () => {
-    const active = makeActiveSession({ parentSessionId: "parent-1", status: "busy" });
+    const active = makeActiveSession({ status: "busy" });
     const broadcast = vi.fn();
     const eventProcessor = new SessionEventProcessor({
       storage: {} as never,
@@ -382,10 +375,7 @@ describe("SessionAgentEventCoordinator", () => {
     const summaryBroadcasts = broadcast.mock.calls.filter(
       ([, message]) => message.type === "session_summary",
     );
-    expect(summaryBroadcasts).toEqual([
-      ["child-1", { type: "session_summary", summary }],
-      ["parent-1", { type: "session_summary", summary }],
-    ]);
+    expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
   it("normalizes prompt_error before broadcasting it to clients", () => {

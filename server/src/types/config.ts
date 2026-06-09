@@ -93,31 +93,5 @@ export interface ServerConfig {
     voice?: {
       defaultVoiceId?: string;
     };
-    subagents?: SubagentConfig;
   };
-}
-
-export interface SubagentConfig {
-  /** How many levels deep agents can spawn other agents.
-   *  1 = parent→child only (no grandchildren). 2 = allows grandchildren.
-   *  Default: 1 */
-  maxDepth: number;
-  /** Whether children automatically stop after completing their work.
-   *  When true, a child that finishes and goes idle is stopped immediately.
-   *  When false, children stay alive until childIdleTimeoutMs expires.
-   *  Default: false */
-  autoStopWhenDone: boolean;
-  /** How long (ms) a child session stays alive after completing its work
-   *  when autoStopWhenDone is false. Matches typical prompt-cache TTL so
-   *  follow-up messages can reuse the cached context.
-   *  Default: 300000 (5 min) */
-  childIdleTimeoutMs: number;
-  /** How long (ms) to wait for a child to start producing output before
-   *  giving up. Covers VM boot time, model loading, and first LLM call.
-   *  Default: 60000 (60s) */
-  startupGraceMs: number;
-  /** Default timeout (ms) for spawn_agent(wait=true) when the caller
-   *  doesn't specify timeout_seconds.
-   *  Default: 1800000 (30 min) */
-  defaultWaitTimeoutMs: number;
 }

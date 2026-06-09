@@ -25,16 +25,6 @@ describe("pi-tui session classification", () => {
     ).toBe(false);
   });
 
-  it("keeps real Oppi child sessions openable", () => {
-    expect(
-      isPiTuiTaskRecordSession({
-        runtime: "pi-tui",
-        name: "general-purpose#738f21e6",
-        parentSessionId: "parent-1",
-      }),
-    ).toBe(false);
-  });
-
   it("classifies matching bridge state only when no trace file is present", () => {
     expect(
       isPiTuiTaskRecordBridgeState({
