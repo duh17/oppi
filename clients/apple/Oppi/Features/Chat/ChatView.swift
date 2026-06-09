@@ -579,7 +579,11 @@ struct ChatView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(Color.themeRed.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.themeRed.opacity(0.08))
+                    }
                     .overlay {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.themeRed.opacity(0.35), lineWidth: 1)

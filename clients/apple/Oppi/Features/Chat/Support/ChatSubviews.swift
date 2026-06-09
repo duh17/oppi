@@ -85,7 +85,7 @@ struct JumpToBottomHintButton: View {
         WorkingSpinnerView(tintColor: providerColor)
             .frame(width: 20, height: 20)
             .frame(width: 36, height: 36)
-            .background(.ultraThinMaterial, in: Circle())
+            .glassEffect(.regular, in: Circle())
             .overlay {
                 Circle()
                     .stroke(providerColor.opacity(pulse ? 0.45 : 0.15), lineWidth: 1.5)
@@ -108,7 +108,7 @@ struct JumpToBottomHintButton: View {
             .font(.caption.weight(.bold))
             .foregroundStyle(.themeFg)
             .frame(width: 34, height: 34)
-            .background(.ultraThinMaterial, in: Circle())
+            .glassEffect(.regular, in: Circle())
             .transition(ThemeMotion.scaleFade(scale: 0.8, reduceMotion: reduceMotion))
     }
 

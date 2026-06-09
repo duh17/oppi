@@ -4,56 +4,19 @@ private extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .background {
-                shape.fill(.regularMaterial)
-                shape.fill(Color.themeBg.opacity(0.84))
-                shape.fill(
-                    LinearGradient(
-                        colors: [
-                            Color.themeFg.opacity(0.04),
-                            Color.clear,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            }
+            .glassEffect(.regular, in: shape)
             .overlay {
-                shape.stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.themeFg.opacity(0.18),
-                            Color.themeComment.opacity(0.16),
-                            Color.themeFg.opacity(0.08),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
+                shape.stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
             }
-            .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 10)
+            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
     }
 
     func extensionGlassInset(cornerRadius: CGFloat = 12) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .background {
-                shape.fill(.thinMaterial)
-                shape.fill(Color.themeBg.opacity(0.82))
-            }
+            .glassEffect(.regular, in: shape)
             .overlay {
-                shape.stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.themeFg.opacity(0.10),
-                            Color.themeComment.opacity(0.12),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
+                shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
             }
     }
 }
