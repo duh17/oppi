@@ -237,9 +237,9 @@ function runScan(config: ScanConfig): ScanResult | undefined {
     "json",
     "--output",
     outputDir,
-    "--ignore-pattern",
+    "--ignore",
     config.ignore.join(","),
-    "--no-tips",
+    "--noTips",
     "--silent",
   ];
 
