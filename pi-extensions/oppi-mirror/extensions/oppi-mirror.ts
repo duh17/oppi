@@ -825,6 +825,26 @@ function stateSnapshot(pi: ExtensionAPI, ctx: ExtensionContext) {
   };
 }
 
+type MirrorStateSnapshot = ReturnType<typeof stateSnapshot>;
+
+function isStaleExtensionContextError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes("extension ctx is stale")
+  );
+}
+
+function safeStateSnapshot(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): MirrorStateSnapshot | undefined {
+  try {
+    return stateSnapshot(pi, ctx);
+  } catch (error) {
+    if (isStaleExtensionContextError(error)) return undefined;
+    throw error;
+  }
+}
+
 function commandError(message: string, id: string, error: unknown) {
   return {
     type: "command_result",
@@ -915,33 +935,83 @@ interface MirrorWidgetComponent {
   dispose?(): void;
 }
 
-interface MirrorAskOption {
+export interface MirrorAskOption {
   value: string;
   label: string;
   description?: string;
 }
 
-interface MirrorAskQuestion {
+export interface MirrorAskQuestion {
   id: string;
   question: string;
   options: MirrorAskOption[];
   multiSelect?: boolean;
 }
 
-interface MirrorAskUIResult {
+export interface MirrorAskUIResult {
   answers: Record<string, string | string[]>;
   allIgnored: boolean;
 }
 
-type MirrorAskFunction = (
+export type MirrorAskFunction = (
   questions: MirrorAskQuestion[],
   allowCustom?: boolean,
   opts?: ExtensionUIDialogOptions,
 ) => Promise<MirrorAskUIResult>;
 
-type MirrorUIContextWithAsk = ExtensionUIContext & {
+export type MirrorOptionalUIContext = Partial<ExtensionUIContext> & {
   ask?: MirrorAskFunction;
 };
+
+export function bindMirrorOptionalUIContext(ui: MirrorOptionalUIContext) {
+  const originalSelect =
+    typeof ui.select === "function" ? ui.select.bind(ui) : undefined;
+  const originalInput =
+    typeof ui.input === "function" ? ui.input.bind(ui) : undefined;
+  return {
+    ask:
+      typeof ui.ask === "function"
+        ? ui.ask.bind(ui)
+        : originalSelect && originalInput
+          ? (
+              questions: MirrorAskQuestion[],
+              allowCustom = true,
+              opts?: ExtensionUIDialogOptions,
+            ) =>
+              terminalAskFallback(questions, allowCustom, opts, {
+                select: originalSelect,
+                input: originalInput,
+              })
+          : async () => ({ answers: {}, allIgnored: true }),
+    select: originalSelect ?? (async () => undefined),
+    confirm:
+      typeof ui.confirm === "function"
+        ? ui.confirm.bind(ui)
+        : async () => false,
+    input: originalInput ?? (async () => undefined),
+    editor:
+      typeof ui.editor === "function"
+        ? ui.editor.bind(ui)
+        : async () => undefined,
+    notify: typeof ui.notify === "function" ? ui.notify.bind(ui) : undefined,
+    setStatus:
+      typeof ui.setStatus === "function" ? ui.setStatus.bind(ui) : undefined,
+    setWidget:
+      typeof ui.setWidget === "function"
+        ? (ui.setWidget.bind(ui) as ExtensionUIContext["setWidget"])
+        : undefined,
+    setTitle:
+      typeof ui.setTitle === "function" ? ui.setTitle.bind(ui) : undefined,
+    setEditorText:
+      typeof ui.setEditorText === "function"
+        ? ui.setEditorText.bind(ui)
+        : undefined,
+    pasteToEditor:
+      typeof ui.pasteToEditor === "function"
+        ? ui.pasteToEditor.bind(ui)
+        : undefined,
+  };
+}
 
 const MIRROR_WIDGET_SNAPSHOT_WIDTH = 88;
 const MIRROR_WIDGET_SNAPSHOT_MAX_LINES = 12;
@@ -1501,12 +1571,12 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   ) => {
     const includeState =
       event.type === "compaction_end" || event.type === "auto_retry_end";
+    const state =
+      includeState && latestCtx ? safeStateSnapshot(pi, latestCtx) : undefined;
     send({
       type: "event",
       event,
-      ...(includeState && latestCtx
-        ? { state: stateSnapshot(pi, latestCtx) }
-        : {}),
+      ...(state ? { state } : {}),
     });
   };
   queueUpdateBridge.listeners.add(queueUpdateListener);
@@ -1515,12 +1585,6 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     publishQueueIfChanged(
       queueUpdateBridge.last.steering,
       queueUpdateBridge.last.followUp,
-    );
-  }
-
-  function isStaleExtensionContextError(error: unknown): boolean {
-    return (
-      error instanceof Error && error.message.includes("extension ctx is stale")
     );
   }
 
@@ -1727,31 +1791,10 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   }
 
   function installExtensionUIProxy(ctx: ExtensionContext): void {
-    const ui = ctx.ui as MirrorUIContextWithAsk;
+    const ui = ctx.ui as MirrorOptionalUIContext;
     if (proxiedUIContexts.has(ui as object)) return;
 
-    const originalSelect = ui.select.bind(ui);
-    const originalInput = ui.input.bind(ui);
-    const original = {
-      ask:
-        typeof ui.ask === "function"
-          ? ui.ask.bind(ui)
-          : (questions, allowCustom = true, opts) =>
-              terminalAskFallback(questions, allowCustom, opts, {
-                select: originalSelect,
-                input: originalInput,
-              }),
-      select: originalSelect,
-      confirm: ui.confirm.bind(ui),
-      input: originalInput,
-      editor: ui.editor.bind(ui),
-      notify: ui.notify.bind(ui),
-      setStatus: ui.setStatus.bind(ui),
-      setWidget: ui.setWidget.bind(ui) as ExtensionUIContext["setWidget"],
-      setTitle: ui.setTitle.bind(ui),
-      setEditorText: ui.setEditorText.bind(ui),
-      pasteToEditor: ui.pasteToEditor.bind(ui),
-    };
+    const original = bindMirrorOptionalUIContext(ui);
 
     proxiedUIContexts.add(ui as object);
 
@@ -1806,7 +1849,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       );
 
     ui.notify = (message, type) => {
-      original.notify(message, type);
+      original.notify?.(message, type);
       if (!suppressUIForwarding) {
         sendUIRequest({
           id: nextUIRequestId("notify"),
@@ -1818,7 +1861,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     };
 
     ui.setStatus = (key, text) => {
-      original.setStatus(key, text);
+      original.setStatus?.(key, text);
       if (!suppressUIForwarding) {
         sendUIRequest({
           id: nextUIRequestId("setStatus"),
@@ -1887,11 +1930,15 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           scheduleSnapshot();
           return component;
         };
-        original.setWidget(key, wrappedContent as never, options as never);
+        if (original.setWidget) {
+          original.setWidget(key, wrappedContent as never, options as never);
+        } else {
+          wrappedContent(undefined, undefined);
+        }
         return;
       }
 
-      original.setWidget(key, content as never, options as never);
+      original.setWidget?.(key, content as never, options as never);
       if (
         !suppressUIForwarding &&
         (content === undefined || Array.isArray(content))
@@ -1907,7 +1954,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     }) as ExtensionUIContext["setWidget"];
 
     ui.setTitle = (title) => {
-      original.setTitle(title);
+      original.setTitle?.(title);
       if (!suppressUIForwarding) {
         sendUIRequest({
           id: nextUIRequestId("setTitle"),
@@ -1918,7 +1965,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     };
 
     ui.setEditorText = (text) => {
-      original.setEditorText(text);
+      original.setEditorText?.(text);
       if (!suppressUIForwarding) {
         sendUIRequest({
           id: nextUIRequestId("set_editor_text"),
@@ -1929,7 +1976,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     };
 
     ui.pasteToEditor = (text) => {
-      original.pasteToEditor(text);
+      original.pasteToEditor?.(text);
       if (!suppressUIForwarding) {
         sendUIRequest({
           id: nextUIRequestId("set_editor_text"),

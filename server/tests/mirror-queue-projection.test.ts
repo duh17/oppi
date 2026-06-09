@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  bindMirrorOptionalUIContext,
   createMirrorWidgetForwardingComponent,
   createMirrorWidgetForwardingTui,
   MirrorQueueProjection,
@@ -136,6 +137,35 @@ describe("mirror widget snapshots", () => {
     expect(forwardedInvalidations).toBe(1);
     expect(originalDisposals).toBe(1);
     expect(forwardedDisposals).toBe(1);
+  });
+});
+
+describe("mirror extension UI proxy helpers", () => {
+  it("binds partial UI contexts without requiring every Pi UI method", async () => {
+    const setWidget = vi.fn();
+    const original = bindMirrorOptionalUIContext({ setWidget } as never);
+
+    await expect(
+      original.ask(
+        [
+          {
+            id: "scope",
+            question: "Scope?",
+            options: [{ value: "goal", label: "Goal" }],
+          },
+        ],
+        true,
+        undefined,
+      ),
+    ).resolves.toEqual({ answers: {}, allIgnored: true });
+    await expect(original.select("Title", ["One"], undefined)).resolves.toBeUndefined();
+    await expect(original.confirm("Title", "Message", undefined)).resolves.toBe(false);
+
+    original.setWidget?.("goal", ["Goal visible"], { placement: "aboveEditor" });
+
+    expect(setWidget).toHaveBeenCalledWith("goal", ["Goal visible"], {
+      placement: "aboveEditor",
+    });
   });
 });
 
