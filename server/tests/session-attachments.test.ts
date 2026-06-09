@@ -1,6 +1,9 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -10,7 +13,34 @@ import {
   materializeToolMediaDetails,
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolCall,
+  streamSessionAttachment,
 } from "../src/session-attachments.js";
+
+class MockWritableResponse extends PassThrough {
+  statusCode = 0;
+  headers: Record<string, string> = {};
+  body = Buffer.alloc(0);
+
+  constructor() {
+    super();
+    this.on("data", (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      this.body = Buffer.concat([this.body, buffer]);
+    });
+  }
+
+  writeHead(statusCode: number, headers: Record<string, string | number> = {}): this {
+    this.statusCode = statusCode;
+    this.headers = Object.fromEntries(
+      Object.entries(headers).map(([key, value]) => [key, String(value)]),
+    );
+    return this;
+  }
+}
+
+function makeIncoming(headers: Record<string, string> = {}): IncomingMessage {
+  return { headers } as IncomingMessage;
+}
 
 let root: string;
 
@@ -57,6 +87,78 @@ describe("session attachments", () => {
     expect(attachment?.record.toolCallId).toBe("tool-1");
     expect(attachment?.record.durationSeconds).toBe(1.25);
     expect(attachment ? await readFile(attachment.path) : null).toEqual(bytes);
+  });
+
+  it("streams audio attachment byte ranges", async () => {
+    const bytes = Buffer.from("0123456789");
+    const details = materializeToolAudioDetails({
+      dataDir: root,
+      sessionId: "s-range",
+      toolCallId: "tool-range",
+      details: {
+        audio: {
+          kind: "audio",
+          mimeType: "audio/wav",
+          base64: bytes.toString("base64"),
+          fileName: "range.wav",
+        },
+      },
+    }) as { audio: { id: string } };
+
+    const attachment = await getSessionAttachment(root, "s-range", details.audio.id);
+    expect(attachment).not.toBeNull();
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    streamSessionAttachment(
+      attachment!,
+      makeIncoming({ range: "bytes=2-5" }),
+      res as unknown as ServerResponse,
+    );
+    await finished;
+
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["Content-Type"]).toBe("audio/wav");
+    expect(res.headers["Accept-Ranges"]).toBe("bytes");
+    expect(res.headers["Content-Range"]).toBe("bytes 2-5/10");
+    expect(res.headers["Content-Length"]).toBe("4");
+    expect(res.body.toString("utf8")).toBe("2345");
+  });
+
+  it("handles audio attachment HEAD requests without a body", async () => {
+    const bytes = Buffer.from("0123456789");
+    const details = materializeToolAudioDetails({
+      dataDir: root,
+      sessionId: "s-head",
+      toolCallId: "tool-head",
+      details: {
+        audio: {
+          kind: "audio",
+          mimeType: "audio/wav",
+          base64: bytes.toString("base64"),
+          fileName: "head.wav",
+        },
+      },
+    }) as { audio: { id: string } };
+
+    const attachment = await getSessionAttachment(root, "s-head", details.audio.id);
+    expect(attachment).not.toBeNull();
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    streamSessionAttachment(
+      attachment!,
+      makeIncoming(),
+      res as unknown as ServerResponse,
+      "HEAD",
+    );
+    await finished;
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["Content-Type"]).toBe("audio/wav");
+    expect(res.headers["Accept-Ranges"]).toBe("bytes");
+    expect(res.headers["Content-Length"]).toBe("10");
+    expect(res.body).toHaveLength(0);
   });
 
   it("does not materialize audio attachments from arbitrary server paths", async () => {

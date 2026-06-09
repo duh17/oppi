@@ -17,6 +17,7 @@ final class NativeAudioMessageView: UIView {
     private var decodedData: Data?
     private var attachmentId: String?
     private var attachmentFetcher: ((String) async throws -> Data)?
+    private var attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)?
     private var playbackBehavior: AudioPlaybackBehavior?
     private var sessionId: String?
     private var decodeTask: Task<Void, Never>?
@@ -74,6 +75,7 @@ final class NativeAudioMessageView: UIView {
         self.suppressAutoplay = suppressAutoplay
         attachmentId = nil
         attachmentFetcher = nil
+        attachmentMediaSourceProvider = nil
 
         guard MediaMimeType.normalized(mimeType) == "audio/wav" else {
             decodedData = nil
@@ -115,6 +117,7 @@ final class NativeAudioMessageView: UIView {
         sessionId: String?,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
+        attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil,
         palette: ThemePalette,
         suppressAutoplay: Bool = false
     ) {
@@ -122,9 +125,11 @@ final class NativeAudioMessageView: UIView {
         self.suppressAutoplay = suppressAutoplay
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
+        self.attachmentMediaSourceProvider = attachmentMediaSourceProvider
 
-        guard MediaMimeType.normalized(mimeType) == "audio/wav", attachmentFetcher != nil else {
+        guard MediaMimeType.normalized(mimeType) == "audio/wav", attachmentMediaSourceProvider != nil else {
             self.attachmentFetcher = nil
+            self.attachmentMediaSourceProvider = nil
             progressView.isHidden = true
             updateButton(palette: palette)
             return
@@ -151,6 +156,7 @@ final class NativeAudioMessageView: UIView {
         self.decodedData = nil
         self.attachmentId = nil
         self.attachmentFetcher = nil
+        self.attachmentMediaSourceProvider = nil
         fetchTask?.cancel()
         fetchTask = nil
         bindAudioStateObservationIfNeeded()
@@ -286,7 +292,7 @@ final class NativeAudioMessageView: UIView {
 
     private func maybeAutoplayAttachmentIfNeeded(palette: ThemePalette) {
         guard !suppressAutoplay,
-              let id, let attachmentId, let attachmentFetcher, let audioPlayer,
+              let id, let attachmentId, let audioPlayer, let attachmentMediaSourceProvider,
               audioPlayer.shouldAutoplayAudioMessage(itemID: id, playbackBehavior: playbackBehavior, sessionId: sessionId) else {
             return
         }
@@ -294,12 +300,11 @@ final class NativeAudioMessageView: UIView {
         fetchTask?.cancel()
         fetchTask = Task { [weak self, attachmentId, id, weak audioPlayer] in
             do {
-                let data = try await attachmentFetcher(attachmentId)
+                let source = try await attachmentMediaSourceProvider(attachmentId, "audio/wav", "wav")
                 await MainActor.run { [weak self] in
                     guard let self, self.id == id else { return }
-                    self.decodedData = data
                     audioPlayer?.markVoiceReplyAutoplayed(itemID: id)
-                    audioPlayer?.toggleDataPlayback(data: data, itemID: id)
+                    audioPlayer?.toggleMediaPlayback(source: source, itemID: id, mode: "autoplay")
                     self.updateButton(palette: ThemeRuntimeState.currentPalette())
                 }
             } catch {

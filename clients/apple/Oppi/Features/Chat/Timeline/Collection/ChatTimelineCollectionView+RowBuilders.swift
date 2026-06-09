@@ -199,6 +199,19 @@ extension ChatTimelineCollectionHost.Controller {
         } else {
             nil
         }
+        let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = if let workspaceId, let apiClient = connection?.apiClient {
+            { [sessionId] attachmentId, mimeType, sourceFileExtension in
+                try await apiClient.makeSessionAttachmentMediaSource(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    attachmentId: attachmentId,
+                    contentTypeHint: mimeType,
+                    sourceFileExtension: sourceFileExtension
+                )
+            }
+        } else {
+            nil
+        }
         let sessionFileDataFetcher: ((String) async throws -> Data)? = if let workspaceId, let apiClient = connection?.apiClient {
             { [sessionId] path in
                 try await apiClient.getSessionFileData(
@@ -210,20 +223,26 @@ extension ChatTimelineCollectionHost.Controller {
         } else {
             nil
         }
-        let sessionFileStreamURLProvider: ((String) async throws -> URL)?
+        let sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)?
         if let workspaceId, let apiClient = connection?.apiClient {
             let workspaceHostMount = connection?.workspaceStore.workspaces.first { $0.id == workspaceId }?.hostMount
-            sessionFileStreamURLProvider = { path in
+            sessionFileMediaSourceProvider = { path in
                 guard let streamPath = path.workspaceRelativePath(hostMount: workspaceHostMount) else {
                     throw APIError.server(
                         status: 400,
                         message: "Video path is outside the workspace"
                     )
                 }
-                return try await apiClient.browseFileStreamURL(workspaceId: workspaceId, path: streamPath)
+                let pathExtension = (streamPath as NSString).pathExtension
+                return try await apiClient.makeWorkspaceMediaSource(
+                    workspaceId: workspaceId,
+                    path: streamPath,
+                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
+                    sourceFileExtension: pathExtension
+                )
             }
         } else {
-            sessionFileStreamURLProvider = nil
+            sessionFileMediaSourceProvider = nil
         }
         var configuration = ToolPresentationBuilder.build(
             itemID: itemID,
@@ -242,8 +261,9 @@ extension ChatTimelineCollectionHost.Controller {
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
+            .withSessionAttachmentMediaSourceProvider(attachmentMediaSourceProvider)
             .withSessionFileDataFetcher(sessionFileDataFetcher)
-            .withSessionFileStreamURLProvider(sessionFileStreamURLProvider)
+            .withSessionFileMediaSourceProvider(sessionFileMediaSourceProvider)
     }
 }
 

@@ -4,6 +4,7 @@ import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { parseByteRangeHeader } from "../src/http-range.js";
 import {
   ALLOWED_EXTENSIONS,
   IGNORE_DIRS,
@@ -13,7 +14,6 @@ import {
   getContentType,
   isBrowseMediaContentType,
   isStreamingMediaContentType,
-  parseByteRangeHeader,
   listDirectoryEntries,
   getFileIndex,
 } from "../src/routes/workspace-files.js";

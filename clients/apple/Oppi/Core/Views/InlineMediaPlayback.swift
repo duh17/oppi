@@ -1036,7 +1036,7 @@ private final class LocalMediaPlaybackModel: ObservableObject {
 
 }
 
-private struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
+struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     let player: AVPlayer
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
@@ -1181,57 +1181,15 @@ struct DataVideoPlayerView: View {
     }
 }
 
-struct URLVideoPlayerView: View {
-    let url: URL
-    var height: CGFloat = 260
-    var autoplay = false
-
-    @State private var player: AVPlayer?
-
-    var body: some View {
-        Group {
-            if let player {
-                AVPlayerViewControllerContainer(player: player)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: height)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            } else {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: height)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-            }
-        }
-        .task(id: url) {
-            let nextPlayer = AVPlayer(url: url)
-            nextPlayer.automaticallyWaitsToMinimizeStalling = true
-            player = nextPlayer
-            if autoplay {
-                nextPlayer.play()
-            }
-        }
-        .onDisappear {
-            player?.pause()
-            player = nil
-        }
-    }
-}
-
 @MainActor
 enum SystemVideoPlaybackPresenter {
-    static func present(url: URL, title: String?, from presenter: UIViewController) {
-        let controller = AVPlayerViewController()
-        let player = AVPlayer(url: url)
-        player.automaticallyWaitsToMinimizeStalling = true
-        controller.player = player
-        controller.showsPlaybackControls = true
+    static func present(source: AuthenticatedMediaSource, title: String?, from presenter: UIViewController) {
+        let controller = AuthenticatedMediaPlayerViewController()
+        controller.configure(source: source, autoplay: false)
         controller.modalPresentationStyle = .fullScreen
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true) {
-            player.play()
+            controller.player?.play()
         }
     }
 }

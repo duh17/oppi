@@ -15,12 +15,14 @@ actor APIClient: ClientLogUploading {
 
     let baseURL: URL
     let token: String
+    private let tlsCertFingerprint: String?
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
     init(baseURL: URL, token: String, tlsCertFingerprint: String? = nil) {
         self.baseURL = baseURL
         self.token = token
+        self.tlsCertFingerprint = tlsCertFingerprint
         trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
 
         let config = URLSessionConfiguration.default
@@ -43,6 +45,7 @@ actor APIClient: ClientLogUploading {
     ) {
         self.baseURL = baseURL
         self.token = token
+        self.tlsCertFingerprint = tlsCertFingerprint
         trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
         session = URLSession(
             configuration: configuration,
@@ -1189,16 +1192,40 @@ actor APIClient: ClientLogUploading {
         return try await get(url: makeWorkspaceRawURL(workspaceId: workspaceId, path: path))
     }
 
-    /// Build an authenticated URL for streaming media via AVPlayer.
+    /// Build a bearer-authenticated media source for AVPlayer resource loading.
     ///
-    /// Uses query-param token auth so AVPlayer can stream directly from the
-    /// server without needing custom header injection. No data is downloaded
-    /// by this method — AVPlayer handles progressive download and buffering.
-    func browseFileStreamURL(workspaceId: String, path: String) throws -> URL {
-        try makeWorkspaceRawURL(
-            workspaceId: workspaceId,
-            path: path,
-            queryItems: [URLQueryItem(name: "token", value: token)]
+    /// AVPlayer receives a local `oppi-media://` asset URL. The resource loader
+    /// translates byte-range requests to this raw endpoint with the normal
+    /// `Authorization: Bearer ...` header.
+    func makeWorkspaceMediaSource(
+        workspaceId: String,
+        path: String,
+        contentTypeHint: String? = nil,
+        sourceFileExtension: String? = nil
+    ) throws -> AuthenticatedMediaSource {
+        AuthenticatedMediaSource(
+            url: try makeWorkspaceRawURL(workspaceId: workspaceId, path: path),
+            authorizationHeaderValue: "Bearer \(token)",
+            tlsCertFingerprint: tlsCertFingerprint,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
+    /// Build a bearer-authenticated media source for a session attachment.
+    func makeSessionAttachmentMediaSource(
+        workspaceId: String,
+        sessionId: String,
+        attachmentId: String,
+        contentTypeHint: String? = nil,
+        sourceFileExtension: String? = nil
+    ) throws -> AuthenticatedMediaSource {
+        AuthenticatedMediaSource(
+            url: try makeURL(pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "attachments", attachmentId]),
+            authorizationHeaderValue: "Bearer \(token)",
+            tlsCertFingerprint: tlsCertFingerprint,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
         )
     }
 

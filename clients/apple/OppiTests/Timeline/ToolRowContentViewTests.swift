@@ -681,8 +681,15 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func readMediaVideoFileUsesStreamURLProviderAndHidesReadToolBoilerplate() throws {
-        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4?token=test"))
+    @Test func readMediaVideoFileUsesMediaSourceProviderAndHidesReadToolBoilerplate() throws {
+        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4"))
+        let mediaSource = AuthenticatedMediaSource(
+            url: videoURL,
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "video/mp4",
+            sourceFileExtension: "mp4"
+        )
         let view = NativeExpandedReadMediaView()
         view.apply(
             output: "Read video file [video/mp4]",
@@ -694,9 +701,9 @@ struct ToolTimelineRowContentViewTests {
             audioPlayer: nil,
             attachmentFetcher: nil,
             sessionFileDataFetcher: nil,
-            sessionFileStreamURLProvider: { path in
+            sessionFileMediaSourceProvider: { path in
                 #expect(path == "clips/demo.mp4")
-                return videoURL
+                return mediaSource
             }
         )
 
@@ -727,7 +734,7 @@ struct ToolTimelineRowContentViewTests {
                 Issue.record("Video rows should not download full session file data")
                 return Data()
             },
-            sessionFileStreamURLProvider: nil
+            sessionFileMediaSourceProvider: nil
         )
 
         let hasVideoRow = timelineAllViews(in: view).contains { $0 is NativeExpandedVideoAttachmentView }
@@ -742,7 +749,14 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func expandedReadMediaVideoViewportStaysCompact() throws {
-        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4?token=test"))
+        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4"))
+        let mediaSource = AuthenticatedMediaSource(
+            url: videoURL,
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "video/mp4",
+            sourceFileExtension: "mp4"
+        )
         var configuration = makeTimelineToolConfiguration(
             expandedContent: .readMedia(
                 output: "Read video file [video/mp4]",
@@ -753,9 +767,9 @@ struct ToolTimelineRowContentViewTests {
             toolNamePrefix: "read",
             isExpanded: true
         )
-        configuration = configuration.withSessionFileStreamURLProvider { path in
+        configuration = configuration.withSessionFileMediaSourceProvider { path in
             #expect(path == "clips/demo.mp4")
-            return videoURL
+            return mediaSource
         }
 
         let view = ToolTimelineRowContentView(configuration: configuration)
@@ -1277,6 +1291,13 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func expandedVoiceMessagePlayButtonIsHitTestTarget() throws {
+        let source = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
             expandedContent: .audioMessage(
@@ -1291,7 +1312,7 @@ struct ToolTimelineRowContentViewTests {
             isExpanded: true
         )
             .withAudioPlayer(AudioPlayerService())
-            .withSessionAttachmentFetcher { _ in Data([0x52, 0x49, 0x46, 0x46]) }
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
         let view = ToolTimelineRowContentView(configuration: config)
         view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
         view.layoutIfNeeded()
@@ -1304,6 +1325,13 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func collapsedVoiceMessagePlayButtonIsHitTestTarget() throws {
+        let source = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
             expandedContent: .audioMessage(
@@ -1318,7 +1346,7 @@ struct ToolTimelineRowContentViewTests {
             isExpanded: false
         )
             .withAudioPlayer(AudioPlayerService())
-            .withSessionAttachmentFetcher { _ in Data([0x52, 0x49, 0x46, 0x46]) }
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
         let view = ToolTimelineRowContentView(configuration: config)
         view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
         view.layoutIfNeeded()
@@ -1331,6 +1359,13 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func expandedVoiceMessageOnlyShowsHeaderPlaybackControl() throws {
+        let source = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
             expandedContent: .audioMessage(
@@ -1345,7 +1380,7 @@ struct ToolTimelineRowContentViewTests {
             isExpanded: true
         )
             .withAudioPlayer(AudioPlayerService())
-            .withSessionAttachmentFetcher { _ in Data([0x52, 0x49, 0x46, 0x46]) }
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
         let view = ToolTimelineRowContentView(configuration: config)
         view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
         view.layoutIfNeeded()
@@ -1360,17 +1395,32 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func collapsedVoiceMessagePlayButtonFetchesAttachmentOnTap() async throws {
-        actor FetchSpy {
+    @Test func collapsedVoiceMessagePlayButtonRequestsMediaSourceOnTap() async throws {
+        actor SourceSpy {
             private(set) var count = 0
-            func fetch(_ attachmentId: String) -> Data {
-                count += 1
-                return Data([0x52, 0x49, 0x46, 0x46])
+            let mediaSource: AuthenticatedMediaSource
+
+            init(mediaSource: AuthenticatedMediaSource) {
+                self.mediaSource = mediaSource
             }
+
+            func source(_ attachmentId: String) -> AuthenticatedMediaSource {
+                count += 1
+                #expect(attachmentId == "att-session-owned-voice")
+                return mediaSource
+            }
+
             func value() -> Int { count }
         }
 
-        let fetchSpy = FetchSpy()
+        let mediaSource = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+        let sourceSpy = SourceSpy(mediaSource: mediaSource)
         let config = makeTimelineToolConfiguration(
             title: "Voice message",
             expandedContent: .audioMessage(
@@ -1385,8 +1435,8 @@ struct ToolTimelineRowContentViewTests {
             isExpanded: false
         )
             .withAudioPlayer(AudioPlayerService())
-            .withSessionAttachmentFetcher { attachmentId in
-                await fetchSpy.fetch(attachmentId)
+            .withSessionAttachmentMediaSourceProvider { attachmentId, _, _ in
+                await sourceSpy.source(attachmentId)
             }
         let view = ToolTimelineRowContentView(configuration: config)
 
@@ -1395,11 +1445,11 @@ struct ToolTimelineRowContentViewTests {
         let button = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first { !$0.isHidden })
         button.sendActions(for: .touchUpInside)
 
-        let didFetch = await waitForTestCondition(timeoutMs: 300, pollMs: 10) {
-            await fetchSpy.value() > 0
+        let didRequestSource = await waitForTestCondition(timeoutMs: 300, pollMs: 10) {
+            await sourceSpy.value() > 0
         }
-        #expect(didFetch)
-        #expect(await fetchSpy.value() == 1)
+        #expect(didRequestSource)
+        #expect(await sourceSpy.value() == 1)
     }
 
 }

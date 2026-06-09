@@ -209,7 +209,7 @@ struct ToolExpandedSurfaceHostTests {
                 return imageData
             },
             sessionFileDataFetcher: nil,
-            sessionFileStreamURLProvider: nil
+            sessionFileMediaSourceProvider: nil
         )
 
         let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
@@ -251,7 +251,7 @@ struct ToolExpandedSurfaceHostTests {
             audioPlayer: nil,
             attachmentFetcher: nil,
             sessionFileDataFetcher: nil,
-            sessionFileStreamURLProvider: nil
+            sessionFileMediaSourceProvider: nil
         )
 
         let visibleLabelText = timelineAllLabels(in: view)
@@ -285,7 +285,7 @@ struct ToolExpandedSurfaceHostTests {
             audioPlayer: nil,
             attachmentFetcher: { _ in imageData },
             sessionFileDataFetcher: nil,
-            sessionFileStreamURLProvider: nil
+            sessionFileMediaSourceProvider: nil
         )
 
         let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in

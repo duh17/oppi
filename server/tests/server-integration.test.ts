@@ -497,16 +497,11 @@ describe("workspace file serving", () => {
     expect(res.status).toBe(401);
   });
 
-  it("supports query-param token auth only for raw file reads", async () => {
-    const legacyBrowse = await fetch(
-      `${baseUrl}/workspaces/${wsId}/files/chart.png?mode=browse&token=${token}`,
-    );
-    expect(legacyBrowse.status).toBe(401);
-
+  it("rejects query-param token auth for raw file reads", async () => {
     const res = await fetch(`${baseUrl}/workspaces/${wsId}/raw/chart.png?token=${token}`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.status).toBe(401);
   });
+
 });
 
 // ── Workspace File Browser (raw files, directory listing, search) ──

@@ -1,4 +1,3 @@
-import AVKit
 import Network
 import PDFKit
 import SwiftUI
@@ -115,10 +114,10 @@ struct FileBrowserContentView: View {
                 }
             case .image(let data):
                 imageView(data)
-            case .video(let url):
-                videoView(url)
-            case .audio(let url):
-                AudioBrowserView(url: url, fileName: fileName)
+            case .video(let source):
+                videoView(source)
+            case .audio(let source):
+                audioView(source)
             case .pdf(let data):
                 PDFBrowserView(data: data)
             case .binary:
@@ -229,14 +228,29 @@ struct FileBrowserContentView: View {
     // MARK: - Video View
 
     @ViewBuilder
-    private func videoView(_ url: URL) -> some View {
-        URLVideoPlayerView(
-            url: url,
-            height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420)
+    private func videoView(_ source: AuthenticatedMediaSource) -> some View {
+        AuthenticatedMediaPlayerView(
+            source: source,
+            height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420),
+            unavailableTitle: "Video preview unavailable",
+            unavailableSystemImage: "film.slash"
         )
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.opacity(0.92))
+    }
+
+    @ViewBuilder
+    private func audioView(_ source: AuthenticatedMediaSource) -> some View {
+        AuthenticatedMediaPlayerView(
+            source: source,
+            height: 220,
+            unavailableTitle: "Audio preview unavailable",
+            unavailableSystemImage: "speaker.slash"
+        )
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.themeBg)
     }
 
     // MARK: - Loading
@@ -266,11 +280,21 @@ struct FileBrowserContentView: View {
 
             switch category {
             case .video:
-                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
-                content = .video(url)
+                let source = try await api.makeWorkspaceMediaSource(
+                    workspaceId: workspaceId,
+                    path: filePath,
+                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: fileExtension),
+                    sourceFileExtension: fileExtension
+                )
+                content = .video(source)
             case .audio:
-                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
-                content = .audio(url)
+                let source = try await api.makeWorkspaceMediaSource(
+                    workspaceId: workspaceId,
+                    path: filePath,
+                    contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: fileExtension),
+                    sourceFileExtension: fileExtension
+                )
+                content = .audio(source)
             case .image, .pdf, .text, .binary:
                 let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
                 switch category {
@@ -352,120 +376,6 @@ struct FileBrowserContentView: View {
     }
 }
 
-// MARK: - Audio View
-
-/// Audio player with playback controls, centered in the view.
-private struct AudioBrowserView: View {
-    let url: URL
-    let fileName: String
-    @State private var player: AVPlayer?
-    @State private var isPlaying = false
-    @State private var currentTime: TimeInterval = 0
-    @State private var duration: TimeInterval = 0
-    @State private var timeObserver: Any?
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            // Album art placeholder
-            Image(systemName: "waveform")
-                .font(.system(size: 60))
-                .foregroundStyle(.themeComment)
-
-            Text(fileName)
-                .font(.headline)
-                .foregroundStyle(.themeFg)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-
-            // Progress bar
-            VStack(spacing: 4) {
-                ProgressView(value: duration > 0 ? currentTime / duration : 0)
-                    .tint(.themeSyntaxKeyword)
-
-                HStack {
-                    Text(formatTime(currentTime))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.themeComment)
-                    Spacer()
-                    Text(formatTime(duration))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.themeComment)
-                }
-            }
-            .padding(.horizontal, 40)
-
-            // Play/pause button
-            Button {
-                togglePlayback()
-            } label: {
-                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.themeSyntaxKeyword)
-            }
-
-            Spacer()
-        }
-        .padding()
-        .onAppear { setupPlayer() }
-        .onDisappear { teardownPlayer() }
-    }
-
-    private func setupPlayer() {
-        let avPlayer = AVPlayer(url: url)
-        player = avPlayer
-
-        // Observe playback time at 10Hz
-        let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            currentTime = time.seconds
-            if let item = avPlayer.currentItem {
-                let dur = item.duration.seconds
-                if dur.isFinite { duration = dur }
-            }
-        }
-
-        // Observe when playback ends
-        NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: avPlayer.currentItem,
-            queue: .main
-        ) { _ in
-            isPlaying = false
-        }
-    }
-
-    private func teardownPlayer() {
-        if let observer = timeObserver {
-            player?.removeTimeObserver(observer)
-        }
-        player?.pause()
-        player = nil
-    }
-
-    private func togglePlayback() {
-        guard let player else { return }
-        if isPlaying {
-            player.pause()
-        } else {
-            // If at end, seek to start
-            if currentTime >= duration - 0.1, duration > 0 {
-                player.seek(to: .zero)
-            }
-            player.play()
-        }
-        isPlaying.toggle()
-    }
-
-    private func formatTime(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return "\(mins):\(String(format: "%02d", secs))"
-    }
-}
-
 // MARK: - PDF View
 
 /// Wraps `PDFKit.PDFView` for inline PDF rendering with scroll, zoom, and text selection.
@@ -511,8 +421,8 @@ private enum FileContentPhase: Equatable {
     case error(String)
     case text(String)
     case image(Data)
-    case video(URL)
-    case audio(URL)
+    case video(AuthenticatedMediaSource)
+    case audio(AuthenticatedMediaSource)
     case pdf(Data)
     case binary
 
@@ -523,8 +433,8 @@ private enum FileContentPhase: Equatable {
         case (.error(let a), .error(let b)): a == b
         case (.text(let a), .text(let b)): a == b
         case (.image(let a), .image(let b)): a == b
-        case (.video(let a), .video(let b)): a == b
-        case (.audio(let a), .audio(let b)): a == b
+        case (.video(let a), .video(let b)): a.identity == b.identity
+        case (.audio(let a), .audio(let b)): a.identity == b.identity
         case (.pdf(let a), .pdf(let b)): a == b
         case (.binary, .binary): true
         default: false

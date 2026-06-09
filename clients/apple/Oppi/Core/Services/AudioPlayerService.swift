@@ -88,6 +88,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     private var player: AVAudioPlayer?
+    private var mediaPlaybackSession: AuthenticatedMediaPlaybackSession?
+    private var mediaStatusObservation: NSKeyValueObservation?
+    private var mediaEndObserver: NSObjectProtocol?
     private var sessionContext: SessionContext?
     private var activePlaybackContext: SessionContext?
     private var lastNowPlayingDurationSeconds: Double?
@@ -176,6 +179,23 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
+    /// Stream a bearer-authenticated media attachment through AVFoundation.
+    func toggleMediaPlayback(source: AuthenticatedMediaSource, itemID: String, mode: String = "manual") {
+        if playingItemID == itemID || loadingItemID == itemID {
+            stop()
+            return
+        }
+
+        let startedAtMs = ChatSessionTelemetry.nowMs()
+        stop()
+        do {
+            try play(source: source, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
+        } catch {
+            recordVoicePlaybackError(source: "media", phase: "start", error: error)
+            logger.error("Audio media playback failed: \(error.localizedDescription)")
+        }
+    }
+
     func beginCaptureInterruption() {
         playbackSuppressedForCapture = true
         stop()
@@ -190,6 +210,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         player?.stop()
         player = nil
         playbackDelegate = nil
+        stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
         if let activeStreamID {
             suppressedAudioStreamIDs.insert(activeStreamID)
@@ -279,9 +300,21 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     // MARK: - Private
 
+    private func stopMediaPlaybackSession() {
+        mediaStatusObservation?.invalidate()
+        mediaStatusObservation = nil
+        if let mediaEndObserver {
+            NotificationCenter.default.removeObserver(mediaEndObserver)
+            self.mediaEndObserver = nil
+        }
+        mediaPlaybackSession?.teardown()
+        mediaPlaybackSession = nil
+    }
+
     private func play(data: Data, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
         claimGlobalPlaybackOwnership()
+        stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
         // Configure audio session for playback
         let audioSession = AVAudioSession.sharedInstance()
@@ -297,6 +330,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private func play(fileURL: URL, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
         claimGlobalPlaybackOwnership()
+        stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.playback, mode: .default)
@@ -306,6 +340,70 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         attachAndStartPlayer(audioPlayer, itemID: itemID)
         recordVoicePlaybackStart(source: "file", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio file for item \(itemID): \(fileURL.lastPathComponent, privacy: .public)")
+    }
+
+    private func play(source: AuthenticatedMediaSource, itemID: String, mode: String, startedAtMs: Int64) throws {
+        guard !playbackSuppressedForCapture else { return }
+        claimGlobalPlaybackOwnership()
+        stopMediaPlaybackSession()
+        stopAudioStream(clearState: false)
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.playback, mode: .default)
+        try audioSession.setActive(true)
+
+        let playbackSession = AuthenticatedMediaPlaybackSession(source: source)
+        let player = playbackSession.player
+        mediaPlaybackSession = playbackSession
+        activePlaybackContext = sessionContext
+        setPlaybackState(playing: nil, loading: itemID)
+        updateNowPlayingInfo(durationSeconds: nil, isLiveStream: false)
+
+        mediaEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.stopMediaPlaybackSession()
+            self.deactivatePlaybackAudioSessionIfPossible()
+            self.setPlaybackState(playing: nil, loading: nil)
+            self.clearGlobalPlaybackOwnershipIfNeeded()
+        }
+
+        mediaStatusObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                switch item.status {
+                case .readyToPlay:
+                    let duration = item.duration.seconds
+                    self.setPlaybackState(playing: itemID, loading: nil)
+                    self.updateNowPlayingInfo(
+                        durationSeconds: duration.isFinite ? duration : nil,
+                        isLiveStream: false
+                    )
+                    player.play()
+                    self.recordVoicePlaybackStart(
+                        source: "media",
+                        mode: mode,
+                        durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs)
+                    )
+                case .failed:
+                    self.recordVoicePlaybackError(source: "media", phase: "load", error: item.error)
+                    logger.error("Audio media playback failed to load: \(item.error?.localizedDescription ?? "unknown")")
+                    self.stopMediaPlaybackSession()
+                    self.deactivatePlaybackAudioSessionIfPossible()
+                    self.setPlaybackState(playing: nil, loading: nil)
+                    self.clearGlobalPlaybackOwnershipIfNeeded()
+                case .unknown:
+                    self.setPlaybackState(playing: nil, loading: itemID)
+                @unknown default:
+                    self.stopMediaPlaybackSession()
+                    self.deactivatePlaybackAudioSessionIfPossible()
+                    self.setPlaybackState(playing: nil, loading: nil)
+                    self.clearGlobalPlaybackOwnershipIfNeeded()
+                }
+            }
+        }
     }
 
     private func attachAndStartPlayer(_ audioPlayer: AVAudioPlayer, itemID: String) {
@@ -608,17 +706,21 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         lastNowPlayingDurationSeconds = durationSeconds
         lastNowPlayingIsLiveStream = isLiveStream
 
-        guard player != nil || streamID != nil else {
+        let mediaPlayer = mediaPlaybackSession?.player
+        guard player != nil || streamID != nil || mediaPlayer != nil else {
             return
         }
 
+        let mediaElapsed = mediaPlayer?.currentTime().seconds
+        let elapsedPlaybackTime = player?.currentTime
+            ?? (mediaElapsed?.isFinite == true ? mediaElapsed ?? 0 : 0)
         let presentation = nowPlayingPresentation
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: presentation?.title ?? Self.nowPlayingFallbackTitle,
             MPMediaItemPropertyArtist: presentation?.subtitle ?? Self.nowPlayingFallbackArtist,
             MPMediaItemPropertyAlbumTitle: "Voice reply",
             MPNowPlayingInfoPropertyPlaybackRate: 1.0,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: player?.currentTime ?? 0,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedPlaybackTime,
         ]
         if let durationSeconds {
             info[MPMediaItemPropertyPlaybackDuration] = durationSeconds

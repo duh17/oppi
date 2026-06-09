@@ -61,6 +61,7 @@ const sessionOperationIds = [
   "getSessionDiff",
   "getSessionRaw",
   "getSessionAttachment",
+  "headSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
   "openDictationStream",

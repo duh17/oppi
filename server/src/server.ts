@@ -71,7 +71,6 @@ import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-type
 import { StreamingSttProvider } from "./stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { fetchCodexUsageStatus } from "./codex-usage.js";
-import { isQueryTokenAllowed } from "./http-auth.js";
 import {
   garbageCollectUploadStore,
   resolveUploadStoreConfig,
@@ -1008,17 +1007,11 @@ export class Server {
 
   // ─── Auth ───
 
-  private authenticate(req: IncomingMessage, url?: URL): boolean {
+  private authenticate(req: IncomingMessage): boolean {
     // Bearer header (primary auth)
     const auth = req.headers.authorization;
     if (auth?.startsWith("Bearer ")) {
       if (this.matchToken(auth.slice(7))) return true;
-    }
-
-    // Query-param token — only for a narrow set of browser-loadable GET routes.
-    if (url && isQueryTokenAllowed(req.method || "GET", url.pathname, url)) {
-      const queryToken = url.searchParams.get("token");
-      if (queryToken && this.matchToken(queryToken)) return true;
     }
 
     return false;
@@ -1090,7 +1083,7 @@ export class Server {
       return;
     }
 
-    const authenticated = this.authenticate(req, url);
+    const authenticated = this.authenticate(req);
     if (!authenticated) {
       log.warn("auth.unauthorized", {
         transport: "http",

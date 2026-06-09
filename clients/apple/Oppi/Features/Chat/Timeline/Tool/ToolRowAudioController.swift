@@ -30,7 +30,7 @@ final class ToolRowAudioController: NSObject {
     func apply(configuration: ToolTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let hasReplayableVoiceAudio = collapsedVoiceAudioAttachment(in: configuration) != nil
+        let hasReplayableVoiceAudio = (collapsedVoiceAudioAttachment(in: configuration) != nil && configuration.sessionAttachmentMediaSourceProvider != nil)
             || collapsedVoiceAudioBase64(in: configuration) != nil
         let hasLiveStreamPlayback = configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false
         guard hasReplayableVoiceAudio || hasLiveStreamPlayback else {
@@ -101,7 +101,7 @@ final class ToolRowAudioController: NSObject {
     }
 
     private func collapsedVoiceAudioItemID(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard collapsedVoiceAudioAttachment(in: configuration) != nil
+        guard (collapsedVoiceAudioAttachment(in: configuration) != nil && configuration.sessionAttachmentMediaSourceProvider != nil)
             || collapsedVoiceAudioBase64(in: configuration) != nil
             || configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) == true else {
             return nil
@@ -126,14 +126,14 @@ final class ToolRowAudioController: NSObject {
         }
 
         if let attachmentId = collapsedVoiceAudioAttachment(in: configuration),
-           let fetcher = configuration.sessionAttachmentFetcher {
+           let mediaSourceProvider = configuration.sessionAttachmentMediaSourceProvider {
             decodeTask?.cancel()
             decodeTask = Task { [attachmentId, itemID, weak audioPlayer] in
                 do {
-                    let data = try await fetcher(attachmentId)
+                    let source = try await mediaSourceProvider(attachmentId, "audio/wav", "wav")
                     await MainActor.run {
                         guard let audioPlayer else { return }
-                        audioPlayer.toggleDataPlayback(data: data, itemID: itemID)
+                        audioPlayer.toggleMediaPlayback(source: source, itemID: itemID)
                     }
                 } catch {
                     await MainActor.run { [weak self] in

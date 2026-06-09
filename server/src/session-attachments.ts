@@ -11,8 +11,9 @@ import {
 } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative } from "node:path";
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { parseByteRangeHeader } from "./http-range.js";
 import { generateId } from "./id.js";
 
 const MANIFEST_VERSION = 1;
@@ -833,14 +834,72 @@ export async function getSessionAttachment(
 
 export function streamSessionAttachment(
   attachment: { record: SessionAttachmentRecord; path: string; size: number },
+  req: IncomingMessage,
   res: ServerResponse,
+  method = "GET",
 ): void {
-  res.writeHead(200, {
+  const commonHeaders = {
     "Content-Type": attachment.record.mimeType,
-    "Content-Length": attachment.size.toString(),
     "Cache-Control": "private, max-age=3600",
+    "Accept-Ranges": "bytes",
+  };
+  const range = parseByteRangeHeader(req.headers?.range, attachment.size);
+  const isHeadRequest = method.toUpperCase() === "HEAD";
+
+  if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+    res.writeHead(416, {
+      ...commonHeaders,
+      "Content-Range": `bytes */${attachment.size}`,
+      "Content-Length": "0",
+    });
+    res.end();
+    return;
+  }
+
+  if (range.kind === "valid") {
+    const contentLength = range.end - range.start + 1;
+    res.writeHead(206, {
+      ...commonHeaders,
+      "Content-Range": `bytes ${range.start}-${range.end}/${attachment.size}`,
+      "Content-Length": contentLength.toString(),
+    });
+    if (isHeadRequest) {
+      res.end();
+      return;
+    }
+    pipeAttachmentStream(attachment.path, res, range);
+    return;
+  }
+
+  res.writeHead(200, {
+    ...commonHeaders,
+    "Content-Length": attachment.size.toString(),
   });
-  createReadStream(attachment.path).pipe(res as NodeJS.WritableStream);
+  if (isHeadRequest) {
+    res.end();
+    return;
+  }
+  pipeAttachmentStream(attachment.path, res);
+}
+
+function pipeAttachmentStream(
+  filePath: string,
+  res: ServerResponse,
+  range?: { start: number; end: number },
+): void {
+  const stream = range
+    ? createReadStream(filePath, { start: range.start, end: range.end })
+    : createReadStream(filePath);
+
+  stream.on("error", (error) => {
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to read attachment" }));
+      return;
+    }
+    res.destroy(error);
+  });
+  stream.pipe(res as NodeJS.WritableStream);
 }
 
 export function deleteSessionAttachments(dataDir: string, sessionId: string): boolean {

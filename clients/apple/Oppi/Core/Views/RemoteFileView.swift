@@ -23,7 +23,7 @@ struct RemoteFileView: View {
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var content: String?
     @State private var imageData: Data?
-    @State private var videoURL: URL?
+    @State private var videoSource: AuthenticatedMediaSource?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadedServerBaseURL: URL?
@@ -123,11 +123,13 @@ struct RemoteFileView: View {
                         }
                     }
                 }
-            } else if let videoURL, isVideoPath {
+            } else if let videoSource, isVideoPath {
                 NavigationStack {
-                    URLVideoPlayerView(
-                        url: videoURL,
-                        height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420)
+                    AuthenticatedMediaPlayerView(
+                        source: videoSource,
+                        height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420),
+                        unavailableTitle: "Video preview unavailable",
+                        unavailableSystemImage: "film.slash"
                     )
                     .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -220,9 +222,11 @@ struct RemoteFileView: View {
                         message: "Video preview requires a workspace file path"
                     )
                 }
-                self.videoURL = try await api.browseFileStreamURL(
+                self.videoSource = try await api.makeWorkspaceMediaSource(
                     workspaceId: resolvedWorkspaceId,
-                    path: streamPath
+                    path: streamPath,
+                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
+                    sourceFileExtension: pathExtension
                 )
             } else {
                 let text = try await api.getSessionFile(

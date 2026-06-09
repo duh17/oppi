@@ -1,6 +1,6 @@
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type RouteSurface = "core" | "admin" | "internal";
-export type RouteAuth = "none" | "owner" | "query-token-get";
+export type RouteAuth = "none" | "owner";
 export type RouteTransport = "http" | "websocket";
 // Which iOS/Mac app flows should depend on this route?
 // - session: watching and controlling agent sessions.
@@ -61,6 +61,7 @@ const sessionOperationIds = new Set<string>([
   "getSessionDiff",
   "getSessionRaw",
   "getSessionAttachment",
+  "headSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
   "openDictationStream",
@@ -301,7 +302,7 @@ const rawApiRouteSpecs = [
     path: "/workspaces/{workspaceId}/raw/{path+}",
     operationId: "getWorkspaceRaw",
     surface: "core",
-    auth: "query-token-get",
+    auth: "owner",
   },
 
   {
@@ -455,7 +456,14 @@ const rawApiRouteSpecs = [
     path: "/workspaces/{workspaceId}/sessions/{sessionId}/attachments/{attachmentId}",
     operationId: "getSessionAttachment",
     surface: "core",
-    auth: "query-token-get",
+    auth: "owner",
+  },
+  {
+    method: "HEAD",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/attachments/{attachmentId}",
+    operationId: "headSessionAttachment",
+    surface: "core",
+    auth: "owner",
   },
   {
     method: "GET",

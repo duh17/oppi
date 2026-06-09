@@ -891,20 +891,109 @@ struct APIClientTests {
         #expect(step == 3)
     }
 
-    @Test func browseFileStreamURLUsesEncodedPathSegmentsAndQueryItems() async throws {
+    @Test func workspaceMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
         let client = makeClient()
-        let url = try await client.browseFileStreamURL(
+        let source = try await client.makeWorkspaceMediaSource(
             workspaceId: "w1",
-            path: "clips/space +?#%&/日本語 sample.mov"
+            path: "clips/space +?#%&/日本語 sample.mov",
+            contentTypeHint: "video/quicktime",
+            sourceFileExtension: "mov"
         )
 
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
         #expect(
             components?.percentEncodedPath ==
                 "/workspaces/w1/raw/clips%2Fspace%20%2B%3F%23%25%26%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20sample.mov"
         )
-        let items = components?.queryItems ?? []
-        #expect(items.contains(where: { $0.name == "token" && $0.value == "sk_test" }))
+        #expect(components?.queryItems?.isEmpty ?? true)
+        #expect(source.url.absoluteString.contains("sk_test") == false)
+        #expect(source.identity.contains("sk_test") == false)
+        #expect(source.authorizationHeaderValue == "Bearer sk_test")
+        #expect(source.contentTypeHint == "video/quicktime")
+        #expect(source.sourceFileExtension == "mov")
+    }
+
+    @Test func sessionAttachmentMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
+        let client = makeClient()
+        let source = try await client.makeSessionAttachmentMediaSource(
+            workspaceId: "w1",
+            sessionId: "s1",
+            attachmentId: "att_space +?#%& 日本語",
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+
+        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
+        #expect(
+            components?.percentEncodedPath ==
+                "/workspaces/w1/sessions/s1/attachments/att_space%20%2B%3F%23%25%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E"
+        )
+        #expect(components?.queryItems?.isEmpty ?? true)
+        #expect(source.url.absoluteString.contains("sk_test") == false)
+        #expect(source.identity.contains("sk_test") == false)
+        #expect(source.authorizationHeaderValue == "Bearer sk_test")
+        #expect(source.contentTypeHint == "audio/wav")
+        #expect(source.sourceFileExtension == "wav")
+    }
+
+    @Test func authenticatedMediaResponseValidatorAcceptsMatchingPartialContent() {
+        let range = AuthenticatedMediaRequestedRange(start: 1_024, end: 2_047)
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 1024-2047/4096"
+        )
+        #expect(error == nil)
+    }
+
+    @Test func authenticatedMediaResponseValidatorAcceptsClampedFinalPartialContent() {
+        let range = AuthenticatedMediaRequestedRange(start: 4_096, end: 5_119)
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 4096-4999/5000"
+        )
+        #expect(error == nil)
+    }
+
+    @Test func authenticatedMediaResponseValidatorRejectsRangeRequestWithFullResponse() {
+        let range = AuthenticatedMediaRequestedRange(start: 1_024, end: 2_047)
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 200,
+            requestedRange: range,
+            contentRange: nil
+        )
+        #expect(error != nil)
+    }
+
+    @Test func authenticatedMediaResponseValidatorRejectsMismatchedContentRange() {
+        let range = AuthenticatedMediaRequestedRange(start: 1_024, end: 2_047)
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 0-1023/4096"
+        )
+        #expect(error != nil)
+    }
+
+    @Test func authenticatedMediaResponseValidatorRejectsMissingContentRange() {
+        let range = AuthenticatedMediaRequestedRange(start: 1_024, end: 2_047)
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: nil
+        )
+        #expect(error != nil)
+    }
+
+    @Test func authenticatedMediaResponseValidatorRejectsMalformedContentRange() {
+        let range = AuthenticatedMediaRequestedRange(start: 1_024, end: 2_047)
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 1024-2047/not-a-size"
+        )
+        #expect(error != nil)
     }
 
     @Test func sessionAndSkillFileURLsUseQueryItemsForSpecialCharacters() async throws {

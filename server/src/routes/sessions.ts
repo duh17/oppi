@@ -1340,7 +1340,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     workspaceId: string,
     sessionId: string,
     attachmentId: string,
+    req: IncomingMessage,
     res: ServerResponse,
+    method: string,
   ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
@@ -1362,7 +1364,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    streamSessionAttachment(attachment, res);
+    streamSessionAttachment(attachment, req, res, method);
   }
 
   async function handleGetToolOutput(
@@ -1778,12 +1780,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionAttachmentMatch = path.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/attachments\/([^/]+)$/,
     );
-    if (wsSessionAttachmentMatch && method === "GET") {
+    if (wsSessionAttachmentMatch && (method === "GET" || method === "HEAD")) {
       await handleGetSessionAttachment(
         wsSessionAttachmentMatch[1],
         wsSessionAttachmentMatch[2],
         wsSessionAttachmentMatch[3],
+        req,
         res,
+        method,
       );
       return true;
     }
