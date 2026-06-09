@@ -3,11 +3,6 @@ import UIKit
 
 enum QuickSessionSheetLayout {
     static let compactDetentHeight: CGFloat = 150
-    /// Stable expanded target for normal inline composer growth. Holding this
-    /// detent through wrapped text rows keeps the sheet from retargeting while
-    /// dictation or typing adds lines.
-    static let expandedComposerDetentHeight: CGFloat = 284
-
     private static let detentIncrement: CGFloat = 4
 
     static func normalizedContentHeight(_ height: CGFloat) -> CGFloat {
@@ -20,12 +15,11 @@ enum QuickSessionSheetLayout {
         guard contentHeight > 0 else { return compactDetentHeight }
 
         // `.height` detents already reserve the sheet presentation chrome/safe area.
-        // Compare against measured content directly so a two-line composer does
-        // not jump to the expanded detent and leave a blank sheet header.
-        let requiredHeight = contentHeight
-        guard requiredHeight > compactDetentHeight else { return compactDetentHeight }
-        guard requiredHeight > expandedComposerDetentHeight else { return expandedComposerDetentHeight }
-        return requiredHeight
+        // Keep the compact rest height for short input, then track measured content
+        // directly. A coarse expanded bucket leaves an empty sheet header when the
+        // composer barely grows past one line.
+        guard contentHeight > compactDetentHeight else { return compactDetentHeight }
+        return contentHeight
     }
 
     static func shouldApplyContentHeightChange(currentContentHeight: CGFloat, incomingContentHeight: CGFloat) -> Bool {
@@ -159,7 +153,11 @@ struct ContentView: View {
 #if DEBUG
         if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
             || ProcessInfo.processInfo.environment["OPPI_E2E_DIAGNOSTICS"] == "1" {
-            E2EWebSocketDiagnosticsView(connection: connection)
+            E2EWebSocketDiagnosticsView(
+                connection: connection,
+                quickSessionContentHeight: quickSessionMeasuredContentHeight,
+                quickSessionDetentHeight: quickSessionDetentHeight
+            )
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
                 .allowsHitTesting(false)
@@ -211,6 +209,8 @@ struct ContentView: View {
 #if DEBUG
 private struct E2EWebSocketDiagnosticsView: View {
     let connection: ServerConnection
+    let quickSessionContentHeight: CGFloat
+    let quickSessionDetentHeight: CGFloat
     @State private var refreshTick = 0
 
     var body: some View {
@@ -223,6 +223,8 @@ private struct E2EWebSocketDiagnosticsView: View {
             diagnosticText("e2e.ws.desiredSubscriptions", value: desiredSubscriptionsLabel)
             diagnosticText("e2e.ws.ackedSubscriptions", value: ackedSubscriptionsLabel)
             diagnosticText("e2e.audio.liveTransportSession", value: connection.audioPlayer.activeLiveTransportSessionID ?? "none")
+            diagnosticText("e2e.quickSession.contentHeight", value: heightLabel(quickSessionContentHeight))
+            diagnosticText("e2e.quickSession.detentHeight", value: heightLabel(quickSessionDetentHeight))
         }
         .task {
             while !Task.isCancelled {
@@ -241,6 +243,10 @@ private struct E2EWebSocketDiagnosticsView: View {
             .lineLimit(1)
             .accessibilityIdentifier(id)
             .accessibilityLabel(value)
+    }
+
+    private func heightLabel(_ height: CGFloat) -> String {
+        String(format: "%.0f", height)
     }
 
     private var wsStatusLabel: String {
