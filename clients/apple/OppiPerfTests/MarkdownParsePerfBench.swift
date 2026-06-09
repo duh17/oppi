@@ -151,8 +151,7 @@ struct MarkdownParsePerfBench {
             content: content,
             isStreaming: true,
             themeID: .dark,
-            textSelectionEnabled: false,
-            plainTextFallbackThreshold: nil
+            textSelectionEnabled: false
         )
     }
 

@@ -83,6 +83,39 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("expanded large markdown activation opens full screen")
+    func expandedLargeMarkdownActivationOpensFullScreen() throws {
+        let largeMarkdown = (0..<1_200).map { index in
+            """
+            ## Section \(index)
+
+            **Strong text \(index)** with `inline code`.
+            """
+        }.joined(separator: "\n\n")
+        #expect(largeMarkdown.utf8.count > 64 * 1024)
+
+        let harness = makeHostHarness()
+        let host = harness.host
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: largeMarkdown),
+            copyOutputText: largeMarkdown,
+            toolNamePrefix: "web_fetch",
+            isExpanded: true
+        ))
+
+        host.view.addSubview(view)
+        view.frame = host.view.bounds
+        host.view.layoutIfNeeded()
+
+        view.performExpandedActivation()
+
+        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
+        #expect(presented.modalPresentationStyle == .pageSheet)
+
+        host.dismiss(animated: false)
+        harness.window.isHidden = true
+    }
+
     @Test("streaming markdown full screen content carries markdown render hint")
     func streamingMarkdownFullScreenContentCarriesMarkdownRenderHint() throws {
         let markdown = "# Streaming plan\n\nBody"

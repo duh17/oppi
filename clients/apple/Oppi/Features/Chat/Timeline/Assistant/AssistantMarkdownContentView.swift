@@ -29,14 +29,10 @@ enum ContentRenderingMode: Equatable, Sendable {
 /// - `NativeCodeBlockView` / `NativeTableBlockView` render block-level surfaces.
 final class AssistantMarkdownContentView: UIView {
     struct Configuration: Equatable {
-        /// Default inline fallback. Pass `nil` for dedicated reader/document surfaces.
-        static let defaultPlainTextFallbackThreshold = 20_000
-
         let content: String
         let isStreaming: Bool
         let themeID: ThemeID
         let textSelectionEnabled: Bool
-        let plainTextFallbackThreshold: Int?
         let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
         let reviewCommentSourceContext: ReviewCommentSourceContext?
         /// Workspace context for resolving inline image paths.
@@ -72,7 +68,6 @@ final class AssistantMarkdownContentView: UIView {
             isStreaming: Bool,
             themeID: ThemeID,
             textSelectionEnabled: Bool = true,
-            plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
             workspaceID: String? = nil,
@@ -87,7 +82,6 @@ final class AssistantMarkdownContentView: UIView {
             self.isStreaming = isStreaming
             self.themeID = themeID
             self.textSelectionEnabled = textSelectionEnabled
-            self.plainTextFallbackThreshold = plainTextFallbackThreshold
             self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
             self.reviewCommentSourceContext = reviewCommentSourceContext
             self.workspaceID = workspaceID
@@ -104,7 +98,6 @@ final class AssistantMarkdownContentView: UIView {
             isStreaming: Bool,
             themeID: ThemeID,
             textSelectionEnabled: Bool = true,
-            plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
             workspaceID: String? = nil,
@@ -120,7 +113,6 @@ final class AssistantMarkdownContentView: UIView {
                 isStreaming: isStreaming,
                 themeID: themeID,
                 textSelectionEnabled: textSelectionEnabled,
-                plainTextFallbackThreshold: plainTextFallbackThreshold,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
                 workspaceID: workspaceID,
@@ -138,7 +130,6 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.isStreaming == rhs.isStreaming
                 && lhs.themeID == rhs.themeID
                 && lhs.textSelectionEnabled == rhs.textSelectionEnabled
-                && lhs.plainTextFallbackThreshold == rhs.plainTextFallbackThreshold
                 && lhs.reviewCommentSelectionRouter === rhs.reviewCommentSelectionRouter
                 && lhs.reviewCommentSourceContext == rhs.reviewCommentSourceContext
                 && lhs.workspaceID == rhs.workspaceID

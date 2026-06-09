@@ -271,7 +271,12 @@ enum FlatSegment: Sendable {
         /// Directory path of the source markdown file (e.g. "docs/").
         /// Used to resolve relative image paths like `images/foo.png`
         /// → `docs/images/foo.png` in the workspace.
-        sourceDirectory: String? = nil
+        sourceDirectory: String? = nil,
+        /// Timeline markdown merges adjacent text-like blocks so native text
+        /// selection can cross paragraphs. Full-screen readers can disable
+        /// merging and virtualize at paragraph/list granularity while using the
+        /// same parser and render views.
+        mergeAdjacentTextSegments: Bool = true
     ) -> [Self] {
         let palette = themeID.palette
         let blocks = MarkdownWikiLinkRewriter.rewrite(
@@ -294,6 +299,11 @@ enum FlatSegment: Sendable {
 
         func appendTextBlock(_ attributed: AttributedString) {
             guard !attributed.characters.isEmpty else { return }
+            guard mergeAdjacentTextSegments else {
+                flushPendingText()
+                result.append(.text(attributed))
+                return
+            }
             if hasPendingText {
                 pendingText.append(paragraphSeparator)
             }

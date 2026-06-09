@@ -1141,28 +1141,169 @@ extension NativeFullScreenTerminalBody: UITextViewDelegate {
     }
 }
 
-final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
-    private let scrollView = UIScrollView()
-    private let markdownView = AssistantMarkdownContentView()
-    private let markdownWidthConstraint: NSLayoutConstraint
+private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDelegate, UIGestureRecognizerDelegate {
+    static let reuseIdentifier = "FullScreenMarkdownSegmentCell"
+
+    private let stackView: UIStackView = {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }()
+
+    private lazy var segmentApplier = AssistantMarkdownSegmentApplier(
+        stackView: stackView,
+        textViewDelegate: self
+    )
+
+    private weak var textViewDelegate: (any UITextViewDelegate)?
+    private var doubleTapActivation: (() -> Void)?
+    private lazy var doubleTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
+        return recognizer
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.backgroundColor = .clear
+        backgroundColor = .clear
+        contentView.addGestureRecognizer(doubleTapRecognizer)
+        contentView.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        textViewDelegate = nil
+        doubleTapActivation = nil
+        segmentApplier.clear()
+    }
+
+    func apply(
+        segment: FlatSegment,
+        config: AssistantMarkdownContentView.Configuration,
+        textViewDelegate: any UITextViewDelegate,
+        doubleTapActivation: (() -> Void)?,
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    ) {
+        self.textViewDelegate = textViewDelegate
+        self.doubleTapActivation = doubleTapActivation
+        segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
+        segmentApplier.fetchSessionFile = fetchSessionFile
+        segmentApplier.apply(segments: [segment], config: config)
+    }
+
+    override func preferredLayoutAttributesFitting(
+        _ layoutAttributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes {
+        let attributes = super.preferredLayoutAttributesFitting(layoutAttributes)
+        bounds.size.width = layoutAttributes.size.width
+        contentView.bounds.size.width = layoutAttributes.size.width
+        setNeedsLayout()
+        layoutIfNeeded()
+
+        let targetSize = CGSize(
+            width: layoutAttributes.size.width,
+            height: UIView.layoutFittingCompressedSize.height
+        )
+        let size = contentView.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        attributes.size = CGSize(width: layoutAttributes.size.width, height: ceil(size.height))
+        return attributes
+    }
+
+    @objc private func handleDoubleTap() {
+        doubleTapActivation?()
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === doubleTapRecognizer
+            || otherGestureRecognizer === doubleTapRecognizer
+    }
+
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        textViewDelegate?.textView?(
+            textView,
+            editMenuForTextIn: range,
+            suggestedActions: suggestedActions
+        )
+    }
+
+    func textView(
+        _ textView: UITextView,
+        primaryActionFor textItem: UITextItem,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        textViewDelegate?.textView?(
+            textView,
+            primaryActionFor: textItem,
+            defaultAction: defaultAction
+        ) ?? defaultAction
+    }
+
+    func textView(
+        _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        textViewDelegate?.textView?(
+            textView,
+            menuConfigurationFor: textItem,
+            defaultMenu: defaultMenu
+        ) ?? UITextItem.MenuConfiguration(menu: defaultMenu)
+    }
+}
+
+final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
+    private let collectionView: UICollectionView
+    private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
-    private let plainTextFallbackThreshold: Int?
-    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
-    private let reviewCommentSourceContext: ReviewCommentSourceContext?
+    private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private var reviewCommentSourceContext: ReviewCommentSourceContext?
+    private var textSelectionEnabled: Bool
     private let workspaceID: String?
     private let sessionID: String?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
+    private let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    private let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
     private var readerPreferences: FullScreenReaderPreferences
 
     private let perfSurface: MarkdownStreamingPerf.Surface?
 
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
+    private var renderedSegments: [FlatSegment] = []
+    private var currentConfig: AssistantMarkdownContentView.Configuration?
+    private var viewportDoubleTapActivation: (() -> Void)?
     private var streamObserverID: UUID?
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
-        scrollView: scrollView,
+        scrollView: collectionView,
         shouldAutoFollowTail: false,
         performLayout: { [weak self] in
             self?.layoutIfNeeded()
@@ -1174,35 +1315,39 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         stream: ThinkingTraceStream?,
         isStreaming: Bool = false,
         palette: ThemePalette,
-        plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
+        textSelectionEnabled: Bool = true,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
+        allowsVerticalBounce: Bool = true,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.stream = stream
         self.perfSurface = perfSurface
-        self.plainTextFallbackThreshold = plainTextFallbackThreshold
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
+        self.textSelectionEnabled = textSelectionEnabled
         self.workspaceID = workspaceID
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         self.readerPreferences = readerPreferences
+        self.fetchWorkspaceFile = fetchWorkspaceFile
+        self.fetchSessionFile = fetchSessionFile
         let initialSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         latestSnapshot = initialSnapshot
-
-        markdownWidthConstraint = markdownView.widthAnchor.constraint(
-            equalTo: scrollView.frameLayoutGuide.widthAnchor,
-            constant: -24
+        collectionView = UICollectionView(
+            frame: .zero,
+            collectionViewLayout: Self.makeCollectionLayout(
+                spacing: readerPreferences.spacing.markdownStackSpacing
+            )
         )
 
         super.init(frame: .zero)
@@ -1210,38 +1355,31 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
         backgroundColor = UIColor(palette.bgDark)
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.backgroundColor = UIColor(palette.bgDark)
-        scrollView.alwaysBounceVertical = true
-        scrollView.showsVerticalScrollIndicator = true
-        scrollView.delegate = self
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.backgroundColor = UIColor(palette.bgDark)
+        collectionView.alwaysBounceVertical = allowsVerticalBounce
+        collectionView.bounces = allowsVerticalBounce
+        collectionView.showsVerticalScrollIndicator = true
+        collectionView.keyboardDismissMode = .interactive
+        collectionView.dataSource = self
+        collectionView.delegate = self
+        collectionView.register(
+            FullScreenMarkdownSegmentCell.self,
+            forCellWithReuseIdentifier: FullScreenMarkdownSegmentCell.reuseIdentifier
+        )
 
-        markdownView.translatesAutoresizingMaskIntoConstraints = false
-        markdownView.backgroundColor = .clear
-
-        addSubview(scrollView)
-        scrollView.addSubview(markdownView)
+        addSubview(collectionView)
 
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            markdownView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
-            markdownView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
-            markdownView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
-            markdownView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -10),
-            markdownWidthConstraint,
+            collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            collectionView.topAnchor.constraint(equalTo: topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        markdownView.fetchWorkspaceFile = fetchWorkspaceFile
-        markdownView.fetchSessionFile = fetchSessionFile
         render(snapshot: initialSnapshot)
 
-        // Static markdown (stream == nil): no observer needed, tail-follow stays off
         guard let stream else { return }
-
         streamObserverID = stream.addObserver { [weak self] snapshot in
             self?.handleStreamUpdate(snapshot)
         }
@@ -1249,6 +1387,12 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override var accessibilityIdentifier: String? {
+        didSet {
+            collectionView.accessibilityIdentifier = accessibilityIdentifier
+        }
+    }
 
     deinit {
         if let streamObserverID {
@@ -1264,15 +1408,63 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         tailFollowCoordinator.onLayoutPass()
     }
 
+    private static func makeCollectionLayout(spacing: CGFloat) -> UICollectionViewLayout {
+        UICollectionViewCompositionalLayout { _, _ in
+            let itemSize = NSCollectionLayoutSize(
+                widthDimension: .fractionalWidth(1.0),
+                heightDimension: .estimated(44)
+            )
+            let item = NSCollectionLayoutItem(layoutSize: itemSize)
+            let group = NSCollectionLayoutGroup.vertical(layoutSize: itemSize, subitems: [item])
+            let section = NSCollectionLayoutSection(group: group)
+            section.interGroupSpacing = spacing
+            section.contentInsets = NSDirectionalEdgeInsets(
+                top: 10,
+                leading: 12,
+                bottom: 10,
+                trailing: 12
+            )
+            return section
+        }
+    }
+
     private func handleStreamUpdate(_ snapshot: ThinkingTraceStream.Snapshot) {
         latestSnapshot = snapshot
         render(snapshot: snapshot)
     }
 
-    func update(content: String, isStreaming: Bool) {
+    func update(
+        content: String,
+        isStreaming: Bool,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
+        textSelectionEnabled: Bool
+    ) {
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
+        self.textSelectionEnabled = textSelectionEnabled
+        renderedSnapshot = nil
         let snapshot = ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         latestSnapshot = snapshot
         render(snapshot: snapshot)
+    }
+
+    func update(content: String, isStreaming: Bool) {
+        update(
+            content: content,
+            isStreaming: isStreaming,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSourceContext: reviewCommentSourceContext,
+            textSelectionEnabled: textSelectionEnabled
+        )
+    }
+
+    func installViewportGestureRecognizer(_ gesture: UIGestureRecognizer) {
+        collectionView.addGestureRecognizer(gesture)
+    }
+
+    func setViewportDoubleTapActivation(_ activation: (() -> Void)?) {
+        viewportDoubleTapActivation = activation
     }
 
     private func render(snapshot: ThinkingTraceStream.Snapshot) {
@@ -1282,11 +1474,11 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         }
 
         renderedSnapshot = snapshot
-        markdownView.apply(configuration: .make(
+        let config = AssistantMarkdownContentView.Configuration.make(
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
             themeID: ThemeRuntimeState.currentThemeID(),
-            plainTextFallbackThreshold: plainTextFallbackThreshold,
+            textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
             workspaceID: workspaceID,
@@ -1295,9 +1487,56 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             sourceFilePath: sourceFilePath,
             readerPreferences: readerPreferences,
             perfSurface: perfSurface
-        ))
+        )
+
+        let cycleStart = MarkdownStreamingPerf.timestampNs()
+        currentConfig = config
+        renderedSegments = segmentSource.buildSegments(
+            config,
+            mergeAdjacentTextSegments: false
+        )
+        collectionView.reloadData()
+        collectionView.collectionViewLayout.invalidateLayout()
+
+        if let surface = config.perfSurface {
+            let elapsed = MarkdownStreamingPerf.timestampNs() - cycleStart
+            MarkdownStreamingPerf.recordFullCycle(
+                totalNs: elapsed,
+                segmentCount: renderedSegments.count,
+                isStreaming: config.isStreaming,
+                surface: surface
+            )
+        }
 
         tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        renderedSegments.count
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        cellForItemAt indexPath: IndexPath
+    ) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: FullScreenMarkdownSegmentCell.reuseIdentifier,
+            for: indexPath
+        )
+        guard let cell = cell as? FullScreenMarkdownSegmentCell,
+              let config = currentConfig,
+              renderedSegments.indices.contains(indexPath.item) else {
+            return cell
+        }
+        cell.apply(
+            segment: renderedSegments[indexPath.item],
+            config: config,
+            textViewDelegate: self,
+            doubleTapActivation: viewportDoubleTapActivation,
+            fetchWorkspaceFile: fetchWorkspaceFile,
+            fetchSessionFile: fetchSessionFile
+        )
+        return cell
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -1327,9 +1566,169 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences
+        collectionView.setCollectionViewLayout(
+            Self.makeCollectionLayout(spacing: preferences.spacing.markdownStackSpacing),
+            animated: false
+        )
         renderedSnapshot = nil
         render(snapshot: latestSnapshot)
         setNeedsLayout()
+    }
+}
+
+#if DEBUG
+extension NativeFullScreenMarkdownBody {
+    var debugRenderedSegmentCountForTesting: Int { renderedSegments.count }
+    var debugVisibleCellCountForTesting: Int { collectionView.visibleCells.count }
+
+    func debugLayoutVisibleMarkdownCellsForTesting() {
+        collectionView.layoutIfNeeded()
+    }
+}
+#endif
+
+extension NativeFullScreenMarkdownBody: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        guard let config = currentConfig else { return nil }
+        return ReviewCommentSelectionEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: config.reviewCommentSelectionRouter,
+            sourceContext: config.reviewCommentSourceContext
+        )
+    }
+
+    func textView(
+        _ textView: UITextView,
+        primaryActionFor textItem: UITextItem,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        guard case let .link(url) = textItem.content else {
+            return defaultAction
+        }
+
+        switch classifyLink(url) {
+        case .deepLink(let normalizedURL):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+            }
+        case .webLink(let normalizedURL):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+            }
+        case .fileLink(let payload):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
+            }
+        case .systemDefault:
+            return defaultAction
+        }
+    }
+
+    func textView(
+        _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        guard case let .link(url) = textItem.content else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+
+        switch classifyLink(url) {
+        case .webLink(let normalizedURL):
+            let copyAction = UIAction(
+                title: "Copy Link",
+                image: UIImage(systemName: "doc.on.doc")
+            ) { _ in
+                UIPasteboard.general.string = normalizedURL.absoluteString
+            }
+
+            let openAction = UIAction(
+                title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
+                image: UIImage(systemName: "safari")
+            ) { _ in
+                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+            }
+
+            let shareAction = UIAction(
+                title: "Share...",
+                image: UIImage(systemName: "square.and.arrow.up")
+            ) { [weak textView] _ in
+                guard let textView else { return }
+                let activityVC = UIActivityViewController(
+                    activityItems: [normalizedURL],
+                    applicationActivities: nil
+                )
+                activityVC.popoverPresentationController?.sourceView = textView
+                textView.window?.rootViewController?
+                    .presentedViewController?.present(activityVC, animated: true)
+                    ?? textView.window?.rootViewController?.present(activityVC, animated: true)
+            }
+
+            return UITextItem.MenuConfiguration(menu: UIMenu(children: [openAction, copyAction, shareAction]))
+
+        case .fileLink, .deepLink, .systemDefault:
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+    }
+
+    private func classifyLink(_ url: URL) -> LinkAction {
+        let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
+        guard let scheme = normalizedURL.scheme?.lowercased() else {
+            return .systemDefault
+        }
+        if scheme == "oppi" {
+            return .deepLink(normalizedURL)
+        }
+        if scheme == "http" || scheme == "https" {
+            return .webLink(normalizedURL)
+        }
+        if scheme == WorkspaceWikiLinkURL.scheme,
+           let payload = workspaceWikiLinkPayload(for: normalizedURL) {
+            return .fileLink(payload)
+        }
+        if scheme == "file",
+           let payload = fileLinkPayload(for: normalizedURL) {
+            return .fileLink(payload)
+        }
+        return .systemDefault
+    }
+
+    private func workspaceWikiLinkPayload(for url: URL) -> FileLinkPayload? {
+        guard let parsed = WorkspaceWikiLinkURL.parse(url),
+              let config = currentConfig,
+              parsed.workspaceID == config.workspaceID else {
+            return nil
+        }
+
+        return FileLinkPayload(
+            workspaceID: parsed.workspaceID,
+            filePath: parsed.filePath,
+            originalURL: url
+        )
+    }
+
+    private func fileLinkPayload(for url: URL) -> FileLinkPayload? {
+        guard url.isFileURL,
+              let config = currentConfig,
+              let workspaceID = config.workspaceID,
+              !workspaceID.isEmpty else {
+            return nil
+        }
+
+        let filePath = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !filePath.isEmpty else { return nil }
+
+        return FileLinkPayload(
+            workspaceID: workspaceID,
+            filePath: filePath,
+            originalURL: url
+        )
     }
 }
 
@@ -1618,7 +2017,6 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
             isStreaming: false,
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: true,
-            plainTextFallbackThreshold: nil,
             readerPreferences: readerPreferences
         ))
         return mdView

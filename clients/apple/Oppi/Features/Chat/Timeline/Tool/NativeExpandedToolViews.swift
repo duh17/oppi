@@ -49,8 +49,9 @@ final class NativeExpandedReadMediaView: UIView {
         themeID: ThemeID,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
+        attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil,
         sessionFileDataFetcher: ((String) async throws -> Data)?,
-        sessionFileStreamURLProvider: ((String) async throws -> URL)?
+        sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)?
     ) {
         self.audioPlayer = audioPlayer
         var hasher = Hasher()
@@ -65,8 +66,9 @@ final class NativeExpandedReadMediaView: UIView {
             hasher.combine(attachment.height)
         }
         hasher.combine(attachmentFetcher != nil)
+        hasher.combine(attachmentMediaSourceProvider != nil)
         hasher.combine(sessionFileDataFetcher != nil)
-        hasher.combine(sessionFileStreamURLProvider != nil)
+        hasher.combine(sessionFileMediaSourceProvider != nil)
         hasher.combine(themeID.rawValue)
         if let audioPlayer {
             hasher.combine(ObjectIdentifier(audioPlayer).hashValue)
@@ -119,10 +121,10 @@ final class NativeExpandedReadMediaView: UIView {
             if case .video = FileType.detect(from: path) { return true }
             return false
         } ?? false
-        let hasVideoFileStreamURLProvider = filePath != nil && sessionFileStreamURLProvider != nil
-        let shouldRenderFetchedVideo = isVideoFile && hasVideoFileStreamURLProvider
+        let hasVideoFileMediaSourceProvider = filePath != nil && sessionFileMediaSourceProvider != nil
+        let shouldRenderFetchedVideo = isVideoFile && hasVideoFileMediaSourceProvider
         let hasRenderableImageAttachment = attachmentFetcher != nil && !imageAttachments.isEmpty
-        let hasRenderableVideoAttachment = attachmentFetcher != nil && !videoAttachments.isEmpty
+        let hasRenderableVideoAttachment = attachmentMediaSourceProvider != nil && !videoAttachments.isEmpty
         let hasRenderedImage = !displayImages.isEmpty || hasRenderableImageAttachment || shouldRenderFetchedSVG
         let hasRenderedVideo = shouldRenderFetchedVideo || hasRenderableVideoAttachment
         let hasImageReadBoilerplate = NativeExpandedReadMediaParser.containsImageReadBoilerplate(displayText)
@@ -248,15 +250,14 @@ final class NativeExpandedReadMediaView: UIView {
                     subtitle: NativeExpandedVideoAttachmentView.subtitle(mimeType: mimeType, sizeBytes: nil),
                     mimeType: mimeType,
                     sourceFileExtension: pathExtension,
-                    streamURLProvider: sessionFileStreamURLProvider.map { provider in { try await provider(filePath) } },
-                    palette: palette,
-                    fetchData: nil
+                    mediaSourceProvider: sessionFileMediaSourceProvider.map { provider in { try await provider(filePath) } },
+                    palette: palette
                 )
                 contentStack.addArrangedSubview(row)
                 renderedCount += 1
             }
 
-            if renderedCount < 6, let attachmentFetcher {
+            if renderedCount < 6, attachmentMediaSourceProvider != nil {
                 for attachment in videoAttachments.prefix(6 - renderedCount) {
                     let row = NativeExpandedVideoAttachmentView()
                     let sourceFileExtension = attachment.fileName.map { ($0 as NSString).pathExtension }
@@ -269,9 +270,10 @@ final class NativeExpandedReadMediaView: UIView {
                         ),
                         mimeType: attachment.mimeType,
                         sourceFileExtension: sourceFileExtension,
-                        streamURLProvider: nil,
-                        palette: palette,
-                        fetchData: { try await attachmentFetcher(attachment.id) }
+                        mediaSourceProvider: attachmentMediaSourceProvider.map { provider in
+                            { try await provider(attachment.id, attachment.mimeType, sourceFileExtension) }
+                        },
+                        palette: palette
                     )
                     contentStack.addArrangedSubview(row)
                     renderedCount += 1
@@ -377,14 +379,8 @@ final class NativeExpandedReadMediaView: UIView {
         label.textColor = UIColor(palette.fg)
         label.numberOfLines = 0
         label.lineBreakMode = .byCharWrapping
-        label.text = sourcePreviewText(source)
+        label.text = source.trimmingCharacters(in: .whitespacesAndNewlines)
         return makeCardView(contentView: label, palette: palette)
-    }
-
-    private func sourcePreviewText(_ source: String) -> String {
-        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 20_000 else { return trimmed }
-        return String(trimmed.prefix(20_000)) + "\n\n[Source preview truncated in UI. Use the read tool with offset/limit for a focused slice.]"
     }
 
     @objc private func svgModeChanged() {
@@ -645,10 +641,8 @@ final class NativeExpandedVideoAttachmentView: UIView {
     private var id: String?
     private var mimeType: String?
     private var sourceFileExtension: String?
-    private var streamURLProvider: (() async throws -> URL)?
-    private var fetchData: (() async throws -> Data)?
+    private var mediaSourceProvider: (() async throws -> AuthenticatedMediaSource)?
     private var fetchTask: Task<Void, Never>?
-    private var fileURL: URL?
     private var lastError: String?
 
     override init(frame: CGRect) {
@@ -669,21 +663,18 @@ final class NativeExpandedVideoAttachmentView: UIView {
         subtitle: String,
         mimeType: String?,
         sourceFileExtension: String?,
-        streamURLProvider: (() async throws -> URL)?,
-        palette: ThemePalette,
-        fetchData: (() async throws -> Data)?
+        mediaSourceProvider: (() async throws -> AuthenticatedMediaSource)?,
+        palette: ThemePalette
     ) {
         if self.id != id {
             fetchTask?.cancel()
-            fileURL = nil
             lastError = nil
         }
 
         self.id = id
         self.mimeType = mimeType
         self.sourceFileExtension = sourceFileExtension
-        self.streamURLProvider = streamURLProvider
-        self.fetchData = fetchData
+        self.mediaSourceProvider = mediaSourceProvider
 
         accessibilityIdentifier = "toolRow.videoAttachment"
         titleLabel.accessibilityIdentifier = "toolRow.videoAttachment.title"
@@ -697,7 +688,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
         spinner.color = UIColor(palette.blue)
         container.backgroundColor = UIColor(palette.bgDark)
         container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-        playButton.isEnabled = streamURLProvider != nil || fetchData != nil
+        playButton.isEnabled = mediaSourceProvider != nil
         updateButton(palette: palette, isLoading: fetchTask != nil)
     }
 
@@ -780,62 +771,19 @@ final class NativeExpandedVideoAttachmentView: UIView {
     }
 
     @objc private func playVideo() {
-        if let fileURL {
-            presentVideo(fileURL)
-            return
-        }
-        guard let id else { return }
-
-        if let streamURLProvider {
-            fetchTask?.cancel()
-            lastError = nil
-            updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: true)
-            fetchTask = Task { [weak self] in
-                do {
-                    let url = try await streamURLProvider()
-                    await MainActor.run { [weak self] in
-                        guard let self, self.id == id else { return }
-                        self.fetchTask = nil
-                        self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
-                        self.presentVideo(url)
-                    }
-                } catch {
-                    await MainActor.run { [weak self] in
-                        guard let self, self.id == id else { return }
-                        self.fetchTask = nil
-                        self.lastError = error.localizedDescription
-                        self.subtitleLabel.text = error.localizedDescription
-                        self.subtitleLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().red)
-                        self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
-                    }
-                }
-            }
-            return
-        }
-
-        guard let fetchData else { return }
+        guard let id, let mediaSourceProvider else { return }
 
         fetchTask?.cancel()
         lastError = nil
         updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: true)
-        let mimeType = self.mimeType
-        let sourceFileExtension = self.sourceFileExtension
         fetchTask = Task { [weak self] in
             do {
-                let data = try await fetchData()
-                let preferredExtension = MediaMimeType.preferredFileExtension(
-                    forVideo: mimeType,
-                    fallbackPathExtension: sourceFileExtension
-                )
-                let url = try await Task.detached(priority: .userInitiated) {
-                    try MediaTempFileStore.fileURL(for: data, preferredExtension: preferredExtension)
-                }.value
+                let source = try await mediaSourceProvider()
                 await MainActor.run { [weak self] in
                     guard let self, self.id == id else { return }
                     self.fetchTask = nil
-                    self.fileURL = url
                     self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
-                    self.presentVideo(url)
+                    self.presentVideo(source)
                 }
             } catch {
                 await MainActor.run { [weak self] in
@@ -850,9 +798,9 @@ final class NativeExpandedVideoAttachmentView: UIView {
         }
     }
 
-    private func presentVideo(_ url: URL) {
+    private func presentVideo(_ source: AuthenticatedMediaSource) {
         guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
-        SystemVideoPlaybackPresenter.present(url: url, title: titleLabel.text, from: presenter)
+        SystemVideoPlaybackPresenter.present(source: source, title: titleLabel.text, from: presenter)
     }
 }
 

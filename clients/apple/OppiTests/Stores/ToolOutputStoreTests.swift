@@ -14,27 +14,22 @@ struct ToolOutputStoreTests {
         #expect(store.totalBytes == 11)
     }
 
-    @Test func perItemCapEnforced() {
+    @Test func largeAppendStoresOutputIntact() {
         let store = ToolOutputStore()
-        let bigChunk = String(repeating: "x", count: ToolOutputStore.perItemCap + 1000)
+        let bigChunk = String(repeating: "x", count: ToolOutputStore.totalCap + 1_000)
         store.append(bigChunk, to: "t1")
 
-        let output = store.fullOutput(for: "t1")
-        // Should be capped at perItemCap + truncation marker
-        #expect(output.hasSuffix(ToolOutputStore.truncationMarker))
-        #expect(output.utf8.count <= ToolOutputStore.perItemCap + ToolOutputStore.truncationMarker.utf8.count + 4)  // +4 for possible char boundary
+        #expect(store.fullOutput(for: "t1") == bigChunk)
+        #expect(store.byteCount(for: "t1") == bigChunk.utf8.count)
     }
 
-    @Test func perItemCapStopsSubsequentAppends() {
+    @Test func largeAppendKeepsSubsequentAppends() {
         let store = ToolOutputStore()
-        // Fill to exactly the cap
-        let fillChunk = String(repeating: "a", count: ToolOutputStore.perItemCap)
+        let fillChunk = String(repeating: "a", count: ToolOutputStore.totalCap + 1_000)
         store.append(fillChunk, to: "t1")
-        let sizeAfterFill = store.byteCount(for: "t1")
 
-        // Further appends should be no-ops
         store.append("more data", to: "t1")
-        #expect(store.byteCount(for: "t1") == sizeAfterFill)
+        #expect(store.fullOutput(for: "t1") == fillChunk + "more data")
     }
 
     @Test func mediaSizedDataUriFitsWithoutTruncation() {
@@ -44,14 +39,12 @@ struct ToolOutputStoreTests {
 
         store.append(output, to: "img")
 
-        #expect(!store.fullOutput(for: "img").hasSuffix(ToolOutputStore.truncationMarker))
         #expect(store.fullOutput(for: "img") == output)
     }
 
     @Test func totalCapEvictsOldest() {
         let store = ToolOutputStore()
-        // Each chunk is per-item cap; inserting enough items should force FIFO eviction
-        let chunkSize = ToolOutputStore.perItemCap
+        let chunkSize = 2 * 1024 * 1024
         let chunk = String(repeating: "x", count: chunkSize)
 
         // Insert many items — should evict oldest to stay under totalCap
@@ -139,12 +132,11 @@ struct ToolOutputStoreTests {
         #expect(store.outputByteCount(for: "t1") == 50_000)
     }
 
-    @Test func replaceRespectsPerItemCap() {
+    @Test func replaceStoresLargeOutputIntact() {
         let store = ToolOutputStore()
-        let oversized = String(repeating: "x", count: ToolOutputStore.perItemCap + 1000)
+        let oversized = String(repeating: "x", count: ToolOutputStore.totalCap + 1_000)
         store.replace(oversized, for: "t1")
-        let output = store.fullOutput(for: "t1")
-        #expect(output.hasSuffix(ToolOutputStore.truncationMarker))
+        #expect(store.fullOutput(for: "t1") == oversized)
     }
 
     @Test func replacePreviewTracksReportedByteCountSeparatelyFromStoredBytes() {

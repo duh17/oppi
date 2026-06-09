@@ -207,9 +207,6 @@ extension ToolPresentationBuilder {
         }
 
         if format == "markdown" {
-            if textOutput.utf8.count > extensionStructuredParseBudgetBytes {
-                return (note("markdown preview skipped (over 64KB). showing text"), textOutput)
-            }
             return (.markdown(text: textOutput), textOutput)
         }
 
@@ -232,9 +229,6 @@ extension ToolPresentationBuilder {
         }
 
         if looksLikeMarkdownContent(textOutput) {
-            if textOutput.utf8.count > extensionStructuredParseBudgetBytes {
-                return (note("markdown preview skipped (over 64KB). showing text"), textOutput)
-            }
             return (.markdown(text: textOutput), textOutput)
         }
 

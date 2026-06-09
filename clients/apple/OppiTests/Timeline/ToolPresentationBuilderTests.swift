@@ -1354,8 +1354,8 @@ struct ToolPresentationBuilderTests {
 
     }
 
-    @Test("extension json/markdown over budget fall back to text with note")
-    func extensionStructuredBudgetFallbackToText() {
+    @Test("extension json over budget stays text, markdown stays markdown")
+    func extensionStructuredBudgetHandling() {
         let oversizedJSON = "{\"payload\":\"" + String(repeating: "x", count: 70_000) + "\"}"
         let jsonFallback = ToolPresentationBuilder.build(
             itemID: "ext-json-over-budget", tool: "extensions.lookup",
@@ -1378,7 +1378,7 @@ struct ToolPresentationBuilderTests {
         #expect(jsonFallback.copyOutputText == oversizedJSON)
 
         let oversizedMarkdown = String(repeating: "- row\n", count: 20_000)
-        let markdownFallback = ToolPresentationBuilder.build(
+        let markdown = ToolPresentationBuilder.build(
             itemID: "ext-md-over-budget", tool: "extensions.notes",
             argsSummary: "",
             outputPreview: "",
@@ -1390,13 +1390,12 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let markdownText, let markdownLanguage) = markdownFallback.expandedContent else {
-            Issue.record("Expected text fallback for oversized markdown")
+        guard case .markdown(let markdownText) = markdown.expandedContent else {
+            Issue.record("Expected oversized markdown to stay markdown")
             return
         }
-        #expect(markdownLanguage == nil)
-        #expect(markdownText.contains("markdown preview skipped (over 64KB)"))
-        #expect(markdownFallback.copyOutputText == oversizedMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(!markdownText.contains("markdown preview skipped"))
+        #expect(markdown.copyOutputText == oversizedMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     @Test("extension expanded strips invocation echo and excessive blank lines")

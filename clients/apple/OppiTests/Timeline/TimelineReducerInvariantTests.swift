@@ -71,16 +71,16 @@ struct TimelineReducerInvariantTests {
         }
     }
 
-    @Test func cappedToolOutputNoOpBatchesDoNotMutateVisibleState() {
+    @Test func emptyToolOutputDoesNotMutateVisibleStateAfterLargeOutput() {
         let reducer = TimelineReducer()
-        let toolID = "tool-cap"
+        let toolID = "tool-large"
 
         reducer.processBatch([
             .agentStart(sessionId: "s1"),
             .toolStart(sessionId: "s1", toolEventId: toolID, tool: "read", args: [:]),
         ])
 
-        let huge = String(repeating: "x", count: ToolOutputStore.perItemCap + 512)
+        let huge = String(repeating: "x", count: ToolOutputStore.totalCap + 512)
         reducer.processBatch([
             .toolOutput(sessionId: "s1", toolEventId: toolID, output: huge, isError: false),
         ])
@@ -90,11 +90,17 @@ struct TimelineReducerInvariantTests {
 
         reducer.processBatch([
             .toolOutput(sessionId: "s1", toolEventId: toolID, output: "", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "ignored-after-cap", isError: false),
         ])
 
         #expect(reducer.renderVersion == baselineVersion)
         #expect(snapshot(of: reducer) == baselineSnapshot)
+
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "appended-after-large-output", isError: false),
+        ])
+
+        #expect(reducer.renderVersion > baselineVersion)
+        #expect(reducer.toolOutputStore.fullOutput(for: toolID) == huge + "appended-after-large-output")
     }
 
     @Test func replayingNonDeltaBatchBumpsRenderVersionOnlyOnFirstPass() {

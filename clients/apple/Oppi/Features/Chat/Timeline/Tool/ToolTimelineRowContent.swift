@@ -39,8 +39,9 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let segmentAttributedTrailing: NSAttributedString?
     var audioPlayer: AudioPlayerService? = nil
     var sessionAttachmentFetcher: ((String) async throws -> Data)? = nil
+    var sessionAttachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil
     var sessionFileDataFetcher: ((String) async throws -> Data)? = nil
-    var sessionFileStreamURLProvider: ((String) async throws -> URL)? = nil
+    var sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)? = nil
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
 
@@ -72,15 +73,21 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         return copy
     }
 
+    func withSessionAttachmentMediaSourceProvider(_ provider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)?) -> Self {
+        var copy = self
+        copy.sessionAttachmentMediaSourceProvider = provider
+        return copy
+    }
+
     func withSessionFileDataFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
         var copy = self
         copy.sessionFileDataFetcher = fetcher
         return copy
     }
 
-    func withSessionFileStreamURLProvider(_ provider: ((String) async throws -> URL)?) -> Self {
+    func withSessionFileMediaSourceProvider(_ provider: ((String) async throws -> AuthenticatedMediaSource)?) -> Self {
         var copy = self
-        copy.sessionFileStreamURLProvider = provider
+        copy.sessionFileMediaSourceProvider = provider
         return copy
     }
 
@@ -177,6 +184,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     var expandedUsesMarkdownLayout = false
     var expandedUsesReadMediaLayout = false
     private var expandedReadMediaContentView: UIView?
+    private var expandedReadMediaViewportHeightConstraint: NSLayoutConstraint?
+    private var expandedMarkdownViewportDoubleTapGesture: UITapGestureRecognizer?
     /// Tracks which base64 image is currently being decoded / displayed.
     private var imagePreviewDecodedKey: String?
     private var imagePreviewDecodeTask: Task<Void, Never>?
@@ -209,6 +218,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         target: self,
         action: #selector(handleExpandedDoubleTap),
         cancelsTouchesInView: true
+    )
+
+    private lazy var expandedContainerDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleExpandedDoubleTap),
+        cancelsTouchesInView: false
     )
 
     private lazy var expandedPinchGesture: UIPinchGestureRecognizer = {
@@ -378,6 +393,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 expandedViewportHeightConstraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
                     for: mode, geometry: geometry
                 )
+            } else if expandedUsesReadMediaLayout,
+                      expandedReadMediaContentView is NativeFullScreenMarkdownBody {
+                let mode: ViewportMode = .expandedText
+                let availableHeight = ToolRowViewportCalculator.availableViewportHeight(
+                    for: mode,
+                    geometry: geometry
+                )
+                expandedViewportHeightConstraint.constant = isStreaming
+                    ? ToolRowViewportCalculator.streamingConstrainedHeight(for: mode, geometry: geometry)
+                    : min(Self.maxOutputViewportHeight, availableHeight)
             } else if expandedUsesReadMediaLayout {
                 // Read-media images should size vertically to show the whole
                 // image in the timeline. Do not clamp to the generic text
@@ -549,6 +574,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 sessionId: currentConfiguration.reviewCommentSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: nil,
+                attachmentMediaSourceProvider: nil,
                 palette: ThemeRuntimeState.currentPalette(),
                 suppressAutoplay: suppressAutoplay
             )
@@ -562,6 +588,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 sessionId: currentConfiguration.reviewCommentSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+                attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
                 palette: ThemeRuntimeState.currentPalette(),
                 suppressAutoplay: suppressAutoplay
             )
@@ -569,6 +596,82 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         native.setNeedsLayout()
         setNeedsLayout()
         ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
+
+    private func installExpandedMarkdownViewport(
+        text: String,
+        isStreaming: Bool,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
+        textSelectionEnabled: Bool
+    ) {
+        let native: NativeFullScreenMarkdownBody
+        if let existing = expandedReadMediaContentView as? NativeFullScreenMarkdownBody {
+            native = existing
+        } else {
+            clearExpandedReadMediaView()
+            native = NativeFullScreenMarkdownBody(
+                content: text,
+                stream: nil,
+                isStreaming: isStreaming,
+                palette: ThemeRuntimeState.currentPalette(),
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+                reviewCommentSourceContext: reviewCommentSourceContext,
+                textSelectionEnabled: textSelectionEnabled,
+                readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
+                perfSurface: .toolExpanded,
+                allowsVerticalBounce: false
+            )
+            installExpandedEmbeddedView(native)
+        }
+
+        native.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
+        native.update(
+            content: text,
+            isStreaming: isStreaming,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSourceContext: reviewCommentSourceContext,
+            textSelectionEnabled: textSelectionEnabled
+        )
+        native.setViewportDoubleTapActivation { [weak self] in
+            self?.performExpandedActivation()
+        }
+        installExpandedMarkdownViewportGestureIfNeeded(on: native)
+        expandedReadMediaViewportHeightConstraint?.isActive = false
+        let heightConstraint = expandedReadMediaContainer.heightAnchor.constraint(
+            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor
+        )
+        heightConstraint.priority = .required
+        heightConstraint.isActive = true
+        expandedReadMediaViewportHeightConstraint = heightConstraint
+        native.setNeedsLayout()
+        setNeedsLayout()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
+
+    private func installExpandedMarkdownViewportGestureIfNeeded(on view: UIView) {
+        if let gesture = expandedMarkdownViewportDoubleTapGesture,
+           gesture.view === view {
+            gesture.isEnabled = expandedDoubleTapGesture.isEnabled
+            return
+        }
+
+        if let gesture = expandedMarkdownViewportDoubleTapGesture {
+            gesture.view?.removeGestureRecognizer(gesture)
+        }
+
+        let gesture = UITapGestureRecognizer(target: self, action: #selector(handleExpandedDoubleTap))
+        gesture.numberOfTapsRequired = 2
+        gesture.delegate = self
+        gesture.cancelsTouchesInView = false
+        gesture.isEnabled = expandedDoubleTapGesture.isEnabled
+        if let markdownViewport = view as? NativeFullScreenMarkdownBody {
+            markdownViewport.installViewportGestureRecognizer(gesture)
+        } else {
+            view.addGestureRecognizer(gesture)
+        }
+        expandedSingleTapBlocker.require(toFail: gesture)
+        expandedMarkdownViewportDoubleTapGesture = gesture
     }
 
     private func installExpandedReadMediaView(
@@ -596,8 +699,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: currentConfiguration.audioPlayer,
             attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+            attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
             sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher,
-            sessionFileStreamURLProvider: currentConfiguration.sessionFileStreamURLProvider
+            sessionFileMediaSourceProvider: currentConfiguration.sessionFileMediaSourceProvider
         )
     }
 
@@ -686,6 +790,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func clearExpandedReadMediaView() {
+        expandedReadMediaViewportHeightConstraint?.isActive = false
+        expandedReadMediaViewportHeightConstraint = nil
+        if let gesture = expandedMarkdownViewportDoubleTapGesture {
+            gesture.view?.removeGestureRecognizer(gesture)
+        }
+        expandedMarkdownViewportDoubleTapGesture = nil
+        if let markdownViewport = expandedReadMediaContentView as? NativeFullScreenMarkdownBody {
+            markdownViewport.setViewportDoubleTapActivation(nil)
+        }
         expandedReadMediaContentView?.removeFromSuperview()
         expandedReadMediaContentView = nil
     }
@@ -718,26 +831,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // from a previous cell reuse cycle, its intrinsic height conflicts
         // with the label's, and Auto Layout may zero out the label frame.
         clearExpandedMarkdownContent()
-    }
-
-    /// Prepare for markdown expanded content.
-    private func showExpandedMarkdown() {
-        expandedSurfaceHostView.activateSurfaceView(expandedMarkdownView)
-        expandedLabel.attributedText = nil
-        expandedLabel.text = nil
-        expandedLabel.isHidden = true
-        expandedMarkdownView.isHidden = false
-        expandedReadMediaContainer.isHidden = true
-        expandedUsesMarkdownLayout = true
-        expandedUsesReadMediaLayout = false
-        clearExpandedReadMediaView()
-        // Reset the label width constraint from code/diff mode (required priority,
-        // large constant) to the default wrapped-text state. The hidden label's
-        // constraints still participate in layout and can force the shared
-        // contentLayoutGuide wider than the markdown view expects, enabling
-        // unintended horizontal scrolling and scroll-gesture conflicts.
-        expandedLabelWidthConstraint?.priority = .defaultHigh
-        expandedLabelWidthConstraint?.constant = -12
     }
 
     /// Prepare for embedded expanded content.
@@ -910,6 +1003,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         commandContainer.addGestureRecognizer(commandDoubleTapGesture)
         outputContainer.addGestureRecognizer(outputDoubleTapGesture)
         expandedScrollView.addGestureRecognizer(expandedDoubleTapGesture)
+        expandedContainerDoubleTapGesture.require(toFail: expandedDoubleTapGesture)
+        expandedSingleTapBlocker.require(toFail: expandedContainerDoubleTapGesture)
+        expandedContainer.addGestureRecognizer(expandedContainerDoubleTapGesture)
         expandedScrollView.addGestureRecognizer(expandedPinchGesture)
 
         commandContainer.addGestureRecognizer(commandSingleTapBlocker)
@@ -1339,13 +1435,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return ToolRowMarkdownRenderStrategy.render(
                 text: text,
                 isStreaming: isStreaming,
-                expandedMarkdownView: expandedMarkdownView,
                 expandedScrollView: expandedScrollView,
                 previousSignature: expandedRenderSignature,
                 previousRenderedText: expandedRenderedText,
                 previousAutoFollow: expandedShouldAutoFollow,
                 wasExpandedVisible: wasExpandedVisible,
-                isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+                isUsingMarkdownViewportLayout: expandedUsesReadMediaLayout
+                    && expandedReadMediaContentView is NativeFullScreenMarkdownBody,
                 reviewCommentSelectionRouter: markdownSelectionEnabled ? reviewCommentSelectionRouter : nil,
                 reviewCommentSourceContext: markdownSelectionEnabled ? reviewCommentSourceContext : nil,
                 textSelectionEnabled: markdownSelectionEnabled
@@ -1359,8 +1455,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachments: attachments,
                 isError: configuration.isError,
                 hasAttachmentFetcher: configuration.sessionAttachmentFetcher != nil,
+                hasAttachmentMediaSourceProvider: configuration.sessionAttachmentMediaSourceProvider != nil,
                 hasSessionFileDataFetcher: configuration.sessionFileDataFetcher != nil,
-                hasSessionFileStreamURLProvider: configuration.sessionFileStreamURLProvider != nil,
+                hasSessionFileMediaSourceProvider: configuration.sessionFileMediaSourceProvider != nil,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
@@ -1444,13 +1541,27 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 playbackBehavior: playbackBehavior,
                 suppressAutoplay: suppressVoiceAutoplay
             )
+        case .markdownViewport(
+            let text,
+            let isStreaming,
+            let reviewCommentSelectionRouter,
+            let reviewCommentSourceContext,
+            let textSelectionEnabled
+        ):
+            installExpandedMarkdownViewport(
+                text: text,
+                isStreaming: isStreaming,
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+                reviewCommentSourceContext: reviewCommentSourceContext,
+                textSelectionEnabled: textSelectionEnabled
+            )
         }
 
         switch output.surface {
         case .label: showExpandedLabel()
-        case .markdown: showExpandedMarkdown()
         case .hostedView: showExpandedHostedView()
         case .compactHostedView: showCompactHostedView()
+        case .markdownViewport: showExpandedHostedView()
         }
 
         expandedRenderSignature = output.renderSignature
@@ -1464,7 +1575,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         setExpandedVerticalLockEnabled(output.verticalLock)
         updateExpandedLabelWidthIfNeeded()
-        if output.surface == .compactHostedView {
+        if output.surface == .markdownViewport {
+            expandedScrollView.isScrollEnabled = false
+            expandedUsesViewport = true
+            expandedViewportHeightConstraint?.priority = .required
+            expandedViewportHeightConstraint?.isActive = true
+            setExpandedContainerGestureInterceptionEnabled(true)
+        } else if output.surface == .compactHostedView {
             expandedUsesViewport = false
             expandedViewportHeightConstraint?.priority = .defaultHigh
             let width = max(1, bounds.width > 0 ? bounds.width - 16 : UIScreen.main.bounds.width - 48)
@@ -1609,6 +1726,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func setExpandedContainerTapCopyGestureEnabled(_ enabled: Bool) {
         expandedDoubleTapGesture.isEnabled = enabled
+        expandedContainerDoubleTapGesture.isEnabled = enabled
+        expandedMarkdownViewportDoubleTapGesture?.isEnabled = enabled
         expandedSingleTapBlocker.isEnabled = enabled
     }
 
@@ -1622,7 +1741,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     // periphery:ignore - used by ToolRowContentViewTests via @testable import
     var expandedTapCopyGestureEnabledForTesting: Bool {
-        expandedDoubleTapGesture.isEnabled && expandedSingleTapBlocker.isEnabled
+        expandedDoubleTapGesture.isEnabled
+            && expandedContainerDoubleTapGesture.isEnabled
+            && expandedSingleTapBlocker.isEnabled
     }
 
     // periphery:ignore - used by ToolExpandedSurfaceHostTests via @testable import
@@ -2003,6 +2124,16 @@ extension ToolTimelineRowContentView: UITextViewDelegate {
             router: reviewCommentSelectionRouter,
             sourceContext: resolveReviewCommentSourceContext(for: textView)
         )
+    }
+}
+
+extension ToolTimelineRowContentView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === expandedMarkdownViewportDoubleTapGesture
+            || otherGestureRecognizer === expandedMarkdownViewportDoubleTapGesture
     }
 }
 

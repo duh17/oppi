@@ -25,17 +25,14 @@ final class AssistantMarkdownSegmentSource {
         streamingState = nil
     }
 
-    func buildSegments(_ config: AssistantMarkdownContentView.Configuration) -> [FlatSegment] {
+    func buildSegments(
+        _ config: AssistantMarkdownContentView.Configuration,
+        mergeAdjacentTextSegments: Bool = true
+    ) -> [FlatSegment] {
         let content = config.content
 
-        if let plainTextFallbackThreshold = config.plainTextFallbackThreshold,
-           content.count > plainTextFallbackThreshold {
-            var plain = AttributedString(content)
-            plain.uiKit.foregroundColor = UIColor(config.themeID.palette.fg)
-            return Self.applyReaderPreferences(to: [.text(plain)], config: config)
-        }
-
         if !config.isStreaming,
+           mergeAdjacentTextSegments,
            let cached = MarkdownSegmentCache.shared.get(
                content,
                themeID: config.themeID,
@@ -60,7 +57,8 @@ final class AssistantMarkdownSegmentSource {
             workspaceID: config.workspaceID,
             sessionID: config.sessionID,
             serverBaseURL: config.serverBaseURL,
-            sourceDirectory: config.sourceDirectory
+            sourceDirectory: config.sourceDirectory,
+            mergeAdjacentTextSegments: mergeAdjacentTextSegments
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 
@@ -72,15 +70,17 @@ final class AssistantMarkdownSegmentSource {
             isStreaming: false
         )
 
-        MarkdownSegmentCache.shared.set(
-            content,
-            themeID: config.themeID,
-            workspaceID: config.workspaceID,
-            sessionID: config.sessionID,
-            serverBaseURL: config.serverBaseURL,
-            sourceDirectory: config.sourceDirectory,
-            segments: segments
-        )
+        if mergeAdjacentTextSegments {
+            MarkdownSegmentCache.shared.set(
+                content,
+                themeID: config.themeID,
+                workspaceID: config.workspaceID,
+                sessionID: config.sessionID,
+                serverBaseURL: config.serverBaseURL,
+                sourceDirectory: config.sourceDirectory,
+                segments: segments
+            )
+        }
         return Self.applyReaderPreferences(to: segments, config: config)
     }
 

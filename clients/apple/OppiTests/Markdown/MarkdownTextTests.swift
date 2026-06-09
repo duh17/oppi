@@ -622,7 +622,7 @@ struct MarkdownDocumentRenderingTests {
             "",
             "**Bold intro** with `inline code`.",
             "",
-            String(repeating: "Body paragraph with enough text to cross the inline fallback threshold.\n\n", count: 320),
+            String(repeating: "Body paragraph with enough text to exercise large markdown rendering.\n\n", count: 320),
         ].joined(separator: "\n")
         #expect(content.count > 20_000)
 
@@ -1268,7 +1268,6 @@ struct AssistantMarkdownInlineImageRenderingTests {
             content: "Before ![Red green](fixtures/red-green.\(ext)) after",
             isStreaming: false,
             themeID: .dark,
-            plainTextFallbackThreshold: nil,
             workspaceID: "workspace-1",
             serverBaseURL: serverBaseURL
         ))
@@ -1306,7 +1305,6 @@ struct AssistantMarkdownInlineImageRenderingTests {
             content: "Before ![Red green](file:///Users/example/workspace/oppi/downloads/red-green.jpeg) after",
             isStreaming: false,
             themeID: .dark,
-            plainTextFallbackThreshold: nil,
             workspaceID: "workspace-1",
             sessionID: "session-1",
             serverBaseURL: serverBaseURL
@@ -1577,7 +1575,6 @@ struct NativeMarkdownImageViewTests {
             content: "![Generated chart](/tmp/chart.png)",
             stream: nil,
             palette: ThemeID.dark.palette,
-            plainTextFallbackThreshold: nil,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
             workspaceID: "workspace-1",

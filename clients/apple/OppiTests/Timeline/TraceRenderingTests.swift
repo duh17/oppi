@@ -244,9 +244,9 @@ struct TraceRenderingTests {
 
     // MARK: - Large tool output (memory bounded)
 
-    @Test func largeToolOutputTruncated() {
+    @Test func largeToolOutputStoredIntact() {
         let reducer = TimelineReducer()
-        let largeOutput = String(repeating: "x", count: ToolOutputStore.perItemCap + 1_024)
+        let largeOutput = String(repeating: "x", count: ToolOutputStore.totalCap + 1_024)
         let events = [
             traceEvent(id: "tc1", type: .toolCall, tool: "read",
                        args: ["path": .string("/tmp/big.txt")]),
@@ -256,8 +256,7 @@ struct TraceRenderingTests {
         reducer.loadSession(events)
 
         let stored = reducer.toolOutputStore.fullOutput(for: "tc1")
-        #expect(stored.count < largeOutput.count, "Output should be truncated to perItemCap")
-        #expect(stored.hasSuffix(ToolOutputStore.truncationMarker))
+        #expect(stored == largeOutput)
     }
 
     // MARK: - Error tool result

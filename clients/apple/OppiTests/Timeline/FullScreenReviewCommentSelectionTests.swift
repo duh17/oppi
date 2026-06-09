@@ -249,9 +249,9 @@ struct FullScreenReviewCommentSelectionTests {
             "",
             "**Bold intro** with `inline code`.",
             "",
-            String(repeating: "Body paragraph with enough text to cross the old fallback threshold.\n\n", count: 320),
+            String(repeating: "Body paragraph with enough text to exercise large markdown rendering.\n\n", count: 320),
         ].joined(separator: "\n")
-        #expect(content.count > AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold)
+        #expect(content.count > 20_000)
 
         let controller = makeController(
             content: .markdown(content: content, filePath: "Notes.md")
@@ -268,6 +268,52 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(!renderedText.contains("`inline code`"))
     }
 
+    @Test func fullScreenMarkdownVirtualizesLargeDocumentsWithoutChangingRenderingPath() throws {
+        let repeatedSections = (0..<400).map { index in
+            """
+            ## Section \(index)
+
+            **Strong text \(index)** links to [Node](https://nodejs.org/api/fs.html#section-\(index)) and includes `inline code`.
+
+            ```js
+            const section\(index) = \(index);
+            ```
+            """
+        }.joined(separator: "\n\n")
+        #expect(repeatedSections.utf8.count > 50_000)
+
+        let body = NativeFullScreenMarkdownBody(
+            content: repeatedSections,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        #expect(body.debugRenderedSegmentCountForTesting > 700)
+        #expect(body.debugVisibleCellCountForTesting < body.debugRenderedSegmentCountForTesting)
+
+        let visibleText = timelineAllTextViews(in: body)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+        #expect(visibleText.contains("Section 0"))
+        #expect(visibleText.contains("Strong text 0"))
+        #expect(!visibleText.contains("## Section 0"))
+        #expect(!visibleText.contains("**Strong text 0**"))
+        #expect(!visibleText.contains("[render note"))
+    }
+
     @Test func liveMarkdownSourceUsesRichRenderingWhileStreaming() throws {
         let markdown = "# Streaming plan\n\n**Decision** with `inline code`."
         let stream = SourceTraceStream(
@@ -280,7 +326,8 @@ struct FullScreenReviewCommentSelectionTests {
             content: .liveSource(snapshot: stream.snapshot, stream: stream)
         )
 
-        let markdownView = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: controller.view))
+        let markdownView = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: controller.view))
+        markdownView.debugLayoutVisibleMarkdownCellsForTesting()
         let renderedText = timelineAllTextViews(in: markdownView)
             .map { timelineRenderedText(of: $0) }
             .joined(separator: "\n")
@@ -300,6 +347,7 @@ struct FullScreenReviewCommentSelectionTests {
             finalContent: .markdown(content: nextMarkdown, filePath: nil)
         )
         controller.view.layoutIfNeeded()
+        markdownView.debugLayoutVisibleMarkdownCellsForTesting()
 
         let updatedText = timelineAllTextViews(in: markdownView)
             .map { timelineRenderedText(of: $0) }

@@ -22,9 +22,9 @@ struct ExpandedRenderOutput {
 
     enum ExpandedSurface {
         case label
-        case markdown
         case hostedView
         case compactHostedView
+        case markdownViewport
     }
 
     enum ScrollBehavior {
@@ -40,5 +40,12 @@ struct ExpandedRenderOutput {
         case none
         case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int, attachments: [ToolPresentationBuilder.ToolMediaAttachment])
         case audioMessage(text: String, attachmentId: String, mimeType: String, playbackBehavior: AudioPlaybackBehavior?)
+        case markdownViewport(
+            text: String,
+            isStreaming: Bool,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+            reviewCommentSourceContext: ReviewCommentSourceContext?,
+            textSelectionEnabled: Bool
+        )
     }
 }

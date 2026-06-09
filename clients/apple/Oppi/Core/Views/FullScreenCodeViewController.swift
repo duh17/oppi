@@ -429,7 +429,6 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 stream: nil,
                 palette: palette,
-                plainTextFallbackThreshold: nil,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenMarkdown,
@@ -444,6 +443,7 @@ final class FullScreenCodeViewController: UIViewController {
                 fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
                 fetchSessionFile: wsContext?.fetchSessionFile
             )
+            body.accessibilityIdentifier = "full-screen.markdown.body"
             return body
         case .html(let text, let filePath):
             let view = HTMLRenderView(
@@ -568,7 +568,6 @@ final class FullScreenCodeViewController: UIViewController {
             stream: nil,
             isStreaming: isStreaming,
             palette: palette,
-            plainTextFallbackThreshold: nil,
             reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
             reviewCommentSourceContext: makeSourceContext(
                 surface: .fullScreenMarkdown,
@@ -1203,7 +1202,7 @@ private struct FullScreenViewingOptionsPanel: View {
 
     private var wrapControl: some View {
         Toggle(isOn: wrapBinding) {
-            Label("Wrap Text", systemImage: "text.alignleft")
+            Label("Wrap Text", systemImage: CodeWrapControl.symbolName)
                 .font(.subheadline)
                 .foregroundStyle(.themeFg)
         }

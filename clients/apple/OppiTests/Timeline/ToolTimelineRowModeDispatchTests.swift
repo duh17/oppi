@@ -268,7 +268,7 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!mediaDoubleTap.isEnabled)
     }
 
-    @Test func expandedMarkdownDisablesInlineTextSelectionWhenFullScreenIsPreferred() throws {
+    @Test func expandedMarkdownUsesHostedViewportWhenFullScreenIsPreferred() throws {
         let markdownConfig = makeToolConfiguration(
             toolNamePrefix: "read",
             expandedContent: .markdown(text: "# Header\n\nBody with [link](https://example.com)"),
@@ -278,13 +278,17 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: markdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
-        let innerTextViews = timelineAllTextViews(in: markdownView)
-        #expect(!innerTextViews.isEmpty, "Expected markdown text views")
+        let inlineMarkdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+        #expect(inlineMarkdownView.isHidden, "Tool markdown should use the hosted viewport, not the inline stack")
+        let inlineMarkdownStack = try #require(markdownStackView(in: inlineMarkdownView))
+        #expect(inlineMarkdownStack.arrangedSubviews.isEmpty)
 
-        for textView in innerTextViews {
-            #expect(!textView.isSelectable)
-        }
+        let hostedMarkdown = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
+        #expect(hostedMarkdown.debugRenderedSegmentCountForTesting > 0)
     }
 
     @Test func horizontalPanPassthroughRejectsVerticalIntent() {
@@ -414,14 +418,15 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: markdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        // Verify markdown view has content after phase 1
+        // Verify markdown installs the hosted viewport and leaves the old inline stack empty.
         let markdownView = try #require(
             privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
         )
         let markdownStack = try #require(markdownStackView(in: markdownView))
+        #expect(markdownStack.arrangedSubviews.isEmpty)
         #expect(
-            !markdownStack.arrangedSubviews.isEmpty,
-            "Markdown view should have content after markdown config"
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) is NativeFullScreenMarkdownBody,
+            "Markdown config should install the hosted markdown viewport"
         )
 
         // Phase 2: reconfigure same view as expanded diff (edit tool — simulates cell reuse)
@@ -472,7 +477,8 @@ struct ToolTimelineRowModeDispatchTests {
             privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
         )
         let markdownStack = try #require(markdownStackView(in: markdownView))
-        #expect(!markdownStack.arrangedSubviews.isEmpty)
+        #expect(markdownStack.arrangedSubviews.isEmpty)
+        #expect(privateOptionalView(named: "expandedReadMediaContentView", in: view) is NativeFullScreenMarkdownBody)
 
         let codeConfig = makeToolConfiguration(
             toolNamePrefix: "read",
@@ -513,7 +519,8 @@ struct ToolTimelineRowModeDispatchTests {
             privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
         )
         let markdownStack = try #require(markdownStackView(in: markdownView))
-        #expect(!markdownStack.arrangedSubviews.isEmpty)
+        #expect(markdownStack.arrangedSubviews.isEmpty)
+        #expect(privateOptionalView(named: "expandedReadMediaContentView", in: view) is NativeFullScreenMarkdownBody)
 
         let mediaConfig = makeToolConfiguration(
             toolNamePrefix: "read",
@@ -804,7 +811,11 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!expandedContainer.isHidden, "Expanded container should remain visible for extension markdown")
 
         let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
-        #expect(!markdownView.isHidden, "Markdown view should be visible for extension markdown")
+        #expect(markdownView.isHidden, "Inline markdown stack should stay hidden for hosted tool markdown")
+
+        let readMediaContainer = try #require(privateView(named: "expandedReadMediaContainer", in: view))
+        #expect(!readMediaContainer.isHidden, "Hosted markdown viewport should be visible for extension markdown")
+        #expect(privateOptionalView(named: "expandedReadMediaContentView", in: view) is NativeFullScreenMarkdownBody)
 
         let label = try #require(privateView(named: "expandedLabel", in: view))
         #expect(label.isHidden, "Label should be hidden in markdown mode")
@@ -897,9 +908,11 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: extensionMarkdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
-        let innerScrollViews = timelineAllScrollViews(in: markdownView)
-        #expect(!innerScrollViews.isEmpty, "Expected markdown text/cell scroll views")
+        let markdownViewport = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
+        let innerScrollViews = timelineAllScrollViews(in: markdownViewport)
+        #expect(!innerScrollViews.isEmpty, "Expected hosted markdown viewport scroll views")
 
         for inner in innerScrollViews {
             #expect(!inner.alwaysBounceVertical)
@@ -1182,23 +1195,24 @@ struct ToolTimelineRowModeDispatchTests {
         view.configuration = done
         _ = fittedSize(for: view, width: 360)
 
-        // After completion, the markdown view should be visible with content,
-        // and the label should be hidden
+        // After completion, the hosted markdown viewport should be visible with content,
+        // and the label should be hidden.
         #expect(expandedLabel.isHidden, "Done write should hide expandedLabel")
-        #expect(!markdownView.isHidden, "Done write should show markdown view")
+        #expect(markdownView.isHidden, "Done write should hide the inline markdown stack")
 
-        let markdownStack = try #require(markdownStackView(in: markdownView))
+        let markdownViewport = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
         #expect(
-            !markdownStack.arrangedSubviews.isEmpty,
-            "Markdown view should have rendered content after write completes"
+            markdownViewport.debugRenderedSegmentCountForTesting > 1,
+            "Markdown viewport should have rendered structured content after write completes"
         )
     }
 
-    // Write tool with large markdown content (> plainTextFallbackThreshold) should
-    // still render as formatted markdown, not fall back to plain text.
+    // Write tool with large markdown content should still render as structured markdown,
+    // not collapse into one plain-text segment.
     @Test func writeToolLargeMarkdownContentRendersAsMarkdown() throws {
-        // Build content that exceeds the 20K plainTextFallbackThreshold.
-        // A comprehensive research document with code blocks can easily reach this.
+        // A comprehensive research document with code blocks can easily reach this size.
         var sections: [String] = ["# Research Document\n"]
         let codeBlock = String(repeating: "    let value = compute()\n", count: 20)
         for i in 1...80 {
@@ -1206,7 +1220,7 @@ struct ToolTimelineRowModeDispatchTests {
             sections.append("```swift\nfunc example\(i)() {\n\(codeBlock)}\n```\n")
         }
         let largeMarkdown = sections.joined(separator: "\n")
-        #expect(largeMarkdown.count > 20_000, "Test content must exceed plainTextFallbackThreshold")
+        #expect(largeMarkdown.count > 20_000, "Test content must be large enough to catch plain-text downgrades")
 
         let config = makeToolConfiguration(
             toolNamePrefix: "write",
@@ -1221,14 +1235,16 @@ struct ToolTimelineRowModeDispatchTests {
         let markdownView = try #require(
             privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
         )
-        #expect(!markdownView.isHidden, "Markdown view should be visible")
+        #expect(markdownView.isHidden, "Inline markdown stack should stay hidden")
 
-        let markdownStack = try #require(markdownStackView(in: markdownView))
-        // With proper markdown rendering, the stack should have MULTIPLE segments
-        // (headings, paragraphs, code blocks). Plain text fallback produces just ONE.
+        let markdownViewport = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
+        // With proper markdown rendering, the viewport should have MULTIPLE segments
+        // (headings, paragraphs, code blocks). A plain-text downgrade would produce just ONE.
         #expect(
-            markdownStack.arrangedSubviews.count > 1,
-            "Large markdown should produce multiple rendered segments, not fall back to plain text. Got \(markdownStack.arrangedSubviews.count) view(s)"
+            markdownViewport.debugRenderedSegmentCountForTesting > 1,
+            "Large markdown should produce multiple rendered segments, not fall back to plain text. Got \(markdownViewport.debugRenderedSegmentCountForTesting) segment(s)"
         )
     }
 
@@ -1253,11 +1269,13 @@ struct ToolTimelineRowModeDispatchTests {
         )
 
         #expect(expandedLabel.isHidden, "Done markdown write should hide expandedLabel")
-        #expect(!markdownView.isHidden, "Done markdown write should show markdown view")
+        #expect(markdownView.isHidden, "Done markdown write should hide the inline markdown stack")
 
-        let markdownStack = try #require(markdownStackView(in: markdownView))
+        let markdownViewport = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
         #expect(
-            !markdownStack.arrangedSubviews.isEmpty,
+            markdownViewport.debugRenderedSegmentCountForTesting > 0,
             "Done markdown write should have rendered content"
         )
     }
@@ -1554,6 +1572,19 @@ private func makeToolConfiguration(
 @MainActor
 private func privateView(named name: String, in view: ToolTimelineRowContentView) -> UIView? {
     Mirror(reflecting: view).children.first { $0.label == name }?.value as? UIView
+}
+
+@MainActor
+private func privateOptionalView(named name: String, in view: ToolTimelineRowContentView) -> UIView? {
+    guard let value = Mirror(reflecting: view).children.first(where: { $0.label == name })?.value else {
+        return nil
+    }
+    if let direct = value as? UIView {
+        return direct
+    }
+    let optionalMirror = Mirror(reflecting: value)
+    guard optionalMirror.displayStyle == .optional else { return nil }
+    return optionalMirror.children.first?.value as? UIView
 }
 
 @MainActor

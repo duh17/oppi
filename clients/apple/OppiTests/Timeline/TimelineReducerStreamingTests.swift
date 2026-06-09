@@ -152,14 +152,14 @@ struct TimelineReducerStreamingTests {
         #expect(isError, "Error flag should propagate when any chunk is error")
     }
 
-    @Test func toolOutputOverflowNoOpSkipsRenderVersionBump() {
+    @Test func largeToolOutputAppendStoresFullContentAndBumpsRenderVersion() {
         let reducer = TimelineReducer()
         let toolID = "t-overflow"
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "read", args: [:]))
 
-        let firstChunk = String(repeating: "x", count: ToolOutputStore.perItemCap + 1_024)
+        let firstChunk = String(repeating: "x", count: ToolOutputStore.totalCap + 1_024)
         reducer.processBatch([
             .toolOutput(sessionId: "s1", toolEventId: toolID, output: firstChunk, isError: false),
         ])
@@ -167,18 +167,17 @@ struct TimelineReducerStreamingTests {
         let versionAfterFirstChunk = reducer.renderVersion
         let outputAfterFirstChunk = reducer.toolOutputStore.fullOutput(for: toolID)
 
-        #expect(!outputAfterFirstChunk.isEmpty)
-        #expect(outputAfterFirstChunk.hasSuffix(ToolOutputStore.truncationMarker))
+        #expect(outputAfterFirstChunk == firstChunk)
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "ignored-after-cap", isError: false),
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "appended-after-large-output", isError: false),
         ])
 
         #expect(
-            reducer.renderVersion == versionAfterFirstChunk,
-            "No-op tool output after per-item cap should not bump renderVersion"
+            reducer.renderVersion > versionAfterFirstChunk,
+            "Appending after a large output should still bump renderVersion"
         )
-        #expect(reducer.toolOutputStore.fullOutput(for: toolID) == outputAfterFirstChunk)
+        #expect(reducer.toolOutputStore.fullOutput(for: toolID) == firstChunk + "appended-after-large-output")
     }
 
     @Test func longThinkingStaysInThinkingPreviewOnAgentEnd() {

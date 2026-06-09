@@ -299,16 +299,14 @@ struct TimelineStressTests {
 
     // MARK: - ToolOutputStore memory bounds
 
-    @Test func toolOutputStorePerItemCap() {
+    @Test func toolOutputStoreKeepsOversizedActiveOutputIntact() {
         let store = ToolOutputStore()
-        let oversized = String(repeating: "x", count: ToolOutputStore.perItemCap + 1000)
+        let oversized = String(repeating: "x", count: ToolOutputStore.totalCap + 1000)
 
         store.append(oversized, to: "t1")
 
         let stored = store.fullOutput(for: "t1")
-        #expect(stored.utf8.count <= ToolOutputStore.perItemCap + ToolOutputStore.truncationMarker.utf8.count,
-            "Per-item cap should be enforced: got \(stored.utf8.count) bytes")
-        #expect(stored.contains("output truncated"))
+        #expect(stored == oversized)
     }
 
     @Test func toolOutputStoreTotalCapEvicts() {

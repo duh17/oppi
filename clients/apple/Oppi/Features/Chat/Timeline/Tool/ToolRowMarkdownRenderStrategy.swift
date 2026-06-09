@@ -5,35 +5,19 @@ struct ToolRowMarkdownRenderStrategy {
     static func render(
         text: String,
         isStreaming: Bool,
-        expandedMarkdownView: AssistantMarkdownContentView,
         expandedScrollView _: UIScrollView,
         previousSignature: Int?,
         previousRenderedText: String?,
         previousAutoFollow: Bool,
         wasExpandedVisible: Bool,
-        isUsingMarkdownLayout: Bool,
+        isUsingMarkdownViewportLayout: Bool,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text, isStreaming: isStreaming)
         let shouldRerender = signature != previousSignature
-            || !isUsingMarkdownLayout
-
-        expandedMarkdownView.apply(configuration: .make(
-            content: text,
-            isStreaming: isStreaming,
-            themeID: ThemeRuntimeState.currentThemeID(),
-            textSelectionEnabled: textSelectionEnabled,
-            // Tool expanded content lives in a scrollable viewport, so there's
-            // no risk of blocking the timeline layout with large markdown.
-            // Disable the plain-text fallback threshold so write/read tools
-            // always render formatted markdown regardless of content size.
-            plainTextFallbackThreshold: nil,
-            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-            reviewCommentSourceContext: reviewCommentSourceContext,
-            perfSurface: .toolExpanded
-        ))
+            || !isUsingMarkdownViewportLayout
 
         let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
             isStreaming: isStreaming,
@@ -61,15 +45,21 @@ struct ToolRowMarkdownRenderStrategy {
             renderSignature: shouldRerender ? signature : previousSignature,
             renderedText: text,
             shouldAutoFollow: autoFollow,
-            surface: .markdown,
+            surface: .markdownViewport,
             viewportMode: .text,
             verticalLock: false,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byCharWrapping,
             horizontalScroll: false,
             deferredHighlight: nil,
-            invalidateLayout: shouldRerender || !isUsingMarkdownLayout,
-            installAction: .none
+            invalidateLayout: shouldRerender || !isUsingMarkdownViewportLayout,
+            installAction: .markdownViewport(
+                text: text,
+                isStreaming: isStreaming,
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+                reviewCommentSourceContext: reviewCommentSourceContext,
+                textSelectionEnabled: textSelectionEnabled
+            )
         )
     }
 }

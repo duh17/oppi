@@ -5,8 +5,9 @@ import Foundation
 /// ChatItem.toolCall only carries a ≤500 char preview and byte count.
 /// The full output is fetched on-demand when the user expands a tool call row.
 ///
-/// Memory bounded: per-item cap of 2MB, total cap of 16MB.
-/// When total cap is exceeded, oldest items are evicted (FIFO).
+/// Memory bounded by FIFO eviction. Individual outputs are stored intact; when
+/// total memory grows past the budget, older entries are evicted instead of
+/// truncating the active output.
 @MainActor @Observable
 final class ToolOutputStore {
     private struct StoredOutput {
@@ -15,16 +16,10 @@ final class ToolOutputStore {
         var totalBytes: Int?
     }
 
-    /// Max bytes stored per tool call output.
-    /// Needs headroom for image/audio data URIs (base64 inflates ~33%).
-    /// 1024x1024 PNGs can exceed 512KB once encoded; 2MB avoids truncating
-    /// common tool-read images while still bounding memory.
-    static let perItemCap = 2 * 1024 * 1024  // 2MB
-    /// Max total bytes across all stored outputs.
-    /// Keeps several large media outputs resident without immediate eviction.
+    /// Max total bytes across stored outputs before FIFO eviction.
+    /// Large active outputs are kept intact even when they exceed this budget;
+    /// older entries are the memory-pressure relief valve.
     static let totalCap = 16 * 1024 * 1024  // 16MB
-    /// Suffix appended when output is truncated.
-    static let truncationMarker = "\n\n… [output truncated]"
 
     private var entries: [String: StoredOutput] = [:]
     /// Insertion order for FIFO eviction.
@@ -42,43 +37,19 @@ final class ToolOutputStore {
         let existingText = existing?.text ?? ""
         let existingBytes = existingText.utf8.count
 
-        // Per-item cap: stop accumulating once hit
-        if existingBytes >= Self.perItemCap {
-            return false
-        }
-
         // Track insertion order
         if existing == nil {
             insertionOrder.append(itemID)
         }
 
-        let updatedText: String
-        // Append chunk, truncating if it would exceed per-item cap
-        let remainingCap = Self.perItemCap - existingBytes
-        let chunkBytes = chunk.utf8.count
-        if chunkBytes <= remainingCap {
-            updatedText = existingText + chunk
-        } else {
-            // Truncate chunk to fit within per-item cap.
-            // Use prefix by character and check byte count to avoid splitting UTF-8.
-            var truncated = ""
-            var bytesSoFar = 0
-            for char in chunk {
-                let charBytes = String(char).utf8.count
-                if bytesSoFar + charBytes > remainingCap { break }
-                truncated.append(char)
-                bytesSoFar += charBytes
-            }
-            updatedText = existingText + truncated + Self.truncationMarker
-        }
-
+        let updatedText = existingText + chunk
         let updatedBytes = updatedText.utf8.count
         totalBytes -= existingBytes
         entries[itemID] = StoredOutput(text: updatedText, previewOnly: false, totalBytes: nil)
         totalBytes += updatedBytes
 
-        // Evict oldest items if total cap exceeded
-        evictIfNeeded()
+        // Evict older items if total cap exceeded. Keep the active output intact.
+        evictIfNeeded(protecting: itemID)
         return true
     }
 
@@ -101,23 +72,7 @@ final class ToolOutputStore {
             insertionOrder.append(itemID)
         }
 
-        let storedText: String
-        let outputBytes = output.utf8.count
-        if outputBytes > Self.perItemCap {
-            // Truncate replacement to fit
-            var truncated = ""
-            var bytesSoFar = 0
-            for char in output {
-                let charBytes = String(char).utf8.count
-                if bytesSoFar + charBytes > Self.perItemCap { break }
-                truncated.append(char)
-                bytesSoFar += charBytes
-            }
-            storedText = truncated + Self.truncationMarker
-        } else {
-            storedText = output
-        }
-
+        let storedText = output
         let storedBytes = storedText.utf8.count
         let normalizedTotalBytes = previewOnly ? max(totalBytes ?? storedBytes, storedBytes) : nil
         if let existing,
@@ -135,7 +90,7 @@ final class ToolOutputStore {
         )
         self.totalBytes += storedBytes
 
-        evictIfNeeded()
+        evictIfNeeded(protecting: itemID)
         return true
     }
 
@@ -185,8 +140,14 @@ final class ToolOutputStore {
 
     // MARK: - Private
 
-    private func evictIfNeeded() {
+    private func evictIfNeeded(protecting protectedItemID: String) {
         while totalBytes > Self.totalCap, let oldest = insertionOrder.first {
+            if oldest == protectedItemID {
+                guard insertionOrder.count > 1 else { return }
+                insertionOrder.removeFirst()
+                insertionOrder.append(oldest)
+                continue
+            }
             insertionOrder.removeFirst()
             if let removed = entries.removeValue(forKey: oldest) {
                 totalBytes -= removed.text.utf8.count
