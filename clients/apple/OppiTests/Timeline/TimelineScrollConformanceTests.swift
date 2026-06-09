@@ -56,15 +56,15 @@ struct TimelineScrollConformanceTests {
         #expect(!harness.scrollController.isCurrentlyNearBottom)
     }
 
-    @Test func toolExpandUsesBottomAnchorAndCollapseUsesTopAnchor() {
+    @Test func toolExpandAndCollapseKeepTappedHeaderStable() {
         let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-expand-collapse")
         harness.startAttachedAtBottom(isBusy: false)
         let toolID = "tool-12"
         harness.userScrollsUpToRead(itemID: toolID)
 
-        let bottomBeforeExpand = harness.screenY(of: toolID, edge: .bottom)
+        let topBeforeExpand = harness.screenY(of: toolID, edge: .top)
         harness.expandTool(id: toolID)
-        harness.assertAnchorStable(itemID: toolID, edge: .bottom, before: bottomBeforeExpand)
+        harness.assertAnchorStable(itemID: toolID, edge: .top, before: topBeforeExpand)
 
         let topBeforeCollapse = harness.screenY(of: toolID, edge: .top)
         harness.collapseTool(id: toolID)

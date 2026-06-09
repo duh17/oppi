@@ -951,7 +951,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     itemID: itemID,
                     anchorIndexPath: indexPath,
                     in: collectionView,
-                    preserveTopEdge: wasExpanded
+                    preserveTopEdge: true
                 )
             case .thinking:
                 // Thinking rows own their long-form entry points (floating
@@ -1122,15 +1122,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             itemID: String,
             anchorIndexPath: IndexPath,
             in collectionView: UICollectionView,
-            preserveTopEdge: Bool = false
+            preserveTopEdge: Bool = true
         ) {
             let anchoredCV = collectionView as? AnchoredCollectionView
 
-            // Expansions keep the bottom edge stable so the row grows upward
-            // and surrounding lower context remains visible. Collapses keep
-            // the top edge stable: a tall image row can shrink by hundreds of
-            // points, and bottom-edge anchoring yanks the user away from the
-            // header they just tapped.
+            // Keep the tapped row header stable so expansion grows downward
+            // from the user's tap point and collapse leaves the same header
+            // available for an immediate second tap.
             let anchorScreenYBefore: CGFloat?
             if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
                 anchorScreenYBefore = (preserveTopEdge ? attrs.frame.minY : attrs.frame.maxY)
@@ -1143,16 +1141,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             // Temporarily disable AnchoredCollectionView's own anchoring
             // during the forced layout. Without this, the anchoring captures
-            // the OLD offset (before bottom-edge correction) and the
-            // self-sizing cascade tries to maintain that old state, undoing
-            // our correction.
+            // the old offset before our explicit correction and the self-sizing
+            // cascade can try to maintain that stale state.
             let savedDetached = anchoredCV?.isDetachedFromBottom ?? false
             anchoredCV?.isDetachedFromBottom = false
             anchoredCV?.clearDetachedAnchor()
 
-            // Force layout to settle the new cell size. Bottom-edge anchoring
-            // needs the ACTUAL maxY (origin + height) after expansion, which
-            // requires the layout pass to resolve the new self-sizing height.
+            // Force layout to settle the new cell size before computing the
+            // absolute offset that preserves the chosen edge.
             let offsetBeforeLayout = collectionView.contentOffset.y
             collectionView.layoutIfNeeded()
 
@@ -1186,9 +1182,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             // Sync the detached flag on the AnchoredCollectionView so the
             // detached anchor system provides ongoing protection after the
-            // expand/collapse anchor clears. Without this, UIKit's self-sizing
-            // cascade reverts the bottom-edge offset correction for collapses
-            // (the cascade wants top-edge stability, we want bottom-edge).
+            // expand/collapse anchor clears.
             let isDetached = !(scrollController?.isCurrentlyNearBottom ?? true)
             anchoredCV?.isDetachedFromBottom = isDetached
 

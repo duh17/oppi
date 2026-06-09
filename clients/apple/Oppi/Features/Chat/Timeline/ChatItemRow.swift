@@ -5,10 +5,9 @@ import SwiftUI
 /// Used by native timeline rows so expansion feels consistent across render
 /// paths (collection timeline + any future non-collection consumers).
 ///
-/// The UIKit expand/collapse uses bottom-edge anchoring: the bottom of the
-/// cell stays in place and content grows upward, keeping the working
-/// indicator and items below visible. The scroll offset correction is
-/// instant; the in-cell content reveal provides the subtle visual polish.
+/// The UIKit expand/collapse uses top-edge anchoring: the tapped header stays
+/// in place and expanded content grows downward. The scroll offset correction
+/// is instant; the in-cell content reveal provides the subtle visual polish.
 enum ToolRowExpansionAnimation {
     // periphery:ignore - reserved for future animated scroll correction
     static let expandDuration: TimeInterval = 0.15

@@ -536,15 +536,6 @@ struct ToolExpandScrollMatrixFixture {
         return attrs.frame.minY - collectionView.contentOffset.y
     }
 
-    /// The bottom-edge screen-relative Y of the target cell.
-    /// Used to assert expansion anchoring stability.
-    func targetBottomScreenY() -> CGFloat? {
-        guard let attrs = collectionView.layoutAttributesForItem(at: targetIndexPath) else {
-            return nil
-        }
-        return attrs.frame.maxY - collectionView.contentOffset.y
-    }
-
     func assertExpandedInnerScrollViewsDoNotCompeteForVerticalScroll() {
         guard let cell = collectionView.cellForItem(at: targetIndexPath) else {
             Issue.record("Expanded target cell not visible for \(toolCase.name)")

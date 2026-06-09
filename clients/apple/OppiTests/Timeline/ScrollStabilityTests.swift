@@ -451,13 +451,13 @@ struct ScrollStabilityTests {
     // MARK: - Tool Row Expansion Scroll Stability
 
     @MainActor
-    @Test func toolRowExpansionViaTapPreservesContentOffsetWhenScrolledUp() {
-        // Bug: user scrolls up, taps a visible tool row to expand. The row
-        // grows taller via animateToolRowExpansion (direct cell configuration
-        // + invalidateLayout). Without offset compensation the viewport jumps.
+    @Test func toolRowExpansionViaTapPreservesHeaderPositionWhenScrolledUp() {
+        // Bug: user scrolls up, taps a visible tool row to expand, and the
+        // timeline moves the row upward. The tapped header must remain at the
+        // same screen position so a second tap at the same location collapses it.
         //
-        // Key: the target cell must be visible (cellForItem != nil) so we hit
-        // the direct-configuration path, NOT the reconfigureItems fallback.
+        // Key: the target cell must be visible (cellForItem != nil) so this
+        // exercises the real tap/reconfigure path.
         let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
@@ -532,22 +532,22 @@ struct ScrollStabilityTests {
             return
         }
 
-        // Bottom-edge anchoring: the bottom of the cell should stay at the
-        // same screen position after expansion (cell grows upward).
-        let bottomScreenYBefore: CGFloat? = {
+        // Top-edge anchoring: the tapped header should stay at the same
+        // screen position after expansion, so the row grows downward.
+        let topScreenYBefore: CGFloat? = {
             guard let attrs = collectionView.layoutAttributesForItem(at: targetIP) else { return nil }
-            return attrs.frame.maxY - collectionView.contentOffset.y
+            return attrs.frame.minY - collectionView.contentOffset.y
         }()
 
         // Tap to expand via real didSelectItemAt → anchoredReconfigureToolRow.
         coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
 
-        if let before = bottomScreenYBefore,
+        if let before = topScreenYBefore,
            let attrs = collectionView.layoutAttributesForItem(at: targetIP) {
-            let after = attrs.frame.maxY - collectionView.contentOffset.y
+            let after = attrs.frame.minY - collectionView.contentOffset.y
             let drift = abs(after - before)
             #expect(drift < 2.0,
-                    "Bottom-edge drifted \(drift)pt after tap-expanding tool row at index \(targetIP.item)")
+                    "Header drifted \(drift)pt after tap-expanding tool row at index \(targetIP.item)")
         }
     }
 
@@ -829,18 +829,16 @@ struct ScrollStabilityTests {
             return
         }
 
-        // Toggle expand/collapse 6 times. Expansions preserve the bottom edge;
-        // collapses preserve the top/header edge.
+        // Toggle expand/collapse 6 times. Both directions preserve the
+        // top/header edge so repeated taps can land in the same place.
         // Allow a longer drain per toggle so UIKit's self-sizing cascade
         // settles — collapse triggers multi-frame re-estimation.
         for round in 1...6 {
-            let isExpandedBeforeToggle = reducer.expandedItemIDs.contains(items[targetIP.item].id)
             guard let attrsBefore = collectionView.layoutAttributesForItem(at: targetIP) else {
                 Issue.record("Missing layout attributes before toggle round \(round)")
                 continue
             }
-            let anchorScreenYBefore = (isExpandedBeforeToggle ? attrsBefore.frame.minY : attrsBefore.frame.maxY)
-                - collectionView.contentOffset.y
+            let anchorScreenYBefore = attrsBefore.frame.minY - collectionView.contentOffset.y
 
             coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
             drainRunLoop(seconds: 0.30)
@@ -849,12 +847,11 @@ struct ScrollStabilityTests {
                 Issue.record("Missing layout attributes after toggle round \(round)")
                 continue
             }
-            let anchorScreenYAfter = (isExpandedBeforeToggle ? attrsAfter.frame.minY : attrsAfter.frame.maxY)
-                - collectionView.contentOffset.y
+            let anchorScreenYAfter = attrsAfter.frame.minY - collectionView.contentOffset.y
             let shift = abs(anchorScreenYAfter - anchorScreenYBefore)
 
             #expect(shift < 5.0,
-                    "Tool row anchor shifted \(shift)pt on screen during toggle round \(round)")
+                    "Tool row header shifted \(shift)pt on screen during toggle round \(round)")
         }
     }
 
@@ -959,8 +956,8 @@ struct ScrollStabilityTests {
             Issue.record("Missing layout attributes for target tool row")
             return
         }
-        // Bottom-edge anchoring: the bottom of the cell should stay in place.
-        let bottomScreenYBefore = attrsBefore.frame.maxY - collectionView.contentOffset.y
+        // Top-edge anchoring: the tapped header should stay in place.
+        let topScreenYBefore = attrsBefore.frame.minY - collectionView.contentOffset.y
 
         // Expand — this is the scenario that was broken.
         coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
@@ -970,13 +967,13 @@ struct ScrollStabilityTests {
             Issue.record("Missing layout attributes after expand")
             return
         }
-        let bottomScreenYAfter = attrsAfter.frame.maxY - collectionView.contentOffset.y
-        let shift = abs(bottomScreenYAfter - bottomScreenYBefore)
+        let topScreenYAfter = attrsAfter.frame.minY - collectionView.contentOffset.y
+        let shift = abs(topScreenYAfter - topScreenYBefore)
 
-        // Bottom-edge anchoring: allow up to 5pt for rounding artifacts
+        // Top-edge anchoring: allow up to 5pt for rounding artifacts
         // from fractional point coordinates across layout passes.
         #expect(shift < 5.0,
-                "Tool row bottom-edge shifted \(shift)pt when expanding near bottom")
+                "Tool row header shifted \(shift)pt when expanding near bottom")
     }
 
     // MARK: - Detached Scroll Stability with New Items

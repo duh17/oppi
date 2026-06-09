@@ -17,17 +17,17 @@ struct ToolExpandScrollMatrixTests {
         )
 
         fixture.prepareDetachedViewport()
-        let bottomScreenYBefore = fixture.targetBottomScreenY()
+        let topScreenYBefore = fixture.targetTopScreenY()
 
         fixture.expandTarget()
         fixture.assertExpandedInnerScrollViewsDoNotCompeteForVerticalScroll()
 
-        // Bottom-edge anchoring: the bottom of the cell should stay at
-        // the same screen position after expansion (expand grows upward).
-        if let before = bottomScreenYBefore, let after = fixture.targetBottomScreenY() {
-            let bottomDrift = abs(after - before)
-            #expect(bottomDrift < 8.0,
-                    "Bottom-edge drifted \(bottomDrift)pt for \(toolCase.name)")
+        // Top-edge anchoring: the tapped header should stay in place while
+        // expansion grows downward.
+        if let before = topScreenYBefore, let after = fixture.targetTopScreenY() {
+            let topDrift = abs(after - before)
+            #expect(topDrift < 8.0,
+                    "Header drifted \(topDrift)pt on expand for \(toolCase.name)")
         }
         let offsetAfterExpand = fixture.offsetY
 
@@ -74,7 +74,7 @@ struct ToolExpandScrollMatrixTests {
     }
 
     @Test(arguments: ToolExpandScrollMatrixCase.allCases)
-    func expandingToolRowsKeepsAnchoredBottomEdgeStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
+    func expandingToolRowsKeepsTappedHeaderPositionStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
         let fixture = try #require(
             ToolExpandScrollMatrixFixture.make(
                 for: toolCase,
@@ -84,15 +84,15 @@ struct ToolExpandScrollMatrixTests {
         )
 
         fixture.prepareDetachedViewport()
-        let bottomScreenYBefore = fixture.targetBottomScreenY()
+        let topScreenYBefore = fixture.targetTopScreenY()
 
         fixture.expandTarget()
 
-        // Bottom-edge anchoring: the bottom of the cell stays in place.
-        if let before = bottomScreenYBefore, let after = fixture.targetBottomScreenY() {
-            let bottomDrift = abs(after - before)
-            #expect(bottomDrift < 8.0,
-                    "Anchored expand bottom-edge drifted \(bottomDrift)pt for \(toolCase.name)")
+        // Top-edge anchoring: the header stays in place so the row opens down.
+        if let before = topScreenYBefore, let after = fixture.targetTopScreenY() {
+            let topDrift = abs(after - before)
+            #expect(topDrift < 8.0,
+                    "Anchored expand header drifted \(topDrift)pt for \(toolCase.name)")
         }
     }
 

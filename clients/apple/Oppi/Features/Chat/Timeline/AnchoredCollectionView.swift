@@ -59,8 +59,7 @@ final class AnchoredCollectionView: UICollectionView {
     /// Pin a specific item's screen position across expand/collapse layout
     /// passes. Uses top-edge (origin.y) for the deferred anchor because
     /// origin.y is stable across self-sizing cascade passes (only height
-    /// changes during re-estimation, not origin). The caller applies the
-    /// immediate bottom-edge offset correction before calling this.
+    /// changes during re-estimation, not origin).
     func setExpandCollapseAnchor(indexPath: IndexPath) {
         expandCollapseAnchorIP = indexPath
         expandCollapseSavedOffsetY = contentOffset.y

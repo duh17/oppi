@@ -95,12 +95,12 @@ struct WriteExpandScrollTests {
             return
         }
 
-        // Bottom-edge anchoring: capture the bottom of the target cell
-        // before expansion. After expansion, the bottom should stay in place
-        // (the cell grows upward).
-        let bottomScreenYBefore: CGFloat? = {
+        // Top-edge anchoring: capture the tapped header before expansion.
+        // After expansion, the header should stay in place and the cell should
+        // grow downward.
+        let topScreenYBefore: CGFloat? = {
             guard let attrs = wh.collectionView.layoutAttributesForItem(at: targetIP) else { return nil }
-            return attrs.frame.maxY - wh.collectionView.contentOffset.y
+            return attrs.frame.minY - wh.collectionView.contentOffset.y
         }()
 
         // Tap to expand the write tool output.
@@ -109,13 +109,13 @@ struct WriteExpandScrollTests {
 
         let offsetAfterExpand = wh.collectionView.contentOffset.y
 
-        // The bottom edge of the cell should stay at the same screen position.
-        if let before = bottomScreenYBefore,
+        // The header should stay at the same screen position.
+        if let before = topScreenYBefore,
            let attrs = wh.collectionView.layoutAttributesForItem(at: targetIP) {
-            let after = attrs.frame.maxY - wh.collectionView.contentOffset.y
-            let bottomDrift = abs(after - before)
-            #expect(bottomDrift < 5.0,
-                    "Bottom-edge drifted \(bottomDrift)pt after expanding write tool row")
+            let after = attrs.frame.minY - wh.collectionView.contentOffset.y
+            let topDrift = abs(after - before)
+            #expect(topDrift < 5.0,
+                    "Header drifted \(topDrift)pt after expanding write tool row")
         }
 
         // Now simulate the user trying to scroll up after the expand.
@@ -264,8 +264,7 @@ struct WriteExpandScrollTests {
         }
         wh.collectionView.layoutIfNeeded()
 
-        // Start from an interior offset so the check has room to move down even
-        // if bottom-edge expansion anchoring pushed the viewport toward an edge.
+        // Start from an interior offset so the check has room to move down.
         let newMax = max(0, wh.collectionView.contentSize.height - wh.collectionView.bounds.height)
         let startingOffset = min(max(0, newMax * 0.25), max(0, newMax - 400))
         setTimelineUserScrollOffsetY(wh.collectionView, startingOffset)
