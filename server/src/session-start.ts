@@ -1,39 +1,20 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
-import { EventRing } from "./event-ring.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
-import type { ExtensionUIState } from "./extension-ui-state.js";
+import {
+  createRuntimeSessionStateScaffold,
+  type RuntimeSessionStateScaffold,
+} from "./session-runtime-state.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
-import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
-import { TurnDedupeCache } from "./turn-cache.js";
-import type { ServerConfig, ServerMessage, Session, Workspace } from "./types.js";
+import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 
-export interface SessionStartActiveSession extends ExtensionUIState {
-  session: Session;
+export interface SessionStartActiveSession extends RuntimeSessionStateScaffold<SessionMessageQueueStore> {
   sdkBackend: SdkBackend;
   workspaceId: string;
-  subscribers: Set<(msg: ServerMessage) => void>;
-  partialResults: Map<string, string>;
-  streamedAssistantText: string;
-  hasStreamedThinking: boolean;
-  streamedThinkingContentIndexes: Set<number>;
-  currentThinkingContentIndex?: number;
-  toolNames: Map<string, string>;
-  toolArgs: Map<string, Record<string, unknown>>;
-  shellPreviewLastSent: Map<string, number>;
-  streamingArgPreviews: Set<string>;
-  streamingToolUpdatesSeen: Map<string, string>;
-  toolFullOutputPaths: Map<string, string>;
-  messageQueue?: SessionMessageQueueStore;
-  turnCache: TurnDedupeCache;
-  pendingTurnStarts: string[];
-  pendingStop?: PendingStop;
-  seq: number;
-  eventRing: EventRing;
 }
 
 export interface SessionStartCoordinatorDeps {
@@ -90,31 +71,12 @@ export class SessionStartCoordinator {
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 
         const activeSession: SessionStartActiveSession = {
-          session,
+          ...createRuntimeSessionStateScaffold<SessionMessageQueueStore>(
+            session,
+            this.deps.eventRingCapacity,
+          ),
           sdkBackend,
           workspaceId: identity.workspaceId,
-          subscribers: new Set(),
-          pendingUIRequests: new Map(),
-          persistentExtensionUINotifications: new Map(),
-          partialResults: new Map(),
-          streamedAssistantText: "",
-          hasStreamedThinking: false,
-          streamedThinkingContentIndexes: new Set(),
-          toolNames: new Map(),
-          toolArgs: new Map(),
-          shellPreviewLastSent: new Map(),
-          streamingArgPreviews: new Set(),
-          streamingToolUpdatesSeen: new Map(),
-          toolFullOutputPaths: new Map(),
-          messageQueue: {
-            version: 0,
-            steering: [],
-            followUp: [],
-          },
-          turnCache: new TurnDedupeCache(),
-          pendingTurnStarts: [],
-          seq: 0,
-          eventRing: new EventRing(this.deps.eventRingCapacity),
         };
 
         this.deps.registerActiveSession(key, activeSession);

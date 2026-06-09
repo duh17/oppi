@@ -19,7 +19,6 @@ import {
   type ExtensionUIRequest,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
-import { EventRing } from "./event-ring.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
@@ -42,8 +41,8 @@ import { isPiTuiTaskRecordBridgeState } from "./pi-tui-session-classification.js
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
-import { SessionEventProcessor, type EventProcessorSessionState } from "./session-events.js";
-import { SessionInputCoordinator, type SessionInputSessionState } from "./session-input.js";
+import { SessionEventProcessor } from "./session-events.js";
+import { SessionInputCoordinator } from "./session-input.js";
 import {
   assertQueueBaseVersion,
   cloneQueueState,
@@ -61,8 +60,12 @@ import {
   updateSearchIndexForSessionEvent,
   type SessionSearchIndex,
 } from "./session-search-indexing.js";
+import {
+  createEmptyRuntimeMessageQueue,
+  createRuntimeSessionStateScaffold,
+  type RuntimeSessionStateScaffold,
+} from "./session-runtime-state.js";
 import type { Storage } from "./storage.js";
-import { TurnDedupeCache } from "./turn-cache.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type {
   ChatAttachmentRef,
@@ -184,21 +187,7 @@ type PiBridgeInboundMessage =
   | PiBridgeExtensionUIRequestMessage
   | PiBridgeExtensionUIRequestSettledMessage;
 
-interface MirrorActiveSession extends EventProcessorSessionState, SessionInputSessionState {
-  session: Session;
-  subscribers: Set<(msg: ServerMessage) => void>;
-  seq: number;
-  eventRing: EventRing;
-  partialResults: Map<string, string>;
-  streamedAssistantText: string;
-  hasStreamedThinking: boolean;
-  streamedThinkingContentIndexes: Set<number>;
-  currentThinkingContentIndex?: number;
-  toolNames: Map<string, string>;
-  shellPreviewLastSent: Map<string, number>;
-  streamingArgPreviews: Set<string>;
-  streamingToolUpdatesSeen: Map<string, string>;
-  toolFullOutputPaths: Map<string, string>;
+interface MirrorActiveSession extends RuntimeSessionStateScaffold<MessageQueueState> {
   messageQueue: MessageQueueState;
   leafId?: string;
   lastSummaryFingerprint?: string;
@@ -394,10 +383,6 @@ function mergePiSessionFile(session: Session, file: string | undefined): void {
   );
   files.add(canonical);
   session.piSessionFiles = [...files];
-}
-
-function emptyQueue(): MessageQueueState {
-  return { version: 0, steering: [], followUp: [] };
 }
 
 function queueCounts(queue: MessageQueueState): {
@@ -1486,24 +1471,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
 
     const active: MirrorActiveSession = {
-      session,
-      subscribers: new Set(),
-      seq: 0,
-      eventRing: new EventRing(EVENT_RING_CAPACITY),
-      pendingUIRequests: new Map(),
-      persistentExtensionUINotifications: new Map(),
-      partialResults: new Map(),
-      streamedAssistantText: "",
-      hasStreamedThinking: false,
-      streamedThinkingContentIndexes: new Set(),
-      toolNames: new Map(),
-      shellPreviewLastSent: new Map(),
-      streamingArgPreviews: new Set(),
-      streamingToolUpdatesSeen: new Map(),
-      toolFullOutputPaths: new Map(),
-      turnCache: new TurnDedupeCache(),
-      pendingTurnStarts: [],
-      messageQueue: emptyQueue(),
+      ...createRuntimeSessionStateScaffold(
+        session,
+        EVENT_RING_CAPACITY,
+        createEmptyRuntimeMessageQueue(),
+      ),
       sdkBackend: {} as never,
     };
     this.active.set(session.id, active);
