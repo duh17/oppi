@@ -1082,10 +1082,14 @@ export function snapshotMirrorWidgetNativeSurface(
     return undefined;
   }
 
-  let json: string;
+  let json: string | undefined;
   try {
     json = JSON.stringify(value);
   } catch {
+    return undefined;
+  }
+
+  if (typeof json !== "string") {
     return undefined;
   }
 

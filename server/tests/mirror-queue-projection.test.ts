@@ -91,6 +91,17 @@ describe("mirror widget snapshots", () => {
     ]);
   });
 
+  it("ignores widget native surfaces that do not serialize to JSON objects", () => {
+    for (const value of [undefined, () => null, null, ["not", "an", "object"]]) {
+      expect(
+        snapshotMirrorWidgetNativeSurface({
+          render: () => ["● Agents"],
+          renderNative: () => value,
+        }),
+      ).toBeUndefined();
+    }
+  });
+
   it("forwards requestRender through a TUI proxy without hiding terminal fields", () => {
     let originalRenderRequests = 0;
     let forwardedRenderRequests = 0;
