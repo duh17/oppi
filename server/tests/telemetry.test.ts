@@ -43,9 +43,11 @@ function makeHarness(body: unknown): {
 
 describe("telemetry routes", () => {
   const originalMode = process.env.OPPI_TELEMETRY_MODE;
+  const originalChatRetentionDays = process.env.OPPI_CHAT_METRICS_RETENTION_DAYS;
 
   beforeEach(() => {
     process.env.OPPI_TELEMETRY_MODE = "internal";
+    process.env.OPPI_CHAT_METRICS_RETENTION_DAYS = "90";
   });
 
   afterEach(() => {
@@ -53,6 +55,12 @@ describe("telemetry routes", () => {
       delete process.env.OPPI_TELEMETRY_MODE;
     } else {
       process.env.OPPI_TELEMETRY_MODE = originalMode;
+    }
+
+    if (originalChatRetentionDays === undefined) {
+      delete process.env.OPPI_CHAT_METRICS_RETENTION_DAYS;
+    } else {
+      process.env.OPPI_CHAT_METRICS_RETENTION_DAYS = originalChatRetentionDays;
     }
   });
 
