@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
@@ -16,6 +16,11 @@ import {
 import { openDatabase } from "../src/sqlite-compat.js";
 
 // ─── Fixtures ───
+
+function setModifiedTime(path: string, isoTimestamp: string): void {
+  const timestamp = new Date(isoTimestamp);
+  utimesSync(path, timestamp, timestamp);
+}
 
 function makeSessionJsonl(opts: {
   id?: string;
@@ -245,24 +250,25 @@ describe("discoverLocalSessions", () => {
   });
 
   it("returns sessions sorted by last modified (most recent first)", async () => {
+    const oldPath = join(testDir, "2026-02-18T00-00-00-000Z_uuid-old.jsonl");
     writeFileSync(
-      join(testDir, "2026-02-18T00-00-00-000Z_uuid-old.jsonl"),
+      oldPath,
       makeSessionJsonl({
         id: "uuid-old",
         timestamp: "2026-02-18T00:00:00.000Z",
       }),
     );
+    setModifiedTime(oldPath, "2026-02-18T00:00:00.000Z");
 
-    // Small delay to ensure different mtime
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
+    const newPath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-new.jsonl");
     writeFileSync(
-      join(testDir, "2026-02-20T00-00-00-000Z_uuid-new.jsonl"),
+      newPath,
       makeSessionJsonl({
         id: "uuid-new",
         timestamp: "2026-02-20T00:00:00.000Z",
       }),
     );
+    setModifiedTime(newPath, "2026-02-20T00:00:00.000Z");
 
     const sessions = await discoverLocalSessions();
     const oldIdx = sessions.findIndex((s) => s.piSessionId === "uuid-old");
@@ -341,41 +347,43 @@ describe("discoverLocalSessions", () => {
   });
 
   it("re-reads file when mtime changes", async () => {
+    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-mtime.jsonl");
     writeFileSync(
-      join(testDir, "2026-02-20T00-00-00-000Z_uuid-mtime.jsonl"),
+      filePath,
       makeSessionJsonl({ id: "uuid-mtime", name: "V1" }),
     );
+    setModifiedTime(filePath, "2026-02-20T00:00:00.000Z");
 
     const first = await discoverLocalSessions();
     expect(first.find((s) => s.piSessionId === "uuid-mtime")?.name).toBe("V1");
 
-    // Wait a tick so mtime changes, then overwrite
-    await new Promise((r) => setTimeout(r, 50));
     writeFileSync(
-      join(testDir, "2026-02-20T00-00-00-000Z_uuid-mtime.jsonl"),
+      filePath,
       makeSessionJsonl({ id: "uuid-mtime", name: "V2" }),
     );
+    setModifiedTime(filePath, "2026-02-20T00:00:01.000Z");
 
     const second = await discoverLocalSessions();
     expect(second.find((s) => s.piSessionId === "uuid-mtime")?.name).toBe("V2");
   });
 
   it("invalidateLocalSessionsCache clears cached entries", async () => {
+    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-inv.jsonl");
     writeFileSync(
-      join(testDir, "2026-02-20T00-00-00-000Z_uuid-inv.jsonl"),
+      filePath,
       makeSessionJsonl({ id: "uuid-inv", name: "Before" }),
     );
+    setModifiedTime(filePath, "2026-02-20T00:00:00.000Z");
 
     const first = await discoverLocalSessions();
     const s1 = first.find((s) => s.piSessionId === "uuid-inv");
     expect(s1?.name).toBe("Before");
 
-    // Overwrite with new content (mtime changes)
-    await new Promise((r) => setTimeout(r, 50));
     writeFileSync(
-      join(testDir, "2026-02-20T00-00-00-000Z_uuid-inv.jsonl"),
+      filePath,
       makeSessionJsonl({ id: "uuid-inv", name: "After" }),
     );
+    setModifiedTime(filePath, "2026-02-20T00:00:01.000Z");
 
     // Even without invalidation, mtime change causes re-read
     const second = await discoverLocalSessions();
