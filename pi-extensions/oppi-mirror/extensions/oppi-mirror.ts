@@ -1631,8 +1631,42 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     );
   }
 
+  function deactivateAfterStaleContext(scope: string) {
+    if (!runtimeActive && !ws && !reconnectTimer && !heartbeatTimer) return;
+    runtimeActive = false;
+    manualStop = true;
+    connectionSerial += 1;
+    clearTimers();
+    pendingUIResponses.clear();
+    latestCtx = null;
+    connectedSessionId = null;
+    connectedWorkspaceId = null;
+
+    const socket = ws;
+    ws = null;
+    if (
+      socket &&
+      (socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING)
+    ) {
+      try {
+        socket.close();
+      } catch (error) {
+        writeMirrorLog("warn", "stale_context_socket_close_failed", {
+          scope,
+          error,
+        });
+      }
+    }
+
+    writeMirrorLog("info", "stale_context_runtime_deactivated", { scope });
+  }
+
   function logCallbackError(scope: string, error: unknown) {
-    if (isStaleExtensionContextError(error)) return;
+    if (isStaleExtensionContextError(error)) {
+      deactivateAfterStaleContext(scope);
+      return;
+    }
     writeMirrorLog("warn", "callback_error", { scope, error });
   }
 
@@ -2471,8 +2505,13 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
 
   function connect(ctx: ExtensionContext) {
     if (!runtimeActive) return;
+    try {
+      installExtensionUIProxy(ctx);
+    } catch (error) {
+      logCallbackError("install extension UI proxy failed", error);
+      return;
+    }
     latestCtx = ctx;
-    installExtensionUIProxy(ctx);
     if (!isInteractiveTerminalProcess()) {
       notify(
         ctx,
@@ -2593,7 +2632,11 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           if (!runtimeActive || connectionSerial !== serial || manualStop) {
             return;
           }
-          connect(ctx);
+          try {
+            connect(ctx);
+          } catch (error) {
+            logCallbackError("reconnect failed", error);
+          }
         }, delayMs);
       } else {
         stopIndicator(ctx);
