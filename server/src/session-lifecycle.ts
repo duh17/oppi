@@ -1,5 +1,5 @@
 import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-state.js";
-import type { PendingStop, StopSessionState } from "./session-stop.js";
+import type { PendingStop, PendingStopSessionState } from "./session-stop.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
@@ -8,13 +8,14 @@ import { createLogger } from "./logger.js";
 export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
   sdkBackend: SdkBackend;
+  pendingStop?: PendingStop;
   workspaceId: string;
 }
 
 export interface SessionLifecycleCoordinatorDeps {
   getActiveSession: (key: string) => SessionLifecycleSessionState | undefined;
   removeActiveSession: (key: string) => void;
-  clearPendingStop: (active: StopSessionState) => PendingStop | null;
+  clearPendingStop: (active: PendingStopSessionState) => PendingStop | null;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
@@ -42,7 +43,7 @@ export class SessionLifecycleCoordinator {
     const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
     this.deps.metrics?.record("server.session_end", 1, { reason: metricReason });
 
-    const pendingStop = this.deps.clearPendingStop(active as StopSessionState);
+    const pendingStop = this.deps.clearPendingStop(active);
     if (pendingStop?.mode === "terminate") {
       this.deps.broadcast(key, {
         type: "stop_confirmed",

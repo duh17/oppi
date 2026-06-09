@@ -16,10 +16,13 @@ export interface PendingStop {
   completionResolve?: () => void;
 }
 
-export interface StopSessionState {
+export interface PendingStopSessionState {
+  pendingStop?: PendingStop;
+}
+
+export interface StopSessionState extends PendingStopSessionState {
   session: Session;
   sdkBackend: SdkBackend;
-  pendingStop?: PendingStop;
 }
 
 export interface SessionStopCoordinatorDeps {
@@ -36,7 +39,7 @@ export class SessionStopCoordinator {
     private readonly stopAbortRetryTimeoutMs: number,
   ) {}
 
-  clearPendingStop(active: StopSessionState): PendingStop | null {
+  clearPendingStop(active: PendingStopSessionState): PendingStop | null {
     const pending = active.pendingStop;
     if (!pending) {
       return null;
@@ -150,7 +153,7 @@ export class SessionStopCoordinator {
     this.deps.broadcast(key, { type: "stop_failed", source, reason });
   }
 
-  finishPendingStopOnAgentEnd(key: string, active: StopSessionState): void {
+  finishPendingStopOnAgentEnd(key: string, active: PendingStopSessionState): void {
     const pending = active.pendingStop;
     if (!pending) {
       return;

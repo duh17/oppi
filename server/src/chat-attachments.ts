@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
 
 import { isPathWithinRoot } from "./git-utils.js";
@@ -33,6 +34,10 @@ export interface MaterializeChatAttachmentsOptions {
   attachments?: ChatAttachmentRef[];
   maxTurnBytes?: number;
   uploadStore?: UploadStoreConfigResolved;
+}
+
+export function trustedSessionAttachmentSourceRoots(): string[] {
+  return [join(homedir(), "Library/Application Support/Yuwp/Audio/pi-voice")];
 }
 
 function normalizeFileName(name: string): string {

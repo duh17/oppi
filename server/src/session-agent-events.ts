@@ -14,7 +14,8 @@ import {
 } from "./session-protocol.js";
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
-import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
+import type { SdkBackend } from "./sdk-backend.js";
+import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
@@ -26,9 +27,9 @@ import {
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
-export interface SessionAgentEventState
-  extends EventProcessorSessionState, TurnSessionState, StopSessionState {
+export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
   subscribers: Set<(msg: ServerMessage) => void>;
+  sdkBackend?: SdkBackend;
   toolFullOutputPaths: Map<string, string>;
 }
 
@@ -37,7 +38,7 @@ const log = createLogger({ base: { component: "session_agent_events" } });
 export interface SessionAgentEventCoordinatorDeps {
   getActiveSession: (key: string) => SessionAgentEventState | undefined;
   eventProcessor: SessionEventProcessor;
-  stopCoordinator: SessionStopCoordinator;
+  stopCoordinator: Pick<SessionStopCoordinator, "finishPendingStopOnAgentEnd">;
   turnCoordinator: SessionTurnCoordinator;
   broadcast: (key: string, message: ServerMessage) => void;
   resetIdleTimer: (key: string) => void;

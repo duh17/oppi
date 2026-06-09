@@ -1,6 +1,4 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-
+import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -33,7 +31,7 @@ import {
   type SessionStopFlowSessionState,
 } from "./session-stop-flow.js";
 import { SessionStopCoordinator } from "./session-stop.js";
-import { SessionTurnCoordinator, type TurnSessionState } from "./session-turns.js";
+import { SessionTurnCoordinator } from "./session-turns.js";
 import type { Storage } from "./storage.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
@@ -42,10 +40,6 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 
 export type { SessionCatchUpResponse };
-
-function trustedSessionAttachmentSourceRoots(): string[] {
-  return [join(homedir(), "Library/Application Support/Yuwp/Audio/pi-voice")];
-}
 
 export interface SessionCoordinatorBundle {
   broadcaster: SessionBroadcaster;
@@ -206,26 +200,11 @@ export function createSessionCoordinatorBundle(
   });
 
   const inputCoordinator = new SessionInputCoordinator({
+    config: deps.config,
     getActiveSession: (key) => deps.active.get(key) as SessionInputSessionState | undefined,
-    beginTurnIntent: (key, active, command, payload, clientTurnId, requestId) =>
-      turnCoordinator.beginTurnIntent(
-        key,
-        active as TurnSessionState,
-        command,
-        payload,
-        clientTurnId,
-        requestId,
-      ),
-    isDuplicateTurnIntent: (active, command, clientTurnId, payload) =>
-      turnCoordinator.isDuplicateTurnIntent(
-        active as TurnSessionState,
-        command,
-        clientTurnId,
-        payload,
-      ),
-    markTurnDispatched: (key, active, command, turn, requestId) =>
-      turnCoordinator.markTurnDispatched(key, active as TurnSessionState, command, turn, requestId),
+    turnCoordinator,
     sendCommand: (key, command) => deps.sendCommand(key, command),
+    uploadStoreConfig,
     enqueueQueuedMessage: (key, kind, message, attachments, idHint, sdkMessage, sdkImages) =>
       queueCoordinator.enqueueQueuedMessage(
         key,
@@ -237,8 +216,6 @@ export function createSessionCoordinatorBundle(
         sdkImages,
       ),
     resolveWorkspaceRoot,
-    maxTurnAttachmentBytes,
-    uploadStoreConfig,
     onFirstMessage: deps.onFirstMessage,
   });
 

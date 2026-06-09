@@ -1,9 +1,12 @@
 import { appendSessionMessage } from "./session-protocol.js";
-import type { TurnSessionState } from "./session-turns.js";
-import type { ChatAttachmentRef, Session, TurnCommand } from "./types.js";
+import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
+import type { ChatAttachmentRef, ServerConfig, Session } from "./types.js";
 import { createLogger } from "./logger.js";
 import { materializeChatAttachments } from "./chat-attachments.js";
-import type { UploadStoreConfigResolved } from "./uploads/local-upload-store.js";
+import {
+  resolveUploadStoreConfig,
+  type UploadStoreConfigResolved,
+} from "./uploads/local-upload-store.js";
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
@@ -16,11 +19,21 @@ function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
 }
 
 export type SdkImageInput = { type: "image"; data: string; mimeType: string };
-type StreamingInputKind = "steer" | "follow_up";
+export type StreamingInputKind = "steer" | "follow_up";
 
 export interface SessionInputDispatchResult {
   duplicate: boolean;
 }
+
+type EnqueueQueuedMessage = (
+  key: string,
+  kind: "steer" | "follow_up",
+  message: string,
+  attachments?: ChatAttachmentRef[],
+  idHint?: string,
+  sdkMessage?: string,
+  sdkImages?: SdkImageInput[],
+) => void;
 
 function isPromiseLike(value: void | Promise<unknown>): value is Promise<unknown> {
   return Boolean(
@@ -29,46 +42,21 @@ function isPromiseLike(value: void | Promise<unknown>): value is Promise<unknown
 }
 
 export interface SessionInputCoordinatorDeps {
+  config: ServerConfig;
   getActiveSession: (key: string) => SessionInputSessionState | undefined;
-  beginTurnIntent: (
-    key: string,
-    active: SessionInputSessionState,
-    command: TurnCommand,
-    payload: unknown,
-    clientTurnId?: string,
-    requestId?: string,
-  ) => { clientTurnId?: string; duplicate: boolean };
-  isDuplicateTurnIntent: (
-    active: SessionInputSessionState,
-    command: TurnCommand,
-    clientTurnId: string | undefined,
-    payload: unknown,
-  ) => boolean;
-  markTurnDispatched: (
-    key: string,
-    active: SessionInputSessionState,
-    command: TurnCommand,
-    turn: { clientTurnId?: string; duplicate: boolean },
-    requestId?: string,
-  ) => void;
+  turnCoordinator: Pick<
+    SessionTurnCoordinator,
+    "beginTurnIntent" | "isDuplicateTurnIntent" | "markTurnDispatched"
+  >;
   sendCommand: (key: string, command: Record<string, unknown>) => void | Promise<unknown>;
+  uploadStoreConfig?: UploadStoreConfigResolved;
   onCommandResult?: (
     key: string,
     command: Record<string, unknown>,
     data: unknown,
   ) => void | Promise<void>;
-  enqueueQueuedMessage?: (
-    key: string,
-    kind: "steer" | "follow_up",
-    message: string,
-    attachments?: ChatAttachmentRef[],
-    idHint?: string,
-    sdkMessage?: string,
-    sdkImages?: SdkImageInput[],
-  ) => void;
+  enqueueQueuedMessage?: EnqueueQueuedMessage;
   resolveWorkspaceRoot?: (session: Session) => string | null;
-  maxTurnAttachmentBytes?: number;
-  uploadStoreConfig?: UploadStoreConfigResolved;
   onFirstMessage?: (session: Session) => void;
   recordPromptLocally?: boolean;
   promptBusyErrorMessage?: string;
@@ -77,7 +65,11 @@ export interface SessionInputCoordinatorDeps {
 }
 
 export class SessionInputCoordinator {
-  constructor(private readonly deps: SessionInputCoordinatorDeps) {}
+  private readonly uploadStoreConfig: UploadStoreConfigResolved;
+
+  constructor(private readonly deps: SessionInputCoordinatorDeps) {
+    this.uploadStoreConfig = deps.uploadStoreConfig ?? resolveUploadStoreConfig(deps.config);
+  }
 
   private async prepareMessageWithAttachments(
     active: SessionInputSessionState,
@@ -113,8 +105,8 @@ export class SessionInputCoordinator {
       turnId: opts.clientTurnId ?? opts.requestId,
       message,
       attachments: opts.attachments,
-      maxTurnBytes: this.deps.maxTurnAttachmentBytes,
-      uploadStore: this.deps.uploadStoreConfig,
+      maxTurnBytes: this.uploadStoreConfig.maxTurnBytes,
+      uploadStore: this.uploadStoreConfig,
     });
 
     return {
@@ -148,7 +140,12 @@ export class SessionInputCoordinator {
     if (
       active.session.status === "busy" &&
       !opts?.streamingBehavior &&
-      !this.deps.isDuplicateTurnIntent(active, "prompt", opts?.clientTurnId, turnPayload)
+      !this.deps.turnCoordinator.isDuplicateTurnIntent(
+        active,
+        "prompt",
+        opts?.clientTurnId,
+        turnPayload,
+      )
     ) {
       throw new Error(
         this.deps.promptBusyErrorMessage ??
@@ -156,7 +153,7 @@ export class SessionInputCoordinator {
       );
     }
 
-    const turn = this.deps.beginTurnIntent(
+    const turn = this.deps.turnCoordinator.beginTurnIntent(
       key,
       active,
       "prompt",
@@ -226,7 +223,7 @@ export class SessionInputCoordinator {
     } else if (this.deps.onCommandResult) {
       await this.deps.onCommandResult(key, cmd, commandResult);
     }
-    this.deps.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
+    this.deps.turnCoordinator.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
 
     if (active.session.status === "busy" && opts?.streamingBehavior) {
       const kind = opts.streamingBehavior === "steer" ? "steer" : "follow_up";
@@ -291,7 +288,7 @@ export class SessionInputCoordinator {
       );
     }
 
-    const turn = this.deps.beginTurnIntent(
+    const turn = this.deps.turnCoordinator.beginTurnIntent(
       key,
       active,
       kind,
@@ -344,7 +341,7 @@ export class SessionInputCoordinator {
     } else if (this.deps.onCommandResult) {
       await this.deps.onCommandResult(key, cmd, commandResult);
     }
-    this.deps.markTurnDispatched(key, active, kind, turn, opts?.requestId);
+    this.deps.turnCoordinator.markTurnDispatched(key, active, kind, turn, opts?.requestId);
     this.deps.enqueueQueuedMessage?.(
       key,
       kind,

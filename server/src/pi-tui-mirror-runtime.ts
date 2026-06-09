@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 
+import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
 import {
   applyForwardedCommandResultToSession,
   type AgentRuntimeTransport,
@@ -66,7 +67,6 @@ import {
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
 import type { Storage } from "./storage.js";
-import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type {
   ChatAttachmentRef,
   MessageQueueDraftItem,
@@ -191,7 +191,6 @@ interface MirrorActiveSession extends RuntimeSessionStateScaffold<MessageQueueSt
   messageQueue: MessageQueueState;
   leafId?: string;
   lastSummaryFingerprint?: string;
-  sdkBackend: never;
 }
 
 interface PendingBridgeStopWaiter {
@@ -214,10 +213,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function trustedSessionAttachmentSourceRoots(): string[] {
-  return [join(homedir(), "Library/Application Support/Yuwp/Audio/pi-voice")];
 }
 
 function rawDataToText(data: RawData): string {
@@ -454,7 +449,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       eventProcessor: this.eventProcessor,
       stopCoordinator: {
         finishPendingStopOnAgentEnd: () => {},
-      } as never,
+      },
       turnCoordinator: this.turnCoordinator,
       broadcast: (sessionId, message) => this.broadcast(sessionId, message),
       resetIdleTimer: () => {},
@@ -467,30 +462,16 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
     });
 
-    const uploadStoreConfig = resolveUploadStoreConfig(this.storage.getConfig());
     this.inputCoordinator = new SessionInputCoordinator({
+      config: this.storage.getConfig(),
       getActiveSession: (sessionId) => this.active.get(sessionId),
-      beginTurnIntent: (sessionId, active, command, payload, clientTurnId, requestId) =>
-        this.turnCoordinator.beginTurnIntent(
-          sessionId,
-          active,
-          command,
-          payload,
-          clientTurnId,
-          requestId,
-        ),
-      isDuplicateTurnIntent: (active, command, clientTurnId, payload) =>
-        this.turnCoordinator.isDuplicateTurnIntent(active, command, clientTurnId, payload),
-      markTurnDispatched: (sessionId, active, command, turn, requestId) =>
-        this.turnCoordinator.markTurnDispatched(sessionId, active, command, turn, requestId),
+      turnCoordinator: this.turnCoordinator,
       sendCommand: (sessionId, command) => this.dispatchBridgeCommand(sessionId, command),
       onCommandResult: (sessionId, command, data) => {
         const commandType = typeof command.type === "string" ? command.type : "unknown";
         this.applyQueueFromCommandData(sessionId, data, `command_result:${commandType}`);
       },
       resolveWorkspaceRoot: (session) => this.resolveWorkspaceRoot(session),
-      maxTurnAttachmentBytes: uploadStoreConfig.maxTurnBytes,
-      uploadStoreConfig,
       recordPromptLocally: false,
       promptBusyErrorMessage:
         "Prompt requires an idle terminal session; use steer or follow_up while a turn is streaming",
@@ -1476,7 +1457,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         EVENT_RING_CAPACITY,
         createEmptyRuntimeMessageQueue(),
       ),
-      sdkBackend: {} as never,
     };
     this.active.set(session.id, active);
     return active;
