@@ -21,7 +21,7 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
-import { BoundSessionStreamMux, SessionAudioStreamMux } from "./stream.js";
+import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { ModelCatalog } from "./model-catalog.js";
@@ -39,7 +39,7 @@ import {
   getAgentDir,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { SkillRegistry, UserSkillStore } from "./skills.js";
+import { SkillRegistry } from "./skills.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -359,7 +359,6 @@ export class Server {
   private skillRegistry: SkillRegistry;
   private skillsInitialized = false;
   private reportedMissingWorkspaceSkills = new Set<string>();
-  private userSkillStore: UserSkillStore;
   private push: PushClient;
   private httpServer: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
   private transportScheme: "http" | "https" = "http";
@@ -390,7 +389,7 @@ export class Server {
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
   private boundSessionStreamMux!: BoundSessionStreamMux;
-  private sessionAudioStreamMux!: SessionAudioStreamMux;
+  private dictationStreamMux!: DictationStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
   private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
@@ -464,8 +463,6 @@ export class Server {
     const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     const bundledSkillsDir = join(serverRoot, "skills");
     this.skillRegistry = new SkillRegistry(existsSync(bundledSkillsDir) ? [bundledSkillsDir] : []);
-    this.userSkillStore = new UserSkillStore();
-    this.userSkillStore.init();
 
     this.push = createPushClient(apnsConfig, this.opsMetrics);
     this.liveActivity = new LiveActivityBridge(this.push, this.storage);
@@ -514,7 +511,7 @@ export class Server {
 
     // Create split session/audio stream muxes.
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
-    this.sessionAudioStreamMux = new SessionAudioStreamMux(streamContext);
+    this.dictationStreamMux = new DictationStreamMux(streamContext);
 
     // Server resource utilization sampler
     this.resourceSampler = new ServerResourceSampler({
@@ -606,7 +603,6 @@ export class Server {
       sessions: this.sessions,
       sessionRuntimes: this.sessionRuntimes,
       skillRegistry: this.skillRegistry,
-      userSkillStore: this.userSkillStore,
       providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
@@ -985,23 +981,15 @@ export class Server {
     this.skillsInitialized = true;
   }
 
-  /**
-   * Resolve workspace skill names to host directory paths.
-   * Checks both built-in skills (SkillRegistry) and user skills (UserSkillStore).
-   */
+  /** Resolve workspace skill names to Pi-discovered host directory paths. */
   private async resolveSkillPaths(skillNames: string[]): Promise<string[]> {
     await this.ensureSkillsInitialized();
     const paths: string[] = [];
     const newlyMissingSkills: string[] = [];
     for (const name of skillNames) {
-      const builtInPath = this.skillRegistry.getPath(name);
-      if (builtInPath) {
-        paths.push(builtInPath);
-        continue;
-      }
-      const userPath = this.userSkillStore.getPath(name);
-      if (userPath) {
-        paths.push(userPath);
+      const skillPath = this.skillRegistry.getPath(name);
+      if (skillPath) {
+        paths.push(skillPath);
         continue;
       }
       if (!this.reportedMissingWorkspaceSkills.has(name)) {
@@ -1170,19 +1158,9 @@ export class Server {
     const sessionStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
     );
-    // TODO(dictation): Remove this legacy session-bound ASR route after old
-    // iOS clients that do not know `/dictation/stream` are no longer supported.
-    const sessionAudioStreamMatch = url.pathname.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/audio\/stream$/,
-    );
     const dictationStreamMatch = url.pathname === "/dictation/stream";
     const mirrorBridgeMatch = url.pathname === "/mirror/v1/bridge";
-    if (
-      !sessionStreamMatch &&
-      !sessionAudioStreamMatch &&
-      !dictationStreamMatch &&
-      !mirrorBridgeMatch
-    ) {
+    if (!sessionStreamMatch && !dictationStreamMatch && !mirrorBridgeMatch) {
       // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
@@ -1216,17 +1194,8 @@ export class Server {
         this.boundSessionStreamMux.handleWebSocket(workspaceId, sessionId, ws, upgradeReceivedAt);
         return;
       }
-      if (sessionAudioStreamMatch) {
-        this.sessionAudioStreamMux.handleWebSocket(
-          decodeURIComponent(sessionAudioStreamMatch[1]),
-          decodeURIComponent(sessionAudioStreamMatch[2]),
-          ws,
-          upgradeReceivedAt,
-        );
-        return;
-      }
       if (dictationStreamMatch) {
-        this.sessionAudioStreamMux.handleServerWebSocket(ws, upgradeReceivedAt);
+        this.dictationStreamMux.handleServerWebSocket(ws, upgradeReceivedAt);
         return;
       }
       if (mirrorBridgeMatch) {

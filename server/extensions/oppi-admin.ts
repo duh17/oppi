@@ -5,14 +5,9 @@ import { join } from "node:path";
 
 import { isValidExtensionName } from "../src/extension-loader.js";
 import type { Storage } from "../src/storage.js";
-import type {
-  CreateWorkspaceRequest,
-  UpdateWorkspaceRequest,
-  Workspace,
-  WorkspaceSystemPromptMode,
-} from "../src/types.js";
+import type { CreateWorkspaceRequest, UpdateWorkspaceRequest, Workspace } from "../src/types.js";
 
-const PromptModeSchema = Type.Union([Type.Literal("append"), Type.Literal("replace")]);
+const PromptModeSchema = Type.Literal("append");
 const ThemeColorSchemeSchema = Type.Union([Type.Literal("dark"), Type.Literal("light")]);
 
 const REQUIRED_THEME_COLOR_KEYS = [
@@ -127,8 +122,8 @@ function normalizeCreateRequest(params: Record<string, unknown>): CreateWorkspac
   if (typeof params.description === "string") req.description = params.description;
   if (typeof params.icon === "string") req.icon = params.icon;
   if (typeof params.systemPrompt === "string") req.systemPrompt = params.systemPrompt;
-  if (params.systemPromptMode === "append" || params.systemPromptMode === "replace") {
-    req.systemPromptMode = params.systemPromptMode as WorkspaceSystemPromptMode;
+  if (params.systemPromptMode === "append") {
+    req.systemPromptMode = params.systemPromptMode;
   }
   if (typeof params.hostMount === "string") req.hostMount = params.hostMount;
   if (typeof params.defaultModel === "string") req.defaultModel = params.defaultModel;
@@ -153,8 +148,8 @@ function normalizeUpdateRequest(params: Record<string, unknown>): UpdateWorkspac
   if (typeof params.systemPrompt === "string" || params.systemPrompt === null) {
     req.systemPrompt = params.systemPrompt as string | null;
   }
-  if (params.systemPromptMode === "append" || params.systemPromptMode === "replace") {
-    req.systemPromptMode = params.systemPromptMode as WorkspaceSystemPromptMode;
+  if (params.systemPromptMode === "append") {
+    req.systemPromptMode = params.systemPromptMode;
   }
   if (typeof params.hostMount === "string" || params.hostMount === null) {
     req.hostMount = params.hostMount as string | null;

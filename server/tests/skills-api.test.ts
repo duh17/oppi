@@ -1,8 +1,8 @@
 /**
  * Skill API route tests.
  *
- * Tests skill CRUD endpoints through RouteHandler with a real
- * SkillRegistry + UserSkillStore backed by temp directories.
+ * Tests skill browsing endpoints through RouteHandler with a real
+ * SkillRegistry backed by a temp directory.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
-import { SkillRegistry, UserSkillStore } from "../src/skills.js";
+import { SkillRegistry } from "../src/skills.js";
 import type { Workspace } from "../src/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -78,9 +78,7 @@ function makeRequest(body: unknown): IncomingMessage {
 // ─── Test Setup ───
 
 let skillDir: string;
-let userSkillDir: string;
 let registry: SkillRegistry;
-let userStore: UserSkillStore;
 let routes: RouteHandler;
 let workspaces: Workspace[];
 
@@ -100,8 +98,6 @@ function makeWorkspace(
 
 beforeEach(() => {
   skillDir = mkdtempSync(join(tmpdir(), "oppi-skill-api-"));
-  userSkillDir = mkdtempSync(join(tmpdir(), "oppi-user-skill-api-"));
-
   // Create built-in skills
   mkdirSync(join(skillDir, "search"), { recursive: true });
   writeFileSync(join(skillDir, "search", "SKILL.md"), SKILL_SEARCH);
@@ -112,11 +108,8 @@ beforeEach(() => {
   writeFileSync(join(skillDir, "fetch", "SKILL.md"), SKILL_FETCH);
 
   registry = new SkillRegistry([], { debounceMs: 50 });
-  (registry as any).scanDirs = [skillDir, userSkillDir];
+  (registry as any).scanDirs = [skillDir];
   registry.scan();
-
-  userStore = new UserSkillStore(userSkillDir);
-  userStore.init();
 
   workspaces = [
     makeWorkspace("ws-1", ["search", "fetch"]),
@@ -125,7 +118,6 @@ beforeEach(() => {
 
   const ctx = {
     skillRegistry: registry,
-    userSkillStore: userStore,
     storage: {
       listWorkspaces: () => workspaces,
       getSession: () => undefined,
@@ -143,7 +135,6 @@ beforeEach(() => {
 afterEach(() => {
   registry.stopWatching();
   rmSync(skillDir, { recursive: true, force: true });
-  rmSync(userSkillDir, { recursive: true, force: true });
 });
 
 // ─── Route call helper ───
@@ -230,53 +221,5 @@ describe("POST /skills/rescan", () => {
 
     expect(data.skills.map((s: any) => s.name)).toContain("new-skill");
     expect(data.changed.added).toContain("new-skill");
-  });
-});
-
-describe("GET /me/skills", () => {
-  it("returns built-in + user skills with enabledIn", async () => {
-    const res = await callRoute("GET", "/me/skills");
-    const data = res.json() as any;
-
-    expect(data.skills.length).toBeGreaterThanOrEqual(2);
-
-    const search = data.skills.find((s: any) => s.name === "search");
-    expect(search.builtIn).toBe(true);
-    expect(search.enabledIn).toEqual(["ws-1", "ws-2"]);
-
-    const fetch = data.skills.find((s: any) => s.name === "fetch");
-    expect(fetch.enabledIn).toEqual(["ws-1"]);
-  });
-});
-
-describe("POST /me/skills", () => {
-  it("returns 403 when skill mutation is disabled", async () => {
-    const res = await callRoute("POST", "/me/skills", {
-      name: "new-skill",
-      sessionId: "session-123",
-    });
-
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toEqual({ error: "Skill editing is disabled on remote clients" });
-  });
-});
-
-describe("PUT /me/skills/:name", () => {
-  it("returns 403 when skill mutation is disabled", async () => {
-    const res = await callRoute("PUT", "/me/skills/search", {
-      content: '---\nname: search\ndescription: "Updated search"\n---\n# Updated',
-    });
-
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toEqual({ error: "Skill editing is disabled on remote clients" });
-  });
-});
-
-describe("DELETE /me/skills/:name", () => {
-  it("returns 403 when skill mutation is disabled", async () => {
-    const res = await callRoute("DELETE", "/me/skills/search");
-
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toEqual({ error: "Skill editing is disabled on remote clients" });
   });
 });

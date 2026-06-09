@@ -89,8 +89,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return undefined;
     }
 
-    if (mode !== "append" && mode !== "replace") {
-      return "systemPromptMode must be append or replace";
+    if (mode !== "append") {
+      return "systemPromptMode must be append";
     }
 
     return undefined;
@@ -785,7 +785,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   return async ({ method, path, url, req, res }) => {
-    if ((path === "/local-sessions" || path === "/tui-sessions") && method === "GET") {
+    if (path === "/local-sessions" && method === "GET") {
       await handleListLocalSessions(res);
       return true;
     }

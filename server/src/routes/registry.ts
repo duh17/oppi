@@ -3,10 +3,10 @@ export type RouteSurface = "core" | "admin" | "internal";
 export type RouteAuth = "none" | "owner" | "query-token-get";
 export type RouteTransport = "http" | "websocket";
 // Which iOS/Mac app flows should depend on this route?
-// - supervision: watching and controlling agent sessions.
+// - session: watching and controlling agent sessions.
 // - settings: configuring the local server and workspaces.
 // This is separate from `surface`, which answers who owns the route: core, admin, or internal.
-export type NativeClientUse = "supervision" | "settings";
+export type NativeClientUse = "session" | "settings";
 
 export type SchemaRef = `#/components/schemas/${string}`;
 
@@ -33,7 +33,7 @@ export interface ApiRouteSpec {
 const schemaRef = (name: string): SchemaRef => `#/components/schemas/${name}` as SchemaRef;
 const errorResponse = schemaRef("ErrorResponse");
 
-const supervisionOperationIds = new Set<string>([
+const sessionOperationIds = new Set<string>([
   "getHealth",
   "pairDevice",
   "getCurrentUser",
@@ -63,7 +63,6 @@ const supervisionOperationIds = new Set<string>([
   "getSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
-  "openSessionAudioStream",
   "openDictationStream",
   "searchSessions",
   "listSessions",
@@ -118,7 +117,7 @@ const settingsOperationIds = new Set<string>([
 
 function nativeClientUsesFor(operationId: string): readonly NativeClientUse[] | undefined {
   const uses: NativeClientUse[] = [];
-  if (supervisionOperationIds.has(operationId)) uses.push("supervision");
+  if (sessionOperationIds.has(operationId)) uses.push("session");
   if (settingsOperationIds.has(operationId)) uses.push("settings");
   return uses.length > 0 ? uses : undefined;
 }
@@ -481,14 +480,6 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/audio/stream",
-    operationId: "openSessionAudioStream",
-    surface: "core",
-    auth: "owner",
-    transport: "websocket",
-  },
-  {
-    method: "GET",
     path: "/dictation/stream",
     operationId: "openDictationStream",
     surface: "core",
@@ -526,13 +517,6 @@ const rawApiRouteSpecs = [
     method: "GET",
     path: "/local-sessions",
     operationId: "listLocalSessions",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
-    method: "GET",
-    path: "/tui-sessions",
-    operationId: "listTuiSessions",
     surface: "internal",
     auth: "owner",
   },
@@ -805,49 +789,6 @@ const rawApiRouteSpecs = [
     surface: "admin",
     auth: "owner",
   },
-  {
-    method: "GET",
-    path: "/me/skills",
-    operationId: "listUserSkills",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
-    method: "POST",
-    path: "/me/skills",
-    operationId: "createUserSkillDisabled",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
-    method: "GET",
-    path: "/me/skills/{skillName}",
-    operationId: "getUserSkillDisabled",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
-    method: "PUT",
-    path: "/me/skills/{skillName}",
-    operationId: "updateUserSkillDisabled",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
-    method: "DELETE",
-    path: "/me/skills/{skillName}",
-    operationId: "deleteUserSkillDisabled",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
-    method: "GET",
-    path: "/me/skills/{skillName}/files",
-    operationId: "getUserSkillFileDisabled",
-    surface: "internal",
-    auth: "owner",
-  },
-
   { method: "GET", path: "/themes", operationId: "listThemes", surface: "admin", auth: "owner" },
   {
     method: "GET",

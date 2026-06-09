@@ -2,7 +2,7 @@
 
 Oppi Mirror makes an interactive terminal `pi` session visible in Oppi as a live session. The terminal keeps execution ownership; Oppi can watch output, send prompts, steer the active turn, queue follow-ups, answer extension UI, and stop or abort through the bridge.
 
-Use mirror mode when you want the same Pi session open in both places: terminal for hands-on work, Oppi for mobile supervision.
+Use mirror mode when you want the same Pi session open in both places: terminal for hands-on work, Oppi for mobile viewing and steering.
 
 Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mode, or other non-interactive Pi processes.
 

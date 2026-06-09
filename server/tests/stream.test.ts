@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
 import { WebSocket } from "ws";
-import { BoundSessionStreamMux, SessionAudioStreamMux, type StreamContext } from "../src/stream.js";
+import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
@@ -159,8 +159,8 @@ function createMockContext(sessions: Session[]): {
 }
 
 async function drain(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function mirrorPendingStubs() {
@@ -494,10 +494,9 @@ describe("BoundSessionStreamMux", () => {
   });
 });
 
-describe("SessionAudioStreamMux", () => {
+describe("DictationStreamMux", () => {
   it("routes dictation controls and binary audio to a per-connection manager", () => {
-    const session = makeSession("s-audio", "w1");
-    const { ctx } = createMockContext([session]);
+    const { ctx } = createMockContext([]);
     const manager = {
       handleControlMessage: vi.fn((msg, send) => {
         if (msg.type === "dictation_start") {
@@ -510,9 +509,9 @@ describe("SessionAudioStreamMux", () => {
     ctx.createDictationManager = () =>
       manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
 
-    const mux = new SessionAudioStreamMux(ctx);
+    const mux = new DictationStreamMux(ctx);
     const ws = new FakeWebSocket();
-    mux.handleWebSocket("w1", "s-audio", ws as unknown as WebSocket);
+    mux.handleServerWebSocket(ws as unknown as WebSocket);
     expect(ctx.trackConnection).toHaveBeenCalledWith(ws);
 
     ws.receive({ type: "dictation_start" } as ClientMessage);
@@ -528,9 +527,8 @@ describe("SessionAudioStreamMux", () => {
     expect(ws.sentOfType("dictation_ready")).toHaveLength(1);
   });
 
-  it("rejects unsupported chat messages on the audio stream", () => {
-    const session = makeSession("s-audio", "w1");
-    const { ctx } = createMockContext([session]);
+  it("rejects unsupported chat messages on the dictation stream", () => {
+    const { ctx } = createMockContext([]);
     const manager = {
       handleControlMessage: vi.fn(),
       handleAudioData: vi.fn(),
@@ -539,26 +537,16 @@ describe("SessionAudioStreamMux", () => {
     ctx.createDictationManager = () =>
       manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
 
-    const mux = new SessionAudioStreamMux(ctx);
+    const mux = new DictationStreamMux(ctx);
     const ws = new FakeWebSocket();
-    mux.handleWebSocket("w1", "s-audio", ws as unknown as WebSocket);
+    mux.handleServerWebSocket(ws as unknown as WebSocket);
 
     ws.receive({ type: "prompt", message: "hello" } as ClientMessage);
 
     const errors = ws.sentOfType("dictation_error");
     expect(errors).toHaveLength(1);
-    expect((errors[0] as { error?: string }).error).toContain("Unsupported audio stream message");
+    expect((errors[0] as { error?: string }).error).toContain("Unsupported dictation stream message");
     expect(manager.handleControlMessage).not.toHaveBeenCalled();
   });
 
-  it("closes missing session sockets without tracking them", () => {
-    const { ctx } = createMockContext([]);
-    const mux = new SessionAudioStreamMux(ctx);
-    const ws = new FakeWebSocket();
-
-    mux.handleWebSocket("w1", "missing", ws as unknown as WebSocket);
-
-    expect(ws.readyState).toBe(WebSocket.CLOSED);
-    expect(ctx.trackConnection).not.toHaveBeenCalled();
-  });
 });

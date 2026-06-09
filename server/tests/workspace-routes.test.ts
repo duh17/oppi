@@ -153,10 +153,10 @@ describe("workspaces module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "Workspace not found" });
   });
 
-  it("handles GET /tui-sessions as the global TUI session list", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-route-"));
-    const testDir = join(getPiSessionsRoot(), "--test-route-tui-sessions--");
-    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_route-tui.jsonl");
+  it("handles GET /local-sessions as the global local session list", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-session-route-"));
+    const testDir = join(getPiSessionsRoot(), "--test-route-local-sessions--");
+    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_route-local.jsonl");
 
     try {
       mkdirSync(testDir, { recursive: true });
@@ -165,13 +165,13 @@ describe("workspaces module", () => {
         [
           JSON.stringify({
             type: "session",
-            id: "route-tui",
+            id: "route-local",
             cwd: "/tmp/project",
             timestamp: "2026-02-20T00:00:00.000Z",
           }),
           JSON.stringify({
             type: "session_info",
-            name: "Route TUI Session",
+            name: "Route Local Session",
           }),
         ].join("\n") + "\n",
       );
@@ -188,8 +188,8 @@ describe("workspaces module", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/tui-sessions",
-        url: new URL("http://localhost/tui-sessions"),
+        path: "/local-sessions",
+        url: new URL("http://localhost/local-sessions"),
         req: {} as never,
         res: res as never,
       });
@@ -197,7 +197,7 @@ describe("workspaces module", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as { sessions: Array<{ piSessionId: string }> };
-      expect(body.sessions.some((session) => session.piSessionId === "route-tui")).toBe(true);
+      expect(body.sessions.some((session) => session.piSessionId === "route-local")).toBe(true);
     } finally {
       rmSync(testDir, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });
@@ -240,6 +240,54 @@ describe("workspaces module", () => {
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toEqual({ error: "skills array required" });
+  });
+
+  it("rejects replace systemPromptMode on POST /workspaces", async () => {
+    const ctx = {
+      skillRegistry: { get: vi.fn() },
+      storage: { createWorkspace: vi.fn() },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces",
+      url: new URL("http://localhost/workspaces"),
+      req: makeRequest({ name: "Test", skills: [], systemPromptMode: "replace" }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "systemPromptMode must be append" });
+    expect(ctx.storage.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("rejects replace systemPromptMode on PUT /workspaces/:id", async () => {
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", skills: [] })),
+        updateWorkspace: vi.fn(),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "PUT",
+      path: "/workspaces/ws-1",
+      url: new URL("http://localhost/workspaces/ws-1"),
+      req: makeRequest({ systemPromptMode: "replace" }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "systemPromptMode must be append" });
+    expect(ctx.storage.updateWorkspace).not.toHaveBeenCalled();
   });
 
   it("rejects missing hostMount on POST /workspaces", async () => {
@@ -304,6 +352,20 @@ describe("workspaces module", () => {
       path: "/workspaces/ws-1/review/comments/attach-to-turn",
       url: new URL("http://localhost/workspaces/ws-1/review/comments/attach-to-turn"),
       req: makeRequest({ ids: ["rc-1"] }) as never,
+      res: makeResponse() as never,
+    });
+
+    expect(handled).toBe(false);
+  });
+
+  it("does not handle retired GET /tui-sessions route", async () => {
+    const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/tui-sessions",
+      url: new URL("http://localhost/tui-sessions"),
+      req: {} as never,
       res: makeResponse() as never,
     });
 

@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { Storage } from "../storage.js";
 import type { SessionManager } from "../sessions.js";
-import type { SkillRegistry, UserSkillStore } from "../skills.js";
+import type { SkillRegistry } from "../skills.js";
 import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
 import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update.js";
@@ -17,7 +17,6 @@ export interface RouteContext {
   sessions: SessionManager;
   sessionRuntimes: SessionRuntimes;
   skillRegistry: SkillRegistry;
-  userSkillStore: UserSkillStore;
   providerAuth: ProviderAuthManager;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;

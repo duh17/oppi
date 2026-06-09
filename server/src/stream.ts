@@ -528,13 +528,13 @@ export class BoundSessionStreamMux {
 
 // ─── Dictation Stream Mux ───
 
-export class SessionAudioStreamMux {
+export class DictationStreamMux {
   private connectionSeq = 0;
 
   constructor(
     private ctx: Pick<
       StreamContext,
-      "storage" | "metrics" | "trackConnection" | "untrackConnection" | "createDictationManager"
+      "metrics" | "trackConnection" | "untrackConnection" | "createDictationManager"
     >,
   ) {}
 
@@ -551,28 +551,6 @@ export class SessionAudioStreamMux {
       level: "dictation",
       upgradeReceivedAt,
       logMetadata: {},
-    });
-  }
-
-  handleWebSocket(
-    workspaceId: string,
-    sessionId: string,
-    ws: WebSocket,
-    upgradeReceivedAt?: number,
-  ): void {
-    const session = this.ctx.storage.getSession(sessionId);
-    if (!session || session.workspaceId !== workspaceId) {
-      ws.close(1008, "Session not found");
-      return;
-    }
-
-    this.handleDictationWebSocket({
-      ws,
-      path: `/workspaces/${workspaceId}/sessions/${sessionId}/audio/stream`,
-      pathTag: "session_audio_stream",
-      level: "session_audio",
-      upgradeReceivedAt,
-      logMetadata: { workspaceId, sessionId },
     });
   }
 
@@ -679,7 +657,7 @@ export class SessionAudioStreamMux {
           });
           send({
             type: "dictation_error",
-            error: `Unsupported audio stream message: ${msg.type}`,
+            error: `Unsupported dictation stream message: ${msg.type}`,
             fatal: false,
           });
       }

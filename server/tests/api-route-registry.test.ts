@@ -33,7 +33,7 @@ const initialSchemaOperationIds = [
   "createWorkspaceQuickActionSession",
 ];
 
-const supervisionOperationIds = [
+const sessionOperationIds = [
   "getHealth",
   "pairDevice",
   "getCurrentUser",
@@ -63,7 +63,6 @@ const supervisionOperationIds = [
   "getSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
-  "openSessionAudioStream",
   "openDictationStream",
   "searchSessions",
   "listSessions",
@@ -168,13 +167,13 @@ describe("api route registry", () => {
   });
 
   it("tracks native client route uses", () => {
-    const byUse = (use: "supervision" | "settings") =>
+    const byUse = (use: "session" | "settings") =>
       apiRouteSpecs
         .filter((route) => route.nativeClientUses?.includes(use))
         .map((route) => route.operationId)
         .sort();
 
-    expect(byUse("supervision")).toEqual([...supervisionOperationIds].sort());
+    expect(byUse("session")).toEqual([...sessionOperationIds].sort());
     expect(byUse("settings")).toEqual([...settingsOperationIds].sort());
   });
 
@@ -228,6 +227,10 @@ describe("api route registry", () => {
     expect(paths.has("/server/runtime/status")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/prompt-templates")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/review/comments/attach-to-turn")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/audio/stream")).toBe(false);
+    expect(paths.has("/tui-sessions")).toBe(false);
+    expect(paths.has("/me/skills")).toBe(false);
+    expect(paths.has("/me/skills/{skillName}")).toBe(false);
     expect(
       paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/tool-output/{toolCallId}/full"),
     ).toBe(false);

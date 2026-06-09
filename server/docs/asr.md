@@ -22,7 +22,7 @@ Older installs that still have a saved Automatic preference are migrated to Serv
 iPhone mic → WSS /dictation/stream → Oppi server → STT backend → transcript
 ```
 
-On current servers, dictation uses the server-level dictation WebSocket. The stream carries JSON control messages and binary PCM audio frames. The legacy session-bound path `/workspaces/:workspaceId/sessions/:sessionId/audio/stream` remains available for older clients.
+Dictation uses the server-level dictation WebSocket. The stream carries JSON control messages and binary PCM audio frames.
 
 Message flow:
 

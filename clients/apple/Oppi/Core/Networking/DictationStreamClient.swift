@@ -20,18 +20,12 @@ final class DictationStreamClient: DictationTransport {
     private var receiveTask: Task<Void, Never>?
     private var continuation: AsyncStream<ServerMessage>.Continuation?
 
-    init?(baseURL: URL, token: String, tlsCertFingerprint: String?, legacyWorkspaceId: String? = nil, legacySessionId: String? = nil) {
+    init?(baseURL: URL, token: String, tlsCertFingerprint: String?) {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
         components.scheme = baseURL.scheme == "https" ? "wss" : "ws"
-        // TODO(dictation): Remove legacy session-bound path construction when
-        // `sessionAudioStream` compatibility is dropped.
-        if let legacyWorkspaceId, let legacySessionId {
-            components.path = "/workspaces/\(legacyWorkspaceId)/sessions/\(legacySessionId)/audio/stream"
-        } else {
-            components.path = "/dictation/stream"
-        }
+        components.path = "/dictation/stream"
         guard let url = components.url else { return nil }
         self.url = url
         self.token = token

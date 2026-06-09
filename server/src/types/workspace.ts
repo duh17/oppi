@@ -1,6 +1,6 @@
 // ─── Workspaces ───
 
-export type WorkspaceSystemPromptMode = "append" | "replace";
+export type WorkspaceSystemPromptMode = "append";
 export type WorkspaceRuntimeMode = "host" | "sandbox";
 
 export interface WorkspaceSandboxConfig {
@@ -19,7 +19,7 @@ export interface WorkspaceMutableConfig {
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Context
-  systemPrompt?: string; // Workspace prompt text (appended or replacement depending on mode)
+  systemPrompt?: string; // Workspace prompt text appended to the Pi prompt
   systemPromptMode: WorkspaceSystemPromptMode;
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
   defaultModel?: string; // Optional default model for new sessions in this workspace

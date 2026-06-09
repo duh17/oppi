@@ -90,7 +90,6 @@ struct ServerInfoTests {
           "capabilities": {
             "sessionStream": { "version": 1 },
             "dictationStream": { "version": 1 },
-            "sessionAudioStream": { "version": 1 },
             "extensionNativeUI": {
               "version": 1,
               "capabilities": [
@@ -114,7 +113,6 @@ struct ServerInfoTests {
         let decoded = try JSONDecoder().decode(ServerInfo.self, from: json)
         #expect(decoded.capabilities?.sessionStream?.version == 1)
         #expect(decoded.capabilities?.dictationStream?.version == 1)
-        #expect(decoded.capabilities?.sessionAudioStream?.version == 1)
         #expect(decoded.capabilities?.extensionNativeUI?.version == 1)
         #expect(decoded.capabilities?.extensionNativeUI?.capabilities == [
             "extension-native-ui:v1:text-fallback",
@@ -129,7 +127,6 @@ struct ServerInfoTests {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1),
             dictationStream: nil,
-            sessionAudioStream: nil,
             extensionNativeUI: nil
         )
 
@@ -141,7 +138,6 @@ struct ServerInfoTests {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: nil,
             dictationStream: nil,
-            sessionAudioStream: .init(version: 1),
             extensionNativeUI: nil
         )
 

@@ -94,7 +94,7 @@ graph TD
   Client --> WorkspaceHTTP[Workspace HTTP lane]
   Client --> SessionWS[Focused session stream<br/>/workspaces/:workspaceId/sessions/:sessionId/stream]
   Client --> SessionCatchup[Focused session catch-up<br/>/workspaces/:workspaceId/sessions/:sessionId/events]
-  Client --> AudioWS[Session audio stream<br/>/workspaces/:workspaceId/sessions/:sessionId/audio/stream]
+  Client --> AudioWS[Dictation stream<br/>/dictation/stream]
 
   WorkspaceHTTP --> Summaries[GET /workspace-summaries]
   WorkspaceHTTP --> RecentList[GET /workspaces/:id/session-list?sinceMs&untilMs]
@@ -116,7 +116,7 @@ graph TD
 | Workspace quick actions and review comments | HTTP                        | `routes/workspaces.ts` + `workspace-quick-action-session.ts` + `review-comment-sqlite-store.ts` | `WorkspaceContextBar`, `WorkspaceReviewFileDetailView`, `ChatView` review comments | Prompt templates exposed as selected-file quick actions, quick-action sessions, and session-scoped review comments |
 | Focused session stream                      | Bidirectional JSON          | `BoundSessionStreamMux` + `SessionRuntimeRouter`                                                | `WebSocketClient` + `SessionStreamCoordinator`                                     | Timeline events, prompts, commands, queue sync, low-frequency `session_summary` updates                            |
 | Focused session catch-up                    | HTTP GET                    | `SessionRuntimeRouter.getCatchUp()`                                                             | `APIClient` + `SessionStreamCoordinator`                                           | Missed durable focused-session events after reconnect                                                              |
-| Session audio stream                        | Bidirectional JSON + binary | `SessionAudioStreamMux`                                                                         | `DictationStreamClient`                                                            | Dictation control messages, transcript events, PCM audio                                                           |
+| Dictation stream                            | Bidirectional JSON + binary | `DictationStreamMux`                                                                            | `DictationStreamClient`                                                            | Dictation control messages, transcript events, PCM audio                                                           |
 
 ## Event flow: prompt to pixel
 

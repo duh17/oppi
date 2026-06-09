@@ -64,13 +64,23 @@ describe("Storage.createWorkspace", () => {
     expect(ws.systemPromptMode).toBe("append");
   });
 
+  it("normalizes legacy persisted systemPromptMode values to append", () => {
+    const ws = storage.createWorkspace(createReq());
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    raw.systemPromptMode = "replace";
+    writeFileSync(path, JSON.stringify(raw, null, 2));
+
+    expect(storage.getWorkspace(ws.id)?.systemPromptMode).toBe("append");
+  });
+
   it("creates workspace with all optional fields", () => {
     const ws = storage.createWorkspace(
       createReq({
         description: "A coding workspace",
         icon: "terminal",
         systemPrompt: "Be helpful",
-        systemPromptMode: "replace",
+        systemPromptMode: "append",
         hostMount: "~/workspace/oppi",
         extensions: ["memory", "todos"],
         defaultModel: "anthropic/claude-sonnet-4-0",
@@ -317,9 +327,9 @@ describe("Storage.updateWorkspace", () => {
     expect(storage.getWorkspace(ws.id)!.systemPrompt).toBeUndefined();
   });
 
-  it("normalizes systemPromptMode updates back to append", () => {
+  it("normalizes internal legacy systemPromptMode updates back to append", () => {
     const ws = storage.createWorkspace(createReq());
-    const updated = storage.updateWorkspace(ws.id, { systemPromptMode: "replace" });
+    const updated = storage.updateWorkspace(ws.id, { systemPromptMode: "replace" } as never);
 
     expect(updated!.systemPromptMode).toBe("append");
   });

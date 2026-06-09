@@ -79,7 +79,7 @@ describe("skills module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "path parameter required" });
   });
 
-  it("returns 403 for skill mutation endpoints", async () => {
+  it("does not handle removed user skill endpoints", async () => {
     const dispatch = createSkillRoutes({} as RouteContext, createRouteHelpers());
     const res = makeResponse();
 
@@ -91,8 +91,8 @@ describe("skills module", () => {
       res: res as never,
     });
 
-    expect(handled).toBe(true);
-    expect(res.statusCode).toBe(403);
+    expect(handled).toBe(false);
+    expect(res.statusCode).toBe(0);
   });
 
   it("reports host path status", async () => {

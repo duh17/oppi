@@ -121,10 +121,6 @@ export function sessionStreamURL(workspaceId: string, sessionId: string): string
   return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/stream`;
 }
 
-export function sessionAudioStreamURL(workspaceId: string, sessionId: string): string {
-  return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/audio/stream`;
-}
-
 export function isSecureTransport(): boolean {
   return activeTransportScheme() === "https";
 }

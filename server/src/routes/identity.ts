@@ -141,9 +141,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       capabilities: {
         sessionStream: { version: 1 },
         dictationStream: config.asr?.sttEndpoint ? { version: 1 } : undefined,
-        // TODO(dictation): Drop this compatibility capability after deployed clients
-        // no longer open the legacy session-bound ASR stream.
-        sessionAudioStream: config.asr?.sttEndpoint ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

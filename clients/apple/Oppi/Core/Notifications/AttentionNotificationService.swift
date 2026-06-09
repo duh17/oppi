@@ -11,7 +11,7 @@ private let notificationLogger = Logger(subsystem: AppIdentifiers.subsystem, cat
 /// - App is backgrounded/inactive (lock screen/banner)
 /// - App is foregrounded but the request is for a different session
 ///
-/// This keeps agent questions and extension prompts visible during multi-session supervision
+/// This keeps agent questions and extension prompts visible while working across sessions
 /// without enabling remote APNs push registration.
 @MainActor
 final class AttentionNotificationService: NSObject, UNUserNotificationCenterDelegate {

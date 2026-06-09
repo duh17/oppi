@@ -525,7 +525,7 @@ struct WorkspaceCodableTests {
             "icon": "hammer",
             "skills": ["searxng", "fetch"],
             "systemPrompt": "You are helpful",
-            "systemPromptMode": "replace",
+            "systemPromptMode": "append",
             "hostMount": "/Users/me/workspace",
             "extensionMode": "explicit",
             "extensions": ["memory", "todos"],
@@ -541,7 +541,7 @@ struct WorkspaceCodableTests {
         #expect(ws.icon == "hammer")
         #expect(ws.skills == ["searxng", "fetch"])
         #expect(ws.systemPrompt == "You are helpful")
-        #expect(ws.systemPromptMode == .replace)
+        #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == "/Users/me/workspace")
         #expect(ws.extensions == ["memory", "todos"])
         #expect(ws.createdAt.timeIntervalSince1970 == 1700000000)
@@ -576,7 +576,7 @@ struct WorkspaceCodableTests {
             "id": "w3", "name": "RT",
             "description": "test", "icon": "star",
             "skills": ["fetch"],
-            "systemPrompt": "prompt", "systemPromptMode": "replace", "hostMount": "/work",
+            "systemPrompt": "prompt", "systemPromptMode": "append", "hostMount": "/work",
             "extensionMode": "explicit", "extensions": ["custom-ext"],
             "createdAt": 1700000000000, "updatedAt": 1700001000000
         }

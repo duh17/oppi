@@ -2,7 +2,6 @@ import Foundation
 
 enum WorkspaceSystemPromptMode: String, Codable, Sendable, CaseIterable {
     case append
-    case replace
 }
 
 enum WorkspaceRuntime: String, Codable, Sendable {

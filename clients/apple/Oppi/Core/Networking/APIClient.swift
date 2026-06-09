@@ -733,23 +733,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).content
     }
 
-    // periphery:ignore - API surface for future skills editor UI
-    /// Create or update a user skill via inline content.
-    ///
-    /// Calls `PUT /me/skills/:name` with SKILL.md content and optional extra files.
-    /// Built-in skills cannot be overwritten.
-    func putUserSkill(
-        name: String,
-        content: String?,
-        files: [String: String]? = nil
-    ) async throws {
-        struct Body: Encodable {
-            let content: String?
-            let files: [String: String]?
-        }
-        _ = try await put("/me/skills/\(name)", body: Body(content: content, files: files))
-    }
-
     // MARK: - Workspace-scoped Sessions (v2 API)
 
     struct WorkspaceSessionSummariesResponse: Decodable {

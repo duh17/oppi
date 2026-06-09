@@ -972,43 +972,32 @@ describe("themes API", () => {
   });
 });
 
-// ── User skills ──
+// ── Removed user skill routes ──
 
-describe("user skills API", () => {
-  it("GET /me/skills returns skill list", async () => {
+describe("removed user skills API", () => {
+  it("GET /me/skills returns 404", async () => {
     const res = await get("/me/skills");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.skills).toBeInstanceOf(Array);
+    expect(res.status).toBe(404);
   });
 
-  it("POST /me/skills is disabled", async () => {
+  it("POST /me/skills returns 404", async () => {
     const res = await post("/me/skills", {
       name: "new-skill",
       sessionId: "session-123",
     });
-    expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toEqual({
-      error: "Skill editing is disabled on remote clients",
-    });
+    expect(res.status).toBe(404);
   });
 
-  it("PUT /me/skills/:name is disabled", async () => {
+  it("PUT /me/skills/:name returns 404", async () => {
     const res = await put("/me/skills/search", {
       content: '---\nname: search\ndescription: "Updated"\n---\n# Updated',
     });
-    expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toEqual({
-      error: "Skill editing is disabled on remote clients",
-    });
+    expect(res.status).toBe(404);
   });
 
-  it("DELETE /me/skills/:name is disabled", async () => {
+  it("DELETE /me/skills/:name returns 404", async () => {
     const res = await del("/me/skills/search");
-    expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toEqual({
-      error: "Skill editing is disabled on remote clients",
-    });
+    expect(res.status).toBe(404);
   });
 });
 
