@@ -283,22 +283,26 @@ describe("RuntimeUpdateManager", () => {
       try {
         pointResolverAt(dir);
 
-        mockExecFile.mockImplementation(
-          (_bin: string, _args: string[], _opts: unknown, cb: Function) => {
-            setTimeout(() => cb(null, "", ""), 25);
-          },
-        );
+        let finishInstall!: () => void;
+        const installStarted = new Promise<void>((resolveStarted) => {
+          mockExecFile.mockImplementation(
+            (_bin: string, _args: string[], _opts: unknown, cb: Function) => {
+              resolveStarted();
+              finishInstall = () => cb(null, "", "");
+            },
+          );
+        });
 
         const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
 
         const first = manager.updateRuntime();
-        await Promise.resolve();
-        await Promise.resolve();
+        await installStarted;
 
         const second = await manager.updateRuntime();
         expect(second.ok).toBe(false);
         expect(second.message).toBe("Update already in progress");
 
+        finishInstall();
         await first;
       } finally {
         cleanup();

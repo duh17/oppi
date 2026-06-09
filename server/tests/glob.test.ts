@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { globMatch } from "../src/glob.js";
+import { formatSeededRepro, mulberry32 } from "./harness/fuzz.js";
 
 describe("globMatch", () => {
   // ── Basic literals ──
@@ -132,25 +133,37 @@ describe("globMatch", () => {
   });
 
   // ── Fuzz: random path/pattern combos don't crash ──
-  it("10K random paths and patterns do not crash", () => {
+  it("10K seeded paths and patterns do not crash", () => {
+    const seed = 0x6f707069;
+    const rng = mulberry32(seed);
     const pathChars = "abcdefghijklmnopqrstuvwxyz0123456789._-/";
     const patChars = "abcdefghijklmnopqrstuvwxyz0123456789._-/*?[]{}\\!";
-    let crashes = 0;
+    const failures: string[] = [];
+
+    const randomInt = (max: number) => Math.floor(rng() * max);
+    const randomString = (chars: string, length: number) => {
+      let result = "";
+      for (let i = 0; i < length; i++) result += chars[randomInt(chars.length)];
+      return result;
+    };
 
     for (let i = 0; i < 10_000; i++) {
-      const pathLen = Math.floor(Math.random() * 100) + 1;
-      const patLen = Math.floor(Math.random() * 50) + 1;
-      let path = "";
-      let pat = "";
-      for (let j = 0; j < pathLen; j++) path += pathChars[Math.floor(Math.random() * pathChars.length)];
-      for (let j = 0; j < patLen; j++) pat += patChars[Math.floor(Math.random() * patChars.length)];
+      const path = randomString(pathChars, randomInt(100) + 1);
+      const pat = randomString(patChars, randomInt(50) + 1);
       try {
         globMatch(path, pat);
-      } catch {
-        crashes++;
+      } catch (error) {
+        failures.push(
+          formatSeededRepro(seed, [
+            `case=${i}`,
+            `path=${JSON.stringify(path)}`,
+            `pattern=${JSON.stringify(pat)}`,
+            `error=${error instanceof Error ? error.message : String(error)}`,
+          ]),
+        );
       }
     }
-    expect(crashes).toBe(0);
+    expect(failures).toEqual([]);
   });
 
   it("100K glob evaluations in under 5s", () => {

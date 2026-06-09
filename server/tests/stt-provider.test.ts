@@ -27,7 +27,7 @@ function errorResponse(status: number): ResponseFactory {
 /**
  * Create a mock fetch that routes by method + URL pattern.
  * Handlers are checked in order; first match wins.
- * Falls back to 404 if nothing matches.
+ * Unmatched requests throw so tests must register every expected route explicitly.
  */
 function createMockFetch(
   handlers: Array<{ match: (url: string, method: string) => boolean; response: ResponseFactory }>,
@@ -47,7 +47,7 @@ function createMockFetch(
     for (const h of handlers) {
       if (h.match(url, method)) return h.response();
     }
-    return new Response("Not found", { status: 404 });
+    throw new Error(`Unexpected fetch request: ${method} ${url}`);
   };
 
   return { fetchFn: fetchFn as typeof globalThis.fetch, calls };

@@ -23,23 +23,9 @@ anotherSessionTookOver removal, TimelineInteractionContext introduction, TestEve
 
 ### ServerConnectionScenarioSupport.swift
 
-| Symbol | Lines | Notes |
-|--------|-------|-------|
-| `AckCommand` (private enum) | 188-213 | Private, never called within the file. Duplicated in `ServerConnectionTests.swift` and `ServerConnectionRoutingTests.swift`. Dead. |
-| `AckRequest` (private struct) | 214-219 | Private, never called within the file. Dead. |
-| `extractAckRequest()` (private) | 220-231 | Private, never called within the file. Dead. |
-| `makeAckTestConnection()` (private) | 234-244 | Private, never called within the file. Dead. |
-| `AckStageRecorder` (private actor) | 246-260 | Private, never called within the file. Dead. |
-| `ScenarioTimelineItemKind` | 180-186 | Not referenced outside this file. Only used by `ServerConnectionScenario.timelineItemCount(of:)`. Tests use it via the scenario but import the enum indirectly. See note below. |
+Resolved 2026-06-09: the private `Ack*` helpers were removed. `ScenarioTimelineItemKind` remains live through `ServerConnectionScenario.timelineItemCount(of:)` call sites.
 
-> `ScenarioTimelineItemKind` **is** used: tests call `scenario.timelineItemCount(of: .assistantMessage)` etc.
-> The enum must be visible for those call sites. Reclassified under Healthy.
->
-> The 5 private `Ack*` symbols (55 lines) are genuinely dead. They were likely left behind when
-> ack tests moved to `ServerConnectionTests.swift` / `ServerConnectionSendAckTests.swift` with
-> their own local copies.
-
-**Total dead lines: ~55 (private Ack helpers in ServerConnectionScenarioSupport.swift)**
+**Total dead lines: 0 known in ServerConnectionScenarioSupport.swift**
 
 ## Rarely Used (1 external reference — candidates for inlining)
 

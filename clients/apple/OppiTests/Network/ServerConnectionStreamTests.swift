@@ -547,11 +547,16 @@ struct ServerConnectionStreamTests {
                 await conn.streamSession("new", workspaceId: "w1")
             }
 
-            try? await Task.sleep(for: .milliseconds(30))
+            let didCancelStaleTask = await waitForMainActorCondition(
+                timeout: .milliseconds(300),
+                poll: .milliseconds(10)
+            ) {
+                staleTask.isCancelled
+            }
             streamTask.cancel()
             _ = await streamTask.value
 
-            #expect(staleTask.isCancelled,
+            #expect(didCancelStaleTask,
                     "Switching bound session streams must tear down stale \(status) transport")
             #expect(conn.focusedSessionId == "new")
             #expect(conn.focusedSessionStreamEndpointKind == "split_session")
@@ -581,12 +586,28 @@ struct ServerConnectionStreamTests {
             )
         }
 
-        try? await Task.sleep(for: .milliseconds(20))
+        let reachedTransportConnect = await waitForMainActorCondition(
+            timeout: .milliseconds(300),
+            poll: .milliseconds(10)
+        ) {
+            if case .connectingTransport = conn.sessionStreamCoordinator.state {
+                return true
+            }
+            return false
+        }
+        #expect(reachedTransportConnect,
+                "streamSession should enter transport setup before the cancellation check")
+
         streamTask.cancel()
         _ = await streamTask.value
-        try? await Task.sleep(for: .milliseconds(100))
+        let queueSyncStayedStopped = await waitForMainActorConditionToStayTrue(
+            for: .milliseconds(100),
+            poll: .milliseconds(10)
+        ) {
+            !sentTypes.contains("get_queue")
+        }
 
-        #expect(!sentTypes.contains("get_queue"),
+        #expect(queueSyncStayedStopped,
                 "Cancelled connection setup must not start queue sync against a dead WebSocket")
         switch conn.sessionStreamCoordinator.state {
         case .queueSync, .streaming:

@@ -1266,7 +1266,7 @@ describe("pairing token flow", () => {
     await withIsolatedPairingServer(
       async ({ storage: pairingStorage, baseUrl: pairingBaseUrl }) => {
         const pt = pairingStorage.issuePairingToken(1_000);
-        await new Promise((r) => setTimeout(r, 1_100));
+        pairingStorage.updateConfig({ pairingTokenExpiresAt: Date.now() - 1 });
 
         const res = await fetch(`${pairingBaseUrl}/pair`, {
           method: "POST",

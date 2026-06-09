@@ -18,6 +18,20 @@ function id(workspaceId: string, sessionId: string): WorkspaceSessionIdentity {
   return { workspaceId, sessionId };
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+async function flushMicrotasks(turns = 2): Promise<void> {
+  for (let i = 0; i < turns; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 // ─── Mutex ───
 
 describe("Mutex", () => {
@@ -223,65 +237,100 @@ describe("WorkspaceRuntime", () => {
   describe("locks", () => {
     it("withSessionLock serializes same-session operations", async () => {
       const order: number[] = [];
+      const firstEntered = deferred();
+      const releaseFirst = deferred();
 
       const p1 = rt.withSessionLock("s1", async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        firstEntered.resolve();
+        await releaseFirst.promise;
         order.push(1);
       });
+      await firstEntered.promise;
 
       const p2 = rt.withSessionLock("s1", async () => {
         order.push(2);
       });
+      await flushMicrotasks();
 
+      expect(order).toEqual([]);
+
+      releaseFirst.resolve();
       await Promise.all([p1, p2]);
       expect(order).toEqual([1, 2]);
     });
 
     it("withSessionLock allows parallel for different sessions", async () => {
       const order: number[] = [];
+      const firstEntered = deferred();
+      const secondFinished = deferred();
+      const releaseFirst = deferred();
 
       const p1 = rt.withSessionLock("s1", async () => {
-        await new Promise((r) => setTimeout(r, 20));
+        firstEntered.resolve();
+        await releaseFirst.promise;
         order.push(1);
       });
+      await firstEntered.promise;
 
       const p2 = rt.withSessionLock("s2", async () => {
         order.push(2);
+        secondFinished.resolve();
       });
+      await secondFinished.promise;
 
+      expect(order).toEqual([2]);
+
+      releaseFirst.resolve();
       await Promise.all([p1, p2]);
-      // s2 should finish first since it doesn't wait
       expect(order).toEqual([2, 1]);
     });
 
     it("withWorkspaceLock serializes same-workspace operations", async () => {
       const order: number[] = [];
+      const firstEntered = deferred();
+      const releaseFirst = deferred();
 
       const p1 = rt.withWorkspaceLock(W, async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        firstEntered.resolve();
+        await releaseFirst.promise;
         order.push(1);
       });
+      await firstEntered.promise;
 
       const p2 = rt.withWorkspaceLock(W, async () => {
         order.push(2);
       });
+      await flushMicrotasks();
 
+      expect(order).toEqual([]);
+
+      releaseFirst.resolve();
       await Promise.all([p1, p2]);
       expect(order).toEqual([1, 2]);
     });
 
     it("withWorkspaceLock allows parallel for different workspaces", async () => {
       const order: number[] = [];
+      const firstEntered = deferred();
+      const secondFinished = deferred();
+      const releaseFirst = deferred();
 
       const p1 = rt.withWorkspaceLock(W, async () => {
-        await new Promise((r) => setTimeout(r, 20));
+        firstEntered.resolve();
+        await releaseFirst.promise;
         order.push(1);
       });
+      await firstEntered.promise;
 
       const p2 = rt.withWorkspaceLock(W2, async () => {
         order.push(2);
+        secondFinished.resolve();
       });
+      await secondFinished.promise;
 
+      expect(order).toEqual([2]);
+
+      releaseFirst.resolve();
       await Promise.all([p1, p2]);
       expect(order).toEqual([2, 1]);
     });

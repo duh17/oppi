@@ -1,4 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockCompleteSimple = vi.hoisted(() => vi.fn());
+
+vi.mock("@earendil-works/pi-ai", async () => {
+  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>(
+    "@earendil-works/pi-ai",
+  );
+  return {
+    ...actual,
+    completeSimple: mockCompleteSimple,
+  };
+});
+
 import {
   normalizeTitle,
   DisabledProvider,
@@ -140,6 +153,31 @@ describe("ApiModelTitleProvider", () => {
 // ─── SessionTitleGenerator (orchestrator) ───
 
 describe("SessionTitleGenerator", () => {
+  beforeEach(() => {
+    mockCompleteSimple.mockReset();
+  });
+
+  function successfulModelRegistry() {
+    return {
+      find: vi.fn(() => ({ provider: "anthropic", id: "claude-haiku-3" })),
+      getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key", headers: {} })),
+    } as never;
+  }
+
+  function waitForMetrics(): {
+    onMetrics: (metrics: TitleGenerationMetrics) => void;
+    metrics: Promise<TitleGenerationMetrics>;
+  } {
+    let resolveMetrics!: (metrics: TitleGenerationMetrics) => void;
+    const metrics = new Promise<TitleGenerationMetrics>((resolve) => {
+      resolveMetrics = resolve;
+    });
+    return {
+      onMetrics: (value) => resolveMetrics(value),
+      metrics,
+    };
+  }
+
   function makeDeps(overrides?: Partial<SessionTitleGeneratorDeps>): SessionTitleGeneratorDeps {
     return {
       getConfig: () => ({ enabled: true, model: "anthropic/claude-haiku-3" }),
@@ -190,38 +228,43 @@ describe("SessionTitleGenerator", () => {
   });
 
   it("skips save if session name was set during generation", async () => {
+    mockCompleteSimple.mockResolvedValue({
+      content: [{ type: "text", text: "Fix WebSocket Reconnect" }],
+      usage: { input: 10, output: 4, cacheRead: 0 },
+    });
+    const { onMetrics, metrics } = waitForMetrics();
     const deps = makeDeps({
-      // Simulate: by the time generation completes, session already has a name
       getSession: vi.fn(() => ({ id: "s1", name: "Already Named" })),
-      modelRegistry: {
-        find: vi.fn(() => undefined),
-        getApiKey: vi.fn(),
-      } as never,
+      modelRegistry: successfulModelRegistry(),
+      onMetrics,
     });
     const gen = new SessionTitleGenerator(deps);
+
     gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
+    await metrics;
 
-    // Wait for the async fire-and-forget to complete
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Model not found → no title → no save attempted anyway
-    // But the re-check logic is tested by the path
     expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.broadcastSessionUpdate).not.toHaveBeenCalled();
   });
 
   it("skips save if session no longer exists", async () => {
+    mockCompleteSimple.mockResolvedValue({
+      content: [{ type: "text", text: "Fix WebSocket Reconnect" }],
+      usage: { input: 10, output: 4, cacheRead: 0 },
+    });
+    const { onMetrics, metrics } = waitForMetrics();
     const deps = makeDeps({
       getSession: vi.fn(() => undefined),
-      modelRegistry: {
-        find: vi.fn(() => undefined),
-        getApiKey: vi.fn(),
-      } as never,
+      modelRegistry: successfulModelRegistry(),
+      onMetrics,
     });
     const gen = new SessionTitleGenerator(deps);
-    gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
 
-    await new Promise((r) => setTimeout(r, 50));
+    gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
+    await metrics;
+
     expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.broadcastSessionUpdate).not.toHaveBeenCalled();
   });
 });
 
