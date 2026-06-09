@@ -261,7 +261,7 @@ struct ToolExpandedSurfaceHostTests {
         #expect(visibleLabelText.contains("Read image file [image/png]"))
     }
 
-    @Test func readMediaAttachmentImageKeepsUsefulReadNotes() async throws {
+    @Test func readMediaAttachmentImageHidesReadDebugMetadata() async throws {
         let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
         let attachment = ToolPresentationBuilder.ToolMediaAttachment(
             kind: "image",
@@ -298,7 +298,7 @@ struct ToolExpandedSurfaceHostTests {
             .filter { !$0.isEmpty }
 
         #expect(!visibleLabelText.contains("Read image file [image/png]"))
-        #expect(visibleLabelText.contains { $0.contains("original 240x160") })
+        #expect(!visibleLabelText.contains { $0.contains("original 240x160") })
     }
 
     @Test func readMediaAttachmentImageRetriesWhenFetcherBecomesAvailable() async throws {

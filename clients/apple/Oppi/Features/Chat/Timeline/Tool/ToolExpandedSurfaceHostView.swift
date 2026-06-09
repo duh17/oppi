@@ -2,7 +2,8 @@ import UIKit
 
 @MainActor
 final class ToolExpandedSurfaceHostView: UIView {
-    private let contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 6, bottom: 5, trailing: 6)
+    private let defaultContentInsets = NSDirectionalEdgeInsets(top: 5, leading: 6, bottom: 5, trailing: 6)
+    private var activeContentInsets = NSDirectionalEdgeInsets(top: 5, leading: 6, bottom: 5, trailing: 6)
     private var activeConstraints: [NSLayoutConstraint] = []
     private(set) weak var activeView: UIView?
 
@@ -20,7 +21,7 @@ final class ToolExpandedSurfaceHostView: UIView {
             return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
         }
         let width = max(1, bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 48)
-        let activeWidth = max(1, width - contentInsets.leading - contentInsets.trailing)
+        let activeWidth = max(1, width - activeContentInsets.leading - activeContentInsets.trailing)
         let activeSize = activeView.systemLayoutSizeFitting(
             CGSize(width: activeWidth, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -28,7 +29,7 @@ final class ToolExpandedSurfaceHostView: UIView {
         )
         return CGSize(
             width: UIView.noIntrinsicMetric,
-            height: activeSize.height + contentInsets.top + contentInsets.bottom
+            height: activeSize.height + activeContentInsets.top + activeContentInsets.bottom
         )
     }
 
@@ -45,7 +46,7 @@ final class ToolExpandedSurfaceHostView: UIView {
             )
         }
         let width = max(1, targetSize.width > 0 ? targetSize.width : bounds.width)
-        let activeWidth = max(1, width - contentInsets.leading - contentInsets.trailing)
+        let activeWidth = max(1, width - activeContentInsets.leading - activeContentInsets.trailing)
         let activeSize = activeView.systemLayoutSizeFitting(
             CGSize(width: activeWidth, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -53,7 +54,7 @@ final class ToolExpandedSurfaceHostView: UIView {
         )
         return CGSize(
             width: width,
-            height: activeSize.height + contentInsets.top + contentInsets.bottom
+            height: activeSize.height + activeContentInsets.top + activeContentInsets.bottom
         )
     }
 
@@ -64,9 +65,13 @@ final class ToolExpandedSurfaceHostView: UIView {
         addSubview(view)
     }
 
-    func activateSurfaceView(_ view: UIView?) {
+    func activateSurfaceView(
+        _ view: UIView?,
+        contentInsets: NSDirectionalEdgeInsets? = nil
+    ) {
         NSLayoutConstraint.deactivate(activeConstraints)
         activeConstraints.removeAll()
+        activeContentInsets = contentInsets ?? defaultContentInsets
 
         if let activeView, activeView !== view {
             activeView.isHidden = true
@@ -83,10 +88,10 @@ final class ToolExpandedSurfaceHostView: UIView {
         view.isHidden = false
 
         let constraints = [
-            view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: contentInsets.leading),
-            view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInsets.trailing),
-            view.topAnchor.constraint(equalTo: topAnchor, constant: contentInsets.top),
-            view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -contentInsets.bottom),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: activeContentInsets.leading),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -activeContentInsets.trailing),
+            view.topAnchor.constraint(equalTo: topAnchor, constant: activeContentInsets.top),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -activeContentInsets.bottom),
         ]
         NSLayoutConstraint.activate(constraints)
         activeConstraints = constraints

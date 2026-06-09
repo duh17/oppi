@@ -63,7 +63,7 @@ enum ToolTimelineRowLayoutBuilder {
         )
         let expandedReadMediaWidth = expandedReadMediaContainer.widthAnchor.constraint(
             equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
-            constant: -12
+            constant: 0
         )
         let imagePreviewHeight = imagePreviewContainer.heightAnchor.constraint(
             equalToConstant: collapsedImagePreviewHeight

@@ -763,6 +763,9 @@ final class NativeExpandedInlineImageView: UIView {
 
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
+        accessibilityIdentifier = "toolRow.readMedia.imageViewport"
+        accessibilityLabel = "Image preview"
+        isAccessibilityElement = true
         backgroundColor = .clear
         clipsToBounds = true
 
@@ -997,7 +1000,7 @@ private enum NativeExpandedReadMediaParser {
 
         let strippedText: String
         if images.isEmpty && audio.isEmpty {
-            strippedText = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            strippedText = visibleReadMediaText(from: output)
         } else {
             var text = output
             let ranges = (images.map(\.range) + audio.map(\.range))
@@ -1005,7 +1008,7 @@ private enum NativeExpandedReadMediaParser {
             for range in ranges {
                 text.removeSubrange(range)
             }
-            strippedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            strippedText = visibleReadMediaText(from: text)
         }
 
         return NativeExpandedReadMediaParsed(
@@ -1013,6 +1016,18 @@ private enum NativeExpandedReadMediaParser {
             images: images,
             audio: audio
         )
+    }
+
+    private static func visibleReadMediaText(from text: String) -> String {
+        text.components(separatedBy: .newlines)
+            .filter { !isImageDisplayMetadata($0) }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isImageDisplayMetadata(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.hasPrefix("[Image:")
     }
 
     private static func isImageReadBoilerplate(_ line: String) -> Bool {

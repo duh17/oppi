@@ -352,7 +352,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if expandedUsesViewport,
            let expandedViewportHeightConstraint {
             if isVoiceMessageExpandedContent(currentConfiguration), expandedUsesReadMediaLayout {
-                let width = max(100, expandedContainer.bounds.width - 12)
+                let width = max(100, expandedContainer.bounds.width)
                 let measurementView = expandedReadMediaContentView ?? expandedReadMediaContainer
                 let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
                     for: measurementView,
@@ -376,7 +376,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 // image in the timeline. Do not clamp to the generic text
                 // viewport max; the outer timeline owns vertical scrolling.
                 let expandedContentView = expandedReadMediaContentView ?? expandedReadMediaContainer
-                let width = max(100, expandedContainer.bounds.width - 12)
+                let width = max(100, expandedContainer.bounds.width)
                 let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
                     for: expandedContentView,
                     width: width
@@ -455,7 +455,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func updateExpandedReadMediaWidthIfNeeded() {
         guard let expandedReadMediaWidthConstraint else { return }
-        expandedReadMediaWidthConstraint.constant = -12
+        expandedReadMediaWidthConstraint.constant = 0
     }
 
     func setExpandedVerticalLockEnabled(_ enabled: Bool) {
@@ -737,7 +737,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         compactHostedSurfaceHostView.clearActiveSurface()
         compactHostedSurfaceHostView.isHidden = true
         expandedScrollView.isHidden = false
-        expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
+        expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer, contentInsets: .zero)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
@@ -758,7 +758,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedSurfaceHostView.clearActiveSurface()
         expandedScrollView.isHidden = true
         compactHostedSurfaceHostView.isHidden = false
-        compactHostedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
+        compactHostedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer, contentInsets: .zero)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
