@@ -217,6 +217,10 @@ struct ChatView: View {
         askRequestStore.pending(for: sessionId)
     }
 
+    private var hasBlockingExtensionInput: Bool {
+        activeComposerAskRequest != nil || connection.hasPendingExtensionDialog(for: sessionId)
+    }
+
     /// Show toolbar when composing (keyboard up) or at bottom of chat.
     /// Hide when scrolled up to read history.
 
@@ -535,7 +539,8 @@ struct ChatView: View {
             }
         } else {
             VStack(spacing: 8) {
-                if let surface = extensionSurfaceState,
+                if !hasBlockingExtensionInput,
+                   let surface = extensionSurfaceState,
                    surface.hasVisibleContent(in: .aboveEditor) {
                     ExtensionSurfacePanel(
                         surface: surface,
@@ -642,7 +647,8 @@ struct ChatView: View {
                     }
                 )
 
-                if let surface = extensionSurfaceState,
+                if !hasBlockingExtensionInput,
+                   let surface = extensionSurfaceState,
                    surface.hasVisibleContent(in: .belowEditor) {
                     ExtensionSurfacePanel(
                         surface: surface,
