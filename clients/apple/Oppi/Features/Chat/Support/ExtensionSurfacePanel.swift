@@ -115,7 +115,7 @@ struct ExtensionNativeSurfaceView: View {
                     if let summaryText {
                         StatusPill(
                             text: summaryText,
-                            systemImage: "bolt.fill",
+                            systemImage: "bolt.circle.fill",
                             tone: .working,
                             emphasis: .quiet,
                             size: .small
@@ -501,8 +501,8 @@ private struct ExtensionNativeActivityRowContent: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             stateMarker
-                .frame(width: 22, height: 22)
-                .padding(.top, 1)
+                .frame(width: 14, height: 14)
+                .padding(.top, 3)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -588,57 +588,26 @@ private struct ExtensionNativeActivityRowContent: View {
         }
     }
 
-    private var markerFillOpacity: Double {
-        row.state == "inactive" ? 0.04 : 0.14
-    }
-
-    private var markerStrokeOpacity: Double {
-        row.state == "inactive" ? 0.42 : 0.26
-    }
-
-    @ViewBuilder
-    private var stateMarker: some View {
-        ZStack {
-            Circle()
-                .fill(rowAccentColor.opacity(markerFillOpacity))
-            Circle()
-                .stroke(rowAccentColor.opacity(markerStrokeOpacity), lineWidth: 1)
-            markerGlyph
-        }
-    }
-
-    @ViewBuilder
-    private var markerGlyph: some View {
+    private var markerSymbolName: String {
         switch row.state {
-        case "running":
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(rowAccentColor)
-        case "success":
-            Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(rowAccentColor)
-        case "warning":
-            Image(systemName: "exclamationmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(rowAccentColor)
-        case "error":
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(rowAccentColor)
-        case "queued":
-            Image(systemName: "clock.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(rowAccentColor)
-        case "inactive":
-            Circle()
-                .stroke(rowAccentColor.opacity(0.80), lineWidth: 1.4)
-                .frame(width: 9, height: 9)
-        default:
-            Circle()
-                .fill(rowAccentColor)
-                .frame(width: 7, height: 7)
+        case "running": return "bolt.circle.fill"
+        case "success": return "checkmark.circle.fill"
+        case "warning": return "exclamationmark.circle.fill"
+        case "error": return "xmark.circle.fill"
+        case "queued": return "clock.circle.fill"
+        case "inactive": return "circle"
+        default: return "circle.fill"
         }
+    }
+
+    private var markerSymbolWeight: Font.Weight {
+        row.state == "inactive" ? .regular : .semibold
+    }
+
+    private var stateMarker: some View {
+        Image(systemName: markerSymbolName)
+            .font(.system(size: 14, weight: markerSymbolWeight))
+            .foregroundStyle(rowAccentColor)
     }
 
     private var normalizedProgress: Double? {
