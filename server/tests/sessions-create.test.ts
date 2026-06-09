@@ -822,25 +822,39 @@ describe("POST /workspaces/:id/sessions/:sessionId/stop", () => {
     expect((mock.responses[0]!.data as { ok: boolean }).ok).toBe(true);
   });
 
-  it("fails fast when a pi-tui session is no longer connected", async () => {
+  it("marks disconnected pi-tui sessions stopped", async () => {
     const mock = createMockContext();
     const session = makeSession({
       id: "sess-1",
       workspaceId: "ws-1",
       runtime: "pi-tui",
       status: "busy",
+      currentTurnStartedAt: Date.now(),
+      mirror: {
+        status: "disconnected",
+        terminal: { lastSeenAt: Date.now() - 1_000 },
+      },
     });
     mock.storage.getSession.mockReturnValue(session);
-    mock.piTuiRuntime.stopSession.mockRejectedValue(
-      new Error("pi-tui is not connected; stop it from the terminal"),
-    );
 
     await dispatchStop(mock);
 
-    expect(mock.responses).toHaveLength(0);
-    expect(mock.errors).toEqual([
-      { status: 409, message: "pi-tui is not connected; stop it from the terminal" },
-    ]);
+    expect(mock.piTuiRuntime.stopSession).not.toHaveBeenCalled();
+    expect(mock.storage.saveSession).toHaveBeenCalledOnce();
+    expect(mock.responses).toHaveLength(1);
+    expect(mock.errors).toEqual([]);
+    expect((mock.responses[0]!.data as { ok: boolean }).ok).toBe(true);
+    expect((mock.responses[0]!.data as { session: Session }).session).toMatchObject({
+      id: "sess-1",
+      runtime: "pi-tui",
+      status: "stopped",
+      mirror: {
+        status: "disconnected",
+        terminal: {
+          disconnectReason: "oppi_stop_disconnected_terminal",
+        },
+      },
+    });
   });
 });
 

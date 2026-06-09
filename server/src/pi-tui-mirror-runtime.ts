@@ -13,6 +13,7 @@ import {
 } from "./agent-runtime-transport.js";
 import {
   buildPendingExtensionUIRequestMessages,
+  cancelPendingAskRequest,
   drainExtensionUITeardownMessages,
   handleExtensionUIRequest as handleExtensionUIRequestState,
   respondToExtensionUIRequest as respondToExtensionUIRequestState,
@@ -606,6 +607,40 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
   }
 
+  private deliverExtensionUIResponse(
+    connection: BridgeConnection,
+    payload: ExtensionUIResponse,
+  ): boolean {
+    try {
+      connection.ws.send(
+        JSON.stringify({
+          type: "extension_ui_response",
+          id: payload.id,
+          value: payload.value,
+          confirmed: payload.confirmed,
+          cancelled: payload.cancelled,
+        }),
+      );
+      return true;
+    } catch (error) {
+      log.warn("mirror_bridge.extension_ui_response_send_failed", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        sessionId: connection.sessionId,
+        bridgeId: connection.bridgeId,
+        requestId: payload.id,
+        error: safeErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  private cancelPendingAsk(active: MirrorActiveSession, connection: BridgeConnection): void {
+    cancelPendingAskRequest(active, {
+      broadcastSettled: (message) => this.broadcast(active.session.id, message),
+      deliver: (payload) => this.deliverExtensionUIResponse(connection, payload),
+    });
+  }
+
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
     this.ensureActiveFromStorage(sessionId);
     return this.broadcaster.subscribe(sessionId, callback);
@@ -730,6 +765,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   async sendAbort(sessionId: string): Promise<void> {
+    const active = this.active.get(sessionId);
+    const connection = this.connectedBridgeForSession(sessionId);
+    if (active && connection) {
+      this.cancelPendingAsk(active, connection);
+    }
+
     const data = await this.dispatchBridgeCommand(sessionId, { type: "abort" });
     this.applyQueueFromCommandData(sessionId, data, "command_result:abort");
   }
@@ -739,6 +780,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     if (!connection) {
       throw new Error("pi-tui is not connected; stop it from the terminal");
+    }
+
+    const active = this.active.get(sessionId);
+    if (active) {
+      this.cancelPendingAsk(active, connection);
     }
 
     connection.stopRequestedAt = Date.now();
@@ -850,29 +896,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     return respondToExtensionUIRequestState(active, response, {
       broadcastSettled: (message) => this.broadcast(active.session.id, message),
-      deliver: (payload) => {
-        try {
-          connection.ws.send(
-            JSON.stringify({
-              type: "extension_ui_response",
-              id: payload.id,
-              value: payload.value,
-              confirmed: payload.confirmed,
-              cancelled: payload.cancelled,
-            }),
-          );
-          return true;
-        } catch (error) {
-          log.warn("mirror_bridge.extension_ui_response_send_failed", {
-            runtime: MIRROR_RUNTIME_LOG_TAG,
-            sessionId,
-            bridgeId: connection.bridgeId,
-            requestId: payload.id,
-            error: safeErrorMessage(error),
-          });
-          return false;
-        }
-      },
+      deliver: (payload) => this.deliverExtensionUIResponse(connection, payload),
     });
   }
 
@@ -1193,6 +1217,54 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
   }
 
+  private teardownMirrorBridgeSession(
+    active: MirrorActiveSession,
+    options: {
+      bridgeId: string;
+      reason: string;
+      cwd?: string;
+      lastSeenAt?: number;
+    },
+  ): void {
+    for (const message of drainExtensionUITeardownMessages(active, { cancelled: true })) {
+      this.broadcast(active.session.id, message);
+    }
+
+    const disconnectedAt = Date.now();
+    const terminal = {
+      ...(active.session.mirror?.terminal ?? {}),
+      bridgeId: options.bridgeId,
+      cwd: options.cwd ?? active.session.mirror?.terminal?.cwd,
+      disconnectedAt,
+      disconnectReason: options.reason,
+      lastSeenAt: options.lastSeenAt ?? disconnectedAt,
+    };
+
+    if (options.reason === "reload") {
+      active.session.mirror = {
+        ...(active.session.mirror ?? { status: "connected" }),
+        status: "connected",
+        terminal,
+      };
+      this.storage.saveSession(active.session);
+      return;
+    }
+
+    active.session.mirror = {
+      ...(active.session.mirror ?? { status: "disconnected" }),
+      status: "disconnected",
+      terminal,
+    };
+    if (isTerminalStoppedReason(options.reason)) {
+      active.session.status = "stopped";
+      active.session.currentTurnStartedAt = undefined;
+      active.session.lastActivity = disconnectedAt;
+    }
+    this.storage.saveSession(active.session);
+    this.broadcast(active.session.id, { type: "state", session: active.session });
+    this.broadcastSessionSummaryIfChanged(active, `mirror_${options.reason}`);
+  }
+
   private detachBridge(connection: BridgeConnection, reason: string): void {
     if (this.bridges.get(connection.bridgeId) !== connection) return;
 
@@ -1210,41 +1282,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     const active = this.active.get(connection.sessionId);
     if (active) {
-      for (const message of drainExtensionUITeardownMessages(active, { cancelled: true })) {
-        this.broadcast(connection.sessionId, message);
-      }
-      const disconnectedAt = Date.now();
-      const terminal = {
-        ...(active.session.mirror?.terminal ?? {}),
+      this.teardownMirrorBridgeSession(active, {
         bridgeId: connection.bridgeId,
-        cwd: connection.cwd ?? active.session.mirror?.terminal?.cwd,
-        disconnectedAt,
-        disconnectReason: effectiveReason,
+        cwd: connection.cwd,
+        reason: effectiveReason,
         lastSeenAt: connection.lastSeenAt,
-      };
-
-      if (effectiveReason === "reload") {
-        active.session.mirror = {
-          ...(active.session.mirror ?? { status: "connected" }),
-          status: "connected",
-          terminal,
-        };
-        this.storage.saveSession(active.session);
-      } else {
-        active.session.mirror = {
-          ...(active.session.mirror ?? { status: "disconnected" }),
-          status: "disconnected",
-          terminal,
-        };
-        if (isTerminalStoppedReason(effectiveReason)) {
-          active.session.status = "stopped";
-          active.session.currentTurnStartedAt = undefined;
-          active.session.lastActivity = disconnectedAt;
-        }
-        this.storage.saveSession(active.session);
-        this.broadcast(connection.sessionId, { type: "state", session: active.session });
-        this.broadcastSessionSummaryIfChanged(active, `mirror_${effectiveReason}`);
-      }
+      });
     }
 
     log.info("mirror_bridge.disconnected", {
@@ -1264,24 +1307,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       const active = this.active.get(sessionId);
       if (!active) continue;
 
-      for (const message of drainExtensionUITeardownMessages(active, { cancelled: true })) {
-        this.broadcast(sessionId, message);
-      }
-      const disconnectedAt = Date.now();
-      active.session.mirror = {
-        ...(active.session.mirror ?? { status: "disconnected" }),
-        status: "disconnected",
-        terminal: {
-          ...(active.session.mirror?.terminal ?? {}),
-          bridgeId,
-          disconnectedAt,
-          disconnectReason: reason,
-          lastSeenAt: disconnectedAt,
-        },
-      };
-      this.storage.saveSession(active.session);
-      this.broadcast(sessionId, { type: "state", session: active.session });
-      this.broadcastSessionSummaryIfChanged(active, `mirror_${reason}`);
+      this.teardownMirrorBridgeSession(active, { bridgeId, reason });
     }
   }
 

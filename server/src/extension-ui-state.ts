@@ -34,15 +34,17 @@ export interface ExtensionUIResponse extends ExtensionUIResponsePayload {
   type: "extension_ui_response";
 }
 
+export interface ExtensionUIResponseDeliveryOptions {
+  deliver: (response: ExtensionUIResponse, request: ExtensionUIRequest) => boolean;
+  metrics?: ServerMetricCollector;
+  now?: () => number;
+  broadcastSettled?: (message: ServerMessage) => void;
+}
+
 export function respondToExtensionUIRequest(
   active: ExtensionUIState | undefined,
   response: ExtensionUIResponse,
-  options: {
-    deliver: (response: ExtensionUIResponse, request: ExtensionUIRequest) => boolean;
-    metrics?: ServerMetricCollector;
-    now?: () => number;
-    broadcastSettled?: (message: ServerMessage) => void;
-  },
+  options: ExtensionUIResponseDeliveryOptions,
 ): boolean {
   const req = active?.pendingUIRequests.get(response.id);
   if (!active || !req) {
@@ -60,6 +62,37 @@ export function respondToExtensionUIRequest(
     broadcastSettled: options.broadcastSettled,
   });
   return true;
+}
+
+export function cancelPendingAskRequest(
+  active: ExtensionUIState | undefined,
+  options: ExtensionUIResponseDeliveryOptions,
+): boolean {
+  const ask = active?.pendingAsk;
+  if (!active || !ask) {
+    return false;
+  }
+
+  const delivered = respondToExtensionUIRequest(
+    active,
+    {
+      type: "extension_ui_response",
+      id: ask.requestId,
+      cancelled: true,
+    },
+    options,
+  );
+  if (delivered) {
+    return true;
+  }
+
+  settleExtensionUIRequest(active, ask.requestId, {
+    cancelled: true,
+    metrics: options.metrics,
+    now: options.now,
+    broadcastSettled: options.broadcastSettled,
+  });
+  return false;
 }
 
 const TERMINAL_ONLY_STATUS_KEYS = new Set(["oppi-mirror"]);

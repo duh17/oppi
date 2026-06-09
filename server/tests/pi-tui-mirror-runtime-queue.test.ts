@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -15,9 +15,27 @@ class FakeBridgeWebSocket extends EventEmitter {
   sent: Array<Record<string, unknown>> = [];
   closeCode?: number;
   closeReason?: string;
+  private sendWaiters: Array<() => void> = [];
 
   send(data: string): void {
     this.sent.push(JSON.parse(data) as Record<string, unknown>);
+    const waiters = this.sendWaiters.splice(0);
+    for (const resolve of waiters) resolve();
+  }
+
+  waitForSend(timeoutMs = 1_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const resolveAndCleanup = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const index = this.sendWaiters.indexOf(resolveAndCleanup);
+        if (index >= 0) this.sendWaiters.splice(index, 1);
+        reject(new Error("Timed out waiting for bridge WebSocket send"));
+      }, timeoutMs);
+      this.sendWaiters.push(resolveAndCleanup);
+    });
   }
 
   close(code?: number, reason?: string): void {
@@ -62,7 +80,7 @@ function makeRuntime(
       icon?: string;
       skills: string[];
       systemPrompt?: string;
-      systemPromptMode?: "append" | "replace";
+      systemPromptMode?: "append";
       hostMount?: string;
       defaultModel?: string;
       tools?: string[];
@@ -176,7 +194,7 @@ async function waitForLatestCommand(ws: FakeBridgeWebSocket): Promise<Record<str
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const command = ws.sent.findLast((message) => message.type === "command");
     if (command) return command;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await ws.waitForSend();
   }
   return latestCommand(ws);
 }
@@ -291,13 +309,11 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.closeCode).toBe(1008);
   });
 
-  it("closes the bridge when hello registration fails", () => {
+  it("closes the bridge when hello registration fails", async () => {
     const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     const ws = new FakeBridgeWebSocket();
-    const missingCwd = join(
-      tmpdir(),
-      `oppi-mirror-missing-cwd-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
+    const missingCwd = await mkdtemp(join(tmpdir(), "oppi-mirror-missing-cwd-"));
+    await rm(missingCwd, { recursive: true, force: true });
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
 
     ws.receive({
@@ -1680,5 +1696,99 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
         questions: [expect.objectContaining({ id: "q1", question: "Pick one" })],
       }),
     ]);
+  });
+
+  it("cancels pending ask UI before mirrored abort", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ask-abort",
+      method: "ask",
+      questions: [
+        {
+          id: "q1",
+          question: "Pick one",
+          options: [{ value: "a", label: "A" }],
+        },
+      ],
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toHaveLength(1);
+
+    const abortPromise = runtime.sendAbort(sessionId);
+
+    expect(ws.sent).toContainEqual({
+      type: "extension_ui_response",
+      id: "ask-abort",
+      cancelled: true,
+    });
+    expect(received).toContainEqual({
+      type: "extension_ui_settled",
+      id: "ask-abort",
+      sessionId,
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "abort" });
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { queue: { version: 0, steering: [], followUp: [] } },
+    });
+
+    await expect(abortPromise).resolves.toBeUndefined();
+  });
+
+  it("cancels pending ask UI before mirrored stop", async () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error("expected mirrored session");
+    session.status = "busy";
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ask-stop",
+      method: "ask",
+      questions: [
+        {
+          id: "q1",
+          question: "Pick one",
+          options: [{ value: "a", label: "A" }],
+        },
+      ],
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toHaveLength(1);
+
+    const stopPromise = runtime.stopSession(sessionId);
+
+    expect(ws.sent).toContainEqual({
+      type: "extension_ui_response",
+      id: "ask-stop",
+      cancelled: true,
+    });
+    expect(received).toContainEqual({
+      type: "extension_ui_settled",
+      id: "ask-stop",
+      sessionId,
+    });
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
+
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({ type: "stop" });
+    ws.receive({
+      type: "goodbye",
+      reason: "stopped",
+      state: { isIdle: true },
+    });
+
+    await expect(stopPromise).resolves.toBeUndefined();
   });
 });

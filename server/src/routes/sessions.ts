@@ -1260,24 +1260,48 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (!session) return;
 
     const hydratedSession = ctx.ensureSessionContextWindow(session);
+    const markStoredSessionStopped = (reason?: string): void => {
+      const stoppedAt = Date.now();
+      hydratedSession.status = "stopped";
+      hydratedSession.currentTurnStartedAt = undefined;
+      hydratedSession.lastActivity = stoppedAt;
+      if (hydratedSession.runtime === "pi-tui") {
+        hydratedSession.mirror = {
+          ...(hydratedSession.mirror ?? { status: "disconnected" }),
+          status: "disconnected",
+          terminal: {
+            ...(hydratedSession.mirror?.terminal ?? {}),
+            disconnectedAt: hydratedSession.mirror?.terminal?.disconnectedAt ?? stoppedAt,
+            disconnectReason: hydratedSession.mirror?.terminal?.disconnectReason ?? reason,
+          },
+        };
+      }
+      ctx.storage.saveSession(hydratedSession);
+    };
 
     try {
-      if (session.runtime === "pi-tui" || ctx.sessionRuntimes.isSessionLive(sessionId)) {
+      if (session.runtime === "pi-tui") {
+        if (ctx.sessionRuntimes.isSessionConnected(sessionId)) {
+          await ctx.sessionRuntimes.stopSession(sessionId);
+        } else {
+          markStoredSessionStopped("oppi_stop_disconnected_terminal");
+        }
+      } else if (ctx.sessionRuntimes.isSessionLive(sessionId)) {
         await ctx.sessionRuntimes.stopSession(sessionId);
       } else {
-        hydratedSession.status = "stopped";
-        hydratedSession.currentTurnStartedAt = undefined;
-        hydratedSession.lastActivity = Date.now();
-        ctx.storage.saveSession(hydratedSession);
+        markStoredSessionStopped();
       }
     } catch (error: unknown) {
       const message = safeErrorMessage(error);
-      helpers.error(
-        res,
-        session.runtime === "pi-tui" && message.includes("not connected") ? 409 : 500,
-        message,
-      );
-      return;
+      if (
+        session.runtime === "pi-tui" &&
+        (message.includes("not connected") || message.includes("disconnected"))
+      ) {
+        markStoredSessionStopped("oppi_stop_disconnected_terminal");
+      } else {
+        helpers.error(res, 500, message);
+        return;
+      }
     }
 
     const updatedSession = ctx.storage.getSession(sessionId);

@@ -38,8 +38,8 @@ import { type SessionStateActiveSession } from "./session-state.js";
 import { createLogger } from "./logger.js";
 import {
   buildPendingExtensionUIRequestMessages,
+  cancelPendingAskRequest,
   respondToExtensionUIRequest,
-  settleExtensionUIRequest,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
 import {
@@ -559,21 +559,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   cancelPendingAsk(sessionId: string): void {
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
-    if (!active?.pendingAsk) return;
-
-    const ask = active.pendingAsk;
-    const handled = this.respondToUIRequest(sessionId, {
-      type: "extension_ui_response",
-      id: ask.requestId,
-      cancelled: true,
-    });
-    if (handled) {
+    if (!active) {
       return;
     }
 
-    settleExtensionUIRequest(active, ask.requestId, {
-      cancelled: true,
+    cancelPendingAskRequest(active, {
       metrics: this.opsMetrics ?? undefined,
+      deliver: (payload) => active.sdkBackend.respondToExtensionUIRequest(payload),
     });
   }
 

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
+import type { Session } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 describe("sessions module", () => {
@@ -131,6 +132,63 @@ describe("sessions module", () => {
         },
       ],
     });
+  });
+
+  it("marks disconnected pi-tui mirror sessions stopped through the stop route", async () => {
+    const session: Session = {
+      id: "mirror-1",
+      workspaceId: "ws-1",
+      runtime: "pi-tui",
+      status: "ready",
+      createdAt: 0,
+      lastActivity: 10,
+      currentTurnStartedAt: 5,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      mirror: {
+        status: "disconnected",
+        terminal: { lastSeenAt: 9 },
+      },
+    };
+    const stopSession = vi.fn(async () => undefined);
+    const saveSession = vi.fn((updated: Session) => {
+      Object.assign(session, structuredClone(updated));
+    });
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn(() => session),
+        saveSession,
+      },
+      sessionRuntimes: {
+        isSessionConnected: vi.fn(() => false),
+        isSessionLive: vi.fn(() => false),
+        stopSession,
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/sessions/mirror-1/stop",
+      url: new URL("http://localhost/workspaces/ws-1/sessions/mirror-1/stop"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(saveSession).toHaveBeenCalledOnce();
+    expect(session.status).toBe("stopped");
+    expect(session.currentTurnStartedAt).toBeUndefined();
+    expect(session.mirror?.status).toBe("disconnected");
+    expect(session.mirror?.terminal?.disconnectReason).toBe("oppi_stop_disconnected_terminal");
+    expect(JSON.parse(res.body).session.status).toBe("stopped");
   });
 
   it("merges active in-memory sessions into workspace session snapshots", async () => {
