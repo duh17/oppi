@@ -144,17 +144,10 @@ struct SessionFilesListView: View {
         guard case .activeSession(let router) = fileDetailReviewCommentScope else {
             return fileDetailReviewCommentScope
         }
-        let inlineSave: ReviewCommentSelectionRouter.InlineSaveHandler? = router.supportsInlineCommentComposer ? { body, request in
-            await router.saveInlineComment(body: body, request: request)
-        } : nil
-        return .activeSession(ReviewCommentSelectionRouter(
-            dispatch: { request in
-                dismiss()
-                router.dispatch(request)
-            },
-            inlineSave: inlineSave,
-            inlineQuickComments: router.inlineQuickComments
-        ))
+        return .activeSession(router.retargetingDispatch { request in
+            dismiss()
+            router.dispatch(request)
+        })
     }
 
     @MainActor

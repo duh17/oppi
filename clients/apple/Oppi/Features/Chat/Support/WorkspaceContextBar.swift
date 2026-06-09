@@ -235,17 +235,10 @@ struct WorkspaceContextBar: View {
         if let parentScope {
             switch parentScope {
             case .activeSession(let router):
-                let inlineSave: ReviewCommentSelectionRouter.InlineSaveHandler? = router.supportsInlineCommentComposer ? { body, request in
-                    await router.saveInlineComment(body: body, request: request)
-                } : nil
-                return .activeSession(ReviewCommentSelectionRouter(
-                    dispatch: { request in
-                        dismissFileDetail()
-                        router.dispatch(request)
-                    },
-                    inlineSave: inlineSave,
-                    inlineQuickComments: router.inlineQuickComments
-                ))
+                return .activeSession(router.retargetingDispatch { request in
+                    dismissFileDetail()
+                    router.dispatch(request)
+                })
             }
         }
 

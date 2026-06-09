@@ -232,10 +232,10 @@ final class NativeFullScreenCodeBody: UIView {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.highlightedSourceText = wrapper.value
-                self?.codeTextView.attributedText = fullScreenAttributedCodeText(
+                self?.codeTextView.setAttributedTextPreservingSelection(fullScreenAttributedCodeText(
                     from: wrapper.value,
                     font: self?.codeFont ?? FullScreenCodeTypography.codeFont
-                )
+                ))
                 self?.invalidateGutterLayout()
             }
         }
@@ -255,10 +255,10 @@ final class NativeFullScreenCodeBody: UIView {
 
         if let attributedText = highlightedSourceText ?? codeTextView.attributedText,
            attributedText.length > 0 {
-            codeTextView.attributedText = fullScreenAttributedCodeText(
+            codeTextView.setAttributedTextPreservingSelection(fullScreenAttributedCodeText(
                 from: attributedText,
                 font: font
-            )
+            ))
         }
         invalidateGutterLayout()
     }
@@ -681,7 +681,7 @@ final class NativeFullScreenDiffBody: UIView {
     private func applyBuiltDiff(_ result: BuiltDiff) {
         builtDiffText = result.text
         let styledText = styledDiffText(result.text)
-        diffTextView.attributedText = styledText
+        diffTextView.setAttributedTextPreservingSelection(styledText)
         unwrappedContentWidth = max(result.width, measuredWidth(of: styledText))
         applyWrapMode()
         statsLabel.text = "\(result.added > 0 ? "+\(result.added)" : "0")  \(result.removed > 0 ? "-\(result.removed)" : "0")"
@@ -697,7 +697,7 @@ final class NativeFullScreenDiffBody: UIView {
         if let attributedText = builtDiffText ?? diffTextView.attributedText,
            attributedText.length > 0 {
             let styledText = styledDiffText(attributedText)
-            diffTextView.attributedText = styledText
+            diffTextView.setAttributedTextPreservingSelection(styledText)
             unwrappedContentWidth = measuredWidth(of: styledText)
         }
         applyWrapMode()

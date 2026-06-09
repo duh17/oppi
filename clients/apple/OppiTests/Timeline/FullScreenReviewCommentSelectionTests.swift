@@ -88,6 +88,45 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(composerAppeared, "The native menu Comment action should open the inline comment composer")
     }
 
+    @Test func nativeFullscreenEditMenuSuppressesFallbackPresentationForSameSelection() throws {
+        let textView = FullScreenReviewCommentTextView()
+        textView.text = "let answer = 42\nlet done = true"
+        textView.configureReviewCommentSelection(
+            router: ReviewCommentSelectionRouter { _ in },
+            sourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenCode,
+                filePath: "Answer.swift"
+            )
+        )
+        textView.selectedRange = NSRange(location: 0, length: 3)
+        #expect(textView.shouldPresentFallbackEditMenuForTesting())
+
+        let menu = try #require(buildFullScreenReviewCommentMenu(
+            textView: textView,
+            range: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }],
+            router: textView.reviewCommentSelectionRouter,
+            sourceContext: textView.reviewCommentSourceContext
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
+        #expect(!textView.shouldPresentFallbackEditMenuForTesting())
+
+        textView.selectedRange = NSRange(location: 4, length: 6)
+        #expect(textView.shouldPresentFallbackEditMenuForTesting())
+    }
+
+    @Test func fullScreenReviewCommentTextViewPreservesSelectionWhenApplyingAttributedText() throws {
+        let textView = FullScreenReviewCommentTextView()
+        textView.text = "let answer = 42\nlet done = true"
+        textView.selectedRange = NSRange(location: 4, length: 6)
+
+        textView.setAttributedTextPreservingSelection(NSAttributedString(string: textView.text))
+
+        #expect(textView.selectedRange == NSRange(location: 4, length: 6))
+    }
+
     @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {
         let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
         let body = NativeFullScreenCodeBody(

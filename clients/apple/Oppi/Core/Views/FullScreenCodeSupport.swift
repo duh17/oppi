@@ -57,24 +57,48 @@ func fullScreenAttributedCodeText(
     return mutable
 }
 
-/// UITextView variant that carries review-comment routing context and presents
-/// the native edit menu after a non-empty selection.
+private final class FullScreenTextSelectionHighlightOverlayView: UIView {
+    var rects: [CGRect] = [] {
+        didSet { setNeedsDisplay() }
+    }
+
+    var fillColor: UIColor = .systemBlue.withAlphaComponent(0.22) {
+        didSet { setNeedsDisplay() }
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext(), !rects.isEmpty else { return }
+        context.setFillColor(fillColor.cgColor)
+        for selectionRect in rects where selectionRect.intersects(rect) {
+            let path = UIBezierPath(roundedRect: selectionRect, cornerRadius: 3)
+            context.addPath(path.cgPath)
+            context.fillPath()
+        }
+    }
+}
+
+/// UITextView variant that carries review-comment routing context.
 ///
-/// Some read-only full-screen code views show selection handles without asking
-/// their delegate to present an edit menu. This view owns a `UIEditMenuInteraction`
-/// so selected code reliably gets the same native action bar as other selectable
-/// text: `Comment`, `Copy`, and the system-provided actions.
+/// The owning `UITextViewDelegate` builds the menu when UIKit asks for it.
+/// Some read-only full-screen selections never get that callback, so this view
+/// also owns a fallback `UIEditMenuInteraction`; the fallback stands down when
+/// the native delegate has already built the menu for the current selection.
 final class FullScreenReviewCommentTextView: UITextView {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSourceContext: ReviewCommentSourceContext?
 
+    private let selectionHighlightOverlay = FullScreenTextSelectionHighlightOverlayView()
     private lazy var reviewCommentEditMenuInteraction = UIEditMenuInteraction(delegate: self)
     private var pendingEditMenuPresentation = false
     private var currentEditMenuTargetRect: CGRect?
+    private var observedSelectedRange = NSRange(location: NSNotFound, length: 0)
+    private var selectionGeneration = 0
+    private var nativeTextViewEditMenuGeneration: Int?
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         addInteraction(reviewCommentEditMenuInteraction)
+        installSelectionHighlightOverlay()
     }
 
     @available(*, unavailable)
@@ -84,12 +108,27 @@ final class FullScreenReviewCommentTextView: UITextView {
         get { super.selectedRange }
         set {
             super.selectedRange = newValue
+            noteSelectionRangeDidMaybeChange()
+            updateSelectionHighlightOverlay()
             scheduleReviewCommentEditMenuPresentation()
         }
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateSelectionHighlightOverlay()
+    }
+
     func reviewCommentSelectionDidChange() {
+        noteSelectionRangeDidMaybeChange()
+        updateSelectionHighlightOverlay()
         scheduleReviewCommentEditMenuPresentation()
+    }
+
+    func noteNativeTextViewEditMenuRequest(for range: NSRange) {
+        noteSelectionRangeDidMaybeChange()
+        guard NSEqualRanges(range, selectedRange) else { return }
+        nativeTextViewEditMenuGeneration = selectionGeneration
     }
 
     func configureReviewCommentSelection(
@@ -110,6 +149,71 @@ final class FullScreenReviewCommentTextView: UITextView {
         }
     }
 
+    func setAttributedTextPreservingSelection(_ attributedText: NSAttributedString) {
+        let selection = selectedRange
+        let shouldRestoreSelection = selection.location != NSNotFound
+            && selection.length > 0
+            && NSMaxRange(selection) <= attributedText.length
+        let wasFirstResponder = isFirstResponder
+
+        self.attributedText = attributedText
+
+        if shouldRestoreSelection {
+            selectedRange = selection
+            if wasFirstResponder {
+                becomeFirstResponder()
+            }
+        }
+        updateSelectionHighlightOverlay()
+    }
+
+    private func installSelectionHighlightOverlay() {
+        selectionHighlightOverlay.isUserInteractionEnabled = false
+        selectionHighlightOverlay.backgroundColor = .clear
+        selectionHighlightOverlay.isOpaque = false
+        addSubview(selectionHighlightOverlay)
+    }
+
+    private func updateSelectionHighlightOverlay() {
+        bringSubviewToFront(selectionHighlightOverlay)
+        selectionHighlightOverlay.frame = bounds
+        selectionHighlightOverlay.fillColor = tintColor.withAlphaComponent(0.30)
+        selectionHighlightOverlay.rects = selectionHighlightRects(for: selectedRange)
+    }
+
+    private func selectionHighlightRects(for range: NSRange) -> [CGRect] {
+        guard range.location != NSNotFound,
+              range.length > 0,
+              NSMaxRange(range) <= textStorage.length else {
+            return []
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let selectedGlyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard selectedGlyphRange.location != NSNotFound, selectedGlyphRange.length > 0 else { return [] }
+
+        var rects: [CGRect] = []
+        layoutManager.enumerateLineFragments(forGlyphRange: selectedGlyphRange) { _, _, _, lineGlyphRange, _ in
+            let glyphRange = NSIntersectionRange(selectedGlyphRange, lineGlyphRange)
+            guard glyphRange.length > 0 else { return }
+            var rect = self.layoutManager.boundingRect(forGlyphRange: glyphRange, in: self.textContainer)
+            rect.origin.x += self.textContainerInset.left - self.contentOffset.x - 2
+            rect.origin.y += self.textContainerInset.top - self.contentOffset.y
+            rect.size.width += 4
+            rect.size.height = max(rect.height, self.font?.lineHeight ?? rect.height)
+            rects.append(rect.integral)
+        }
+        return rects
+    }
+
+    private func noteSelectionRangeDidMaybeChange() {
+        let range = selectedRange
+        guard !NSEqualRanges(range, observedSelectedRange) else { return }
+        observedSelectedRange = range
+        selectionGeneration &+= 1
+        nativeTextViewEditMenuGeneration = nil
+    }
+
     private func scheduleReviewCommentEditMenuPresentation() {
         guard !pendingEditMenuPresentation else { return }
         pendingEditMenuPresentation = true
@@ -121,6 +225,8 @@ final class FullScreenReviewCommentTextView: UITextView {
     }
 
     private func presentReviewCommentEditMenuIfNeeded() {
+        noteSelectionRangeDidMaybeChange()
+        guard nativeTextViewEditMenuGeneration != selectionGeneration else { return }
         guard window != nil,
               reviewCommentSelectionRouter != nil,
               reviewCommentSourceContext != nil,
@@ -137,13 +243,18 @@ final class FullScreenReviewCommentTextView: UITextView {
         let targetRect = selectionAnchorRect(for: selectedRange)
             ?? CGRect(x: bounds.midX, y: min(bounds.midY, bounds.minY + 180), width: 1, height: 1)
         currentEditMenuTargetRect = targetRect.integral
-        let sourcePoint = CGPoint(x: targetRect.midX, y: targetRect.minY)
-        let configuration = UIEditMenuConfiguration(
+        reviewCommentEditMenuInteraction.presentEditMenu(with: UIEditMenuConfiguration(
             identifier: "review-comment-selection" as NSString,
-            sourcePoint: sourcePoint
-        )
-        reviewCommentEditMenuInteraction.presentEditMenu(with: configuration)
+            sourcePoint: CGPoint(x: targetRect.midX, y: targetRect.minY)
+        ))
     }
+
+#if DEBUG
+    func shouldPresentFallbackEditMenuForTesting() -> Bool {
+        noteSelectionRangeDidMaybeChange()
+        return nativeTextViewEditMenuGeneration != selectionGeneration
+    }
+#endif
 
     private func selectionAnchorRect(for range: NSRange) -> CGRect? {
         guard range.location != NSNotFound,
@@ -168,7 +279,6 @@ final class FullScreenReviewCommentTextView: UITextView {
         anchor = anchor.offsetBy(dx: -contentOffset.x, dy: -contentOffset.y)
         return anchor.integral
     }
-
 }
 
 extension FullScreenReviewCommentTextView: @preconcurrency UIEditMenuInteractionDelegate {
@@ -214,7 +324,7 @@ func buildFullScreenReviewCommentMenu(
     router: ReviewCommentSelectionRouter?,
     sourceContext: ReviewCommentSourceContext?
 ) -> UIMenu? {
-    ReviewCommentSelectionEditMenuSupport.buildMenu(
+    let menu = ReviewCommentSelectionEditMenuSupport.buildMenu(
         textView: textView,
         range: range,
         suggestedActions: suggestedActions,
@@ -222,6 +332,10 @@ func buildFullScreenReviewCommentMenu(
         sourceContext: sourceContext,
         presentingViewController: nearestViewController(from: textView)
     )
+    if menu != nil {
+        (textView as? FullScreenReviewCommentTextView)?.noteNativeTextViewEditMenuRequest(for: range)
+    }
+    return menu
 }
 
 private func nearestViewController(from responder: UIResponder) -> UIViewController? {

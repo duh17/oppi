@@ -51,6 +51,18 @@ final class ReviewCommentSelectionRouter {
         guard let inlineSaveClosure else { return false }
         return await inlineSaveClosure(body, request)
     }
+
+    func retargetingDispatch(_ dispatch: @escaping (ReviewCommentSelectionRequest) -> Void) -> ReviewCommentSelectionRouter {
+        let inlineSave: InlineSaveHandler? = supportsInlineCommentComposer ? { body, request in
+            await self.saveInlineComment(body: body, request: request)
+        } : nil
+        return ReviewCommentSelectionRouter(
+            dispatch: dispatch,
+            inlineSave: inlineSave,
+            inlineQuickComments: inlineQuickComments,
+            voiceInputManager: voiceInputManager
+        )
+    }
 }
 
 enum ReviewCommentSurfaceKind: Equatable {
