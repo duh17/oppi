@@ -13,6 +13,7 @@ import {
   getContentType,
   isBrowseMediaContentType,
   isStreamingMediaContentType,
+  parseByteRangeHeader,
   listDirectoryEntries,
   getFileIndex,
 } from "../src/routes/workspace-files.js";
@@ -339,6 +340,40 @@ describe("media content helpers", () => {
     expect(isBrowseMediaContentType("application/pdf")).toBe(true);
     expect(isBrowseMediaContentType("video/mp4")).toBe(true);
     expect(isBrowseMediaContentType("application/octet-stream")).toBe(false);
+  });
+});
+
+// MARK: - parseByteRangeHeader
+
+describe("parseByteRangeHeader", () => {
+  test("parses a bounded byte range", () => {
+    expect(parseByteRangeHeader("bytes=0-1", 10)).toEqual({ kind: "valid", start: 0, end: 1 });
+  });
+
+  test("parses an open-ended byte range", () => {
+    expect(parseByteRangeHeader("bytes=4-", 10)).toEqual({ kind: "valid", start: 4, end: 9 });
+  });
+
+  test("parses a suffix byte range", () => {
+    expect(parseByteRangeHeader("bytes=-4", 10)).toEqual({ kind: "valid", start: 6, end: 9 });
+  });
+
+  test("clamps an oversized end offset to the file size", () => {
+    expect(parseByteRangeHeader("bytes=7-100", 10)).toEqual({ kind: "valid", start: 7, end: 9 });
+  });
+
+  test("ignores unsupported range units", () => {
+    expect(parseByteRangeHeader("items=0-1", 10)).toEqual({ kind: "none" });
+  });
+
+  test("rejects multipart ranges instead of generating multipart bodies", () => {
+    expect(parseByteRangeHeader("bytes=0-1,4-5", 10)).toEqual({ kind: "invalid" });
+  });
+
+  test("marks empty or out-of-bounds ranges unsatisfiable", () => {
+    expect(parseByteRangeHeader("bytes=-0", 10)).toEqual({ kind: "unsatisfiable" });
+    expect(parseByteRangeHeader("bytes=10-12", 10)).toEqual({ kind: "unsatisfiable" });
+    expect(parseByteRangeHeader("bytes=0-1", 0)).toEqual({ kind: "unsatisfiable" });
   });
 });
 

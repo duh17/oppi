@@ -681,6 +681,96 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func readMediaVideoFileUsesStreamURLProviderAndHidesReadToolBoilerplate() throws {
+        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4?token=test"))
+        let view = NativeExpandedReadMediaView()
+        view.apply(
+            output: "Read video file [video/mp4]",
+            isError: false,
+            filePath: "clips/demo.mp4",
+            startLine: 1,
+            attachments: [],
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: nil,
+            attachmentFetcher: nil,
+            sessionFileDataFetcher: nil,
+            sessionFileStreamURLProvider: { path in
+                #expect(path == "clips/demo.mp4")
+                return videoURL
+            }
+        )
+
+        let hasVideoRow = timelineAllViews(in: view).contains { $0 is NativeExpandedVideoAttachmentView }
+        #expect(hasVideoRow)
+
+        let visibleText = timelineAllLabels(in: view)
+            .filter { timelineViewIsVisible($0) }
+            .map(timelineRenderedText(of:))
+            .joined(separator: "\n")
+        #expect(!visibleText.contains("Read video file [video/mp4]"))
+        #expect(visibleText.contains("clips/demo.mp4"))
+    }
+
+    @MainActor
+    @Test func readMediaVideoFileWithoutStreamURLKeepsFallbackTextAndDoesNotEnableDataFetch() throws {
+        let view = NativeExpandedReadMediaView()
+        view.apply(
+            output: "Read video file [video/mp4]",
+            isError: false,
+            filePath: "/Users/example/workspace/oppi/clips/demo.mp4",
+            startLine: 1,
+            attachments: [],
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: nil,
+            attachmentFetcher: nil,
+            sessionFileDataFetcher: { _ in
+                Issue.record("Video rows should not download full session file data")
+                return Data()
+            },
+            sessionFileStreamURLProvider: nil
+        )
+
+        let hasVideoRow = timelineAllViews(in: view).contains { $0 is NativeExpandedVideoAttachmentView }
+        #expect(!hasVideoRow)
+
+        let visibleText = timelineAllLabels(in: view)
+            .filter { timelineViewIsVisible($0) }
+            .map(timelineRenderedText(of:))
+            .joined(separator: "\n")
+        #expect(visibleText.contains("Read video file [video/mp4]"))
+    }
+
+    @MainActor
+    @Test func expandedReadMediaVideoViewportStaysCompact() throws {
+        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4?token=test"))
+        var configuration = makeTimelineToolConfiguration(
+            expandedContent: .readMedia(
+                output: "Read video file [video/mp4]",
+                filePath: "clips/demo.mp4",
+                startLine: 1,
+                attachments: []
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        configuration = configuration.withSessionFileStreamURLProvider { path in
+            #expect(path == "clips/demo.mp4")
+            return videoURL
+        }
+
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        _ = fittedTimelineSize(for: view, width: 370)
+        let viewport = try #require(
+            Mirror(reflecting: view).children.first { $0.label == "expandedViewportHeightConstraint" }?.value as? NSLayoutConstraint
+        )
+
+        #expect(
+            viewport.constant < 180,
+            "Expanded video rows should stay as compact launch rows; inline AVPlayer belongs in full-screen playback. viewport=\(viewport.constant)"
+        )
+    }
+
+    @MainActor
     @Test func expandedReadMediaViewportGrowsForTallImages() async throws {
         let portraitSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 600\"><rect width=\"200\" height=\"600\" fill=\"red\"/></svg>"
         let landscapeSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 200\"><rect width=\"600\" height=\"200\" fill=\"blue\"/></svg>"

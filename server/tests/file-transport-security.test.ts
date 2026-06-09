@@ -77,6 +77,10 @@ function makeContext(workspace: Workspace, session: Session): RouteContext {
   } as unknown as RouteContext;
 }
 
+function makeIncoming(headers: Record<string, string> = {}): IncomingMessage {
+  return { headers } as IncomingMessage;
+}
+
 describe("file transport security parity", () => {
   let root: string;
 
@@ -184,6 +188,122 @@ describe("file transport security parity", () => {
     expect(errors).toEqual([]);
     expect(rawRes.statusCode).toBe(200);
     expect(rawRes.body.toString("utf8")).toBe("hi from oppi\n");
+  });
+
+  it("serves workspace raw byte ranges with partial-content headers", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-range-"));
+    writeFileSync(join(root, "clip.mp4"), "0123456789", "utf8");
+
+    const workspace = makeWorkspace(root);
+    const session = makeSession();
+    const errors: Array<{ status: number; message: string }> = [];
+    const route = createWorkspaceFileRoutes(makeContext(workspace, session), makeHelpers(errors));
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    const handled = await route({
+      method: "GET",
+      path: "/workspaces/ws-1/raw/clip.mp4",
+      url: new URL("https://localhost/workspaces/ws-1/raw/clip.mp4"),
+      req: makeIncoming({ range: "bytes=2-5" }),
+      res: res as unknown as ServerResponse,
+    });
+    await finished;
+
+    expect(handled).toBe(true);
+    expect(errors).toEqual([]);
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["Content-Type"]).toBe("video/mp4");
+    expect(res.headers["Accept-Ranges"]).toBe("bytes");
+    expect(res.headers["Content-Range"]).toBe("bytes 2-5/10");
+    expect(res.headers["Content-Length"]).toBe("4");
+    expect(res.body.toString("utf8")).toBe("2345");
+  });
+
+  it("advertises range support on full workspace raw responses", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-range-full-"));
+    writeFileSync(join(root, "notes.txt"), "hello", "utf8");
+
+    const workspace = makeWorkspace(root);
+    const session = makeSession();
+    const errors: Array<{ status: number; message: string }> = [];
+    const route = createWorkspaceFileRoutes(makeContext(workspace, session), makeHelpers(errors));
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    const handled = await route({
+      method: "GET",
+      path: "/workspaces/ws-1/raw/notes.txt",
+      url: new URL("https://localhost/workspaces/ws-1/raw/notes.txt"),
+      req: makeIncoming(),
+      res: res as unknown as ServerResponse,
+    });
+    await finished;
+
+    expect(handled).toBe(true);
+    expect(errors).toEqual([]);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["Accept-Ranges"]).toBe("bytes");
+    expect(res.headers["Content-Length"]).toBe("5");
+    expect(res.body.toString("utf8")).toBe("hello");
+  });
+
+  it("returns 416 for unsatisfiable workspace raw byte ranges", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-range-416-"));
+    writeFileSync(join(root, "clip.mp4"), "0123456789", "utf8");
+
+    const workspace = makeWorkspace(root);
+    const session = makeSession();
+    const errors: Array<{ status: number; message: string }> = [];
+    const route = createWorkspaceFileRoutes(makeContext(workspace, session), makeHelpers(errors));
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    const handled = await route({
+      method: "GET",
+      path: "/workspaces/ws-1/raw/clip.mp4",
+      url: new URL("https://localhost/workspaces/ws-1/raw/clip.mp4"),
+      req: makeIncoming({ range: "bytes=99-100" }),
+      res: res as unknown as ServerResponse,
+    });
+    await finished;
+
+    expect(handled).toBe(true);
+    expect(errors).toEqual([]);
+    expect(res.statusCode).toBe(416);
+    expect(res.headers["Accept-Ranges"]).toBe("bytes");
+    expect(res.headers["Content-Range"]).toBe("bytes */10");
+    expect(res.headers["Content-Length"]).toBe("0");
+    expect(res.body).toHaveLength(0);
+  });
+
+  it("handles workspace raw HEAD requests without a body", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-range-head-"));
+    writeFileSync(join(root, "clip.mp4"), "0123456789", "utf8");
+
+    const workspace = makeWorkspace(root);
+    const session = makeSession();
+    const errors: Array<{ status: number; message: string }> = [];
+    const route = createWorkspaceFileRoutes(makeContext(workspace, session), makeHelpers(errors));
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    const handled = await route({
+      method: "HEAD",
+      path: "/workspaces/ws-1/raw/clip.mp4",
+      url: new URL("https://localhost/workspaces/ws-1/raw/clip.mp4"),
+      req: makeIncoming(),
+      res: res as unknown as ServerResponse,
+    });
+    await finished;
+
+    expect(handled).toBe(true);
+    expect(errors).toEqual([]);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["Content-Type"]).toBe("video/mp4");
+    expect(res.headers["Accept-Ranges"]).toBe("bytes");
+    expect(res.headers["Content-Length"]).toBe("10");
+    expect(res.body).toHaveLength(0);
   });
 
   it("blocks session raw reads outside the workspace even when changeStats contains an absolute path", async () => {

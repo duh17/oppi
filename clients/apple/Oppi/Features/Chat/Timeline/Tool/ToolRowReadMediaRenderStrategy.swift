@@ -10,6 +10,7 @@ struct ToolRowReadMediaRenderStrategy {
         isError: Bool,
         hasAttachmentFetcher: Bool,
         hasSessionFileDataFetcher: Bool,
+        hasSessionFileStreamURLProvider: Bool,
         previousSignature: Int?,
         isUsingReadMediaLayout: Bool,
         hasExpandedReadMediaContentView: Bool
@@ -21,7 +22,8 @@ struct ToolRowReadMediaRenderStrategy {
             isError: isError,
             attachments: attachments,
             hasAttachmentFetcher: hasAttachmentFetcher,
-            hasSessionFileDataFetcher: hasSessionFileDataFetcher
+            hasSessionFileDataFetcher: hasSessionFileDataFetcher,
+            hasSessionFileStreamURLProvider: hasSessionFileStreamURLProvider
         )
         let shouldReinstall = signature != previousSignature
             || !isUsingReadMediaLayout

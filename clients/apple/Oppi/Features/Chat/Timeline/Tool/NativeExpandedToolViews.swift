@@ -1,3 +1,4 @@
+import AVKit
 import CryptoKit
 import UIKit
 import SwiftUI
@@ -48,7 +49,8 @@ final class NativeExpandedReadMediaView: UIView {
         themeID: ThemeID,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
-        sessionFileDataFetcher: ((String) async throws -> Data)?
+        sessionFileDataFetcher: ((String) async throws -> Data)?,
+        sessionFileStreamURLProvider: ((String) async throws -> URL)?
     ) {
         self.audioPlayer = audioPlayer
         var hasher = Hasher()
@@ -64,6 +66,7 @@ final class NativeExpandedReadMediaView: UIView {
         }
         hasher.combine(attachmentFetcher != nil)
         hasher.combine(sessionFileDataFetcher != nil)
+        hasher.combine(sessionFileStreamURLProvider != nil)
         hasher.combine(themeID.rawValue)
         if let audioPlayer {
             hasher.combine(ObjectIdentifier(audioPlayer).hashValue)
@@ -109,11 +112,26 @@ final class NativeExpandedReadMediaView: UIView {
         }
 
         let imageAttachments = attachments.filter { $0.kind == "image" }
+        let videoAttachments = attachments.filter { attachment in
+            attachment.kind == "video" || attachment.mimeType.lowercased().hasPrefix("video/")
+        }
+        let isVideoFile = filePath.map { path in
+            if case .video = FileType.detect(from: path) { return true }
+            return false
+        } ?? false
+        let hasVideoFileStreamURLProvider = filePath != nil && sessionFileStreamURLProvider != nil
+        let shouldRenderFetchedVideo = isVideoFile && hasVideoFileStreamURLProvider
         let hasRenderableImageAttachment = attachmentFetcher != nil && !imageAttachments.isEmpty
+        let hasRenderableVideoAttachment = attachmentFetcher != nil && !videoAttachments.isEmpty
         let hasRenderedImage = !displayImages.isEmpty || hasRenderableImageAttachment || shouldRenderFetchedSVG
+        let hasRenderedVideo = shouldRenderFetchedVideo || hasRenderableVideoAttachment
         let hasImageReadBoilerplate = NativeExpandedReadMediaParser.containsImageReadBoilerplate(displayText)
+        let hasVideoReadBoilerplate = NativeExpandedReadMediaParser.containsVideoReadBoilerplate(displayText)
         if hasRenderedImage {
             displayText = NativeExpandedReadMediaParser.removingRedundantImageReadBoilerplate(from: displayText)
+        }
+        if hasRenderedVideo {
+            displayText = NativeExpandedReadMediaParser.removingRedundantVideoReadBoilerplate(from: displayText)
         }
 
         let isVoiceMessage = filePath == "Voice message"
@@ -152,7 +170,7 @@ final class NativeExpandedReadMediaView: UIView {
             contentStack = rootStack
         }
 
-        if let filePath, !filePath.isEmpty, !(hasRenderedImage && hasImageReadBoilerplate) {
+        if let filePath, !filePath.isEmpty, !(hasRenderedImage && hasImageReadBoilerplate), !(hasRenderedVideo && hasVideoReadBoilerplate) {
             let pathLabel = UILabel()
             pathLabel.font = ToolFont.small
             pathLabel.textColor = UIColor(palette.comment)
@@ -211,6 +229,64 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
+        let totalVideoCount = videoAttachments.count + (shouldRenderFetchedVideo ? 1 : 0)
+        if totalVideoCount > 0 {
+            let countLabel = UILabel()
+            countLabel.font = ToolFont.smallBold
+            countLabel.textColor = UIColor(palette.comment)
+            countLabel.text = totalVideoCount == 1 ? "Video" : "Videos (\(totalVideoCount))"
+            contentStack.addArrangedSubview(countLabel)
+
+            var renderedCount = 0
+            if shouldRenderFetchedVideo, let filePath {
+                let row = NativeExpandedVideoAttachmentView()
+                let pathExtension = (filePath as NSString).pathExtension
+                let mimeType = MediaMimeType.videoMimeType(forPathExtension: pathExtension)
+                row.apply(
+                    id: "expanded-video-file-\(filePath)",
+                    title: filePath.shortenedPath,
+                    subtitle: NativeExpandedVideoAttachmentView.subtitle(mimeType: mimeType, sizeBytes: nil),
+                    mimeType: mimeType,
+                    sourceFileExtension: pathExtension,
+                    streamURLProvider: sessionFileStreamURLProvider.map { provider in { try await provider(filePath) } },
+                    palette: palette,
+                    fetchData: nil
+                )
+                contentStack.addArrangedSubview(row)
+                renderedCount += 1
+            }
+
+            if renderedCount < 6, let attachmentFetcher {
+                for attachment in videoAttachments.prefix(6 - renderedCount) {
+                    let row = NativeExpandedVideoAttachmentView()
+                    let sourceFileExtension = attachment.fileName.map { ($0 as NSString).pathExtension }
+                    row.apply(
+                        id: "expanded-video-attachment-\(attachment.id)",
+                        title: attachment.fileName?.isEmpty == false ? attachment.fileName ?? "Video" : "Video attachment",
+                        subtitle: NativeExpandedVideoAttachmentView.subtitle(
+                            mimeType: attachment.mimeType,
+                            sizeBytes: attachment.sizeBytes
+                        ),
+                        mimeType: attachment.mimeType,
+                        sourceFileExtension: sourceFileExtension,
+                        streamURLProvider: nil,
+                        palette: palette,
+                        fetchData: { try await attachmentFetcher(attachment.id) }
+                    )
+                    contentStack.addArrangedSubview(row)
+                    renderedCount += 1
+                }
+            }
+
+            if totalVideoCount > renderedCount {
+                let more = UILabel()
+                more.font = ToolFont.small
+                more.textColor = UIColor(palette.comment)
+                more.text = "+\(totalVideoCount - renderedCount) more video attachment(s)"
+                contentStack.addArrangedSubview(more)
+            }
+        }
+
         if !parsed.audio.isEmpty {
             let countLabel = UILabel()
             countLabel.font = ToolFont.smallBold
@@ -240,7 +316,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
-        if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && parsed.audio.isEmpty && !shouldRenderFetchedSVG {
+        if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && videoAttachments.isEmpty && parsed.audio.isEmpty && !shouldRenderFetchedSVG && !shouldRenderFetchedVideo {
             let empty = UILabel()
             empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
@@ -552,6 +628,231 @@ final class NativeExpandedAudioAttachmentView: UIView {
 
     private func estimatedDecodedByteCount(_ base64: String) -> Int {
         max(0, (base64.count * 3) / 4 - base64.suffix(2).filter { $0 == "=" }.count)
+    }
+}
+
+@MainActor
+final class NativeExpandedVideoAttachmentView: UIView {
+    private let container = UIView()
+    private let rootStack = UIStackView()
+    private let iconView = UIImageView(image: UIImage(systemName: "film"))
+    private let labelsStack = UIStackView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let playButton = UIButton(type: .system)
+    private let spinner = UIActivityIndicatorView(style: .medium)
+
+    private var id: String?
+    private var mimeType: String?
+    private var sourceFileExtension: String?
+    private var streamURLProvider: (() async throws -> URL)?
+    private var fetchData: (() async throws -> Data)?
+    private var fetchTask: Task<Void, Never>?
+    private var fileURL: URL?
+    private var lastError: String?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        fetchTask?.cancel()
+    }
+
+    func apply(
+        id: String,
+        title: String,
+        subtitle: String,
+        mimeType: String?,
+        sourceFileExtension: String?,
+        streamURLProvider: (() async throws -> URL)?,
+        palette: ThemePalette,
+        fetchData: (() async throws -> Data)?
+    ) {
+        if self.id != id {
+            fetchTask?.cancel()
+            fileURL = nil
+            lastError = nil
+        }
+
+        self.id = id
+        self.mimeType = mimeType
+        self.sourceFileExtension = sourceFileExtension
+        self.streamURLProvider = streamURLProvider
+        self.fetchData = fetchData
+
+        accessibilityIdentifier = "toolRow.videoAttachment"
+        titleLabel.accessibilityIdentifier = "toolRow.videoAttachment.title"
+        subtitleLabel.accessibilityIdentifier = "toolRow.videoAttachment.subtitle"
+        playButton.accessibilityIdentifier = "toolRow.videoAttachment.play"
+        titleLabel.text = title
+        titleLabel.textColor = UIColor(palette.fg)
+        subtitleLabel.text = lastError ?? subtitle
+        subtitleLabel.textColor = lastError == nil ? UIColor(palette.comment) : UIColor(palette.red)
+        iconView.tintColor = UIColor(palette.blue)
+        spinner.color = UIColor(palette.blue)
+        container.backgroundColor = UIColor(palette.bgDark)
+        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        playButton.isEnabled = streamURLProvider != nil || fetchData != nil
+        updateButton(palette: palette, isLoading: fetchTask != nil)
+    }
+
+    static func subtitle(mimeType: String?, sizeBytes: Int?) -> String {
+        let type = mimeType?.isEmpty == false ? mimeType ?? "video/unknown" : "video/unknown"
+        guard let sizeBytes else { return type }
+        return "\(type) • \(ToolCallFormatting.formatBytes(sizeBytes))"
+    }
+
+    private func setupViews() {
+        translatesAutoresizingMaskIntoConstraints = false
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.layer.cornerRadius = 8
+        container.layer.borderWidth = 1
+
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        rootStack.axis = .horizontal
+        rootStack.alignment = .center
+        rootStack.spacing = 10
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.contentMode = .scaleAspectFit
+
+        labelsStack.translatesAutoresizingMaskIntoConstraints = false
+        labelsStack.axis = .vertical
+        labelsStack.alignment = .leading
+        labelsStack.spacing = 2
+
+        titleLabel.font = ToolFont.regular
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        subtitleLabel.font = ToolFont.small
+        subtitleLabel.numberOfLines = 1
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+
+        playButton.translatesAutoresizingMaskIntoConstraints = false
+        playButton.addTarget(self, action: #selector(playVideo), for: .touchUpInside)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.hidesWhenStopped = true
+
+        addSubview(container)
+        container.addSubview(rootStack)
+        playButton.addSubview(spinner)
+        labelsStack.addArrangedSubview(titleLabel)
+        labelsStack.addArrangedSubview(subtitleLabel)
+        rootStack.addArrangedSubview(iconView)
+        rootStack.addArrangedSubview(labelsStack)
+        rootStack.addArrangedSubview(UIView())
+        rootStack.addArrangedSubview(playButton)
+
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: trailingAnchor),
+            container.topAnchor.constraint(equalTo: topAnchor),
+            container.bottomAnchor.constraint(equalTo: bottomAnchor),
+            rootStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            rootStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            rootStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            rootStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+            playButton.widthAnchor.constraint(equalToConstant: 36),
+            playButton.heightAnchor.constraint(equalToConstant: 36),
+            spinner.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
+        ])
+    }
+
+    private func updateButton(palette: ThemePalette, isLoading: Bool) {
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        playButton.setPreferredSymbolConfiguration(symbolConfig, forImageIn: .normal)
+        if isLoading {
+            playButton.setImage(nil, for: .normal)
+            spinner.startAnimating()
+        } else {
+            spinner.stopAnimating()
+            playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+        }
+        playButton.tintColor = playButton.isEnabled ? UIColor(palette.blue) : UIColor(palette.comment)
+    }
+
+    @objc private func playVideo() {
+        if let fileURL {
+            presentVideo(fileURL)
+            return
+        }
+        guard let id else { return }
+
+        if let streamURLProvider {
+            fetchTask?.cancel()
+            lastError = nil
+            updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: true)
+            fetchTask = Task { [weak self] in
+                do {
+                    let url = try await streamURLProvider()
+                    await MainActor.run { [weak self] in
+                        guard let self, self.id == id else { return }
+                        self.fetchTask = nil
+                        self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
+                        self.presentVideo(url)
+                    }
+                } catch {
+                    await MainActor.run { [weak self] in
+                        guard let self, self.id == id else { return }
+                        self.fetchTask = nil
+                        self.lastError = error.localizedDescription
+                        self.subtitleLabel.text = error.localizedDescription
+                        self.subtitleLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().red)
+                        self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
+                    }
+                }
+            }
+            return
+        }
+
+        guard let fetchData else { return }
+
+        fetchTask?.cancel()
+        lastError = nil
+        updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: true)
+        let mimeType = self.mimeType
+        let sourceFileExtension = self.sourceFileExtension
+        fetchTask = Task { [weak self] in
+            do {
+                let data = try await fetchData()
+                let preferredExtension = MediaMimeType.preferredFileExtension(
+                    forVideo: mimeType,
+                    fallbackPathExtension: sourceFileExtension
+                )
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try MediaTempFileStore.fileURL(for: data, preferredExtension: preferredExtension)
+                }.value
+                await MainActor.run { [weak self] in
+                    guard let self, self.id == id else { return }
+                    self.fetchTask = nil
+                    self.fileURL = url
+                    self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
+                    self.presentVideo(url)
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.id == id else { return }
+                    self.fetchTask = nil
+                    self.lastError = error.localizedDescription
+                    self.subtitleLabel.text = error.localizedDescription
+                    self.subtitleLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().red)
+                    self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
+                }
+            }
+        }
+    }
+
+    private func presentVideo(_ url: URL) {
+        guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
+        SystemVideoPlaybackPresenter.present(url: url, title: titleLabel.text, from: presenter)
     }
 }
 
@@ -987,9 +1288,22 @@ private enum NativeExpandedReadMediaParser {
         }
     }
 
+    static func containsVideoReadBoilerplate(_ text: String) -> Bool {
+        text.components(separatedBy: .newlines).contains { line in
+            isVideoReadBoilerplate(line)
+        }
+    }
+
     static func removingRedundantImageReadBoilerplate(from text: String) -> String {
         text.components(separatedBy: .newlines)
             .filter { line in !isImageReadBoilerplate(line) }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func removingRedundantVideoReadBoilerplate(from text: String) -> String {
+        text.components(separatedBy: .newlines)
+            .filter { line in !isVideoReadBoilerplate(line) }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1031,11 +1345,18 @@ private enum NativeExpandedReadMediaParser {
     }
 
     private static func isImageReadBoilerplate(_ line: String) -> Bool {
+        isMediaReadBoilerplate(line, prefix: "Read image file [", mimePrefix: "image/")
+    }
+
+    private static func isVideoReadBoilerplate(_ line: String) -> Bool {
+        isMediaReadBoilerplate(line, prefix: "Read video file [", mimePrefix: "video/")
+    }
+
+    private static func isMediaReadBoilerplate(_ line: String, prefix: String, mimePrefix: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let prefix = "Read image file ["
         guard trimmed.hasPrefix(prefix), trimmed.hasSuffix("]") else { return false }
 
         let mimeType = trimmed.dropFirst(prefix.count).dropLast()
-        return mimeType.lowercased().hasPrefix("image/")
+        return mimeType.lowercased().hasPrefix(mimePrefix)
     }
 }

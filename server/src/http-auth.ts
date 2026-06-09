@@ -10,12 +10,13 @@ function decodePathSuffix(value: string): string | null {
 }
 
 export function isQueryTokenAllowed(method: string, path: string, _url: URL): boolean {
-  if (method.toUpperCase() !== "GET") {
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod !== "GET" && normalizedMethod !== "HEAD") {
     return false;
   }
 
   if (SESSION_ATTACHMENT_ROUTE.test(path)) {
-    return true;
+    return normalizedMethod === "GET";
   }
 
   const workspaceMatch = path.match(WORKSPACE_RAW_ROUTE);

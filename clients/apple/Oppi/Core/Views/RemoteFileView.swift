@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import UIKit
 
 // periphery:ignore
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "RemoteFileView")
@@ -22,6 +23,7 @@ struct RemoteFileView: View {
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var content: String?
     @State private var imageData: Data?
+    @State private var videoURL: URL?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadedServerBaseURL: URL?
@@ -121,14 +123,15 @@ struct RemoteFileView: View {
                         }
                     }
                 }
-            } else if !isLoading && isVideoPath {
+            } else if let videoURL, isVideoPath {
                 NavigationStack {
-                    ContentUnavailableView(
-                        "Video Preview Unavailable",
-                        systemImage: "film",
-                        description: Text("Oppi does not preview video files.")
+                    URLVideoPlayerView(
+                        url: videoURL,
+                        height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420)
                     )
-                    .background(Color.themeBg)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.92))
                     .navigationTitle(filename)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -211,7 +214,16 @@ struct RemoteFileView: View {
                 )
                 self.imageData = data
             } else if isVideoPath {
-                // Intentionally unsupported to keep the client code lean.
+                guard let streamPath = path.workspaceRelativePath(hostMount: currentWorkspaceHostMount) else {
+                    throw APIError.server(
+                        status: 400,
+                        message: "Video preview requires a workspace file path"
+                    )
+                }
+                self.videoURL = try await api.browseFileStreamURL(
+                    workspaceId: resolvedWorkspaceId,
+                    path: streamPath
+                )
             } else {
                 let text = try await api.getSessionFile(
                     workspaceId: resolvedWorkspaceId,

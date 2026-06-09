@@ -34,13 +34,21 @@ extension E2ETestCase {
 
     /// Creates a workspace through the paired E2E server API.
     @discardableResult
-    func createLabWorkspace(named name: String, skills: [String] = [], defaultModel: String? = nil) throws -> String {
+    func createLabWorkspace(
+        named name: String,
+        skills: [String] = [],
+        defaultModel: String? = nil,
+        hostMount: String? = nil
+    ) throws -> String {
         var body: [String: Any] = [
             "name": name,
             "skills": skills,
         ]
         if let defaultModel {
             body["defaultModel"] = defaultModel
+        }
+        if let hostMount {
+            body["hostMount"] = hostMount
         }
 
         let response = try e2eLabAPIJSON(
@@ -77,6 +85,16 @@ extension E2ETestCase {
             }
         }
         return sessionIds
+    }
+
+    /// Sends a synthetic session message through the paired E2E UI harness.
+    @discardableResult
+    func sendE2EHarnessMessage(sessionId: String, _ message: [String: Any]) throws -> [String: Any] {
+        try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/sessions/\(sessionId)/message",
+            body: message
+        )
     }
 
     /// Calls the paired E2E server API using the harness token.

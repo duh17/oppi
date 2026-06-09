@@ -33,7 +33,7 @@ enum FileBrowserContentRenderingPolicy {
 /// - JSON: pretty-printed with colored tokens
 /// - Images: inline preview
 /// - Audio: native AVPlayer with playback controls
-/// - Video: placeholder only (preview intentionally unsupported)
+/// - Video: system video player with playback controls
 /// - PDF: PDFKit with scroll, zoom, and text selection
 /// - Plain text: monospaced with line numbers
 ///
@@ -115,12 +115,8 @@ struct FileBrowserContentView: View {
                 }
             case .image(let data):
                 imageView(data)
-            case .video:
-                ContentUnavailableView(
-                    "Video Preview Unavailable",
-                    systemImage: "film",
-                    description: Text("Oppi does not preview video files.")
-                )
+            case .video(let url):
+                videoView(url)
             case .audio(let url):
                 AudioBrowserView(url: url, fileName: fileName)
             case .pdf(let data):
@@ -230,6 +226,19 @@ struct FileBrowserContentView: View {
         }
     }
 
+    // MARK: - Video View
+
+    @ViewBuilder
+    private func videoView(_ url: URL) -> some View {
+        URLVideoPlayerView(
+            url: url,
+            height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420)
+        )
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.92))
+    }
+
     // MARK: - Loading
 
     private func loadContent(force: Bool = false) async {
@@ -257,7 +266,8 @@ struct FileBrowserContentView: View {
 
             switch category {
             case .video:
-                content = .video
+                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
+                content = .video(url)
             case .audio:
                 let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
                 content = .audio(url)
@@ -501,7 +511,7 @@ private enum FileContentPhase: Equatable {
     case error(String)
     case text(String)
     case image(Data)
-    case video
+    case video(URL)
     case audio(URL)
     case pdf(Data)
     case binary
@@ -513,7 +523,7 @@ private enum FileContentPhase: Equatable {
         case (.error(let a), .error(let b)): a == b
         case (.text(let a), .text(let b)): a == b
         case (.image(let a), .image(let b)): a == b
-        case (.video, .video): true
+        case (.video(let a), .video(let b)): a == b
         case (.audio(let a), .audio(let b)): a == b
         case (.pdf(let a), .pdf(let b)): a == b
         case (.binary, .binary): true

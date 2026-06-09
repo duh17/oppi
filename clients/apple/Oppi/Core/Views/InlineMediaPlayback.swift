@@ -285,6 +285,16 @@ enum MediaMimeType {
         }
     }
 
+    static func videoMimeType(forPathExtension pathExtension: String?) -> String? {
+        switch (pathExtension ?? "").lowercased() {
+        case "mp4", "m4v": return "video/mp4"
+        case "mov": return "video/quicktime"
+        case "webm": return "video/webm"
+        case "avi": return "video/x-msvideo"
+        default: return nil
+        }
+    }
+
     static func preferredFileExtension(forAudio mimeType: String?, fallbackPathExtension: String? = nil) -> String {
         if let fallback = sanitizedPathExtension(fallbackPathExtension) {
             return fallback
@@ -299,6 +309,19 @@ enum MediaMimeType {
         case "audio/flac": return "flac"
         case "audio/opus": return "opus"
         default: return "m4a"
+        }
+    }
+
+    static func preferredFileExtension(forVideo mimeType: String?, fallbackPathExtension: String? = nil) -> String {
+        if let fallback = sanitizedPathExtension(fallbackPathExtension) {
+            return fallback
+        }
+
+        switch normalized(mimeType) {
+        case "video/quicktime": return "mov"
+        case "video/webm": return "webm"
+        case "video/x-msvideo": return "avi"
+        default: return "mp4"
         }
     }
 
@@ -1018,7 +1041,7 @@ private struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
-        controller.showsPlaybackControls = true
+        configure(controller)
         controller.player = player
         return controller
     }
@@ -1027,7 +1050,16 @@ private struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         if uiViewController.player !== player {
             uiViewController.player = player
         }
-        uiViewController.showsPlaybackControls = true
+        configure(uiViewController)
+    }
+
+    private func configure(_ controller: AVPlayerViewController) {
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.view.accessibilityIdentifier = "videoPlayer.native"
     }
 }
 
@@ -1038,6 +1070,8 @@ private struct LocalMediaPlayerView: View {
     var autoplay: Bool
     var loops: Bool
     var muteByDefault: Bool
+    var unavailableTitle = "Media preview unavailable"
+    var unavailableSystemImage = "play.slash"
 
     @StateObject private var model = LocalMediaPlaybackModel()
 
@@ -1054,10 +1088,10 @@ private struct LocalMediaPlayerView: View {
                     .frame(height: height)
                     .overlay {
                         VStack(spacing: 6) {
-                            Image(systemName: "speaker.slash")
+                            Image(systemName: unavailableSystemImage)
                                 .font(.caption)
                                 .foregroundStyle(.themeComment)
-                            Text("Audio preview unavailable")
+                            Text(unavailableTitle)
                                 .font(.caption2)
                                 .foregroundStyle(.themeComment)
                             Text(errorMessage)
@@ -1116,7 +1150,88 @@ struct DataAudioPlayerView: View {
             height: height,
             autoplay: autoplay,
             loops: false,
-            muteByDefault: false
+            muteByDefault: false,
+            unavailableTitle: "Audio preview unavailable",
+            unavailableSystemImage: "speaker.slash"
         )
+    }
+}
+
+struct DataVideoPlayerView: View {
+    let data: Data
+    let mimeType: String?
+    var sourceFileExtension: String? = nil
+    var height: CGFloat = 260
+    var autoplay = false
+
+    var body: some View {
+        LocalMediaPlayerView(
+            data: data,
+            preferredExtension: MediaMimeType.preferredFileExtension(
+                forVideo: mimeType,
+                fallbackPathExtension: sourceFileExtension
+            ),
+            height: height,
+            autoplay: autoplay,
+            loops: false,
+            muteByDefault: false,
+            unavailableTitle: "Video preview unavailable",
+            unavailableSystemImage: "film.slash"
+        )
+    }
+}
+
+struct URLVideoPlayerView: View {
+    let url: URL
+    var height: CGFloat = 260
+    var autoplay = false
+
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        Group {
+            if let player {
+                AVPlayerViewControllerContainer(player: player)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.themeBgHighlight)
+                    .frame(height: height)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+            }
+        }
+        .task(id: url) {
+            let nextPlayer = AVPlayer(url: url)
+            nextPlayer.automaticallyWaitsToMinimizeStalling = true
+            player = nextPlayer
+            if autoplay {
+                nextPlayer.play()
+            }
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+    }
+}
+
+@MainActor
+enum SystemVideoPlaybackPresenter {
+    static func present(url: URL, title: String?, from presenter: UIViewController) {
+        let controller = AVPlayerViewController()
+        let player = AVPlayer(url: url)
+        player.automaticallyWaitsToMinimizeStalling = true
+        controller.player = player
+        controller.showsPlaybackControls = true
+        controller.modalPresentationStyle = .fullScreen
+        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
+        presenter.present(controller, animated: true) {
+            player.play()
+        }
     }
 }

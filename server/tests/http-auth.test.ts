@@ -8,9 +8,10 @@ describe("isQueryTokenAllowed", () => {
     return isQueryTokenAllowed(method, url.pathname, url);
   };
 
-  it("allows GET workspace raw file routes", () => {
+  it("allows GET and HEAD workspace raw file routes", () => {
     expect(allowed("GET", "/workspaces/ws-1/raw/video%20clip.mp4?token=secret")).toBe(true);
     expect(allowed("get", "/workspaces/ws-1/raw/nested/slide deck.pdf?token=secret")).toBe(true);
+    expect(allowed("HEAD", "/workspaces/ws-1/raw/video%20clip.mp4?token=secret")).toBe(true);
   });
 
   it("allows GET session attachment routes", () => {
@@ -19,8 +20,11 @@ describe("isQueryTokenAllowed", () => {
     ).toBe(true);
   });
 
-  it("rejects non-GET methods", () => {
+  it("rejects unsupported or unsafe methods", () => {
     expect(allowed("POST", "/workspaces/ws-1/raw/image.png?token=secret")).toBe(false);
+    expect(
+      allowed("HEAD", "/workspaces/ws-1/sessions/sess-1/attachments/att_123?token=secret"),
+    ).toBe(false);
     expect(
       allowed("DELETE", "/workspaces/ws-1/sessions/sess-1/attachments/att_123?token=secret"),
     ).toBe(false);

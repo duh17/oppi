@@ -210,6 +210,21 @@ extension ChatTimelineCollectionHost.Controller {
         } else {
             nil
         }
+        let sessionFileStreamURLProvider: ((String) async throws -> URL)?
+        if let workspaceId, let apiClient = connection?.apiClient {
+            let workspaceHostMount = connection?.workspaceStore.workspaces.first { $0.id == workspaceId }?.hostMount
+            sessionFileStreamURLProvider = { path in
+                guard let streamPath = path.workspaceRelativePath(hostMount: workspaceHostMount) else {
+                    throw APIError.server(
+                        status: 400,
+                        message: "Video path is outside the workspace"
+                    )
+                }
+                return try await apiClient.browseFileStreamURL(workspaceId: workspaceId, path: streamPath)
+            }
+        } else {
+            sessionFileStreamURLProvider = nil
+        }
         var configuration = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -228,6 +243,7 @@ extension ChatTimelineCollectionHost.Controller {
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
             .withSessionFileDataFetcher(sessionFileDataFetcher)
+            .withSessionFileStreamURLProvider(sessionFileStreamURLProvider)
     }
 }
 

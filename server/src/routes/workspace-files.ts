@@ -1,4 +1,4 @@
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Dirent, Stats } from "node:fs";
 import { createReadStream } from "node:fs";
 import { stat, realpath, readdir } from "node:fs/promises";
@@ -316,6 +316,85 @@ export function getContentType(ext: string, filename: string): string {
   return "application/octet-stream";
 }
 
+export type ByteRangeParseResult =
+  | { kind: "none" }
+  | { kind: "valid"; start: number; end: number }
+  | { kind: "invalid" }
+  | { kind: "unsatisfiable" };
+
+function parseRangeInteger(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+export function parseByteRangeHeader(
+  header: string | string[] | undefined,
+  fileSize: number,
+): ByteRangeParseResult {
+  if (header === undefined) return { kind: "none" };
+  if (Array.isArray(header)) return { kind: "invalid" };
+  if (!Number.isSafeInteger(fileSize) || fileSize < 0) return { kind: "invalid" };
+
+  const raw = header.trim();
+  if (!raw) return { kind: "invalid" };
+  if (!raw.toLowerCase().startsWith("bytes=")) return { kind: "none" };
+
+  const spec = raw.slice("bytes=".length).trim();
+  if (!spec || spec.includes(",")) return { kind: "invalid" };
+
+  const match = spec.match(/^(\d*)-(\d*)$/);
+  if (!match) return { kind: "invalid" };
+
+  const [, startText, endText] = match;
+  if (!startText && !endText) return { kind: "invalid" };
+  if (fileSize === 0) return { kind: "unsatisfiable" };
+
+  if (!startText) {
+    const suffixLength = parseRangeInteger(endText);
+    if (suffixLength === null) return { kind: "invalid" };
+    if (suffixLength === 0) return { kind: "unsatisfiable" };
+
+    const start = suffixLength >= fileSize ? 0 : fileSize - suffixLength;
+    return { kind: "valid", start, end: fileSize - 1 };
+  }
+
+  const start = parseRangeInteger(startText);
+  if (start === null) return { kind: "invalid" };
+  if (start >= fileSize) return { kind: "unsatisfiable" };
+
+  if (!endText) {
+    return { kind: "valid", start, end: fileSize - 1 };
+  }
+
+  const requestedEnd = parseRangeInteger(endText);
+  if (requestedEnd === null) return { kind: "invalid" };
+  if (requestedEnd < start) return { kind: "unsatisfiable" };
+
+  return { kind: "valid", start, end: Math.min(requestedEnd, fileSize - 1) };
+}
+
+function pipeFileStream(
+  filePath: string,
+  res: ServerResponse,
+  range?: { start: number; end: number },
+): void {
+  const stream = range
+    ? createReadStream(filePath, { start: range.start, end: range.end })
+    : createReadStream(filePath);
+
+  stream.on("error", (error) => {
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to read file" }));
+      return;
+    }
+    res.destroy(error);
+  });
+  stream.pipe(res as NodeJS.WritableStream);
+}
+
 /**
  * Resolve and validate a workspace-relative file path.
  *
@@ -490,7 +569,9 @@ export function createWorkspaceFileRoutes(
   async function handleBrowseFile(
     wsId: string,
     requestedPath: string,
+    req: IncomingMessage,
     res: ServerResponse,
+    method: string,
   ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
@@ -539,12 +620,48 @@ export function createWorkspaceFileRoutes(
       }
     }
 
-    res.writeHead(200, {
+    const commonHeaders = {
       "Content-Type": contentType,
-      "Content-Length": fileStat.size.toString(),
       "Cache-Control": "private, no-cache",
+      "Accept-Ranges": "bytes",
+    };
+    const range = parseByteRangeHeader(req.headers?.range, fileStat.size);
+    const isHeadRequest = method.toUpperCase() === "HEAD";
+
+    if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+      res.writeHead(416, {
+        ...commonHeaders,
+        "Content-Range": `bytes */${fileStat.size}`,
+        "Content-Length": "0",
+      });
+      res.end();
+      return;
+    }
+
+    if (range.kind === "valid") {
+      const contentLength = range.end - range.start + 1;
+      res.writeHead(206, {
+        ...commonHeaders,
+        "Content-Range": `bytes ${range.start}-${range.end}/${fileStat.size}`,
+        "Content-Length": contentLength.toString(),
+      });
+      if (isHeadRequest) {
+        res.end();
+        return;
+      }
+      pipeFileStream(realFile, res, range);
+      return;
+    }
+
+    res.writeHead(200, {
+      ...commonHeaders,
+      "Content-Length": fileStat.size.toString(),
     });
-    createReadStream(realFile).pipe(res as NodeJS.WritableStream);
+    if (isHeadRequest) {
+      res.end();
+      return;
+    }
+    pipeFileStream(realFile, res);
   }
 
   async function handleListDirectory(
@@ -588,23 +705,25 @@ export function createWorkspaceFileRoutes(
     helpers.json(res, response);
   }
 
-  return async ({ method, path, res }) => {
+  return async ({ method, path, req, res }) => {
+    const normalizedMethod = method.toUpperCase();
+
     // GET /workspaces/:id/paths — flat path list for client-side fuzzy search.
     const pathsMatch = path.match(/^\/workspaces\/([^/]+)\/paths$/);
-    if (pathsMatch && method === "GET") {
+    if (pathsMatch && normalizedMethod === "GET") {
       await handleFileIndex(pathsMatch[1], res);
       return true;
     }
 
     // GET /workspaces/:id/contents[/path] — directory contents for file browser.
     const contentsRootMatch = path.match(/^\/workspaces\/([^/]+)\/contents$/);
-    if (contentsRootMatch && method === "GET") {
+    if (contentsRootMatch && normalizedMethod === "GET") {
       await handleListDirectory(contentsRootMatch[1], "", res);
       return true;
     }
 
     const contentsMatch = path.match(/^\/workspaces\/([^/]+)\/contents\/(.*)$/);
-    if (contentsMatch && method === "GET") {
+    if (contentsMatch && normalizedMethod === "GET") {
       const requestedPath = decodeWorkspaceRoutePath(contentsMatch[2]);
       if (requestedPath === null) {
         helpers.error(res, 400, "Invalid file path encoding");
@@ -615,16 +734,16 @@ export function createWorkspaceFileRoutes(
       return true;
     }
 
-    // GET /workspaces/:id/raw/:path — raw bytes for previews/media.
+    // GET/HEAD /workspaces/:id/raw/:path — raw bytes for previews/media.
     const rawMatch = path.match(/^\/workspaces\/([^/]+)\/raw\/(.+)$/);
-    if (rawMatch && method === "GET") {
+    if (rawMatch && (normalizedMethod === "GET" || normalizedMethod === "HEAD")) {
       const requestedPath = decodeWorkspaceRoutePath(rawMatch[2]);
       if (requestedPath === null) {
         helpers.error(res, 400, "Invalid file path encoding");
         return true;
       }
 
-      await handleBrowseFile(rawMatch[1], requestedPath, res);
+      await handleBrowseFile(rawMatch[1], requestedPath, req, res, normalizedMethod);
       return true;
     }
 

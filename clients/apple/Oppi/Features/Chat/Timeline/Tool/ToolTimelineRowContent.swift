@@ -40,6 +40,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var audioPlayer: AudioPlayerService? = nil
     var sessionAttachmentFetcher: ((String) async throws -> Data)? = nil
     var sessionFileDataFetcher: ((String) async throws -> Data)? = nil
+    var sessionFileStreamURLProvider: ((String) async throws -> URL)? = nil
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
 
@@ -74,6 +75,12 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     func withSessionFileDataFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
         var copy = self
         copy.sessionFileDataFetcher = fetcher
+        return copy
+    }
+
+    func withSessionFileStreamURLProvider(_ provider: ((String) async throws -> URL)?) -> Self {
+        var copy = self
+        copy.sessionFileStreamURLProvider = provider
         return copy
     }
 
@@ -589,7 +596,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: currentConfiguration.audioPlayer,
             attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
-            sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher
+            sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher,
+            sessionFileStreamURLProvider: currentConfiguration.sessionFileStreamURLProvider
         )
     }
 
@@ -1352,6 +1360,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isError: configuration.isError,
                 hasAttachmentFetcher: configuration.sessionAttachmentFetcher != nil,
                 hasSessionFileDataFetcher: configuration.sessionFileDataFetcher != nil,
+                hasSessionFileStreamURLProvider: configuration.sessionFileStreamURLProvider != nil,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
