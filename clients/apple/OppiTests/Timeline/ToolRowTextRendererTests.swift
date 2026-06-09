@@ -48,7 +48,7 @@ struct SyntaxOutputTests {
     @Test func knownLanguageUsesMonospaceFontAcrossHighlightedRuns() throws {
         let result = ToolRowTextRenderer.makeSyntaxOutputPresentation("let x = 1", language: .swift)
         let attributed = try #require(result.attributedText)
-        let expected = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let expected = ToolFont.regular
 
         var sawMissingFont = false
         var sawUnexpectedFont = false

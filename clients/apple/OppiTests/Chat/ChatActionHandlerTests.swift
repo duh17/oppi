@@ -627,7 +627,7 @@ struct ChatActionHandlerTests {
 
         let hasError = reducer.items.contains { item in
             if case .error(_, let message) = item {
-                return message.contains("Image upload refs are not wired")
+                return message.contains("Legacy image payloads are not supported")
             }
             return false
         }
