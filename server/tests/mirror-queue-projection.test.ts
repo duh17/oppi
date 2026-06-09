@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   bindMirrorOptionalUIContext,
+  createMirrorTerminalDialogQueue,
   createMirrorWidgetForwardingComponent,
   createMirrorWidgetForwardingTui,
   MirrorQueueProjection,
@@ -16,6 +17,12 @@ import {
   type MessageQueueState,
 } from "../../pi-extensions/oppi-mirror.ts";
 import { serializeSessionTree } from "../src/session-tree.js";
+
+async function flushMicrotasks(count = 4): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+}
 
 function queue(
   version: number,
@@ -141,6 +148,52 @@ describe("mirror widget snapshots", () => {
 });
 
 describe("mirror extension UI proxy helpers", () => {
+  it("serializes terminal dialogs and skips phone-settled dialogs before their turn", async () => {
+    const dialogQueue = createMirrorTerminalDialogQueue();
+    const started: string[] = [];
+    let finishFirst!: (value: string) => void;
+    let finishThird!: (value: string) => void;
+    const secondAbort = new AbortController();
+
+    const first = dialogQueue.run(
+      () =>
+        new Promise<string>((resolve) => {
+          started.push("first");
+          finishFirst = resolve;
+        }),
+      { defaultValue: "first-skipped" },
+    );
+    const second = dialogQueue.run(
+      async () => {
+        started.push("second");
+        return "second";
+      },
+      { signal: secondAbort.signal, defaultValue: "second-skipped" },
+    );
+    const third = dialogQueue.run(
+      () =>
+        new Promise<string>((resolve) => {
+          started.push("third");
+          finishThird = resolve;
+        }),
+      { defaultValue: "third-skipped" },
+    );
+
+    await flushMicrotasks();
+    expect(started).toEqual(["first"]);
+
+    secondAbort.abort();
+    finishFirst("first");
+
+    await expect(first).resolves.toBe("first");
+    await flushMicrotasks();
+    expect(started).toEqual(["first", "third"]);
+    await expect(second).resolves.toBe("second-skipped");
+
+    finishThird("third");
+    await expect(third).resolves.toBe("third");
+  });
+
   it("binds partial UI contexts without requiring every Pi UI method", async () => {
     const setWidget = vi.fn();
     const original = bindMirrorOptionalUIContext({ setWidget } as never);

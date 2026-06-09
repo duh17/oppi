@@ -1321,6 +1321,48 @@ interface PendingMirrorUIResponse<T> {
   resolve: (value: T) => void;
 }
 
+export interface MirrorTerminalDialogQueueRunOptions<T> {
+  signal?: AbortSignal;
+  defaultValue: T;
+}
+
+export interface MirrorTerminalDialogQueue {
+  run<T>(
+    task: () => Promise<T>,
+    options: MirrorTerminalDialogQueueRunOptions<T>,
+  ): Promise<T>;
+}
+
+export function createMirrorTerminalDialogQueue(): MirrorTerminalDialogQueue {
+  let tail: Promise<void> = Promise.resolve();
+
+  return {
+    async run<T>(
+      task: () => Promise<T>,
+      options: MirrorTerminalDialogQueueRunOptions<T>,
+    ): Promise<T> {
+      const previous = tail.catch(() => {});
+      let release = () => {};
+      const currentDone = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      tail = previous.then(() => currentDone);
+
+      await previous;
+      if (options.signal?.aborted) {
+        release();
+        return options.defaultValue;
+      }
+
+      try {
+        return await task();
+      } finally {
+        release();
+      }
+    },
+  };
+}
+
 function invalidMirrorAskResponse(message: string): Error {
   return new Error(`Malformed ask response: ${message}`);
 }
@@ -1536,6 +1578,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     string,
     PendingMirrorUIResponse<unknown>
   >();
+  const terminalDialogQueue = createMirrorTerminalDialogQueue();
   const toolArgsByCallId = new Map<string, Record<string, unknown>>();
   const proxiedUIContexts = new WeakSet<object>();
   const widgetForwardingGenerations = new Map<string, number>();
@@ -1759,8 +1802,11 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       timeoutAt: opts?.timeout ? Date.now() + opts.timeout : undefined,
     });
 
-    const terminalPromise = Promise.resolve()
-      .then(() => terminalCall(terminalOpts))
+    const terminalPromise = terminalDialogQueue
+      .run(() => terminalCall(terminalOpts), {
+        signal: terminalOpts.signal,
+        defaultValue,
+      })
       .then((value) => ({ source: "terminal" as const, value }))
       .catch((error: unknown) => {
         if (settledByPhone)
