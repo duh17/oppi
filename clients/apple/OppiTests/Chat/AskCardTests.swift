@@ -144,6 +144,52 @@ struct AskCardTests {
         #expect(AskCard.inlineQuestionLineLimit(for: .accessibility1) > AskCard.inlineQuestionLineLimit(for: .large))
     }
 
+    @Test("Inline question display extracts fenced command preview")
+    func inlineQuestionDisplayExtractsFencedCommandPreview() {
+        let question = """
+        Git push
+
+        Pushing writes to a remote repository.
+
+        ### Command
+
+        ```bash
+        git push origin main
+        ```
+        """
+
+        let display = AskCard.inlineQuestionDisplay(for: question)
+
+        #expect(display.summary == "Git push\n\nPushing writes to a remote repository.")
+        #expect(display.commandPreview == "git push origin main")
+    }
+
+    @Test("Inline question display extracts unfenced command preview")
+    func inlineQuestionDisplayExtractsUnfencedCommandPreview() {
+        let question = """
+        Review this command before allowing it.
+
+        ### Command
+
+        npm test -- --runInBand
+
+        Allow this tool call?
+        """
+
+        let display = AskCard.inlineQuestionDisplay(for: question)
+
+        #expect(display.summary == "Review this command before allowing it.")
+        #expect(display.commandPreview == "npm test -- --runInBand")
+    }
+
+    @Test("Inline question display leaves ordinary questions unchanged")
+    func inlineQuestionDisplayLeavesOrdinaryQuestionUnchanged() {
+        let display = AskCard.inlineQuestionDisplay(for: "Pick an option")
+
+        #expect(display.summary == "Pick an option")
+        #expect(display.commandPreview == nil)
+    }
+
     // MARK: - Page Count
 
     @Test("Single question single-select skips pager — 1 page")

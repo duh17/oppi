@@ -144,6 +144,7 @@ struct AskCard: View {
             )
             .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
             .presentationDragIndicator(.visible)
+            .presentationContentInteraction(.resizes)
             .presentationCornerRadius(28)
         }
     }
@@ -192,35 +193,29 @@ struct AskCard: View {
     }
 
     private func questionText(_ question: AskQuestion) -> some View {
+        let display = Self.inlineQuestionDisplay(for: question.question)
+        let summary = display.summary.isEmpty ? "Review this request." : display.summary
         let usesPreview = Self.usesInlineQuestionPreview(
-            question.question,
+            summary,
             dynamicTypeSize: dynamicTypeSize
         )
 
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                Text(question.question)
+                Text(summary)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.themeFg)
                     .lineLimit(usesPreview ? Self.inlineQuestionLineLimit(for: dynamicTypeSize) : nil)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityLabel("Question: \(question.question)")
+                    .accessibilityLabel("Question: \(summary)")
 
                 expandButton
             }
 
-            if usesPreview {
-                Button {
-                    isExpanded = true
-                } label: {
-                    Label("View full request", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeBlue)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens the complete question and details")
+            if let commandPreview = display.commandPreview {
+                AskCommandPreview(command: commandPreview)
             }
         }
         .padding(.horizontal, 12)
@@ -231,15 +226,46 @@ struct AskCard: View {
             isExpanded = true
         } label: {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.caption)
+                .font(.callout)
                 .foregroundStyle(.themeComment)
-                .frame(width: 32, height: 32)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Expand ask request")
+        .accessibilityHint("Opens the complete question and details")
         .accessibilityIdentifier("ask.expand")
+    }
+
+    private struct AskCommandPreview: View {
+        let command: String
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Command")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+
+                Text(command)
+                    .font(.system(.footnote, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.themeComment.opacity(0.12), lineWidth: 1)
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Command preview")
+            .accessibilityValue(command)
+        }
     }
 
     private func optionRows(for question: AskQuestion) -> some View {
@@ -387,6 +413,23 @@ extension AskCard {
         max(1, request.questions.count)
     }
 
+    static func inlineQuestionDisplay(for question: String) -> (summary: String, commandPreview: String?) {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = trimmed.components(separatedBy: .newlines)
+        guard let headingIndex = lines.firstIndex(where: isCommandSectionHeading) else {
+            return (trimmed, nil)
+        }
+
+        let summary = lines[..<headingIndex]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (
+            summary,
+            commandPreview(from: lines, after: headingIndex)
+        )
+    }
+
     static func inlineQuestionLineLimit(for size: DynamicTypeSize) -> Int {
         switch size {
         case .accessibility1, .accessibility2, .accessibility3,
@@ -395,6 +438,67 @@ extension AskCard {
         default:
             return 6
         }
+    }
+
+    private static func isCommandSectionHeading(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("#") else { return false }
+        let title = String(trimmed.drop(while: { $0 == "#" }))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.caseInsensitiveCompare("Command") == .orderedSame
+    }
+
+    private static func commandPreview(from lines: [String], after headingIndex: Int) -> String? {
+        var index = headingIndex + 1
+        while index < lines.count,
+              lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            index += 1
+        }
+        guard index < lines.count else { return nil }
+
+        let firstLine = lines[index].trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fence = commandFenceMarker(for: firstLine) {
+            index += 1
+            var commandLines: [String] = []
+            while index < lines.count {
+                let line = lines[index]
+                if line.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(fence) {
+                    break
+                }
+                commandLines.append(line)
+                index += 1
+            }
+            return normalizedCommandPreview(commandLines.joined(separator: "\n"))
+        }
+
+        var commandLines: [String] = []
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("#") { break }
+            if trimmed.isEmpty {
+                if commandLines.isEmpty {
+                    index += 1
+                    continue
+                }
+                break
+            }
+            commandLines.append(line)
+            index += 1
+        }
+
+        return normalizedCommandPreview(commandLines.joined(separator: "\n"))
+    }
+
+    private static func commandFenceMarker(for line: String) -> String? {
+        if line.hasPrefix("```") { return "```" }
+        if line.hasPrefix("~~~") { return "~~~" }
+        return nil
+    }
+
+    private static func normalizedCommandPreview(_ command: String) -> String? {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     static func usesInlineQuestionPreview(

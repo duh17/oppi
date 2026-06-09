@@ -49,16 +49,23 @@ final class ScreenshotPreviewUITests: XCTestCase {
     func testAskCardPreview() throws {
         launchPreview(screen: "ask-card")
 
-        let question = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Which target kinds")).firstMatch
-        XCTAssertTrue(question.waitForExistence(timeout: 5), "Ask card question not visible")
-        let firstOption = app.staticTexts["Host + sandbox only"]
-        XCTAssertTrue(firstOption.waitForExistence(timeout: 5), "First ask option row not visible")
+        let question = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Git push")).firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 5), "Permission gate title not visible")
+        let commandLabel = app.staticTexts["Command"]
+        XCTAssertTrue(commandLabel.waitForExistence(timeout: 5), "Command preview label not visible")
+        let commandPreview = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "git push origin main")).firstMatch
+        XCTAssertTrue(commandPreview.waitForExistence(timeout: 5), "Command preview text not visible")
+        let firstOption = app.staticTexts["Allow once"]
+        XCTAssertTrue(firstOption.waitForExistence(timeout: 5), "Allow option row not visible")
+        let secondOption = app.staticTexts["Deny"]
+        XCTAssertTrue(secondOption.waitForExistence(timeout: 5), "Deny option row not visible")
 
         saveScreenshot(name: "ask-card-inline")
 
         app.terminate()
         launchPreview(screen: "ask-card-expanded-sheet")
-        XCTAssertTrue(app.staticTexts["Or type your answer"].waitForExistence(timeout: 5), "Expanded ask sheet not visible")
+        let expandedOption = app.staticTexts["Run this tool call now"]
+        XCTAssertTrue(expandedOption.waitForExistence(timeout: 5), "Expanded permission gate not visible")
 
         saveScreenshot(name: "ask-card-expanded-sheet")
     }

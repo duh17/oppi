@@ -123,37 +123,49 @@ private struct ExtensionSurfacePreview: View {
 // MARK: - Ask Card Preview
 
 private enum AskCardPreviewFixture {
-    static let request = AskRequest(
-        id: "preview-ask-card",
-        sessionId: "preview-session",
-        questions: [
-            AskQuestion(
-                id: "target-kind",
-                question: "Which target kinds should the core `POST /clankers` support in v1? This matters because `/clankers/:id/input` already handles existing sessions, so `target.kind = \"session\"` may be redundant.",
-                options: [
-                    AskOption(
-                        value: "host-sandbox",
-                        label: "Host + sandbox only",
-                        description: "Recommended: create new clankers only; existing clankers use `/clankers/:id/input`."
-                    ),
-                    AskOption(
-                        value: "sandbox",
-                        label: "Sandbox only",
-                        description: "Start safest: all generic clankers run in Gondolin; workspace host route remains compatibility only."
-                    ),
-                    AskOption(
-                        value: "host-workspace-sandbox",
-                        label: "Host workspace + sandbox",
-                        description: "Include `{kind: \"workspace\"}` as a convenience target while keeping host execution explicit."
-                    ),
-                ],
-                multiSelect: false
-            ),
-        ],
-        allowCustom: true,
-        timeout: nil,
-        customPlaceholder: "Type a custom target policy"
-    )
+    static let request: AskRequest = {
+        let permissionRequest = ExtensionUIRequest(
+            id: "preview-permission-gate",
+            sessionId: "preview-session",
+            method: "select",
+            title: """
+            Git push
+
+            Pushing writes to a remote repository.
+
+            ### Command
+
+            ```bash
+            git push origin main
+            ```
+
+            Allow this tool call?
+
+              Allow once: Run this tool call now
+              Deny: Block the tool call
+            """,
+            options: ["Allow once", "Deny"]
+        )
+
+        return permissionRequest.inlineAskRequest ?? AskRequest(
+            id: "preview-permission-gate",
+            sessionId: "preview-session",
+            questions: [
+                AskQuestion(
+                    id: ExtensionUIRequest.inlineQuestionId,
+                    question: "Git push",
+                    options: [
+                        AskOption(value: "Allow once", label: "Allow once", description: "Run this tool call now"),
+                        AskOption(value: "Deny", label: "Deny", description: "Block the tool call"),
+                    ],
+                    multiSelect: false
+                ),
+            ],
+            allowCustom: false,
+            timeout: nil,
+            responseEncoding: .extensionSelect
+        )
+    }()
 }
 
 private struct AskCardPreview: View {
