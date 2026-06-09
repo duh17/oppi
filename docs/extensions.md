@@ -66,7 +66,7 @@ Oppi does not replace pi discovery. It filters host-loaded extensions and inject
 
 ## Approval prompts
 
-Approval behavior belongs to Pi extensions. Command classification, route decisions, and user prompts live inside extension handlers; Oppi renders the resulting UI but does not create a separate policy layer.
+Approval behavior belongs to Pi extensions. Command classification, route decisions, and user prompts live inside extension handlers; Oppi renders the resulting UI but does not create a separate approval layer.
 
 The behavior is the same shape for Oppi-owned sessions and mirrored terminal sessions:
 

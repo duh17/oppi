@@ -53,7 +53,9 @@ Use `sessionIdleTimeoutMs` in config files.
 
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
 
-Approval behavior is extension-owned. If a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui` or the built-in `ask` extension. No server-side approval config is required.
+Approval behavior is extension-owned. If a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui` or the built-in `ask` extension. No Oppi-specific approval config is required.
+
+Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
 ### Runtime Environment
 

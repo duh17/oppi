@@ -28,7 +28,7 @@ function makeRequest(body?: unknown): Readable {
   return Readable.from(text ? [text] : []);
 }
 
-describe("workspace policy routes", () => {
+describe("retired workspace routes", () => {
   it("GET /workspaces/:id/policy is not exposed", async () => {
     const routes = new RouteHandler({} as RouteContext);
     const res = makeResponse();

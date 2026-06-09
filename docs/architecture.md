@@ -246,7 +246,7 @@ Key boundaries:
 - `WorkspaceStore` owns workspace catalog freshness plus SQLite-backed workspace-home summaries.
 - `WorkspaceDetailView` owns view-scoped workspace refresh/polling using `getWorkspaceSessionList(...)` and lazy archive bucket fetches.
 - Workspace prompt templates are exposed to Apple as quick-action options; quick actions and review comments stay on the HTTP lane, and review-comment loading is keyed by workspace plus session so comments do not leak across sessions in the same workspace.
-- Standard Pi extension UI is the current approval and input lane: ask requests use `AskRequestStore`; select, confirm, input, editor, notification, status, widget, and editor-text surfaces live on `ServerConnection` state. Oppi has no separate built-in server/client `PermissionStore` approval transport.
+- Standard Pi extension UI is the current approval and input lane: ask requests use `AskRequestStore`; select, confirm, input, editor, notification, status, widget, and editor-text surfaces live on `ServerConnection` state. Oppi has no separate built-in server/client approval transport.
 - `SessionStore` keeps the hot list projection separate from full session state so timeline-frequency updates do not rebuild workspace lists.
 - Timeline row rendering is UIKit-backed for the hot path. SwiftUI owns navigation shells, forms, and high-level composition.
 

@@ -45,7 +45,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 20,
     maxSessionsGlobal: 40,
-    permissionGate: true,
 
     runtimePathEntries: defaultRuntimePathEntries(),
     runtimeEnv: {},
@@ -93,12 +92,9 @@ function normalizeConfig(
     "workspaceIdleTimeoutMs",
     "maxSessionsPerWorkspace",
     "maxSessionsGlobal",
-    "approvalTimeoutMs",
-    "permissionGate",
     "runtimePathEntries",
     "runtimeEnv",
     "tls",
-    "policy",
 
     "token",
     "pairingToken",
@@ -107,19 +103,25 @@ function normalizeConfig(
     "pushDeviceTokens",
     "liveActivityToken",
     "autoTitle",
-    "autoPermission",
     "asr",
     "images",
     "uploadStore",
     "extensions",
   ]);
 
+  const unknownTopLevelKeys = Object.keys(obj).filter((key) => !topLevelKeys.has(key));
+  if (unknownTopLevelKeys.length > 0) {
+    changed = true;
+  }
+
   if (strictUnknown) {
-    for (const key of Object.keys(obj)) {
-      if (!topLevelKeys.has(key)) {
-        errors.push(`config.${key}: unknown key`);
-      }
+    for (const key of unknownTopLevelKeys) {
+      errors.push(`config.${key}: unknown key`);
     }
+  } else if (unknownTopLevelKeys.length > 0) {
+    warnings.push(
+      `config: ignored ${unknownTopLevelKeys.length} unknown top-level key${unknownTopLevelKeys.length === 1 ? "" : "s"}`,
+    );
   }
 
   const readNumber = (
@@ -205,10 +207,6 @@ function normalizeConfig(
   const maxSessionsGlobal = readNumber("maxSessionsGlobal", { min: 1 });
   if (maxSessionsGlobal !== undefined) {
     config.maxSessionsGlobal = maxSessionsGlobal;
-  }
-
-  if (typeof raw.permissionGate === "boolean") {
-    config.permissionGate = raw.permissionGate;
   }
 
   if (!("runtimePathEntries" in obj)) {
@@ -335,13 +333,6 @@ function normalizeConfig(
     changed = true;
   }
 
-  if ("policy" in obj) {
-    // Legacy custom policy config is accepted for config-file compatibility.
-    // Runtime confirmation flows now use Pi extension API compatibility instead.
-  } else {
-    changed = true;
-  }
-
   // Pairing/auth/push runtime state — passthrough (no strict schema validation, optional)
   if ("token" in obj && typeof obj.token === "string") {
     config.token = obj.token;
@@ -384,11 +375,6 @@ function normalizeConfig(
       autoTitle.model = at.model.trim();
     }
     config.autoTitle = autoTitle;
-  }
-
-  if ("autoPermission" in obj) {
-    // Legacy server auto-permission config is ignored. Extension-driven
-    // confirmation flows use Pi extension API compatibility instead.
   }
 
   // ASR / dictation pipeline config

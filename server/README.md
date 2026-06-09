@@ -181,6 +181,7 @@ The server ships one default extension name:
 - **ask** — structured Q&A between agent and user. Oppi's version supports multiple questions and multi-select options; users can still load their own Pi extension named `ask`.
 
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
+Approval logic lives in Pi extensions, not in Oppi server config.
 
 Workspace extension behavior is explicit:
 
@@ -212,6 +213,7 @@ Key config sections:
 | `images` | Image attachment preprocessing before upload                                |
 
 Model routing and API keys are managed by pi (`pi auth`), not the oppi config.
+Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
 Quick inspection:
 

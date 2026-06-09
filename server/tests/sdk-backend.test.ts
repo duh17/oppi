@@ -138,40 +138,47 @@ describe("filterSdkLoadedExtensions", () => {
     return { path, resolvedPath };
   }
 
-  it("keeps global permission-gate outside workspace allowlists", () => {
-    const permissionGate = "/home/user/.pi/agent/extensions/permission-gate.ts";
+  it("applies workspace allowlists to host extensions", () => {
+    const reviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
     const filtered = filterSdkLoadedExtensions(
-      [ext(permissionGate), ext("/home/user/.pi/agent/extensions/memory.ts")],
+      [ext(reviewer), ext("/home/user/.pi/agent/extensions/memory.ts")],
       {
         workspaceExtensions: ["memory"],
-        permissionGateEnabled: true,
-        permissionGatePath: permissionGate,
       },
     );
 
     expect(filtered.map((item) => item.path)).toEqual([
-      permissionGate,
       "/home/user/.pi/agent/extensions/memory.ts",
     ]);
   });
 
-  it("filters project-local permission-gate when a global gate path is configured", () => {
-    const globalGate = "/home/user/.pi/agent/extensions/permission-gate.ts";
-    const projectGate = "/workspace/.pi/extensions/permission-gate.ts";
-    const filtered = filterSdkLoadedExtensions([ext(projectGate), ext(globalGate)], {
-      permissionGateEnabled: true,
-      permissionGatePath: globalGate,
-    });
+  it("keeps allowlisted host extensions by name", () => {
+    const reviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
+    const filtered = filterSdkLoadedExtensions(
+      [ext(reviewer), ext("/home/user/.pi/agent/extensions/memory.ts")],
+      {
+        workspaceExtensions: ["reviewer", "memory"],
+      },
+    );
 
-    expect(filtered.map((item) => item.path)).toEqual([globalGate]);
+    expect(filtered.map((item) => item.path)).toEqual([
+      reviewer,
+      "/home/user/.pi/agent/extensions/memory.ts",
+    ]);
   });
 
-  it("filters permission-gate when disabled even if the workspace lists it", () => {
-    const permissionGate = "/home/user/.pi/agent/extensions/permission-gate.ts";
-    const filtered = filterSdkLoadedExtensions([ext(permissionGate)], {
-      workspaceExtensions: ["permission-gate"],
-      permissionGateEnabled: false,
-      permissionGatePath: permissionGate,
+  it("does not privilege global host paths over project-local discovery", () => {
+    const globalReviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
+    const projectReviewer = "/workspace/.pi/extensions/reviewer.ts";
+    const filtered = filterSdkLoadedExtensions([ext(projectReviewer), ext(globalReviewer)], {});
+
+    expect(filtered.map((item) => item.path)).toEqual([projectReviewer, globalReviewer]);
+  });
+
+  it("filters host extensions when the workspace allowlist omits them", () => {
+    const reviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
+    const filtered = filterSdkLoadedExtensions([ext(reviewer)], {
+      workspaceExtensions: ["memory"],
     });
 
     expect(filtered).toEqual([]);
@@ -182,7 +189,6 @@ describe("filterSdkLoadedExtensions", () => {
       "/home/user/.pi/agent/npm/node_modules/@tintinweb/pi-subagents/src/index.ts";
     const filtered = filterSdkLoadedExtensions([ext(tintinwebSubagents)], {
       workspaceExtensions: ["tintinweb-subagents"],
-      permissionGateEnabled: false,
     });
 
     expect(filtered.map((item) => item.path)).toEqual([tintinwebSubagents]);
@@ -192,7 +198,6 @@ describe("filterSdkLoadedExtensions", () => {
     const ask = "/home/user/.pi/agent/extensions/ask.ts";
     const filtered = filterSdkLoadedExtensions([ext(ask)], {
       workspaceExtensions: ["ask"],
-      permissionGateEnabled: false,
     });
 
     expect(filtered.map((item) => item.path)).toEqual([ask]);

@@ -836,7 +836,6 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },
   workspaceIdleTimeoutMs: { type: "number", desc: "Workspace idle timeout (ms)" },
-  permissionGate: { type: "boolean", desc: "Keep configured global host extension available" },
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
   tls: { type: "json", desc: "TLS config JSON object" },

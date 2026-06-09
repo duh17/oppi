@@ -5,6 +5,7 @@ Oppi runs a coding agent on your machine with filesystem and tool access. It is 
 ## Permission prompts
 
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same mobile bridge as other Pi extension UI.
+Approval decisions come from Pi extensions, not from Oppi-specific server rules.
 
 ## Authentication
 
