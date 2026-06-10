@@ -5,39 +5,46 @@
 <h1 align="center">Oppi</h1>
 
 <p align="center">
-  Run <a href="https://github.com/badlogic/pi-mono">pi</a> coding sessions from your phone.<br />
-  <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/">Screenshots</a>
+  Use <a href="https://github.com/badlogic/pi-mono">pi</a> from iPhone and iPad.<br />
+  <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/toolcalling-demo.mp4">Demo video</a> · <a href="docs/demo/">Screenshots</a>
 </p>
 
-There are many clankers and this one is mine. iPhone app + self-hosted server + Mac companion for running [pi](https://github.com/badlogic/pi-mono) coding agent sessions from your phone. Stream output, answer extension prompts, steer sessions, dictate prompts, attach screenshots — with native rendering that makes LLM output actually readable (no flickering).
+There are many clankers and this one is mine: an iPhone/iPad client and self-hosted server for [Pi](https://github.com/badlogic/pi-mono) coding agent sessions.
 
-All the code is written by agents. I haven't written or reviewed most of it — I describe features, try them on device, file bugs, and add tests so neither the agent nor I are hallucinating. I spent the last year doing Tailscale + tmux + Termius to use Claude Code from my phone. It worked until it didn't: no dictation, no image input, Ctrl-A N nightmares. So I built this.
-
-The approach: [just talk to it](https://steipete.me/posts/just-talk-to-it), [feel it](https://mitchellh.com/writing/feel-it) by using it to build itself, and [measure everything](https://lucumr.pocoo.org/2025/6/17/measuring/). It mostly works, but there are [booboos everywhere](https://mariozechner.at/posts/2026-03-25-thoughts-on-slowing-the-fuck-down/). Unlike Mario, I have a high tolerance for booboos.
+The goal is to bring Pi's transparency and extensibility to native iOS, render clanker output and tool use nicely, and make it easy to review and steer sessions from mobile devices.
 
 ## How it works
 
-The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly for server-owned sessions, so there is no separate CLI process. Those sessions run in-process with tool execution, streaming, and standard Pi extension UI. Mirror mode can also project a terminal-owned Pi session through the `oppi-mirror` extension. Oppi bridges most Pi extension input and confirm UI to mobile through Pi's standard extension API.
+Oppi has two session paths:
+
+- **SDK sessions:** the server embeds the Pi SDK in-process, with tool execution, streaming, and standard Pi extension UI.
+- **TUI bridge:** the `oppi-mirror` extension projects a terminal-owned Pi session into Oppi.
+
+Extension prompts, confirmations, editor requests, status, and widgets render as iOS cards, editor sheets, rows, panels, or fallback text. Extension behavior, tools, providers, and session files stay in Pi.
 
 ```
-┌─────────┐        WSS / HTTPS        ┌──────────────┐
-│  iPhone  │  ◄──────────────────────► │  oppi-server │
-│  (Oppi)  │  stream, extension UI    │  (Node.js)   │
-└─────────┘                            └──────┬───────┘
-                                              │
-                                      pi SDK (in-process)
-                                              │
-                                       ┌──────┴───────┐
-                                       │ LLM provider  │
-                                       │ + tools       │
-                                       └──────────────-┘
+┌─────────────────────┐
+│   iPhone / iPad     │
+│        Oppi         │
+└──────────┬──────────┘
+           │ HTTPS / WSS
+           │ session stream + Pi extension UI
+┌──────────▼──────────┐
+│     oppi-server     │
+│       Node.js       │
+└──────────┬──────────┘
+           │ pi SDK / TUI
+┌──────────▼──────────┐
+│    LLM provider     │
+│      + tools        │
+└─────────────────────┘
 ```
 
-## Install
+## Quick start
 
-Requires Node.js 23.6+ and [pi](https://github.com/badlogic/pi-mono) with at least one provider authenticated (`pi auth`). Linux self-signed TLS also requires `openssl` on PATH.
+Requires Node.js 23.6+ and at least one Pi provider configured (`pi auth`, or an API key such as `ANTHROPIC_API_KEY`). Linux self-signed TLS also requires `openssl` on PATH.
 
-Use the npm package for normal installs:
+Install and start:
 
 ```bash
 npm install -g oppi-server
@@ -69,7 +76,7 @@ oppi pair --host <hostname-or-ip>
 Notes:
 
 - `--host` expects host/IP only (no `https://`, no `:port`).
-- Invite is single-use and short-lived (90 seconds by default). If pairing fails, generate a fresh invite.
+- Invites are single-use and short-lived (90 seconds by default). If pairing fails, generate a fresh invite.
 - Invite port comes from server config (`oppi config get port`).
 
 If you want first-run QR output from `serve` to already use your Tailscale host, start with:
@@ -100,10 +107,6 @@ oppi server restart    # restart
 oppi server uninstall  # remove
 ```
 
-## What you can do
-
-[Screenshots and demo video](docs/demo/)
-
 ## Commands
 
 Use `oppi ...` after installing `oppi-server` from npm.
@@ -127,35 +130,28 @@ oppi server restart          restart background server
 oppi server stop             stop background server
 ```
 
-## Mac App (experimental)
+## Mac app shell (experimental)
 
-On macOS, there's also a menu bar companion app that manages the server and handles onboarding through a guided wizard. It bundles its own JS runtime (Bun) — no separate Node.js install needed.
+The macOS app is an experimental shell with early configuration views. It is not a supported Pi session UI yet.
 
-The Mac app is experimental. For a more predictable setup, use the CLI above.
-
-Requirements: macOS 15+, [pi](https://github.com/badlogic/pi-mono) CLI.
-
-1. Download the DMG from [Releases](../../releases)
-2. Drag Oppi to Applications and launch
-3. Follow the setup wizard
-4. Scan the QR code from the iOS app
+For normal use, run the server with the CLI above and pair from the iPhone/iPad app.
 
 ## Docs
 
-- [Changelog](CHANGELOG.md) — release history and versioning policy
-- [Server README](server/README.md) — server setup, Docker, development
-- [Onboarding and pairing](docs/onboarding.md) — intended first-run user flow
-- [Deep links](docs/deeplinks.md) — custom URL schemes for pairing, workspaces, and sessions
-- [Config schema](server/docs/config-schema.md) — all config options
-- [Dictation / ASR](server/docs/asr.md) — server dictation setup
-- [Voice replies / TTS](server/docs/tts.md) — voice extension setup
-- [Extensions](docs/extensions.md) — Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
-- [Document viewers](docs/document-viewers.md) — full-screen reading controls for markdown, code, diffs, terminal output, and rendered documents
-- [Oppi Mirror mode](docs/oppi-mirror.md) — live terminal Pi sessions in Oppi and the separate `oppi-mirror` package
-- [Sandbox workspaces](docs/sandbox.md) — Gondolin VM isolation, network boundaries, tools, and safe defaults
-- [Custom themes](server/docs/themes.md) — creating color themes for the iOS app
-- [Telemetry and diagnostics](docs/telemetry.md) — privacy gates, storage paths, and experience metrics
-- [Security](SECURITY.md) — security model and privacy
+- [Changelog](CHANGELOG.md) - release history and versioning policy
+- [Server README](server/README.md) - server setup, Docker, development
+- [Onboarding and pairing](docs/onboarding.md) - intended first-run user flow
+- [Deep links](docs/deeplinks.md) - custom URL schemes for pairing, workspaces, and sessions
+- [Config schema](server/docs/config-schema.md) - all config options
+- [Dictation / ASR](server/docs/asr.md) - server dictation setup
+- [Voice replies / TTS](server/docs/tts.md) - voice extension setup
+- [Extensions](docs/extensions.md) - Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
+- [Document viewers](docs/document-viewers.md) - full-screen reading controls for markdown, code, diffs, terminal output, and rendered documents
+- [TUI session bridge](docs/oppi-mirror.md) - live terminal Pi sessions in Oppi and the separate `oppi-mirror` package
+- [Sandbox workspaces](docs/sandbox.md) - Gondolin VM isolation, network boundaries, tools, and safe defaults
+- [Custom themes](server/docs/themes.md) - creating color themes for the iOS app
+- [Telemetry and diagnostics](docs/telemetry.md) - privacy controls, storage paths, latency, and reliability metrics
+- [Security](SECURITY.md) - security model and privacy
 
 ## License
 
