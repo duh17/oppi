@@ -94,6 +94,11 @@ enum FileSharePresenter {
         presentActivityController(item: item)
     }
 
+    /// Share an existing URL from UIKit interaction menus.
+    static func share(_ url: URL, sourceView: UIView? = nil) {
+        presentActivityController(item: .file(url), sourceView: sourceView)
+    }
+
     // MARK: - UIKit Bar Button Factory
 
     /// Create a fully-wired share bar button item.
@@ -183,7 +188,10 @@ enum FileSharePresenter {
     /// Present UIActivityViewController from the topmost view controller.
     ///
     /// Handles popover positioning for iPad. Cleans up temp files on completion.
-    static func presentActivityController(item: FileShareService.ShareItem) {
+    static func presentActivityController(
+        item: FileShareService.ShareItem,
+        sourceView: UIView? = nil
+    ) {
         guard let topVC = topViewController() else { return }
 
         let ac = UIActivityViewController(
@@ -194,13 +202,18 @@ enum FileSharePresenter {
             FileShareService.cleanupTempFiles()
         }
         if let popover = ac.popoverPresentationController {
-            popover.sourceView = topVC.view
-            popover.sourceRect = CGRect(
-                x: topVC.view.bounds.midX,
-                y: 44,
-                width: 0,
-                height: 0
-            )
+            if let sourceView {
+                popover.sourceView = sourceView
+                popover.sourceRect = sourceView.bounds
+            } else {
+                popover.sourceView = topVC.view
+                popover.sourceRect = CGRect(
+                    x: topVC.view.bounds.midX,
+                    y: 44,
+                    width: 0,
+                    height: 0
+                )
+            }
         }
         topVC.present(ac, animated: true)
     }

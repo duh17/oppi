@@ -1683,15 +1683,7 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
                 title: "Share...",
                 image: UIImage(systemName: "square.and.arrow.up")
             ) { [weak textView] _ in
-                guard let textView else { return }
-                let activityVC = UIActivityViewController(
-                    activityItems: [normalizedURL],
-                    applicationActivities: nil
-                )
-                activityVC.popoverPresentationController?.sourceView = textView
-                textView.window?.rootViewController?
-                    .presentedViewController?.present(activityVC, animated: true)
-                    ?? textView.window?.rootViewController?.present(activityVC, animated: true)
+                FileSharePresenter.share(normalizedURL, sourceView: textView)
             }
 
             return UITextItem.MenuConfiguration(menu: UIMenu(children: [openAction, copyAction, shareAction]))
