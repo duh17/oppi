@@ -84,6 +84,46 @@ final class AssistantMarkdownSegmentSource {
         return Self.applyReaderPreferences(to: segments, config: config)
     }
 
+    func buildSegmentsWithSourceLineRanges(
+        _ config: AssistantMarkdownContentView.Configuration,
+        mergeAdjacentTextSegments: Bool = true
+    ) -> FlatSegment.BuildResult {
+        guard !config.isStreaming else {
+            return FlatSegment.BuildResult(
+                segments: buildSegments(config, mergeAdjacentTextSegments: mergeAdjacentTextSegments),
+                sourceLineRanges: []
+            )
+        }
+
+        let content = config.content
+        let parseStart = MarkdownStreamingPerf.timestampNs()
+        let blocks = parseCommonMarkLocated(content)
+        let parseEnd = MarkdownStreamingPerf.timestampNs()
+        let build = FlatSegment.buildWithSourceLineRanges(
+            from: blocks,
+            themeID: config.themeID,
+            workspaceID: config.workspaceID,
+            sessionID: config.sessionID,
+            serverBaseURL: config.serverBaseURL,
+            sourceDirectory: config.sourceDirectory,
+            mergeAdjacentTextSegments: mergeAdjacentTextSegments
+        )
+        let buildEnd = MarkdownStreamingPerf.timestampNs()
+
+        MarkdownStreamingPerf.record(
+            parseDurationNs: parseEnd - parseStart,
+            buildDurationNs: buildEnd - parseEnd,
+            lineCount: Self.countNewlines(content) + 1,
+            isTailOnly: false,
+            isStreaming: false
+        )
+
+        return FlatSegment.BuildResult(
+            segments: Self.applyReaderPreferences(to: build.segments, config: config),
+            sourceLineRanges: build.sourceLineRanges
+        )
+    }
+
     static func hasUnclosedCodeFence(_ content: String) -> Bool {
         var openFences = 0
         for line in content.split(separator: "\n", omittingEmptySubsequences: false) {

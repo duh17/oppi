@@ -52,6 +52,24 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
     return blocks
 }
 
+nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdownBlock] {
+    guard let doc = cmarkParsedDocument(source) else { return [] }
+    defer { cmark_node_free(doc) }
+
+    var blocks: [LocatedMarkdownBlock] = []
+    var child = cmark_node_first_child(doc)
+    while let node = child {
+        if let block = convertCMarkBlock(node) {
+            blocks.append(LocatedMarkdownBlock(
+                block: block,
+                lineRange: sourceLineRange(for: node)
+            ))
+        }
+        child = cmark_node_next(node)
+    }
+    return blocks
+}
+
 /// Fast parse with last block start line — used by the streaming incremental path.
 nonisolated func parseCommonMarkFastWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
     guard let doc = cmarkParsedDocument(source) else { return ([], 1) }
@@ -80,6 +98,28 @@ nonisolated func parseCommonMarkFastWithLastLine(_ source: String) -> (blocks: [
 }
 
 // MARK: - Block Conversion
+
+private func sourceLineRange(for node: UnsafeMutablePointer<cmark_node>) -> ClosedRange<Int>? {
+    let start = Int(cmark_node_get_start_line(node))
+    let end = Int(cmark_node_get_end_line(node))
+    guard start > 0 else { return nil }
+
+    if cmark_node_get_type(node) == CMARK_NODE_CODE_BLOCK {
+        var fenceLength: Int32 = 0
+        var fenceOffset: Int32 = 0
+        var fenceCharacter: CChar = 0
+        cmark_node_get_fenced(node, &fenceLength, &fenceOffset, &fenceCharacter)
+        if fenceLength > 0 {
+            let rawCode = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
+            let code = rawCode.hasSuffix("\n") ? String(rawCode.dropLast()) : rawCode
+            let lineCount = max(1, code.split(separator: "\n", omittingEmptySubsequences: false).count)
+            let codeStart = start + 1
+            return codeStart...(codeStart + lineCount - 1)
+        }
+    }
+
+    return start...max(start, end)
+}
 
 private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> MarkdownBlock? {
     let nodeType = cmark_node_get_type(node)

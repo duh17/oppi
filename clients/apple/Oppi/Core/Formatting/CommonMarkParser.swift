@@ -18,3 +18,8 @@ nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
 nonisolated func parseCommonMarkWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
     return parseCommonMarkFastWithLastLine(source)
 }
+
+/// Parse CommonMark and retain top-level source line ranges.
+nonisolated func parseCommonMarkLocated(_ source: String) -> [LocatedMarkdownBlock] {
+    parseCommonMarkFastLocated(source)
+}

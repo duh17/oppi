@@ -20,6 +20,7 @@ final class AssistantMarkdownSegmentApplier {
     /// References to LaTeX block views for in-place updates.
     private var latexViews: [Int: NativeLatexBlockView] = [:]
     private var highlightTasks: [Int: Task<Void, Never>] = [:]
+    private var sourceLineRanges: [ClosedRange<Int>?] = []
 
     /// Cached NSAttributedString for the streaming tail segment. Maintained
     /// incrementally (append-only) to avoid O(total) NSAttributedString conversion
@@ -63,8 +64,10 @@ final class AssistantMarkdownSegmentApplier {
 
     func apply(
         segments: [FlatSegment],
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        sourceLineRanges: [ClosedRange<Int>?] = []
     ) {
+        self.sourceLineRanges = sourceLineRanges
         if !config.isStreaming {
             cachedStreamingTailNS = nil
         }
@@ -137,6 +140,7 @@ final class AssistantMarkdownSegmentApplier {
             let textView = makeTextView(palette: palette)
             textView.isSelectable = config.textSelectionEnabled
             textView.attributedText = NSAttributedString(attributed)
+            configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: index))
             stackView.addArrangedSubview(textView)
             textViews[index] = textView
 
@@ -145,7 +149,11 @@ final class AssistantMarkdownSegmentApplier {
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
             codeView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                sourceContext: assistantCodeBlockSourceContext(
+                    language: language,
+                    config: config,
+                    lineRange: sourceLineRange(at: index)
+                )
             )
             codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
             stackView.addArrangedSubview(codeView)
@@ -158,7 +166,10 @@ final class AssistantMarkdownSegmentApplier {
             let tableView = NativeTableBlockView()
             tableView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantTableSourceContext(config: config)
+                sourceContext: assistantTableSourceContext(
+                    config: config,
+                    lineRange: sourceLineRange(at: index)
+                )
             )
             tableView.apply(headers: headers, rows: rows, palette: palette)
             stackView.addArrangedSubview(tableView)
@@ -184,7 +195,11 @@ final class AssistantMarkdownSegmentApplier {
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
             mermaidView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
+                sourceContext: assistantCodeBlockSourceContext(
+                    language: "mermaid",
+                    config: config,
+                    lineRange: sourceLineRange(at: index)
+                )
             )
             if isOpen {
                 mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -199,7 +214,11 @@ final class AssistantMarkdownSegmentApplier {
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
             latexView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
-                sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                sourceContext: assistantCodeBlockSourceContext(
+                    language: "latex",
+                    config: config,
+                    lineRange: sourceLineRange(at: index)
+                )
             )
             if isOpen {
                 latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -309,6 +328,7 @@ final class AssistantMarkdownSegmentApplier {
             switch segment {
             case .text(let attributed):
                 if let textView = textViews[index] {
+                    configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: index))
                     if !config.isStreaming || isStreamingTail {
                         // Skip isSelectable during streaming when unchanged — UITextView
                         // does internal state work on assignment even if value is identical.
@@ -403,7 +423,11 @@ final class AssistantMarkdownSegmentApplier {
                     if !config.isStreaming || isOpen {
                         codeView.configureReviewCommentSelection(
                             router: config.reviewCommentSelectionRouter,
-                            sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                            sourceContext: assistantCodeBlockSourceContext(
+                                language: language,
+                                config: config,
+                                lineRange: sourceLineRange(at: index)
+                            )
                         )
                         codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
                         if isOpen {
@@ -419,7 +443,10 @@ final class AssistantMarkdownSegmentApplier {
                 if let tableView = tableViews[index] {
                     tableView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
-                        sourceContext: assistantTableSourceContext(config: config)
+                        sourceContext: assistantTableSourceContext(
+                            config: config,
+                            lineRange: sourceLineRange(at: index)
+                        )
                     )
                     tableView.apply(headers: headers, rows: rows, palette: palette)
                 }
@@ -446,7 +473,11 @@ final class AssistantMarkdownSegmentApplier {
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     mermaidView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: "mermaid", config: config)
+                        sourceContext: assistantCodeBlockSourceContext(
+                            language: "mermaid",
+                            config: config,
+                            lineRange: sourceLineRange(at: index)
+                        )
                     )
                     if isOpen {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
@@ -463,7 +494,11 @@ final class AssistantMarkdownSegmentApplier {
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
                     latexView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                        sourceContext: assistantCodeBlockSourceContext(
+                            language: "latex",
+                            config: config,
+                            lineRange: sourceLineRange(at: index)
+                        )
                     )
                     if isOpen {
                         latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -509,9 +544,29 @@ final class AssistantMarkdownSegmentApplier {
         stackView.superview?.setNeedsLayout()
     }
 
+    private func sourceLineRange(at index: Int) -> ClosedRange<Int>? {
+        sourceLineRanges.indices.contains(index) ? sourceLineRanges[index] : nil
+    }
+
+    private func configureSourceLineResolver(
+        _ textView: BaselineSafeTextView,
+        sourceLineRange: ClosedRange<Int>?
+    ) {
+        textView.reviewCommentSourceLineRangeResolver = { [weak textView] range in
+            guard let sourceLineRange else { return nil }
+            guard let textView else { return sourceLineRange }
+            let text = textView.attributedText?.string ?? textView.text ?? ""
+            guard let localRange = ReviewCommentSelectionEditMenuSupport.textLineRange(in: text, range: range) else {
+                return sourceLineRange
+            }
+            return ReviewCommentSelectionEditMenuSupport.offsetLineRange(localRange, from: sourceLineRange)
+        }
+    }
+
     private func assistantCodeBlockSourceContext(
         language: String?,
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        lineRange: ClosedRange<Int>?
     ) -> ReviewCommentSourceContext? {
         guard let base = config.reviewCommentSourceContext else { return nil }
         return ReviewCommentSourceContext(
@@ -519,14 +574,15 @@ final class AssistantMarkdownSegmentApplier {
             surface: .assistantCodeBlock,
             sourceLabel: base.sourceLabel,
             filePath: base.filePath,
-            lineRange: base.lineRange,
+            lineRange: lineRange ?? base.lineRange,
             languageHint: language,
             timelineItemId: base.timelineItemId
         )
     }
 
     private func assistantTableSourceContext(
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        lineRange: ClosedRange<Int>?
     ) -> ReviewCommentSourceContext? {
         guard let base = config.reviewCommentSourceContext else { return nil }
         return ReviewCommentSourceContext(
@@ -534,7 +590,7 @@ final class AssistantMarkdownSegmentApplier {
             surface: .assistantTable,
             sourceLabel: base.sourceLabel,
             filePath: base.filePath,
-            lineRange: base.lineRange,
+            lineRange: lineRange ?? base.lineRange,
             languageHint: base.languageHint,
             timelineItemId: base.timelineItemId
         )

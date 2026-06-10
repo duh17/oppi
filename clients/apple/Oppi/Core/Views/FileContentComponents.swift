@@ -165,6 +165,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
     var reviewCommentSourceContext: ReviewCommentSourceContext? = nil
 
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
+    @Environment(\.reviewCommentSourceContext) private var environmentReviewCommentSourceContext
 
     /// Approximate line height for FullScreenCodeTypography.codeFont (12pt mono).
     private static let estimatedLineHeight: CGFloat = 15.0
@@ -179,7 +180,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
             palette: ThemeRuntimeState.currentThemeID().palette,
             alwaysBounceVertical: maxHeight == nil,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-            reviewCommentSourceContext: reviewCommentSourceContext
+            reviewCommentSourceContext: reviewCommentSourceContext ?? environmentReviewCommentSourceContext
         )
     }
 

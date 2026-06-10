@@ -243,6 +243,173 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func codeBodyUsesStartLineForSelectedSourceLine() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let body = NativeFullScreenCodeBody(
+            content: "let first = 1\nlet second = 2\nlet third = 3",
+            language: "swift",
+            startLine: 40,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured = $0 },
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenCode,
+                filePath: "Sources/App.swift",
+                languageHint: "swift"
+            )
+        )
+        let host = attachToHost(body)
+        _ = host
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("let second = 2")
+        })
+        try dispatchCommentAction(textView: textView, selectedText: "let second = 2")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "let second = 2")
+        #expect(request.source.filePath == "Sources/App.swift")
+        #expect(request.source.lineRange == 41...41)
+    }
+
+    @Test func sourceBodyOffsetsSelectionFromProvidedSourceRange() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let body = NativeFullScreenSourceBody(
+            content: "alpha\nbeta\ngamma",
+            isStreaming: false,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured = $0 },
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenSource,
+                filePath: "notes.txt",
+                lineRange: 20...22
+            )
+        )
+        let host = attachToHost(body)
+        _ = host
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("beta")
+        })
+        try dispatchCommentAction(textView: textView, selectedText: "beta")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "beta")
+        #expect(request.source.filePath == "notes.txt")
+        #expect(request.source.lineRange == 21...21)
+    }
+
+    @Test func diffBodyUsesSourceLineAttributesForAddedAndRemovedRows() async throws {
+        var captured: [ReviewCommentSelectionRequest] = []
+        let lines = [
+            DiffLine(kind: .context, text: "let first = 1", oldLineNumber: 10, newLineNumber: 10),
+            DiffLine(kind: .removed, text: "let value = 2", oldLineNumber: 11, newLineNumber: nil),
+            DiffLine(kind: .added, text: "let value = 3", oldLineNumber: nil, newLineNumber: 11),
+            DiffLine(kind: .context, text: "let last = 4", oldLineNumber: 12, newLineNumber: 12),
+        ]
+        let body = NativeFullScreenDiffBody(
+            oldText: "",
+            newText: "",
+            filePath: "Sources/App.swift",
+            precomputedLines: lines,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured.append($0) },
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenDiff,
+                filePath: "Sources/App.swift"
+            )
+        )
+        let host = attachToHost(body)
+        _ = host
+
+        let textView = try #require(timelineAllTextViews(in: body).first)
+        let richDiffReady = await waitForMainActorCondition {
+            let text = textView.attributedText?.string ?? ""
+            let addedRange = (text as NSString).range(of: "let value = 3")
+            guard addedRange.location != NSNotFound else { return false }
+            return textView.attributedText?.attribute(
+                reviewLineNumberAttributeKey,
+                at: addedRange.location,
+                effectiveRange: nil
+            ) as? Int == 11
+        }
+        #expect(richDiffReady)
+
+        try dispatchCommentAction(textView: textView, selectedText: "let value = 3")
+        try dispatchCommentAction(textView: textView, selectedText: "let value = 2")
+
+        #expect(captured.count == 2)
+        if captured.count == 2 {
+            #expect(captured[0].source.lineRange == 11...11)
+            #expect(captured[1].source.lineRange == 11...11)
+        }
+        #expect(captured.allSatisfy { $0.source.filePath == "Sources/App.swift" })
+    }
+
+    @Test func markdownBodyUsesSourceLineForRenderedHeadingSelection() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let body = makeMarkdownBody(
+            content: "# Changelog\n\n## Changed\n\n- Server: Extension loading follows Pi resource loading.",
+            captured: { captured = $0 }
+        )
+        let host = attachToHost(body)
+        _ = host
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("Changed")
+        })
+        try dispatchCommentAction(textView: textView, selectedText: "Changed")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "Changed")
+        #expect(request.source.filePath == "CHANGELOG.md")
+        #expect(request.source.lineRange == 3...3)
+    }
+
+    @Test func markdownBodyUsesSourceLineForRenderedListSelection() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let body = makeMarkdownBody(
+            content: "# Changelog\n\n- first item\n- second item\n- third item",
+            captured: { captured = $0 }
+        )
+        let host = attachToHost(body)
+        _ = host
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("second item")
+        })
+        try dispatchCommentAction(textView: textView, selectedText: "second item")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "second item")
+        #expect(request.source.lineRange == 4...4)
+    }
+
+    @Test func markdownBodyUsesSourceLineForRenderedCodeBlockSelection() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let body = makeMarkdownBody(
+            content: "Intro\n\n```swift\nlet one = 1\nlet two = 2\n```\n\nDone",
+            captured: { captured = $0 }
+        )
+        let host = attachToHost(body)
+        _ = host
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("let two = 2")
+        })
+        try dispatchCommentAction(textView: textView, selectedText: "let two = 2")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "let two = 2")
+        #expect(request.source.filePath == "CHANGELOG.md")
+        #expect(request.source.lineRange == 5...5)
+    }
+
     @Test func fullScreenMarkdownUsesRichRenderingForLargeDocuments() throws {
         let content = [
             "# Heading",
@@ -655,6 +822,54 @@ struct FullScreenReviewCommentSelectionTests {
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
         return controller
+    }
+
+    private func makeMarkdownBody(
+        content: String,
+        captured: @escaping (ReviewCommentSelectionRequest) -> Void
+    ) -> NativeFullScreenMarkdownBody {
+        NativeFullScreenMarkdownBody(
+            content: content,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured($0) },
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenMarkdown,
+                filePath: "CHANGELOG.md",
+                languageHint: "markdown"
+            )
+        )
+    }
+
+    private func attachToHost(_ body: UIView) -> UIView {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.setNeedsLayout()
+        host.layoutIfNeeded()
+        return host
+    }
+
+    private func dispatchCommentAction(textView: UITextView, selectedText: String) throws {
+        let rendered = timelineRenderedText(of: textView) as NSString
+        let selectedRange = rendered.range(of: selectedText)
+        #expect(selectedRange.location != NSNotFound)
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: selectedRange,
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        let button = UIButton(type: .system)
+        button.addAction(commentAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
     }
 
     private func firstParagraphLineBreakMode(in textView: UITextView) -> NSLineBreakMode? {

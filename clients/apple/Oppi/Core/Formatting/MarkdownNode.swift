@@ -22,6 +22,11 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     }
 }
 
+struct LocatedMarkdownBlock: Equatable, Sendable {
+    let block: MarkdownBlock
+    let lineRange: ClosedRange<Int>?
+}
+
 /// Parsed CommonMark inline node.
 indirect enum MarkdownInline: Equatable, Sendable {
     case text(String)

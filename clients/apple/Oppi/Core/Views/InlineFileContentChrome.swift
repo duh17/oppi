@@ -18,6 +18,7 @@ struct InlineFileContentChrome<Content: View>: View {
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @State private var showFullScreen = false
 
     init(
@@ -42,6 +43,27 @@ struct InlineFileContentChrome<Content: View>: View {
         self.innerContent = innerContent
     }
 
+    private var inlineReviewCommentSourceContext: ReviewCommentSourceContext? {
+        guard let source = fullScreenContent.inlineReviewCommentSource else { return nil }
+        let selectionContext = reviewCommentSelectionScope?.makeContext(
+            sourceLabel: label,
+            filePath: source.filePath,
+            languageHint: source.languageHint
+        ) ?? ReviewCommentSelectionContext(
+            router: reviewCommentSelectionRouter,
+            sourceLabel: label,
+            filePath: source.filePath,
+            languageHint: source.languageHint
+        )
+
+        return selectionContext?.sourceContext(
+            surface: source.surface,
+            sourceLabel: label,
+            filePath: source.filePath,
+            languageHint: source.languageHint
+        )
+    }
+
     var body: some View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
         let lineCount = min(lines.count, maxDisplayLines)
@@ -61,6 +83,7 @@ struct InlineFileContentChrome<Content: View>: View {
             )
 
             innerContent(displayContent, isTruncated)
+                .environment(\.reviewCommentSourceContext, inlineReviewCommentSourceContext)
 
             if isTruncated {
                 TruncationNotice(showing: lineCount, total: lines.count)
@@ -72,5 +95,32 @@ struct InlineFileContentChrome<Content: View>: View {
             content: fullScreenContent,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter
         )
+    }
+}
+
+private struct InlineReviewCommentSourceInfo {
+    let surface: ReviewCommentSurfaceKind
+    let filePath: String?
+    let languageHint: String?
+}
+
+private extension FullScreenCodeContent {
+    var inlineReviewCommentSource: InlineReviewCommentSourceInfo? {
+        switch self {
+        case .code(_, let language, let filePath, _):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenCode, filePath: filePath, languageHint: language)
+        case .plainText(_, let filePath):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenSource, filePath: filePath, languageHint: nil)
+        case .graphviz(_, let filePath):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenCode, filePath: filePath, languageHint: "dot")
+        case .latex(_, let filePath):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenCode, filePath: filePath, languageHint: "latex")
+        case .orgMode(_, let filePath):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenCode, filePath: filePath, languageHint: "org")
+        case .mermaid(_, let filePath):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenCode, filePath: filePath, languageHint: "mermaid")
+        case .markdown, .html, .diff, .thinking, .terminal, .liveSource:
+            return nil
+        }
     }
 }

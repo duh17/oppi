@@ -98,15 +98,18 @@ final class NativeFullScreenCodeBody: UIView {
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
+        let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
         self.content = content
         self.language = language
         self.startLine = startLine
-        self.lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
+        self.lineCount = lineCount
         self.palette = palette
         self.alwaysBounceVertical = alwaysBounceVertical
         self.readerPreferences = readerPreferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
-        self.reviewCommentSourceContext = reviewCommentSourceContext
+        self.reviewCommentSourceContext = reviewCommentSourceContext?.withLineRange(
+            startLine...(startLine + lineCount - 1)
+        )
         super.init(frame: .zero)
         setup()
         loadHighlighting()
@@ -1195,6 +1198,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     func apply(
         segment: FlatSegment,
         config: AssistantMarkdownContentView.Configuration,
+        sourceLineRange: ClosedRange<Int>?,
         textViewDelegate: any UITextViewDelegate,
         doubleTapActivation: (() -> Void)?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
@@ -1204,7 +1208,11 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         self.doubleTapActivation = doubleTapActivation
         segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
         segmentApplier.fetchSessionFile = fetchSessionFile
-        segmentApplier.apply(segments: [segment], config: config)
+        segmentApplier.apply(
+            segments: [segment],
+            config: config,
+            sourceLineRanges: [sourceLineRange]
+        )
     }
 
     override func preferredLayoutAttributesFitting(
@@ -1298,6 +1306,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
     private var renderedSegments: [FlatSegment] = []
+    private var renderedSegmentLineRanges: [ClosedRange<Int>?] = []
     private var currentConfig: AssistantMarkdownContentView.Configuration?
     private var viewportDoubleTapActivation: (() -> Void)?
     private var streamObserverID: UUID?
@@ -1493,10 +1502,21 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         let cycleStart = MarkdownStreamingPerf.timestampNs()
         currentConfig = config
-        renderedSegments = segmentSource.buildSegments(
-            config,
-            mergeAdjacentTextSegments: false
-        )
+        let shouldResolveFileLines = !config.isStreaming && config.reviewCommentSourceContext?.filePath != nil
+        if shouldResolveFileLines {
+            let build = segmentSource.buildSegmentsWithSourceLineRanges(
+                config,
+                mergeAdjacentTextSegments: false
+            )
+            renderedSegments = build.segments
+            renderedSegmentLineRanges = build.sourceLineRanges
+        } else {
+            renderedSegments = segmentSource.buildSegments(
+                config,
+                mergeAdjacentTextSegments: false
+            )
+            renderedSegmentLineRanges = []
+        }
         collectionView.reloadData()
         collectionView.collectionViewLayout.invalidateLayout()
 
@@ -1533,6 +1553,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.apply(
             segment: renderedSegments[indexPath.item],
             config: config,
+            sourceLineRange: renderedSegmentLineRanges.indices.contains(indexPath.item) ? renderedSegmentLineRanges[indexPath.item] : nil,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,

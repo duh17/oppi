@@ -204,14 +204,27 @@ final class AssistantMarkdownContentView: UIView {
         stackView.spacing = config.readerPreferences?.spacing.markdownStackSpacing ?? 8
 
         let cycleStart = MarkdownStreamingPerf.timestampNs()
-        let segments = segmentSource.buildSegments(config)
-        segmentApplier.apply(segments: segments, config: config)
+        let shouldResolveFileLines = !config.isStreaming && config.reviewCommentSourceContext?.filePath != nil
+        let build: FlatSegment.BuildResult
+        if shouldResolveFileLines {
+            build = segmentSource.buildSegmentsWithSourceLineRanges(config)
+        } else {
+            build = FlatSegment.BuildResult(
+                segments: segmentSource.buildSegments(config),
+                sourceLineRanges: []
+            )
+        }
+        segmentApplier.apply(
+            segments: build.segments,
+            config: config,
+            sourceLineRanges: build.sourceLineRanges
+        )
 
         if let surface = config.perfSurface {
             let elapsed = MarkdownStreamingPerf.timestampNs() - cycleStart
             MarkdownStreamingPerf.recordFullCycle(
                 totalNs: elapsed,
-                segmentCount: segments.count,
+                segmentCount: build.segments.count,
                 isStreaming: config.isStreaming,
                 surface: surface
             )

@@ -298,6 +298,11 @@ struct ReviewCommentSelectionRequest: Equatable {
     let source: ReviewCommentSourceContext
 }
 
+@MainActor
+protocol ReviewCommentSourceLineRangeResolving: AnyObject {
+    func reviewCommentSourceLineRange(for range: NSRange) -> ClosedRange<Int>?
+}
+
 enum ReviewCommentSelectionTextFormatter {
     static func normalizedSelectedText(_ text: String) -> String {
         let normalizedNewlines = text.replacingOccurrences(of: "\r\n", with: "\n")
@@ -416,20 +421,43 @@ enum ReviewCommentSelectionEditMenuSupport {
         )
     }
 
+    @MainActor
     static func enrichedSourceContext(
         _ sourceContext: ReviewCommentSourceContext,
         textView: UITextView,
         range: NSRange
     ) -> ReviewCommentSourceContext {
-        guard sourceContext.lineRange == nil else { return sourceContext }
-
-        if let attributedRange = attributedLineRange(in: textView, range: range) {
-            return sourceContext.withLineRange(attributedRange)
-        }
-
-        return sourceContext.withLineRange(textLineRange(in: textView.attributedText?.string ?? textView.text ?? "", range: range))
+        sourceContext.withLineRange(sourceLineRange(
+            in: textView,
+            range: range,
+            sourceContext: sourceContext
+        ))
     }
 
+    @MainActor
+    static func sourceLineRange(
+        in textView: UITextView,
+        range: NSRange,
+        sourceContext: ReviewCommentSourceContext
+    ) -> ClosedRange<Int>? {
+        if let sourceRange = (textView as? ReviewCommentSourceLineRangeResolving)?.reviewCommentSourceLineRange(for: range) {
+            return sourceRange
+        }
+
+        if let attributedRange = attributedLineRange(in: textView, range: range) {
+            return attributedRange
+        }
+
+        let text = textView.attributedText?.string ?? textView.text ?? ""
+        if let baseRange = sourceContext.lineRange {
+            guard let localRange = textLineRange(in: text, range: range) else { return baseRange }
+            return offsetLineRange(localRange, from: baseRange)
+        }
+
+        return textLineRange(in: text, range: range)
+    }
+
+    @MainActor
     private static func attributedLineRange(in textView: UITextView, range: NSRange) -> ClosedRange<Int>? {
         guard let attributedText = textView.attributedText,
               range.location != NSNotFound,
@@ -450,25 +478,45 @@ enum ReviewCommentSelectionEditMenuSupport {
         return min...max
     }
 
-    private static func textLineRange(in text: String, range: NSRange) -> ClosedRange<Int>? {
+    static func textLineRange(in text: String, range: NSRange) -> ClosedRange<Int>? {
         guard range.location != NSNotFound, range.length > 0 else { return nil }
         let nsText = text as NSString
         guard NSMaxRange(range) <= nsText.length else { return nil }
 
-        let before = nsText.substring(to: range.location)
+        var line = 1
+        if range.location > 0 {
+            let before = nsText.substring(to: range.location)
+            for character in before where character == "\n" {
+                line += 1
+            }
+        }
+
+        var additionalLines = 0
         let selected = nsText.substring(with: range)
-        let startLine = before.reduce(1) { count, character in
-            character == "\n" ? count + 1 : count
+        for character in selected where character == "\n" {
+            additionalLines += 1
         }
-        let additionalLines = selected.reduce(0) { count, character in
-            character == "\n" ? count + 1 : count
-        }
-        return startLine...max(startLine, startLine + additionalLines)
+        return line...max(line, line + additionalLines)
+    }
+
+    static func offsetLineRange(
+        _ localRange: ClosedRange<Int>,
+        from baseRange: ClosedRange<Int>
+    ) -> ClosedRange<Int> {
+        let lower = baseRange.lowerBound + localRange.lowerBound - 1
+        let upper = baseRange.lowerBound + localRange.upperBound - 1
+        let clampedLower = min(max(lower, baseRange.lowerBound), baseRange.upperBound)
+        let clampedUpper = min(max(upper, clampedLower), baseRange.upperBound)
+        return clampedLower...clampedUpper
     }
 }
 
 private struct ReviewCommentSelectionScopeEnvironmentKey: EnvironmentKey {
     static let defaultValue: ReviewCommentSelectionScope? = nil
+}
+
+private struct ReviewCommentSourceContextEnvironmentKey: EnvironmentKey {
+    static let defaultValue: ReviewCommentSourceContext? = nil
 }
 
 extension EnvironmentValues {
@@ -477,6 +525,12 @@ extension EnvironmentValues {
     var reviewCommentSelectionScope: ReviewCommentSelectionScope? {
         get { self[ReviewCommentSelectionScopeEnvironmentKey.self] }
         set { self[ReviewCommentSelectionScopeEnvironmentKey.self] = newValue }
+    }
+
+    /// Source metadata for shared selectable renderers embedded inside a file surface.
+    var reviewCommentSourceContext: ReviewCommentSourceContext? {
+        get { self[ReviewCommentSourceContextEnvironmentKey.self] }
+        set { self[ReviewCommentSourceContextEnvironmentKey.self] = newValue }
     }
 
     /// Convenience read-only access to the scoped review comment router.

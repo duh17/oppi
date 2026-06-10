@@ -262,6 +262,11 @@ enum FlatSegment: Sendable {
     /// Cached paragraph separator. Created once to avoid repeated allocation.
     private static let paragraphSeparator = AttributedString("\n\n")
 
+    struct BuildResult: Sendable {
+        let segments: [FlatSegment]
+        let sourceLineRanges: [ClosedRange<Int>?]
+    }
+
     static func build(
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
@@ -278,6 +283,48 @@ enum FlatSegment: Sendable {
         /// same parser and render views.
         mergeAdjacentTextSegments: Bool = true
     ) -> [Self] {
+        buildResult(
+            from: blocks,
+            themeID: themeID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory,
+            mergeAdjacentTextSegments: mergeAdjacentTextSegments
+        ).segments
+    }
+
+    static func buildWithSourceLineRanges(
+        from blocks: [LocatedMarkdownBlock],
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        workspaceID: String? = nil,
+        sessionID: String? = nil,
+        serverBaseURL: URL? = nil,
+        sourceDirectory: String? = nil,
+        mergeAdjacentTextSegments: Bool = true
+    ) -> BuildResult {
+        buildResult(
+            from: blocks.map(\.block),
+            themeID: themeID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory,
+            sourceLineRanges: blocks.map(\.lineRange),
+            mergeAdjacentTextSegments: mergeAdjacentTextSegments
+        )
+    }
+
+    private static func buildResult(
+        from blocks: [MarkdownBlock],
+        themeID: ThemeID,
+        workspaceID: String?,
+        sessionID: String?,
+        serverBaseURL: URL?,
+        sourceDirectory: String?,
+        sourceLineRanges: [ClosedRange<Int>?]? = nil,
+        mergeAdjacentTextSegments: Bool
+    ) -> BuildResult {
         let palette = themeID.palette
         let blocks = MarkdownWikiLinkRewriter.rewrite(
             blocks: blocks,
@@ -286,38 +333,64 @@ enum FlatSegment: Sendable {
         )
         var result: [Self] = []
         result.reserveCapacity(blocks.count)
+        var resultLineRanges: [ClosedRange<Int>?] = []
+        resultLineRanges.reserveCapacity(blocks.count)
 
         var pendingText = AttributedString()
+        var pendingTextLineRange: ClosedRange<Int>?
         var hasPendingText = false
+
+        func mergedLineRange(_ lhs: ClosedRange<Int>?, _ rhs: ClosedRange<Int>?) -> ClosedRange<Int>? {
+            switch (lhs, rhs) {
+            case (nil, nil):
+                return nil
+            case (let range?, nil), (nil, let range?):
+                return range
+            case (let lhs?, let rhs?):
+                return min(lhs.lowerBound, rhs.lowerBound)...max(lhs.upperBound, rhs.upperBound)
+            }
+        }
+
+        func sourceLineRange(at index: Int) -> ClosedRange<Int>? {
+            guard let sourceLineRanges, sourceLineRanges.indices.contains(index) else { return nil }
+            return sourceLineRanges[index]
+        }
+
+        func appendSegment(_ segment: Self, lineRange: ClosedRange<Int>?) {
+            result.append(segment)
+            resultLineRanges.append(lineRange)
+        }
 
         func flushPendingText() {
             guard hasPendingText, !pendingText.characters.isEmpty else { return }
-            result.append(.text(pendingText))
+            appendSegment(.text(pendingText), lineRange: pendingTextLineRange)
             pendingText = AttributedString()
+            pendingTextLineRange = nil
             hasPendingText = false
         }
 
-        func appendTextBlock(_ attributed: AttributedString) {
+        func appendTextBlock(_ attributed: AttributedString, lineRange: ClosedRange<Int>?) {
             guard !attributed.characters.isEmpty else { return }
             guard mergeAdjacentTextSegments else {
                 flushPendingText()
-                result.append(.text(attributed))
+                appendSegment(.text(attributed), lineRange: lineRange)
                 return
             }
             if hasPendingText {
                 pendingText.append(paragraphSeparator)
             }
             pendingText.append(attributed)
+            pendingTextLineRange = mergedLineRange(pendingTextLineRange, lineRange)
             hasPendingText = true
         }
 
-        func appendCodeSegment(language: String?, code: String) {
+        func appendCodeSegment(language: String?, code: String, lineRange: ClosedRange<Int>?) {
             if let lang = language, SyntaxLanguage.detect(lang) == .mermaid {
-                result.append(.mermaidDiagram(code: code))
+                appendSegment(.mermaidDiagram(code: code), lineRange: lineRange)
             } else if let lang = language, SyntaxLanguage.detect(lang) == .latex {
-                result.append(.latexBlock(code: code))
+                appendSegment(.latexBlock(code: code), lineRange: lineRange)
             } else {
-                result.append(.codeBlock(language: language, code: code))
+                appendSegment(.codeBlock(language: language, code: code), lineRange: lineRange)
             }
         }
 
@@ -326,6 +399,7 @@ enum FlatSegment: Sendable {
         // This preserves code fences inside list items instead of dropping them.
         func appendListBlock(
             items: [[MarkdownBlock]],
+            lineRange: ClosedRange<Int>?,
             markerForItem: (Int) -> AttributedString,
             continuationForItem: (Int) -> AttributedString,
             transformItemContent: (inout AttributedString, Int) -> Void = { _, _ in }
@@ -342,7 +416,7 @@ enum FlatSegment: Sendable {
                     }
                     merged.append(line)
                 }
-                appendTextBlock(merged)
+                appendTextBlock(merged, lineRange: lineRange)
                 textLines.removeAll(keepingCapacity: true)
             }
 
@@ -373,7 +447,7 @@ enum FlatSegment: Sendable {
                         }
                         flushListTextLines()
                         flushPendingText()
-                        appendCodeSegment(language: language, code: code)
+                        appendCodeSegment(language: language, code: code, lineRange: lineRange)
                         emittedAnyRenderable = true
 
                     case .table(let headers, let rows):
@@ -383,7 +457,7 @@ enum FlatSegment: Sendable {
                         }
                         flushListTextLines()
                         flushPendingText()
-                        result.append(.table(headers: headers, rows: rows))
+                        appendSegment(.table(headers: headers, rows: rows), lineRange: lineRange)
                         emittedAnyRenderable = true
 
                     case .thematicBreak:
@@ -393,7 +467,7 @@ enum FlatSegment: Sendable {
                         }
                         flushListTextLines()
                         flushPendingText()
-                        result.append(.thematicBreak)
+                        appendSegment(.thematicBreak, lineRange: lineRange)
                         emittedAnyRenderable = true
 
                     default:
@@ -409,19 +483,21 @@ enum FlatSegment: Sendable {
             flushListTextLines()
         }
 
-        for block in blocks {
+        for (blockIndex, block) in blocks.enumerated() {
+            let lineRange = sourceLineRange(at: blockIndex)
+
             switch block {
             case .codeBlock(let language, let code):
                 flushPendingText()
-                appendCodeSegment(language: language, code: code)
+                appendCodeSegment(language: language, code: code, lineRange: lineRange)
 
             case .table(let headers, let rows):
                 flushPendingText()
-                result.append(.table(headers: headers, rows: rows))
+                appendSegment(.table(headers: headers, rows: rows), lineRange: lineRange)
 
             case .thematicBreak:
                 flushPendingText()
-                result.append(.thematicBreak)
+                appendSegment(.thematicBreak, lineRange: lineRange)
 
             case .paragraph(let inlines):
                 // Promote standalone display-math paragraphs to `.latexBlock`
@@ -431,7 +507,7 @@ enum FlatSegment: Sendable {
                 // when the source is a resolvable URL (absolute or workspace-relative).
                 if let latexSource = resolveStandaloneLatex(inlines: inlines) {
                     flushPendingText()
-                    result.append(.latexBlock(code: latexSource))
+                    appendSegment(.latexBlock(code: latexSource), lineRange: lineRange)
                 } else if let imageSegments = resolveParagraphImageSegments(
                     inlines: inlines,
                     palette: palette,
@@ -443,22 +519,23 @@ enum FlatSegment: Sendable {
                     for segment in imageSegments {
                         switch segment {
                         case .text(let attributed):
-                            appendTextBlock(attributed)
+                            appendTextBlock(attributed, lineRange: lineRange)
                         case .image(let alt, let url):
                             flushPendingText()
-                            result.append(.image(alt: alt, url: url))
+                            appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
                         case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
                             break
                         }
                     }
                 } else {
                     let attributed = Self.attributedString(for: block, palette: palette)
-                    appendTextBlock(attributed)
+                    appendTextBlock(attributed, lineRange: lineRange)
                 }
 
             case .unorderedList(let items):
                 appendListBlock(
                     items: items,
+                    lineRange: lineRange,
                     markerForItem: { _ in
                         var marker = AttributedString("  • ")
                         marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
@@ -471,6 +548,7 @@ enum FlatSegment: Sendable {
                 let listFont = Self.listBodyFont()
                 appendListBlock(
                     items: items,
+                    lineRange: lineRange,
                     markerForItem: { itemIndex in
                         let markerText = "  \(start + itemIndex). "
                         var marker = AttributedString(markerText)
@@ -491,12 +569,12 @@ enum FlatSegment: Sendable {
 
             default:
                 let attributed = Self.attributedString(for: block, palette: palette)
-                appendTextBlock(attributed)
+                appendTextBlock(attributed, lineRange: lineRange)
             }
         }
 
         flushPendingText()
-        return result
+        return BuildResult(segments: result, sourceLineRanges: resultLineRanges)
     }
 
     // MARK: - Display Math Paragraph Detection

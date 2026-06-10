@@ -11,7 +11,12 @@ import UIKit
 ///
 /// Fix: Override the private method to return a safe default (font ascent)
 /// when called in an unsafe state, preventing the assertion.
-final class BaselineSafeTextView: UITextView {
+final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolving {
+    var reviewCommentSourceLineRangeResolver: ((NSRange) -> ClosedRange<Int>?)?
+
+    func reviewCommentSourceLineRange(for range: NSRange) -> ClosedRange<Int>? {
+        reviewCommentSourceLineRangeResolver?(range)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()

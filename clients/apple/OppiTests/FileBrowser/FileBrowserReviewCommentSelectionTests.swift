@@ -129,6 +129,47 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
     }
 
+    @Test func inlineCodeFileViewDispatchesFileLineFromSelection() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let host = makeHostedInlineFileView(
+            CodeFileView(
+                content: "let first = 1\nlet second = 2\nlet third = 3",
+                language: .swift,
+                startLine: 30,
+                presentation: .inline,
+                filePath: "Sources/App.swift"
+            ),
+            captured: { captured = $0 }
+        )
+
+        try dispatchComment(in: host.view, selectedText: "let second = 2")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "let second = 2")
+        #expect(request.source.filePath == "Sources/App.swift")
+        #expect(request.source.lineRange == 31...31)
+    }
+
+    @Test func inlinePlainTextViewDispatchesFileLineFromSelection() throws {
+        var captured: ReviewCommentSelectionRequest?
+        let host = makeHostedInlineFileView(
+            PlainTextView(
+                content: "first\nsecond\nthird",
+                startLine: 50,
+                presentation: .inline,
+                filePath: "notes.txt"
+            ),
+            captured: { captured = $0 }
+        )
+
+        try dispatchComment(in: host.view, selectedText: "second")
+
+        let request = try #require(captured)
+        #expect(request.selectedText == "second")
+        #expect(request.source.filePath == "notes.txt")
+        #expect(request.source.lineRange == 51...51)
+    }
+
     @Test func treeDirectoryNavigationClearsSelectedFile() {
         let selected = FileBrowserSelection(path: "Sources/App.swift", name: "App.swift", size: 42)
 
@@ -193,5 +234,48 @@ struct FileBrowserReviewCommentSelectionTests {
         )
 
         #expect(menu == nil)
+    }
+
+    private struct HostedInlineFileView {
+        let host: UIHostingController<AnyView>
+        let window: UIWindow
+
+        var view: UIView { host.view }
+    }
+
+    private func makeHostedInlineFileView<Content: View>(
+        _ view: Content,
+        captured: @escaping (ReviewCommentSelectionRequest) -> Void
+    ) -> HostedInlineFileView {
+        let host = UIHostingController(rootView:
+            AnyView(view.environment(
+                \.reviewCommentSelectionScope,
+                .activeSession(ReviewCommentSelectionRouter { captured($0) })
+            ))
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 300)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        return HostedInlineFileView(host: host, window: window)
+    }
+
+    private func dispatchComment(in root: UIView, selectedText: String) throws {
+        let textView = try #require(timelineAllTextViews(in: root).first {
+            timelineRenderedText(of: $0).contains(selectedText)
+        })
+        let selectedRange = (timelineRenderedText(of: textView) as NSString).range(of: selectedText)
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: selectedRange,
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        let button = UIButton(type: .system)
+        button.addAction(commentAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
     }
 }
