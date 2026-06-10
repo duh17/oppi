@@ -322,9 +322,10 @@ struct ToolTimelineRowContentViewTests {
 
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let markdownView = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
-        let textView = try #require(timelineFirstTextView(in: markdownView))
-        let menu = markdownView.textView(
+        let markdownViewport = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: view))
+        markdownViewport.debugLayoutVisibleMarkdownCellsForTesting()
+        let textView = try #require(timelineFirstTextView(in: markdownViewport))
+        let menu = markdownViewport.textView(
             textView,
             editMenuForTextIn: NSRange(location: 0, length: 5),
             suggestedActions: [UIAction(title: "Copy") { _ in }]
@@ -1083,11 +1084,12 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 300)
 
+        let markdownViewport = timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: view)
         let rendered = timelineAllTextViews(in: view)
             .map { $0.attributedText?.string ?? $0.text ?? "" }
             .joined(separator: "\n")
 
-        #expect(rendered.contains("Tail Marker"))
+        #expect(markdownViewport?.debugSourceTextForTesting.contains("Tail Marker") == true)
         #expect(!rendered.contains("output truncated for display"))
     }
 

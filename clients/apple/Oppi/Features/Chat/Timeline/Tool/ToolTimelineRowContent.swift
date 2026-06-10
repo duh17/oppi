@@ -102,6 +102,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     static let maxExpandedViewportHeight: CGFloat = 620
     static let maxOutputViewportHeight: CGFloat = maxExpandedViewportHeight
     static let maxDiffViewportHeight: CGFloat = maxExpandedViewportHeight
+    private static let maxExtensionMarkdownViewportHeight: CGFloat = 480
     /// Fixed viewport height used during streaming. The cell height stays
     /// constant while content grows inside, eliminating the nested-scroll
     /// invalidation cascade (inner content resize → cell height change →
@@ -400,9 +401,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     for: mode,
                     geometry: geometry
                 )
-                expandedViewportHeightConstraint.constant = isStreaming
-                    ? ToolRowViewportCalculator.streamingConstrainedHeight(for: mode, geometry: geometry)
-                    : min(Self.maxOutputViewportHeight, availableHeight)
+                let maxViewportHeight = usesCompactCustomMarkdownViewport
+                    ? Self.maxExtensionMarkdownViewportHeight
+                    : Self.maxOutputViewportHeight
+                let hasSettledWidth = bounds.width > 10 && expandedContainer.bounds.width > 10
+                let targetHeight = hasSettledWidth
+                    ? maxViewportHeight
+                    : Self.streamingViewportHeight
+                expandedViewportHeightConstraint.constant = min(availableHeight, max(mode.minHeight, targetHeight))
             } else if expandedUsesReadMediaLayout {
                 // Read-media images should size vertically to show the whole
                 // image in the timeline. Do not clamp to the generic text
@@ -497,6 +503,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var currentOutputViewportProfile: ToolTimelineRowViewportProfile? {
         guard bashToolRowView.outputUsesViewport else { return nil }
         return ToolTimelineRowViewportProfile(kind: .bashOutput, text: bashToolRowView.outputRenderedText)
+    }
+
+    private var usesCompactCustomMarkdownViewport: Bool {
+        guard case .markdown = currentConfiguration.expandedContent else { return false }
+        let builtInPrefixes: Set<String> = ["$", "read", "write", "edit"]
+        guard let prefix = currentConfiguration.toolNamePrefix else { return true }
+        return !builtInPrefixes.contains(prefix)
     }
 
     private var currentExpandedViewportProfile: ToolTimelineRowViewportProfile? {
@@ -620,7 +633,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 textSelectionEnabled: textSelectionEnabled,
                 readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
                 perfSurface: .toolExpanded,
-                allowsVerticalBounce: false
+                allowsVerticalBounce: false,
+                allowsVerticalScrolling: false
             )
             installExpandedEmbeddedView(native)
         }
@@ -1754,7 +1768,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case expandedMarkdownView:
             .markdown
         case expandedReadMediaContainer:
-            .hosted
+            expandedReadMediaContentView is NativeFullScreenMarkdownBody ? .markdown : .hosted
         default:
             .none
         }

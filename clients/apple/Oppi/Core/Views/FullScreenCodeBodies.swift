@@ -1325,6 +1325,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         allowsVerticalBounce: Bool = true,
+        allowsVerticalScrolling: Bool = true,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
     ) {
@@ -1357,9 +1358,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.backgroundColor = UIColor(palette.bgDark)
-        collectionView.alwaysBounceVertical = allowsVerticalBounce
-        collectionView.bounces = allowsVerticalBounce
-        collectionView.showsVerticalScrollIndicator = true
+        collectionView.alwaysBounceVertical = allowsVerticalBounce && allowsVerticalScrolling
+        collectionView.bounces = allowsVerticalBounce && allowsVerticalScrolling
+        collectionView.isScrollEnabled = allowsVerticalScrolling
+        collectionView.showsVerticalScrollIndicator = allowsVerticalScrolling
         collectionView.keyboardDismissMode = .interactive
         collectionView.dataSource = self
         collectionView.delegate = self
@@ -1580,6 +1582,7 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
 extension NativeFullScreenMarkdownBody {
     var debugRenderedSegmentCountForTesting: Int { renderedSegments.count }
     var debugVisibleCellCountForTesting: Int { collectionView.visibleCells.count }
+    var debugSourceTextForTesting: String { latestSnapshot.text }
 
     func debugLayoutVisibleMarkdownCellsForTesting() {
         collectionView.layoutIfNeeded()
