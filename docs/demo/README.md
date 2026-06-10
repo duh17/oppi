@@ -20,6 +20,10 @@
 
 ![Ask](ask-combined.png)
 
+## Extension UI support
+
+![Extension UI support](extension-ui-support-combined.jpg)
+
 ## Workspace editor and context inspector
 
 ![Workspace and context](workspace-context-combined.png)

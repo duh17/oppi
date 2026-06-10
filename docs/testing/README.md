@@ -18,12 +18,6 @@ npm run check
 npm test
 ```
 
-Fast PR gate:
-
-```bash
-npm run test:gate:pr-fast
-```
-
 Server E2E coverage is documented in `server/e2e/README.md`:
 
 ```bash
@@ -81,8 +75,6 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
   -only-testing:OppiTests
 ```
 
-Why: the full `Oppi` scheme also builds `OppiPerfTests`, `OppiUITests`, and `OppiE2ETests`, which makes focused unit-test runs look hung.
-
 ### Swift Testing filters
 
 `xcodebuild` strips one trailing `()` from Swift Testing identifiers. Use double parentheses for function-level filters.
@@ -94,6 +86,14 @@ Why: the full `Oppi` scheme also builds `OppiPerfTests`, `OppiUITests`, and `Opp
 # Function
 -only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'
 ```
+
+### Swift Testing conventions
+
+- Use Swift Testing for unit tests: `import Testing`, `@Test`, `#expect`.
+- Use XCTest only for UI tests that require `XCUIApplication`.
+- Group related tests with `@Suite`.
+- Put `@MainActor` on the suite when all tests need main actor isolation.
+- Use `Issue.record()` instead of `XCTFail()`.
 
 ### iOS E2E tests
 
