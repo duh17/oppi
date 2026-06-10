@@ -97,7 +97,7 @@ struct ExtensionNativeSurfaceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) {
                     isExpanded.toggle()
@@ -115,7 +115,7 @@ struct ExtensionNativeSurfaceView: View {
                     if let summaryText {
                         StatusPill(
                             text: summaryText,
-                            systemImage: "bolt.circle.fill",
+                            systemImage: "play.circle.fill",
                             tone: .working,
                             emphasis: .quiet,
                             size: .small
@@ -590,7 +590,7 @@ private struct ExtensionNativeActivityRowContent: View {
 
     private var markerSymbolName: String {
         switch row.state {
-        case "running": return "bolt.circle.fill"
+        case "running": return "play.circle.fill"
         case "success": return "checkmark.circle.fill"
         case "warning": return "exclamationmark.circle.fill"
         case "error": return "xmark.circle.fill"
@@ -852,7 +852,7 @@ struct ExtensionSurfacePanel: View {
                     ExtensionNativeSurfaceView(surface: nativeSurface.surface, onOpenURL: onOpenURL)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 6)
                         .extensionGlassPanel(cornerRadius: 18)
                 case .widget(let widget):
                     ExtensionWidgetCard(
