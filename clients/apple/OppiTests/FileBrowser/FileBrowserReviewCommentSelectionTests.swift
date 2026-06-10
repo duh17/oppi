@@ -154,6 +154,20 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed) == true)
     }
 
+    @Test func fileBrowserFileTargetUsesLinkedFileDestinationForHistoryBack() {
+        let target = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "notes/daily.md"
+        )
+
+        #expect(target == WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/daily.md", fileName: "daily.md")
+        ))
+    }
+
     @Test func codeBodyNoCommentMenuWhenRouterNil() throws {
         let codeBody = NativeFullScreenCodeBody(
             content: "let answer = 42",

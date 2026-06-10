@@ -20,6 +20,26 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
     let serverId: String
     let workspaceId: String
     let kind: WorkspaceLinkedFileKind
+
+    static func workspaceFile(
+        serverId: String,
+        workspaceId: String,
+        path: String,
+        fileName: String? = nil
+    ) -> WorkspaceLinkedFileNavTarget {
+        let resolvedFileName: String
+        if let fileName, !fileName.isEmpty {
+            resolvedFileName = fileName
+        } else {
+            resolvedFileName = path.split(separator: "/").last.map(String.init) ?? path
+        }
+
+        return WorkspaceLinkedFileNavTarget(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            kind: .workspaceFile(path: path, fileName: resolvedFileName)
+        )
+    }
 }
 
 /// Utility destinations that live under the Workspaces navigation stack.

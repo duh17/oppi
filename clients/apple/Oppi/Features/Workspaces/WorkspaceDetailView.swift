@@ -493,7 +493,7 @@ struct WorkspaceDetailView: View {
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
         }
         .navigationDestination(for: FileBrowserNavTarget.self) { target in
-            FileBrowserView(workspaceId: target.workspaceId, initialPath: target.path)
+            FileBrowserView(serverId: currentServerId, workspaceId: target.workspaceId, initialPath: target.path)
         }
         .navigationDestination(
             item: $navigateToSessionId

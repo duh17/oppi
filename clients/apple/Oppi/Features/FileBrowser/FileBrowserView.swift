@@ -74,8 +74,15 @@ private enum FileBrowserAdaptiveLayout: Equatable {
 /// Search uses a shared file index cached in `FileIndexStore`.
 /// All filtering happens locally on-device for instant feedback.
 struct FileBrowserView: View {
+    let serverId: String?
     let workspaceId: String
     let initialPath: String
+
+    init(serverId: String? = nil, workspaceId: String, initialPath: String) {
+        self.serverId = serverId
+        self.workspaceId = workspaceId
+        self.initialPath = initialPath
+    }
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -642,13 +649,11 @@ struct FileBrowserView: View {
                             let dir = (result.path as NSString).deletingLastPathComponent
                             return dir.isEmpty ? "" : dir + "/"
                         }()
-                        NavigationLink {
-                            FileBrowserContentView(
-                                workspaceId: workspaceId,
-                                filePath: result.path,
-                                fileName: fileName
-                            )
-                        } label: {
+                        compactFileNavigationLink(
+                            path: result.path,
+                            name: fileName,
+                            size: nil
+                        ) {
                             Label {
                                 VStack(alignment: .leading, spacing: 2) {
                                     SearchResultFileName(
@@ -707,15 +712,12 @@ struct FileBrowserView: View {
                 }
             }
         } else {
-            NavigationLink {
-                let filePath = filePath(for: entry, relativeTo: parentPath)
-                FileBrowserContentView(
-                    workspaceId: workspaceId,
-                    filePath: filePath,
-                    fileName: entry.name,
-                    fileSize: entry.size
-                )
-            } label: {
+            let filePath = filePath(for: entry, relativeTo: parentPath)
+            compactFileNavigationLink(
+                path: filePath,
+                name: entry.name,
+                size: entry.size
+            ) {
                 Label {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -737,6 +739,41 @@ struct FileBrowserView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func compactFileNavigationLink<Label: View>(
+        path: String,
+        name: String,
+        size: Int?,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        if let target = linkedFileTarget(path: path, name: name) {
+            NavigationLink(value: target) {
+                label()
+            }
+        } else {
+            NavigationLink {
+                FileBrowserContentView(
+                    workspaceId: workspaceId,
+                    filePath: path,
+                    fileName: name,
+                    fileSize: size
+                )
+            } label: {
+                label()
+            }
+        }
+    }
+
+    private func linkedFileTarget(path: String, name: String) -> WorkspaceLinkedFileNavTarget? {
+        guard let serverId, !serverId.isEmpty else { return nil }
+        return .workspaceFile(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            path: path,
+            fileName: name
+        )
     }
 
     // MARK: - Helpers
