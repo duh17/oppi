@@ -40,7 +40,28 @@ Example:
 
 ### Notes
 
-- Near-term release focus: convert remaining built-in Oppi extension flows to standard Pi extensions, keep improving compatibility with the Pi extension API on native iOS, and continue polishing the iPad client, which is usable today but still rough in places.
+- This release focuses on Pi extension compatibility, mirrored terminal sessions, media playback, long tool output, and review tools on iPhone and iPad.
+
+### Added
+
+- **Protocol/Client/Server:** Added native rendering for Pi extension prompts, replayable widgets, and custom trace messages, including text, markdown, sections, activity rows, progress, terminal output, code, and fallback text.
+- **Client/Server:** Added video playback from the file browser, session attachments, and expanded tool rows with authenticated byte-range streaming and system controls.
+- **Client:** Added reader controls for text size, line spacing, wrapping, Mermaid state diagrams, and markdown code-block wrapping.
+- **Client:** Added review-comment drafts for selected code and tool output, with a composer stash before sending.
+
+### Changed
+
+- **Client/Server:** Pi extension prompts cover more Pi UI requests in SDK and mirrored sessions, including select, confirm, input, editor, queued approval, status, notification, and tool snapshot rendering.
+- **Server:** Removed Oppi's custom subagent server implementation from this release path; subagent-style work now goes through Pi extensions or custom agents.
+- **Client/Server:** Mirrored terminal sessions can reconnect, replay supported extension UI, queue follow-up messages, and hand control between terminal Pi and Oppi without losing pending prompts.
+- **Client:** Expanded tool rows use native or virtualized viewers for long markdown, code, images, video, and media output instead of oversized timeline cells.
+
+### Fixed
+
+- **Server:** Fixed SDK `/reload` so live Pi extension code reloads in the active session instead of only refreshing resource metadata.
+- **Client:** Fixed long tool output truncation and timeline instability by loading full output on demand and evicting older cached output under memory pressure.
+- **Client/Server:** Fixed mirrored terminal widget replay, takeover prompts, stale contexts after compaction, concurrent forwarded dialogs, and dead `pi-tui` session cleanup.
+- **Client:** Fixed review-comment controls hiding behind the keyboard on iPad and duplicate selection actions.
 
 ## [0.4.0] - 2026-06-01
 
