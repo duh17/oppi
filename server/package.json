@@ -85,9 +85,9 @@
   },
   "dependencies": {
     "@earendil-works/gondolin": "0.12.0",
-    "@earendil-works/pi-ai": "0.79.0",
-    "@earendil-works/pi-coding-agent": "0.79.0",
-    "@earendil-works/pi-tui": "0.79.0",
+    "@earendil-works/pi-ai": "0.79.1",
+    "@earendil-works/pi-coding-agent": "0.79.1",
+    "@earendil-works/pi-tui": "0.79.1",
     "diff-match-patch": "^1.0.5",
     "typebox": "1.1.28",
     "ws": "8.20.1"

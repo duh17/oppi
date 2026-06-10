@@ -8,7 +8,7 @@ Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mo
 
 ## Prerequisites
 
-- Oppi server `0.4.0` or newer is running.
+- Oppi server `0.41.0` or newer is running.
 - The server has a valid token in `~/.config/oppi/config.json`.
 - You are starting Pi in interactive terminal mode.
 
@@ -60,7 +60,7 @@ By default, the extension reads the local Oppi server URL and token from `~/.con
 Override the connection for one process:
 
 ```bash
-OPPI_MIRROR_URL=http://127.0.0.1:8787 \
+OPPI_MIRROR_URL=https://127.0.0.1:7749 \
 OPPI_MIRROR_TOKEN=your-token \
 pi
 ```
@@ -78,9 +78,9 @@ Configure startup and missing-workspace behavior in `~/.pi/agent/settings.json`:
 
 `workspaceCreation` accepts:
 
-- `ask` — prompt in terminal Pi before creating a workspace. This is the default.
-- `always` — create the workspace without prompting.
-- `never` — do not create workspaces from mirror mode.
+- `ask`: prompt in terminal Pi before creating a workspace. This is the default.
+- `always`: create the workspace without prompting.
+- `never`: do not create workspaces from mirror mode.
 
 When creation is approved, Oppi uses the nearest parent git repo as the workspace root. If there is no git repo, it uses the terminal cwd.
 
@@ -118,11 +118,11 @@ In Oppi clients:
 
 - connected mirror sessions show as `Mirror live`
 - disconnected or stale mirror sessions show as `Mirror offline`
-- stopped, disconnected mirror sessions can be resumed as managed Oppi sessions when the server has the session file
+- stopped, disconnected mirror sessions can be resumed as server-owned Oppi sessions when the server has the session file
 
 ## What works from mobile
 
-Mirror mode is meant for supervising and steering an active terminal session.
+Mirror mode keeps an active terminal session available from Oppi for viewing, prompts, and steering.
 
 Supported from Oppi:
 
@@ -132,8 +132,8 @@ Supported from Oppi:
 - queue updates
 - model and thinking-level changes
 - session rename, compaction, and tree navigation
-- standard Pi extension UI such as ask, select, confirm, input, editor, notify, title, status, and simple widget text, rendered through the native contract in [`extension-native-ui.md`](extension-native-ui.md)
-- `ask` requests with multi-select questions: Oppi renders the phone AskCard, while the terminal keeps a Pi UI fallback because Pi's standard dialog API has no portable multi-select request
+- standard Pi extension UI covered in the [compatibility matrix](#extension-ui-compatibility-matrix)
+- Oppi AskCard requests with multi-select questions, with terminal fallback; this is Oppi-specific compatibility, not Pi's standard extension UI API
 
 Still terminal-only:
 
@@ -142,12 +142,20 @@ Still terminal-only:
 - terminal-specific custom UI, headers, footers, custom editors, and raw TUI rendering unless the mirror bridge advertises a future native-snapshot capability
 - session sharing from a mirrored session
 
+## Extension UI compatibility matrix
+
+| Pi or Oppi UI request | Mobile behavior | Terminal behavior |
+| --- | --- | --- |
+| `ctx.ui.select`, `ctx.ui.confirm`, `ctx.ui.input`, `ctx.ui.editor` | Native prompt; phone or terminal answer settles the request first | Terminal prompt remains available |
+| `ctx.ui.notify`, `ctx.ui.setTitle`, `ctx.ui.setStatus`, `ctx.ui.setWidget` | Native banner, status, or surface when the request is semantic | Terminal UI remains terminal-owned |
+| Oppi AskCard multi-select | Native AskCard, with first response winning | Terminal fallback |
+| Custom terminal components, headers, footers, raw TUI layouts | Terminal-owned unless bridged as a semantic widget or future snapshot | Terminal-owned |
+
 ## Known Limitations
 
 - Mirror supports standard semantic Pi extension UI. Custom terminal component trees and raw ANSI/TUI layouts require an explicit bridge-forwarded snapshot or native-snapshot capability; otherwise they remain terminal-owned.
 - Session-file replacement commands such as new session, fork, and switch session remain terminal-only.
 - Session sharing from a mirrored session is not supported yet.
-- Reconnect and stale terminal state still need more real-device soak testing.
 
 ## Troubleshooting
 

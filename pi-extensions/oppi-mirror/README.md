@@ -37,7 +37,7 @@ By default, the extension reads the local Oppi server URL and token from `~/.con
 Override the connection for one process:
 
 ```bash
-OPPI_MIRROR_URL=http://127.0.0.1:8787 \
+OPPI_MIRROR_URL=https://127.0.0.1:7749 \
 OPPI_MIRROR_TOKEN=your-token \
 pi
 ```
@@ -65,15 +65,13 @@ pi
 
 ## What it supports
 
-Mirror supports prompts, steer and follow-up messages, stop, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows.
-
-For Oppi's `ask` request, Mirror supports multi-select on the phone AskCard and keeps a terminal fallback. This exists because Pi's standard dialog API has `select`, `confirm`, `input`, and `editor`, but no portable multi-select form request.
+Mirror supports prompts, steering and follow-up messages, stop or abort, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows such as select, confirm, input, editor, notify, title, status, and widgets.
 
 Session replacement stays terminal-owned. Use terminal Pi for `/new`, `/fork`, and session switching.
 
 ## Requirements
 
-- Oppi server `0.4.0` or newer
+- Oppi server `0.41.0` or newer
 - Interactive terminal `pi`; print, JSON, RPC, and server-owned SDK sessions are not mirror sessions
 
 See the full mirror contract and compatibility matrix in the Oppi repo: https://github.com/duh17/oppi/blob/main/docs/oppi-mirror.md

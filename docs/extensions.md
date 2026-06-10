@@ -71,7 +71,7 @@ Approval behavior belongs to Pi extensions. Command classification, route decisi
 The behavior is the same shape for Oppi-owned sessions and mirrored terminal sessions:
 
 - A Pi extension can intercept `tool_call`, `session_before_switch`, `session_before_fork`, or other Pi events.
-- The extension can ask with `ctx.ui.confirm()`, `ctx.ui.select()`, `ctx.ui.input()`, `ctx.ui.editor()`, or the `ask` extension.
+- The extension can ask with `ctx.ui.confirm()`, `ctx.ui.select()`, `ctx.ui.input()`, or `ctx.ui.editor()`.
 - Oppi mobile renders those standard extension UI requests natively and sends responses through `extension_ui_response`.
 - Standalone terminal Pi uses the same extension logic through its normal TUI.
 
@@ -125,7 +125,7 @@ The picker response:
 
 ## Native extension UI contract
 
-Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract keeps blocking prompts Pi-shaped, maps `ask`, `select`, `confirm`, `input`, and `editor` to native iOS prompt presentations, projects Pi UI state such as working rows, hidden thinking labels, and tool expansion, and defines display-only widget `ExtensionUINativeSurface` panels with blocks such as `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, and `code`.
+Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract keeps blocking prompts Pi-shaped, maps standard `select`, `confirm`, `input`, and `editor` requests to native iOS prompt presentations, projects Pi UI state such as working rows, hidden thinking labels, and tool expansion, and defines display-only widget `ExtensionUINativeSurface` panels with blocks such as `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, and `code`.
 
 The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components.
 

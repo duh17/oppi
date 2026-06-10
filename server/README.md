@@ -1,6 +1,6 @@
 # oppi-server
 
-Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/earendil-works/pi) to run server-owned sessions in-process and supports terminal-owned mirror sessions through the `oppi-mirror` Pi extension.
+Server for [Oppi](../README.md). Embeds the [Pi SDK](https://github.com/badlogic/pi-mono) for server-owned sessions and supports terminal-owned mirror sessions through the `oppi-mirror` Pi extension.
 
 ## Quickstart
 
@@ -14,7 +14,7 @@ oppi serve
 
 On first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials,
 and bootstraps local HTTPS/WSS with `tls.mode=self-signed`. Run `oppi pair` to
-show a pairing QR for the iOS/macOS app.
+show a pairing QR for the iPhone/iPad app.
 
 Upgrade or uninstall the global CLI with npm:
 
@@ -24,6 +24,8 @@ npm uninstall -g oppi-server
 ```
 
 ### Source checkout install
+
+Use a source checkout only for development or unreleased server changes. For regular use, prefer the npm global install above.
 
 ```bash
 git clone https://github.com/duh17/oppi.git && cd oppi/server
@@ -63,7 +65,8 @@ Create a workspace in the app and start a session.
 ## Requirements
 
 - Node.js 23.6+
-- [pi](https://github.com/earendil-works/pi) runtime dependency (installed automatically with npm package)
+- [Pi](https://github.com/badlogic/pi-mono) runtime dependency, installed automatically with the npm package
+- At least one Pi provider configured with `pi auth` or an API key such as `ANTHROPIC_API_KEY`
 - macOS or Linux
 - OpenSSL on PATH for `tls.mode=self-signed` certificate generation
 
@@ -75,7 +78,7 @@ A containerized setup is included in this directory:
 - `docker-compose.yml`
 - `docker/entrypoint.sh`
 
-The container runs `oppi serve`, persists state in Docker volumes, and seeds PI auth and skills from your host on first start. Mounting the Docker socket is optional — only needed for Docker-backed skill wrappers.
+The container runs `oppi serve`, persists state in Docker volumes, and seeds Pi auth and skills from your host on first start. Mounting the Docker socket is optional and only needed for Docker-backed skill wrappers.
 
 Quick start:
 
@@ -105,8 +108,8 @@ What it does:
 - auto-restarts via `restart: unless-stopped`
 - binds host `${OPPI_PORT:-7750}` to the same in-container port
 - persists server state in Docker volume `oppi-data` (`/data/oppi`)
-- persists runtime PI state in Docker volume `pi-agent-data` (`/data/pi-agent`)
-- seeds PI auth/skills/extensions from host `${PI_AGENT_DIR}` into container (`copy-once` by default)
+- persists runtime Pi state in Docker volume `pi-agent-data` (`/data/pi-agent`)
+- seeds Pi auth/skills/extensions from host `${PI_AGENT_DIR}` into container (`copy-once` by default)
 - exposes host-side SearXNG via `SEARXNG_URL` (default: `http://host.docker.internal:8888`)
 - mounts Docker socket so in-session wrappers can reach sibling containers (e.g. `web-toolkit`)
 
@@ -122,7 +125,7 @@ Useful commands:
 docker compose logs -f oppi-server
 
 # Health
-curl -s "http://127.0.0.1:${OPPI_PORT:-7750}/health"
+curl -sk "https://127.0.0.1:${OPPI_PORT:-7750}/health"
 
 # Verify SearXNG reachability from inside container
 docker compose exec oppi-server curl -sS "$SEARXNG_URL/healthz"
@@ -130,7 +133,7 @@ docker compose exec oppi-server curl -sS "$SEARXNG_URL/healthz"
 # Generate pairing QR/deep link explicitly
 docker compose exec oppi-server node dist/src/cli.js pair --host <your-lan-host-or-ip>
 
-# Force resync PI seed from host on next start
+# Force resync Pi seed from host on next start
 PI_AGENT_SYNC_MODE=always docker compose up -d
 
 # Stop / start
@@ -146,11 +149,11 @@ Use `oppi ...` for npm/global installs. In a source checkout before linking, use
 ```bash
 oppi serve [--host <h>]      # start server
 oppi init                    # interactive first-time setup
-oppi pair [name]             # regenerate pairing QR
+oppi pair [--host <h>]       # regenerate pairing QR
 oppi status                  # server config overview
 oppi doctor                  # check prerequisites
 oppi update                  # update mutable runtime dependencies only
-oppi update --self           # update the global npm server install
+oppi update --self           # show how to update the server install
 oppi config show             # show config
 oppi config get <key>        # get a config value, including nested paths
 oppi config set <key> <val>  # update config, e.g. asr.sttEndpoint
@@ -168,27 +171,18 @@ oppi server stop             # stop background server
 - **App-managed runtime:** Oppi.app owns server code and seeds
   `~/.config/oppi/server-runtime`. `oppi update` updates mutable runtime
   dependencies only; update Oppi.app to update server code.
-- **npm global install:** npm owns server code. Use `oppi update --self` or
-  `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g
-oppi-server` to remove. `oppi update` updates mutable runtime dependencies only.
+- **npm global install:** npm owns server code. Use `oppi update --self` for
+  upgrade instructions, `npm install -g oppi-server@latest` to upgrade, and
+  `npm uninstall -g oppi-server` to remove. `oppi update` updates mutable
+  runtime dependencies only.
 - **Git/bootstrap install:** git owns server code. Use
   `git pull && npm install && npm run build` to upgrade a checkout.
 
-## Built-in extensions
+## Extensions
 
-The server ships one default extension name:
+Oppi uses Pi's extension system and adds mobile rendering for standard extension UI requests. Extension approval behavior lives in Pi extensions, not in server config.
 
-- **ask** — structured Q&A between agent and user. Oppi's version supports multiple questions and multi-select options; users can still load their own Pi extension named `ask`.
-
-Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
-Approval logic lives in Pi extensions, not in Oppi server config.
-
-Workspace extension behavior is explicit:
-
-- when `workspace.extensions` is unset, Oppi keeps normal pi discovery and does **not** auto-enable `ask`
-- when `workspace.extensions` is set, it becomes an authoritative allowlist for optional extensions; include `ask` explicitly if you want an Ask tool
-
-Pi provides the core runtime and extension model. Oppi builds on top of that with the mobile client, transport, server orchestration, native rendering, and server-managed capabilities.
+See [Oppi extension behavior](../docs/extensions.md) for workspace allowlists and mobile rendering. Use [Oppi Mirror mode](../docs/oppi-mirror.md) for terminal-owned sessions.
 
 ## Server stats API
 
@@ -233,19 +227,18 @@ See [config-schema.md](docs/config-schema.md) for full reference.
 ## Development
 
 ```bash
-npm test                            # vitest
-npm run check                       # typecheck + lint + iOS architecture boundaries + format
-npm run check:architecture          # run iOS architecture boundary checks directly
-npm run review                      # generate AI review prompt from staged diff
+npm test                            # vitest unit tests
+npm run test:coverage               # coverage gate
+npm run check                       # typecheck + lint + dead-code + format check
 npm run dev                         # watch mode
+npm run test:e2e                    # Docker E2E harness
+npm run test:e2e:pairing            # pairing flow only
+npm run test:e2e:session            # paired session flow only
+E2E_NATIVE=1 npm run test:e2e       # native E2E harness without Docker
 npm run bench:correctness           # check + test before perf measurements
-npm run bench                       # correctness + perf regression gate (median vs baseline)
-npm run bench:perf                  # hotpath microbenchmark once (skip compare)
-npm run bench:perf:gate             # hotpath benchmark gate (median vs baseline)
-npm run bench:hotpath               # critical event pipeline benchmark
-npm run bench:hotpath:gate          # hotpath gate (correctness + median compare)
-npm run test:e2e:linux              # linux container E2E
-npm run test:e2e:lmstudio:contract  # real model contract tests
+npm run bench                       # correctness + perf regression gate
+npm run telemetry:review            # telemetry summary
+npm run diagnostics:review          # diagnostics summary
 ```
 
 Benchmark conventions, baselines, and comparison workflow live in [bench/README.md](bench/README.md).
@@ -265,8 +258,8 @@ npm run telemetry:grafana:up
 
 This starts two services:
 
-- `telemetry-importer` — watches telemetry JSONL and keeps SQLite in sync.
-- `grafana-telemetry` — serves the dashboard.
+- `telemetry-importer`: watches telemetry JSONL and keeps SQLite in sync.
+- `grafana-telemetry`: serves the dashboard.
 
 Importer behavior:
 
