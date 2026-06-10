@@ -7,7 +7,6 @@ import XCTest
 @MainActor
 final class FileBrowserVideoPlaybackE2ETests: E2ETestCase {
     nonisolated(unsafe) private var workspaceName = ""
-    nonisolated(unsafe) private var hostDirectory: URL?
 
     override var e2eLaunchesWorkspaceHomeOnly: Bool { true }
 
@@ -15,24 +14,12 @@ final class FileBrowserVideoPlaybackE2ETests: E2ETestCase {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         workspaceName = "video-playback-\(suffix)"
 
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("oppi-e2e-video-playback-\(suffix)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        hostDirectory = directory
-
-        let videoURL = directory.appendingPathComponent(Self.videoFilename, isDirectory: false)
-        let compactBase64 = Self.videoFixtureBase64.filter { !$0.isWhitespace }
-        let videoData = try XCTUnwrap(Data(base64Encoded: compactBase64), "Fixture MP4 base64 did not decode")
-        try videoData.write(to: videoURL, options: .atomic)
-
-        _ = try createLabWorkspace(named: workspaceName, hostMount: directory.path)
-    }
-
-    override func tearDownWithError() throws {
-        if let hostDirectory {
-            try? FileManager.default.removeItem(at: hostDirectory)
-        }
-        try super.tearDownWithError()
+        let fixture = try createLabWorkspaceFileFixture(
+            directoryName: "oppi-e2e-video-playback-\(suffix)",
+            filename: Self.videoFilename,
+            base64: Self.videoFixtureBase64
+        )
+        _ = try createLabWorkspace(named: workspaceName, hostMount: fixture.hostMount)
     }
 
     func testFileBrowserVideoPlaybackCanBeRecorded() throws {

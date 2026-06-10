@@ -22,6 +22,12 @@ struct E2ELabWorkspaceFixture {
     }
 }
 
+struct E2ELabWorkspaceFileFixture {
+    let hostMount: String
+    let filePath: String
+    let filename: String
+}
+
 extension E2ETestCase {
     /// Seeds a set of real server workspaces and optional active/stopped sessions.
     func seedLabWorkspaces(_ fixtures: [E2ELabWorkspaceFixture]) throws {
@@ -30,6 +36,29 @@ extension E2ETestCase {
             try createLabSessions(count: fixture.activeSessionCount, workspaceId: workspaceId, stopAfterCreate: false)
             try createLabSessions(count: fixture.stoppedSessionCount, workspaceId: workspaceId, stopAfterCreate: true)
         }
+    }
+
+    /// Creates a file fixture on the E2E server and returns a host mount path
+    /// that can be attached to a workspace.
+    func createLabWorkspaceFileFixture(
+        directoryName: String,
+        filename: String,
+        base64: String
+    ) throws -> E2ELabWorkspaceFileFixture {
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/fixtures/workspace-file",
+            body: [
+                "directoryName": directoryName,
+                "filename": filename,
+                "base64": base64,
+            ]
+        )
+        return E2ELabWorkspaceFileFixture(
+            hostMount: try XCTUnwrap(response["hostMount"] as? String, "Fixture response missing hostMount"),
+            filePath: try XCTUnwrap(response["filePath"] as? String, "Fixture response missing filePath"),
+            filename: try XCTUnwrap(response["filename"] as? String, "Fixture response missing filename")
+        )
     }
 
     /// Creates a workspace through the paired E2E server API.
@@ -127,7 +156,24 @@ extension E2ETestCase {
     }
 
     private func e2eLabAPIData(method: String, path: String, body: [String: Any] = [:]) throws -> E2ELabHTTPResponse {
-        let url = try e2eLabURL(path: path)
+        var lastError: Error?
+        for scheme in e2eLabSchemes() {
+            do {
+                return try e2eLabAPIData(method: method, path: path, body: body, scheme: scheme)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? E2ELabAPIError.missingHTTPResponse
+    }
+
+    private func e2eLabAPIData(
+        method: String,
+        path: String,
+        body: [String: Any],
+        scheme: String
+    ) throws -> E2ELabHTTPResponse {
+        let url = try e2eLabURL(path: path, scheme: scheme)
         let token = try e2eLabDeviceToken()
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -139,7 +185,13 @@ extension E2ETestCase {
 
         let semaphore = DispatchSemaphore(value: 0)
         let resultBox = E2ELabHTTPResultBox()
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        let session: URLSession
+        if scheme == "https" {
+            session = URLSession(configuration: .ephemeral, delegate: E2ELabHTTPSDelegate(), delegateQueue: nil)
+        } else {
+            session = .shared
+        }
+        session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
 
             if let error {
@@ -155,15 +207,24 @@ extension E2ETestCase {
         }.resume()
 
         guard semaphore.wait(timeout: .now() + 30) == .success else {
+            if scheme == "https" { session.invalidateAndCancel() }
             throw E2ELabAPIError.timeout(path)
         }
+        if scheme == "https" { session.finishTasksAndInvalidate() }
         return try XCTUnwrap(resultBox.result, "API request did not complete").get()
     }
 
-    private func e2eLabURL(path: String) throws -> URL {
+    private func e2eLabSchemes() -> [String] {
+        let preferred = ProcessInfo.processInfo.environment["E2E_SCHEME"]?.lowercased()
+        if preferred == "http" { return ["http", "https"] }
+        if preferred == "https" { return ["https", "http"] }
+        return ["http", "https"]
+    }
+
+    private func e2eLabURL(path: String, scheme: String) throws -> URL {
         let port = ProcessInfo.processInfo.environment["E2E_PORT"] ?? "17760"
         var components = URLComponents()
-        components.scheme = "http"
+        components.scheme = scheme
         components.host = "127.0.0.1"
         components.port = Int(port)
         components.path = path.hasPrefix("/") ? path : "/\(path)"
@@ -188,6 +249,21 @@ extension E2ETestCase {
         let resolvedToken = try XCTUnwrap(token.isEmpty ? nil : token, "E2E device token file is empty")
         Self.e2eDeviceTokenCache = resolvedToken
         return resolvedToken
+    }
+}
+
+private final class E2ELabHTTPSDelegate: NSObject, URLSessionDelegate {
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
 

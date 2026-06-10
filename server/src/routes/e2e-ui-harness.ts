@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   clearRecordedE2EUIResponses,
@@ -14,6 +16,8 @@ import type { AskQuestion, ServerMessage } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
 const MAX_E2E_UI_MESSAGE_BYTES = 32 * 1024;
+const MAX_E2E_FIXTURE_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_E2E_FIXTURE_BODY_BYTES = 8 * 1024 * 1024;
 
 export function createE2EUIHarnessRoutes(
   ctx: RouteContext,
@@ -26,6 +30,16 @@ export function createE2EUIHarnessRoutes(
 
     if (process.env.OPPI_E2E_UI_HARNESS !== "1") {
       helpers.error(res, 404, "Not found");
+      return true;
+    }
+
+    const fixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/workspace-file$/);
+    if (fixtureMatch) {
+      if (method !== "POST") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      await handleWorkspaceFileFixture(ctx, helpers, req, res);
       return true;
     }
 
@@ -49,6 +63,50 @@ export function createE2EUIHarnessRoutes(
     await handleHarnessMessage(ctx, helpers, decodeURIComponent(messageMatch[1]), req, res);
     return true;
   };
+}
+
+async function handleWorkspaceFileFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
+  });
+  const directoryName = safePathSegment(stringField(body.directoryName));
+  const filename = safePathSegment(stringField(body.filename));
+  const rawBase64 = stringField(body.base64);
+
+  if (!directoryName || !filename || !rawBase64) {
+    helpers.error(res, 400, "Fixture requires directoryName, filename, and base64");
+    return;
+  }
+
+  const compactBase64 = rawBase64.replace(/\s/g, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compactBase64)) {
+    helpers.error(res, 400, "Fixture base64 is invalid");
+    return;
+  }
+
+  const bytes = Buffer.from(compactBase64, "base64");
+  if (bytes.length === 0 || bytes.length > MAX_E2E_FIXTURE_FILE_BYTES) {
+    helpers.error(res, 400, "Fixture file size is invalid");
+    return;
+  }
+
+  const root = join(ctx.storage.getDataDir(), "e2e-fixtures");
+  const hostMount = join(root, directoryName);
+  const filePath = join(hostMount, filename);
+  await mkdir(hostMount, { recursive: true, mode: 0o700 });
+  await writeFile(filePath, bytes, { mode: 0o600 });
+  helpers.json(res, { ok: true, hostMount, filePath, filename });
+}
+
+function safePathSegment(value: string | undefined): string | null {
+  if (!value || value === "." || value === ".." || value.includes("\0")) return null;
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) return null;
+  return value;
 }
 
 function handleHarnessResponses(
