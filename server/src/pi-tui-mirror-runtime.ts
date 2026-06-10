@@ -84,6 +84,8 @@ const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 const BRIDGE_PROTOCOL_VERSION = 1;
 const EVENT_RING_CAPACITY = 500;
 const OPPI_RUNTIME_CONFLICT_RETRY_MS = 10_000;
+const OPPI_RUNTIME_TAKEOVER_STOP_TIMEOUT_MS = 15_000;
+const OPPI_RUNTIME_TAKEOVER_STOP_POLL_MS = 50;
 const PI_TUI_STOP_TIMEOUT_MS = 15_000;
 const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
 const MIRROR_EXTENSION_NAME = "oppi-mirror";
@@ -401,8 +403,13 @@ function queueShapeChanged(previous: MessageQueueState, next: MessageQueueState)
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface PiTuiMirrorRuntimeOptions {
   isOppiSessionActive?: (sessionId: string) => boolean;
+  stopOppiSession?: (sessionId: string) => Promise<void>;
 }
 
 export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTransport {
@@ -501,7 +508,46 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   handleBridgeWebSocket(ws: WebSocket): void {
     let connection: BridgeConnection | undefined;
+    let registration: Promise<void> | null = null;
     let rejectedBeforeHello = false;
+    const pendingMessages: PiBridgeInboundMessage[] = [];
+
+    const rejectMessage = (error: unknown): void => {
+      const message = safeErrorMessage(error);
+      const details = error instanceof BridgeRegistrationError ? error.details : {};
+      log.warn("mirror_bridge.message_rejected", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        error: message,
+        ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
+      });
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            error: message,
+            ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
+          }),
+        );
+        if (!connection) {
+          rejectedBeforeHello = true;
+          pendingMessages.length = 0;
+          ws.close(1008, message);
+        }
+      }
+    };
+
+    const flushPendingMessages = (): void => {
+      if (!connection) return;
+      const messages = pendingMessages.splice(0);
+      for (const message of messages) {
+        try {
+          this.handleBridgeMessage(connection, message);
+        } catch (error) {
+          rejectMessage(error);
+          break;
+        }
+      }
+    };
 
     ws.on("message", (data, isBinary) => {
       if (rejectedBeforeHello) {
@@ -515,10 +561,31 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       try {
         const message = parseBridgeMessage(data);
         if (message.type === "hello") {
-          if (connection) {
+          if (connection || registration) {
             throw new Error("Bridge already registered");
           }
-          connection = this.registerBridge(ws, message);
+          const registered = this.registerBridge(ws, message);
+          if (registered instanceof Promise) {
+            registration = registered
+              .then((nextConnection) => {
+                connection = nextConnection;
+                flushPendingMessages();
+              })
+              .catch((error: unknown) => {
+                rejectMessage(error);
+              })
+              .finally(() => {
+                registration = null;
+              });
+            return;
+          }
+          connection = registered;
+          flushPendingMessages();
+          return;
+        }
+
+        if (registration) {
+          pendingMessages.push(message);
           return;
         }
 
@@ -528,26 +595,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
         this.handleBridgeMessage(connection, message);
       } catch (error) {
-        const message = safeErrorMessage(error);
-        const details = error instanceof BridgeRegistrationError ? error.details : {};
-        log.warn("mirror_bridge.message_rejected", {
-          runtime: MIRROR_RUNTIME_LOG_TAG,
-          error: message,
-          ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
-        });
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({
-              type: "error",
-              error: message,
-              ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
-            }),
-          );
-          if (!connection) {
-            rejectedBeforeHello = true;
-            ws.close(1008, message);
-          }
-        }
+        rejectMessage(error);
       }
     });
 
@@ -943,7 +991,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return serializeRawSessionTreePayload(data, readSessionTreeFilterMode(request.filterMode));
   }
 
-  private registerBridge(ws: WebSocket, hello: PiBridgeHelloMessage): BridgeConnection {
+  private registerBridge(
+    ws: WebSocket,
+    hello: PiBridgeHelloMessage,
+  ): BridgeConnection | Promise<BridgeConnection> {
     const now = Date.now();
     const protocolVersion = hello.protocolVersion ?? BRIDGE_PROTOCOL_VERSION;
     const bridgeId = hello.bridgeId?.trim() || `pi-tui-${process.pid}-${now}`;
@@ -957,6 +1008,32 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
     const workspace = this.resolveWorkspace(hello);
     const session = this.resolveOrCreateSession(workspace, state, hello);
+    if (session instanceof Promise) {
+      return session.then((resolvedSession) =>
+        this.finishBridgeRegistration(ws, hello, resolvedSession, workspace, state, {
+          now,
+          bridgeId,
+          protocolVersion,
+        }),
+      );
+    }
+
+    return this.finishBridgeRegistration(ws, hello, session, workspace, state, {
+      now,
+      bridgeId,
+      protocolVersion,
+    });
+  }
+
+  private finishBridgeRegistration(
+    ws: WebSocket,
+    hello: PiBridgeHelloMessage,
+    session: Session,
+    workspace: Workspace,
+    state: PiBridgeStateSnapshot,
+    registration: { now: number; bridgeId: string; protocolVersion: number },
+  ): BridgeConnection {
+    const { now, bridgeId, protocolVersion } = registration;
     const active = this.ensureActive(session);
 
     const existingSameBridge = this.bridges.get(bridgeId);
@@ -1395,7 +1472,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     workspace: Workspace,
     state: PiBridgeStateSnapshot,
     hello: PiBridgeHelloMessage,
-  ): Session {
+  ): Session | Promise<Session> {
     const piSessionFile = canonicalSessionFilePath(state.sessionFile);
     const piSessionId = state.piSessionId?.trim();
     const existing = this.storage.listSessions().find((session) => {
@@ -1408,14 +1485,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
 
     if (existing && existing.runtime !== "pi-tui") {
-      if (this.options.isOppiSessionActive?.(existing.id)) {
-        throw new BridgeRegistrationError(
-          `Session ${existing.id} is already owned by the oppi runtime; stop it before mirroring this pi-tui session`,
-          "oppi_runtime_active",
-          { sessionId: existing.id, retryAfterMs: OPPI_RUNTIME_CONFLICT_RETRY_MS },
-        );
-      }
-
+      const requiresStop = this.options.isOppiSessionActive?.(existing.id) === true;
       if (hello.takeoverConfirmation?.sessionId !== existing.id) {
         throw new BridgeRegistrationError(
           `Confirm taking over Oppi session ${existing.id} from this Pi terminal before mirroring it`,
@@ -1425,18 +1495,74 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
             sessionName: meaningfulSessionName(existing.name, existing.id),
             sessionStatus: existing.status,
             workspaceId: existing.workspaceId,
+            requiresStop,
           },
         );
       }
 
-      log.info("mirror_bridge.oppi_session_takeover_confirmed", {
-        runtime: MIRROR_RUNTIME_LOG_TAG,
-        sessionId: existing.id,
-        workspaceId: existing.workspaceId,
-        status: existing.status,
-      });
+      if (requiresStop) {
+        return this.stopOppiSessionForTakeover(existing.id).then(() => {
+          this.logOppiSessionTakeoverConfirmed(existing, true);
+          return this.promoteBridgeSession(workspace, state, piSessionFile, piSessionId, existing);
+        });
+      }
+
+      this.logOppiSessionTakeoverConfirmed(existing, false);
     }
 
+    return this.promoteBridgeSession(workspace, state, piSessionFile, piSessionId, existing);
+  }
+
+  private async stopOppiSessionForTakeover(sessionId: string): Promise<void> {
+    const stopOppiSession = this.options.stopOppiSession;
+    if (!stopOppiSession) {
+      throw new BridgeRegistrationError(
+        `Session ${sessionId} is already owned by the oppi runtime; stop it before mirroring this pi-tui session`,
+        "oppi_runtime_active",
+        { sessionId, retryAfterMs: OPPI_RUNTIME_CONFLICT_RETRY_MS },
+      );
+    }
+
+    try {
+      await stopOppiSession(sessionId);
+    } catch (error) {
+      throw new BridgeRegistrationError(
+        `Failed to stop Oppi session ${sessionId} before mirror takeover: ${safeErrorMessage(error)}`,
+        "oppi_runtime_stop_failed",
+        { sessionId },
+      );
+    }
+
+    const deadline = Date.now() + OPPI_RUNTIME_TAKEOVER_STOP_TIMEOUT_MS;
+    while (this.options.isOppiSessionActive?.(sessionId) === true) {
+      if (Date.now() >= deadline) {
+        throw new BridgeRegistrationError(
+          `Timed out stopping Oppi session ${sessionId} before mirror takeover`,
+          "oppi_runtime_active",
+          { sessionId, retryAfterMs: OPPI_RUNTIME_CONFLICT_RETRY_MS },
+        );
+      }
+      await sleep(OPPI_RUNTIME_TAKEOVER_STOP_POLL_MS);
+    }
+  }
+
+  private logOppiSessionTakeoverConfirmed(session: Session, stoppedOppiRuntime: boolean): void {
+    log.info("mirror_bridge.oppi_session_takeover_confirmed", {
+      runtime: MIRROR_RUNTIME_LOG_TAG,
+      sessionId: session.id,
+      workspaceId: session.workspaceId,
+      status: session.status,
+      stoppedOppiRuntime,
+    });
+  }
+
+  private promoteBridgeSession(
+    workspace: Workspace,
+    state: PiBridgeStateSnapshot,
+    piSessionFile: string | undefined,
+    piSessionId: string | undefined,
+    existing: Session | undefined,
+  ): Session {
     const model = normalizeModelId(state.model);
     const sessionName = meaningfulSessionName(state.sessionName);
     const session = existing ?? this.storage.createSession(sessionName, model);

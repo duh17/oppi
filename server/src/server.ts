@@ -472,6 +472,7 @@ export class Server {
 
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
       isOppiSessionActive: (sessionId) => this.sessions.getActiveSession(sessionId) !== undefined,
+      stopOppiSession: (sessionId) => this.sessions.stopSession(sessionId),
     });
     this.sessionRuntimes = new SessionRuntimes(this.storage, this.sessions, this.mirrorRuntime);
 

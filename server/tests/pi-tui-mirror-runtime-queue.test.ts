@@ -55,6 +55,7 @@ function makeRuntime(
     dataDir?: string;
     includeDefaultWorkspace?: boolean;
     isOppiSessionActive?: (sessionId: string) => boolean;
+    stopOppiSession?: (sessionId: string) => Promise<void>;
   } = {},
 ) {
   const defaultWorkspace: Workspace = {
@@ -137,6 +138,7 @@ function makeRuntime(
   return {
     runtime: new PiTuiMirrorRuntime(storage, {
       isOppiSessionActive: options.isOppiSessionActive,
+      stopOppiSession: options.stopOppiSession,
     }),
     sessions,
     workspaces,
@@ -431,7 +433,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
-  it("reports oppi-runtime ownership conflicts as structured retryable bridge errors", () => {
+  it("requires terminal confirmation before taking over an active Oppi session", () => {
     const { runtime, sessions } = makeRuntime({
       hostMount: "/tmp/oppi-mirror-test",
       isOppiSessionActive: (sessionId) => sessionId === "oppi-1",
@@ -468,13 +470,64 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.sent).toHaveLength(1);
     expect(ws.sent[0]).toMatchObject({
       type: "error",
-      code: "oppi_runtime_active",
+      code: "oppi_takeover_confirmation_required",
       sessionId: "oppi-1",
-      retryAfterMs: 10_000,
-      error: expect.stringContaining("already owned by the oppi runtime"),
+      sessionStatus: "busy",
+      requiresStop: true,
+      error: expect.stringContaining("Confirm taking over Oppi session oppi-1"),
     });
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.closeCode).toBe(1008);
+  });
+
+  it("stops an active Oppi SDK session after terminal takeover confirmation", async () => {
+    let oppiActive = true;
+    const stoppedSessions: string[] = [];
+    const { runtime, sessions } = makeRuntime({
+      hostMount: "/tmp/oppi-mirror-test",
+      isOppiSessionActive: (sessionId) => oppiActive && sessionId === "oppi-1",
+      stopOppiSession: async (sessionId) => {
+        stoppedSessions.push(sessionId);
+        oppiActive = false;
+      },
+    });
+    sessions.set("oppi-1", {
+      id: "oppi-1",
+      workspaceId: "w1",
+      workspaceName: "Workspace",
+      runtime: "oppi",
+      status: "busy",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      piSessionId: "pi-1",
+      piSessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+    });
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      protocolVersion: 1,
+      bridgeId: "bridge-1",
+      workspaceId: "w1",
+      takeoverConfirmation: { sessionId: "oppi-1" },
+      cwd: "/tmp/oppi-mirror-test",
+      state: {
+        piSessionId: "pi-1",
+        sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+      },
+    });
+    await ws.waitForSend();
+
+    const ack = ws.sent.find((message) => message.type === "hello_ack");
+    expect(ack).toMatchObject({ sessionId: "oppi-1" });
+    expect(stoppedSessions).toEqual(["oppi-1"]);
+    expect(sessions.get("oppi-1")?.runtime).toBe("pi-tui");
+    expect(sessions.get("oppi-1")?.status).toBe("ready");
+    expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
   it("marks the iOS mirror session stopped when the terminal session shuts down", () => {

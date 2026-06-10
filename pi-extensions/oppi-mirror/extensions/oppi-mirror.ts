@@ -2450,6 +2450,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       typeof err.sessionStatus === "string" && err.sessionStatus.trim()
         ? err.sessionStatus.trim()
         : undefined;
+    const requiresStop = err.requiresStop === true;
 
     takeoverConfirmationSessionId = null;
     nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
@@ -2459,6 +2460,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       sessionId,
       sessionName,
       sessionStatus,
+      requiresStop,
     });
 
     if (!sessionId) {
@@ -2479,10 +2481,13 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       const statusLine = sessionStatus
         ? `\nCurrent Oppi status: ${sessionStatus}`
         : "";
+      const takeoverEffect = requiresStop
+        ? "Oppi will stop the server-owned SDK session, then mirror this terminal as pi-tui."
+        : "Oppi will treat the live runtime as pi-tui until the terminal mirror stops.";
       confirmed = await withSuppressedUIForwarding(() =>
         ctx.ui.confirm(
           "Take over Oppi session?",
-          `This Pi session is currently owned by Oppi as ${label}.${statusLine}\n\nTake it over from this terminal? Oppi will treat the live runtime as pi-tui until the terminal mirror stops.`,
+          `This Pi session is currently owned by Oppi as ${label}.${statusLine}\n\nTake it over from this terminal? ${takeoverEffect}`,
         ),
       );
     } catch (error) {
@@ -2747,6 +2752,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           sessionId?: string;
           sessionName?: string;
           sessionStatus?: string;
+          requiresStop?: boolean;
           cwd?: string;
           suggestedHostMount?: string;
           suggestedName?: string;
@@ -2764,7 +2770,18 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           err.code === "oppi_runtime_active" ||
           errorText.includes("already owned by the oppi runtime")
         ) {
-          const sessionId = err.sessionId ?? "this session";
+          const sessionId =
+            typeof err.sessionId === "string" ? err.sessionId : "";
+          if (sessionId && takeoverConfirmationSessionId !== sessionId) {
+            await handleOppiTakeoverConfirmationRequired(ctx, {
+              ...err,
+              sessionId,
+              requiresStop: true,
+            });
+            return;
+          }
+
+          const sessionLabel = sessionId || "this session";
           nextReconnectDelayMs =
             typeof err.retryAfterMs === "number" &&
             Number.isFinite(err.retryAfterMs)
@@ -2776,15 +2793,15 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
 
           const now = Date.now();
           const shouldNotify =
-            lastOppiRuntimeConflictSessionId !== sessionId ||
+            lastOppiRuntimeConflictSessionId !== sessionLabel ||
             now - lastOppiRuntimeConflictNotifiedAt >
               OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS;
           if (shouldNotify) {
-            lastOppiRuntimeConflictSessionId = sessionId;
+            lastOppiRuntimeConflictSessionId = sessionLabel;
             lastOppiRuntimeConflictNotifiedAt = now;
             notify(
               ctx,
-              `Oppi Mirror is waiting for Oppi session ${sessionId} to stop before taking over this terminal session.`,
+              `Oppi Mirror could not stop Oppi session ${sessionLabel}. Stop it in Oppi, then retry the terminal takeover.`,
               "warning",
             );
           }
