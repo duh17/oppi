@@ -13,6 +13,7 @@ const mockExistsSync = vi.fn<(path: string) => boolean>();
 const mockMkdirSync = vi.fn();
 const mockWriteFileSync = vi.fn();
 const mockReadFileSync = vi.fn<(path: string, encoding: string) => string>();
+const mockRealpathSync = vi.fn<(path: string) => string>();
 const mockUnlinkSync = vi.fn();
 const mockExecSync = vi.fn<(cmd: string, opts?: object) => string>();
 const mockHomedir = vi.fn(() => "/Users/testuser");
@@ -22,6 +23,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(args[0] as string, args[1] as string),
+  realpathSync: (...args: unknown[]) => mockRealpathSync(args[0] as string),
   unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
 }));
 
@@ -38,6 +40,7 @@ const originalGetuid = process.getuid;
 beforeEach(() => {
   process.getuid = () => 501;
   mockUnlinkSync.mockImplementation(() => undefined);
+  mockRealpathSync.mockImplementation((path: string) => path);
   mockReadFileSync.mockImplementation((path: string) => {
     if (path.endsWith("package.json")) {
       return JSON.stringify({ engines: { node: ">=23.6.0" } });
@@ -267,6 +270,33 @@ describe("CLI resolution", () => {
     const result = installService("/tmp/data");
     expect(result.ok).toBe(true);
     expect(result.cliPath).toBe("/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js");
+  });
+
+  it("resolves the current npm CLI symlink before the app bundle seed", () => {
+    const originalArgv1 = process.argv[1];
+    process.argv[1] = "/tmp/npm-prefix/bin/oppi";
+    mockRealpathSync.mockImplementation((p: string) => {
+      if (p === "/tmp/npm-prefix/bin/oppi") {
+        return "/tmp/npm-prefix/lib/node_modules/oppi-server/dist/src/cli.js";
+      }
+      return p;
+    });
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/opt/homebrew/bin/node") return true;
+      if (p === "/tmp/npm-prefix/bin/oppi") return true;
+      if (p === "/tmp/npm-prefix/lib/node_modules/oppi-server/dist/src/cli.js") return true;
+      if (p === "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js") return true;
+      if (p.endsWith(".plist")) return false;
+      return false;
+    });
+
+    try {
+      const result = installService("/tmp/data");
+      expect(result.ok).toBe(true);
+      expect(result.cliPath).toBe("/tmp/npm-prefix/lib/node_modules/oppi-server/dist/src/cli.js");
+    } finally {
+      process.argv[1] = originalArgv1;
+    }
   });
 });
 

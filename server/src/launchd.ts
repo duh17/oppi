@@ -14,7 +14,14 @@
  * - KeepAlive restarts on crash; RunAtLoad starts on boot/login
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -194,19 +201,36 @@ function runtimeResolutionFailureMessage(cliPath?: string | null): string {
  *
  * Search order:
  * 1. Mutable runtime dir (seeded from DMG)
- * 2. The CLI that's currently running (git clone / local dev)
+ * 2. The CLI that's currently running, including npm bin symlinks
  * 3. App bundle seed (direct)
  * 4. npm global
  */
+function resolveCurrentCLIAbsolute(): string | null {
+  const selfCLI = process.argv[1];
+  if (!selfCLI || !existsSync(selfCLI)) return null;
+
+  const candidates = [selfCLI];
+  try {
+    candidates.push(realpathSync(selfCLI));
+  } catch {
+    // Keep the unresolved path as the fallback candidate.
+  }
+
+  for (const candidate of candidates) {
+    if (candidate.endsWith("cli.js") && existsSync(candidate)) {
+      return resolve(candidate);
+    }
+  }
+
+  return null;
+}
+
 function resolveCLIAbsolute(): string | null {
   const runtimeCLI = join(homedir(), ".config", "oppi", "server-runtime", "dist", "src", "cli.js");
   if (existsSync(runtimeCLI)) return runtimeCLI;
 
-  // The CLI that invoked us — works for git clone installs
-  const selfCLI = process.argv[1];
-  if (selfCLI && selfCLI.endsWith("cli.js") && existsSync(selfCLI)) {
-    return resolve(selfCLI);
-  }
+  const currentCLI = resolveCurrentCLIAbsolute();
+  if (currentCLI) return currentCLI;
 
   const seedCLI = "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js";
   if (existsSync(seedCLI)) return seedCLI;
