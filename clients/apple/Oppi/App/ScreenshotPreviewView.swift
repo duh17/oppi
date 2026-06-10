@@ -72,22 +72,87 @@ struct ScreenshotPreviewView: View {
 // MARK: - Extension Surface Preview
 
 private struct ExtensionSurfacePreview: View {
-    // This fixture exercises generic terminal fallback rendering for extension widgets.
-    // Keep the sample content generic so the screenshot does not imply bespoke native UI for one extension.
     private static let surface = ExtensionSurfaceState(
-        title: "Pi extension UI",
-        statuses: ["tasks": "2 active tasks"],
-        widgets: [
-            "tasks": ExtensionWidgetState(
+        nativeSurfaces: [
+            "tasks": ExtensionNativeSurfaceState(
                 key: "tasks",
-                lines: [
-                    "● Tasks",
-                    "├─ ⠹ Audit native UI contract · ↻5≤30 · 5 tool uses · 33.8k tokens (62%) · 12.3s",
-                    "│    ⎿  reviewing Apple UI guardrails…",
-                    "├─ ✓ Validate terminal fallback · ↻3 · 3 tool uses · 12.4k tokens (100%) · 4.1s",
-                    "│    ⎿  screenshot captured",
-                    "└─ ◦ 1 queued",
-                ],
+                surface: ExtensionUINativeSurface(
+                    version: 1,
+                    id: "widget:tasks",
+                    source: "widget",
+                    presentation: ExtensionUINativePresentation(
+                        style: "surfacePanel",
+                        title: "1 of 5 tasks completed",
+                        subtitle: nil
+                    ),
+                    blocks: [
+                        .progress(
+                            base: ExtensionUIBlockBase(id: "goal-progress", accessibility: nil),
+                            label: nil,
+                            value: 0.2,
+                            indeterminate: nil
+                        ),
+                        .activityList(
+                            base: ExtensionUIBlockBase(id: "goal-tasks", accessibility: nil),
+                            rows: [
+                                ExtensionUIActivityRow(
+                                    id: "task-1",
+                                    title: "Check Apple AVKit/AVFoundation playback requirements",
+                                    subtitle: nil,
+                                    detail: nil,
+                                    state: "success",
+                                    progress: nil,
+                                    link: nil,
+                                    children: nil
+                                ),
+                                ExtensionUIActivityRow(
+                                    id: "task-2",
+                                    title: "Read HTTP Range semantics from RFC",
+                                    subtitle: nil,
+                                    detail: nil,
+                                    state: "running",
+                                    progress: nil,
+                                    link: nil,
+                                    children: nil
+                                ),
+                                ExtensionUIActivityRow(
+                                    id: "task-3",
+                                    title: "Check Node.js stream/fs implementation details",
+                                    subtitle: nil,
+                                    detail: nil,
+                                    state: "running",
+                                    progress: nil,
+                                    link: nil,
+                                    children: nil
+                                ),
+                                ExtensionUIActivityRow(
+                                    id: "task-4",
+                                    title: "Compare current Oppi route against requirements",
+                                    subtitle: nil,
+                                    detail: nil,
+                                    state: "inactive",
+                                    progress: nil,
+                                    link: nil,
+                                    children: nil
+                                ),
+                                ExtensionUIActivityRow(
+                                    id: "task-5",
+                                    title: "Propose robust implementation and tests",
+                                    subtitle: nil,
+                                    detail: nil,
+                                    state: "inactive",
+                                    progress: nil,
+                                    link: nil,
+                                    children: nil
+                                ),
+                            ]
+                        ),
+                    ],
+                    fallback: ExtensionUINativeFallback(
+                        text: nil,
+                        lines: ["1 of 5 tasks completed"]
+                    )
+                ),
                 placement: "aboveEditor"
             ),
         ]
@@ -103,7 +168,7 @@ private struct ExtensionSurfacePreview: View {
                     Text("Extension surface")
                         .font(.headline)
                         .foregroundStyle(.themeFg)
-                    Text("Terminal snapshot rendered through Oppi's generic extension surface.")
+                    Text("Native activity widget rendered through Oppi's generic extension surface.")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }
