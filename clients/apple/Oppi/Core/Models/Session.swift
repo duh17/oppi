@@ -169,7 +169,10 @@ struct SessionSummary: Sendable, Equatable {
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var piSessionId: String? = nil
     var ephemeral: Bool?
-    var pendingAskCount: Int
+    var pendingAskCount: Int {
+        didSet { hasPendingAskCount = true }
+    }
+    fileprivate(set) var hasPendingAskCount: Bool
 
     var attentionCounts: SessionSummaryAttentionCounts {
         SessionSummaryAttentionCounts(pendingAskCount: pendingAskCount)
@@ -230,6 +233,7 @@ extension SessionSummary {
         self.piSessionId = session.piSessionId
         self.ephemeral = session.ephemeral
         self.pendingAskCount = 0
+        self.hasPendingAskCount = false
     }
 }
 
@@ -323,9 +327,10 @@ private extension DecodedSessionWireFields {
         )
     }
 
-    func makeSummary(pendingAskCount: Int) -> SessionSummary {
+    func makeSummary(pendingAskCount: Int?) -> SessionSummary {
         var summary = SessionSummary(from: makeSession())
-        summary.pendingAskCount = pendingAskCount
+        summary.pendingAskCount = pendingAskCount ?? 0
+        summary.hasPendingAskCount = pendingAskCount != nil
         return summary
     }
 }
@@ -347,7 +352,7 @@ extension SessionSummary: Decodable {
         let container = try decoder.container(keyedBy: SessionWireCodingKeys.self)
         let fields = try DecodedSessionWireFields(from: container)
         self = fields.makeSummary(
-            pendingAskCount: try container.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
+            pendingAskCount: try container.decodeIfPresent(Int.self, forKey: .pendingAskCount)
         )
     }
 }

@@ -529,8 +529,8 @@ describe("SessionManager extension UI", () => {
     expect(uiReq).toBeDefined();
   });
 
-  it("respondToUIRequest clears pending request", () => {
-    const { manager, active, sdkBackend } = makeManagerHarness();
+  it("respondToUIRequest clears pending request and broadcasts settled", () => {
+    const { manager, active, sdkBackend, events } = makeManagerHarness();
 
     // Set up a pending request
     active.pendingUIRequests.set("ui-3", {
@@ -550,6 +550,7 @@ describe("SessionManager extension UI", () => {
     expect(result).toBe(true);
     expect(sdkBackend.respondToExtensionUIRequest).toHaveBeenCalledWith(response);
     expect(active.pendingUIRequests.has("ui-3")).toBe(false);
+    expect(events.at(-1)).toEqual({ type: "extension_ui_settled", id: "ui-3", sessionId: "s1" });
   });
 
   it("respondToUIRequest keeps pending request when the SDK bridge rejects delivery", () => {

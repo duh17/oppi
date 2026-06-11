@@ -54,6 +54,42 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(calls == 2)
     }
 
+    @Test func coldSessionListRefreshDiscoversAndStartsAppEventStream() async {
+        let connection = makeConnection()
+        connection.setAPIClientForTesting(makeMockAPIClient())
+        connection.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
+        connection.workspaceStore.isLoaded = true
+        connection.sessionStore.upsert(makeTestSession(id: "seed", workspaceId: "w1"))
+        defer { cleanup(connection) }
+
+        var requestedPaths: [String] = []
+        var startedStreamURL: URL?
+        connection._startAppEventStreamForTesting = { url in
+            startedStreamURL = url
+        }
+
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            requestedPaths.append(path)
+            switch path {
+            case "/server/info":
+                return self.mockServerInfoResponse(for: request, appEventStream: true)
+            case "/sessions/recent":
+                return self.jsonResponse("{\"sessions\":[]}", for: request)
+            default:
+                Issue.record("Unexpected request path: \(path)")
+                return self.jsonResponse("{}", for: request, statusCode: 404)
+            }
+        }
+
+        await connection.refreshSessionList(force: true)
+
+        #expect(requestedPaths.first == "/server/info")
+        #expect(requestedPaths.contains("/sessions/recent"))
+        #expect(connection.appEventStreamAvailable)
+        #expect(startedStreamURL?.path == "/app/events/stream")
+    }
+
     @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async {
         let connection = makeConnection(
             host: "paired.example",
@@ -125,7 +161,11 @@ struct ServerConnectionStreamRecoveryTests {
         )
     }
 
-    private func mockServerInfoResponse(for request: URLRequest) -> (Data, HTTPURLResponse) {
+    private func mockServerInfoResponse(
+        for request: URLRequest,
+        appEventStream: Bool = false
+    ) -> (Data, HTTPURLResponse) {
+        let appEventCapability = appEventStream ? ",\n            \"appEventStream\": { \"version\": 1 }" : ""
         let data = """
         {
           "name": "Test",
@@ -138,7 +178,7 @@ struct ServerConnectionStreamRecoveryTests {
           "piVersion": "0.0.0-test",
           "configVersion": 2,
           "capabilities": {
-            "sessionStream": { "version": 1 }
+            "sessionStream": { "version": 1 }\(appEventCapability)
           },
           "stats": {
             "workspaceCount": 1,
@@ -158,8 +198,25 @@ struct ServerConnectionStreamRecoveryTests {
         return (data, response)
     }
 
+    private func jsonResponse(
+        _ json: String,
+        for request: URLRequest,
+        statusCode: Int = 200
+    ) -> (Data, HTTPURLResponse) {
+        let data = json.data(using: .utf8)!
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "http://127.0.0.1:7749")!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (data, response)
+    }
+
     private func cleanup(_ connection: ServerConnection) {
         TestURLProtocol.handler = nil
+        connection._startAppEventStreamForTesting = nil
+        connection.disconnectAppEventStream()
         connection.disconnectStream()
     }
 }

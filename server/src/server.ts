@@ -21,6 +21,7 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
+import { AppEventStreamMux } from "./app-event-stream.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
@@ -387,6 +388,7 @@ export class Server {
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
+  private appEventStreamMux!: AppEventStreamMux;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private dictationStreamMux!: DictationStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
@@ -509,7 +511,16 @@ export class Server {
       createDictationManager: () => this.createDictationManager(),
     };
 
-    // Create split session/audio stream muxes.
+    // Create global app, split session, and audio stream muxes.
+    this.appEventStreamMux = new AppEventStreamMux({
+      storage: this.storage,
+      sessionRuntimes: this.sessionRuntimes,
+      ensureSessionContextWindow: (session: Session) =>
+        this.models.ensureSessionContextWindow(session),
+      trackConnection: (ws: WebSocket) => this.trackConnection(ws),
+      untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
+      metrics: this.opsMetrics,
+    });
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
 
@@ -567,8 +578,8 @@ export class Server {
           }
         }
       },
-      broadcastSessionUpdate: () => {
-        // Workspace/session list refreshes pick up title changes.
+      broadcastSessionUpdate: (sessionId) => {
+        this.appEventStreamMux.emitSessionSummaryById(sessionId);
       },
       onMetrics: (metrics) => {
         this.opsMetrics.record("server.session_title_gen_ms", metrics.durationMs, {
@@ -582,6 +593,7 @@ export class Server {
 
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
       this.liveActivity.handleSessionEvent(payload);
+      this.appEventStreamMux.handleSessionBroadcastEvent(payload);
     };
     this.sessions.on("session_event", handleSessionEvent);
     this.mirrorRuntime.on("session_event", handleSessionEvent);
@@ -615,6 +627,7 @@ export class Server {
       runRuntimeUpdate: () => this.runtimeUpdates.updateRuntime(),
       getCodexUsageStatus: () => fetchCodexUsageStatus(),
       searchIndex: this.searchIndex ?? undefined,
+      appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
       piVersion: Server.detectPiVersion(this.piExecutable),
@@ -1152,9 +1165,15 @@ export class Server {
     const sessionStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
     );
+    const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
     const mirrorBridgeMatch = url.pathname === "/mirror/v1/bridge";
-    if (!sessionStreamMatch && !dictationStreamMatch && !mirrorBridgeMatch) {
+    if (
+      !sessionStreamMatch &&
+      !appEventStreamMatch &&
+      !dictationStreamMatch &&
+      !mirrorBridgeMatch
+    ) {
       // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
@@ -1186,6 +1205,10 @@ export class Server {
           return;
         }
         this.boundSessionStreamMux.handleWebSocket(workspaceId, sessionId, ws, upgradeReceivedAt);
+        return;
+      }
+      if (appEventStreamMatch) {
+        this.appEventStreamMux.handleWebSocket(ws, upgradeReceivedAt);
         return;
       }
       if (dictationStreamMatch) {

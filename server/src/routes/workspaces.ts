@@ -774,10 +774,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     const launchedSession = ctx.sessionRuntimes.getSessionSnapshot(session.id) || session;
+    const hydratedSession = ctx.ensureSessionContextWindow(launchedSession);
+    ctx.appEvents?.emitSessionCreated(hydratedSession);
     const response: WorkspaceQuickActionSessionResponse = {
       promptTemplateName: launch.promptTemplateName,
       selectedPathCount: launch.files.length,
-      session: ctx.ensureSessionContextWindow(launchedSession),
+      session: hydratedSession,
       visiblePrompt: launch.visiblePrompt,
       filePaths: launch.files.map((f) => f.path),
     };

@@ -64,6 +64,7 @@ const sessionOperationIds = [
   "headSessionAttachment",
   "getSessionToolOutput",
   "openSessionStream",
+  "openAppEventStream",
   "openDictationStream",
   "searchSessions",
   "listSessions",
@@ -218,6 +219,19 @@ describe("api route registry", () => {
         expect(route.schemas?.body, `${route.operationId} body schema`).toBeDefined();
       }
     }
+  });
+
+  it("registers the global app event stream as a native session WebSocket", () => {
+    const route = apiRouteSpecs.find((candidate) => candidate.operationId === "openAppEventStream");
+
+    expect(route).toMatchObject({
+      method: "GET",
+      path: "/app/events/stream",
+      surface: "core",
+      auth: "owner",
+      transport: "websocket",
+      nativeClientUses: ["session"],
+    });
   });
 
   it("does not register retired cleanup routes", () => {

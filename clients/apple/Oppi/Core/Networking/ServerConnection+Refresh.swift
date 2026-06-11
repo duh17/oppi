@@ -51,6 +51,10 @@ extension ServerConnection {
     func refreshSessionList(force: Bool = false) async {
         guard let apiClient else { return }
 
+        // Cold list/home paths also need capability discovery so the global
+        // app-event stream starts before users focus a chat session.
+        await refreshStreamCapabilitiesIfNeeded()
+
         let callStartedAt = Date()
         let callMetadata: [String: String] = [
             "force": force ? "1" : "0",
@@ -250,10 +254,20 @@ extension ServerConnection {
             }
         }
 
-        // 1. Refresh global lists as needed (single-flight + freshness-gated).
+        // 1. Make capability discovery part of foreground recovery so a cold
+        // workspace/session list can start the global app-event stream without
+        // first opening a focused chat stream.
+        await refreshStreamCapabilitiesIfNeeded()
+
+        // 2. Reopen the global app event stream when foreground recovery finds it stopped.
+        if appEventStreamAvailable, !appEventStreamCoordinator.isRunning {
+            startAppEventStreamIfAvailable()
+        }
+
+        // 3. Refresh global lists as needed (single-flight + freshness-gated).
         await refreshWorkspaceAndSessionLists(force: false)
 
-        // 2. Refresh active session metadata (not timeline — ChatSessionManager owns that)
+        // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)
         guard let sessionId = focusedSessionId else { return }
         guard let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
               !workspaceId.isEmpty else {

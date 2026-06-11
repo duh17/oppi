@@ -18,9 +18,12 @@ final class ServerConnection {
     private(set) var wsClient: WebSocketClient?
     var splitSessionStreamAvailable = false
     var dictationStreamAvailable = false
+    var appEventStreamAvailable = false
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
     private var streamCapabilitiesRefreshFailed = false
+    private var streamCapabilitiesRefreshTask: Task<Void, Never>?
+    private var streamCapabilitiesGeneration: UInt64 = 0
     private(set) var focusedSessionStreamEndpointKind = "none"
     private var focusedSessionStreamSessionId: String?
     private var focusedSessionStreamWorkspaceId: String?
@@ -121,6 +124,7 @@ final class ServerConnection {
         focusedSessionStore.isFocused(sessionId)
     }
     let sessionStreamCoordinator = SessionStreamCoordinator()
+    let appEventStreamCoordinator = AppEventStreamCoordinator()
     /// Send protocol — turn ack, command correlation, retry.
     let sender = MessageSender()
 
@@ -182,6 +186,9 @@ final class ServerConnection {
     // periphery:ignore - test seam used by ServerConnectionStreamTests via @testable import
     /// Test seam: replace WebSocket opening with a deterministic stream.
     var _connectStreamForTesting: (() -> AsyncStream<StreamFrameEvent>)?
+
+    /// Test seam: observe app-event stream start without opening a real socket.
+    var _startAppEventStreamForTesting: ((URL) -> Void)?
 
     /// Test seam: override the cache actor used by list refresh paths.
     var _cacheForTesting: TimelineCache?
@@ -278,6 +285,7 @@ final class ServerConnection {
         guard server.id != currentServerId else { return true } // Already targeting this server
         disconnectSession()
         disconnectStream()
+        disconnectAppEventStream()
         discoveredLANEndpoint = nil
         endpointSelection = nil
         transportPath = .paired
@@ -296,11 +304,17 @@ final class ServerConnection {
             return false
         }
 
+        disconnectAppEventStream()
+        streamCapabilitiesRefreshTask?.cancel()
+        streamCapabilitiesRefreshTask = nil
+        streamCapabilitiesGeneration &+= 1
+
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
         self.endpointSelection = selection
         self.splitSessionStreamAvailable = false
         self.dictationStreamAvailable = false
+        self.appEventStreamAvailable = false
         self.missingRequiredSplitStreamCapabilities = []
         self.streamCapabilitiesLoaded = false
         self.streamCapabilitiesRefreshFailed = false
@@ -379,6 +393,10 @@ final class ServerConnection {
                 token: credentials.token,
                 tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
             )
+            if appEventStreamAvailable {
+                disconnectAppEventStream()
+                startAppEventStreamIfAvailable()
+            }
         }
     }
 
@@ -447,6 +465,10 @@ final class ServerConnection {
 
         // Reconnect with the updated (Tailscale) endpoint.
         connectStream()
+        if appEventStreamAvailable {
+            disconnectAppEventStream()
+            startAppEventStreamIfAvailable()
+        }
     }
 
     // MARK: - Stream Lifecycle
@@ -540,40 +562,65 @@ final class ServerConnection {
 
     func refreshStreamCapabilities() async {
         guard let apiClient else { return }
-        let hadLoadedCapabilities = streamCapabilitiesLoaded
-        do {
-            let info = try await apiClient.serverInfo()
-            let capabilities = info.capabilities
-            splitSessionStreamAvailable = capabilities?.sessionStream?.version ?? 0 >= 1
-            dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
-            missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
-                .missingRequiredSplitStreamCapabilities(in: capabilities)
-            streamCapabilitiesRefreshFailed = false
-            if dictationStreamAvailable {
-                setServerDictationAvailableFromCapabilities(true)
-            }
-            streamCapabilitiesLoaded = true
-        } catch {
-            // Do not let a transient handoff failure permanently poison stream
-            // capability state. If we already had a good capability snapshot,
-            // keep using it; otherwise leave the state unloaded so the next
-            // session entry retries /server/info instead of returning nil forever.
-            streamCapabilitiesRefreshFailed = true
-            if !hadLoadedCapabilities {
-                splitSessionStreamAvailable = false
-                dictationStreamAvailable = false
-                missingRequiredSplitStreamCapabilities = []
-                streamCapabilitiesLoaded = false
-            }
-
-            var metadata = ClientLog.networkErrorMetadata(error)
-            metadata["hadLoadedCapabilities"] = hadLoadedCapabilities ? "true" : "false"
-            metadata["capabilityStatus"] = requiredSplitStreamCapabilitiesStatusForDiagnostics
-            metadata["transport"] = transportPath.rawValue
-            let apiBaseURL = await apiClient.baseURL
-            metadata.merge(ClientLog.endpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
-            ClientLog.warning("Network", "Stream capability refresh failed", metadata: metadata)
+        if let inFlight = streamCapabilitiesRefreshTask {
+            await inFlight.value
+            return
         }
+
+        let generation = streamCapabilitiesGeneration
+        let task = Task { @MainActor [weak self, apiClient] in
+            guard let self else { return }
+            defer { self.streamCapabilitiesRefreshTask = nil }
+
+            let hadLoadedCapabilities = self.streamCapabilitiesLoaded
+            do {
+                let info = try await apiClient.serverInfo()
+                guard self.streamCapabilitiesGeneration == generation else { return }
+
+                let capabilities = info.capabilities
+                self.splitSessionStreamAvailable = capabilities?.sessionStream?.version ?? 0 >= 1
+                self.dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
+                self.appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
+                self.missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
+                    .missingRequiredSplitStreamCapabilities(in: capabilities)
+                self.streamCapabilitiesRefreshFailed = false
+                if self.dictationStreamAvailable {
+                    self.setServerDictationAvailableFromCapabilities(true)
+                }
+                self.streamCapabilitiesLoaded = true
+                if self.appEventStreamAvailable {
+                    self.startAppEventStreamIfAvailable()
+                } else {
+                    self.disconnectAppEventStream()
+                }
+            } catch {
+                guard self.streamCapabilitiesGeneration == generation else { return }
+                // Do not let a transient handoff failure permanently poison stream
+                // capability state. If we already had a good capability snapshot,
+                // keep using it; otherwise leave the state unloaded so the next
+                // session entry retries /server/info instead of returning nil forever.
+                self.streamCapabilitiesRefreshFailed = true
+                if !hadLoadedCapabilities {
+                    self.splitSessionStreamAvailable = false
+                    self.dictationStreamAvailable = false
+                    self.appEventStreamAvailable = false
+                    self.disconnectAppEventStream()
+                    self.missingRequiredSplitStreamCapabilities = []
+                    self.streamCapabilitiesLoaded = false
+                }
+
+                var metadata = ClientLog.networkErrorMetadata(error)
+                metadata["hadLoadedCapabilities"] = hadLoadedCapabilities ? "true" : "false"
+                metadata["capabilityStatus"] = self.requiredSplitStreamCapabilitiesStatusForDiagnostics
+                metadata["transport"] = self.transportPath.rawValue
+                let apiBaseURL = await apiClient.baseURL
+                metadata.merge(ClientLog.endpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
+                ClientLog.warning("Network", "Stream capability refresh failed", metadata: metadata)
+            }
+        }
+
+        streamCapabilitiesRefreshTask = task
+        await task.value
     }
 
     /// Send a graceful WS close frame before iOS suspends the app.
@@ -1112,6 +1159,20 @@ final class ServerConnection {
         sessionId: String,
         payload: ExtensionUIResponsePayload
     ) async throws {
+        let workspaceId = askRequestStore.pending(for: sessionId)?.workspaceId
+            ?? pendingExtensionDialogQueues[sessionId]?.first(where: { $0.id == id })?.workspaceId
+            ?? sessionStore.workspaceId(for: sessionId)
+
+        if !isFocusedSession(sessionId), let workspaceId, apiClient != nil {
+            try await respondToExtensionUI(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                id: id,
+                payload: payload
+            )
+            return
+        }
+
         try await sender.dispatchSend(
             .extensionUIResponse(
                 id: id,
@@ -1149,6 +1210,46 @@ final class ServerConnection {
             token: credentials.token,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
         )
+    }
+
+    func startAppEventStreamIfAvailable() {
+        guard appEventStreamAvailable,
+              let selection = endpointSelection,
+              let credentials,
+              let streamURL = makeAppEventStreamURL(selection: selection) else {
+            return
+        }
+
+        #if DEBUG
+        if let startAppEventStreamForTesting = _startAppEventStreamForTesting {
+            startAppEventStreamForTesting(streamURL)
+            return
+        }
+        #endif
+
+        let client = AppEventStreamClient(
+            url: streamURL,
+            token: credentials.token,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
+        appEventStreamCoordinator.start(
+            connection: self,
+            client: client,
+            streamURL: streamURL
+        )
+    }
+
+    func disconnectAppEventStream() {
+        appEventStreamCoordinator.disconnect()
+    }
+
+    private func makeAppEventStreamURL(selection: EndpointSelection) -> URL? {
+        guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
+        components.path = "/app/events/stream"
+        return components.url
     }
 
     // MARK: - Reconnect State (used by ServerConnection+Refresh)
@@ -1195,10 +1296,12 @@ final class ServerConnection {
 
     func setSplitStreamCapabilitiesForTesting(
         sessionStream: Bool = true,
-        dictationStream: Bool = false
+        dictationStream: Bool = false,
+        appEventStream: Bool = false
     ) {
         splitSessionStreamAvailable = sessionStream
         dictationStreamAvailable = dictationStream
+        appEventStreamAvailable = appEventStream
         var missing: [String] = []
         if !sessionStream { missing.append("sessionStream") }
         missingRequiredSplitStreamCapabilities = missing

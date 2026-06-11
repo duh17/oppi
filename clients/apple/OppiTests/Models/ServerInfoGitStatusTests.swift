@@ -90,6 +90,7 @@ struct ServerInfoTests {
           "capabilities": {
             "sessionStream": { "version": 1 },
             "dictationStream": { "version": 1 },
+            "appEventStream": { "version": 1 },
             "extensionNativeUI": {
               "version": 1,
               "capabilities": [
@@ -113,6 +114,7 @@ struct ServerInfoTests {
         let decoded = try JSONDecoder().decode(ServerInfo.self, from: json)
         #expect(decoded.capabilities?.sessionStream?.version == 1)
         #expect(decoded.capabilities?.dictationStream?.version == 1)
+        #expect(decoded.capabilities?.appEventStream?.version == 1)
         #expect(decoded.capabilities?.extensionNativeUI?.version == 1)
         #expect(decoded.capabilities?.extensionNativeUI?.capabilities == [
             "extension-native-ui:v1:text-fallback",

@@ -241,6 +241,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       deliver: (payload) => {
         return active.sdkBackend.respondToExtensionUIRequest(payload);
       },
+      broadcastSettled: (message) => this.broadcast(key, message),
     });
   }
 
@@ -566,6 +567,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     cancelPendingAskRequest(active, {
       metrics: this.opsMetrics ?? undefined,
       deliver: (payload) => active.sdkBackend.respondToExtensionUIRequest(payload),
+      broadcastSettled: (message) => this.broadcast(key, message),
     });
   }
 

@@ -47,6 +47,13 @@ final class FileIndexStore {
         dirty = true
     }
 
+    /// Mark the current workspace index dirty when the global app event stream
+    /// reports a workspace mutation.
+    func invalidate(workspaceId: String) {
+        guard workspaceId == self.workspaceId else { return }
+        invalidate()
+    }
+
     // MARK: - Testing
 
     // periphery:ignore - used by tests via @testable import

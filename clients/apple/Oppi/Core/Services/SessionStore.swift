@@ -514,6 +514,7 @@ final class SessionStore {
 
         for summary in summaries {
             guard !isDeletedSessionTombstoned(summary.id) else { continue }
+            guard summary.hasPendingAskCount else { continue }
             let nextCounts = summary.attentionCounts
             if nextCounts.hasAttention {
                 counts[summary.id] = nextCounts

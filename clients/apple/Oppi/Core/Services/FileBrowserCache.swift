@@ -56,6 +56,15 @@ actor FileBrowserCache {
         logger.debug("Invalidated directory listings for \(workspaceId)")
     }
 
+    /// Clear workspace-scoped listings and the cached file index after a global
+    /// workspace mutation invalidation.
+    func invalidateWorkspaceCaches(for workspaceId: String) {
+        let workspace = workspaceDir(workspaceId)
+        try? FileManager.default.removeItem(at: workspace.appendingPathComponent("dirs", isDirectory: true))
+        try? FileManager.default.removeItem(at: workspace.appendingPathComponent("index.json"))
+        logger.debug("Invalidated workspace file caches for \(workspaceId)")
+    }
+
     // MARK: - File Content
 
     /// Cached file content, or nil if not cached or stale.

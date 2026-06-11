@@ -56,7 +56,20 @@ struct ServerInfo: Codable, Sendable, Equatable {
     struct Capabilities: Codable, Sendable, Equatable {
         let sessionStream: CapabilityVersion?
         let dictationStream: CapabilityVersion?
+        let appEventStream: CapabilityVersion?
         let extensionNativeUI: ExtensionNativeUICapability?
+
+        init(
+            sessionStream: CapabilityVersion?,
+            dictationStream: CapabilityVersion?,
+            appEventStream: CapabilityVersion? = nil,
+            extensionNativeUI: ExtensionNativeUICapability?
+        ) {
+            self.sessionStream = sessionStream
+            self.dictationStream = dictationStream
+            self.appEventStream = appEventStream
+            self.extensionNativeUI = extensionNativeUI
+        }
     }
 
     struct CapabilityVersion: Codable, Sendable, Equatable {

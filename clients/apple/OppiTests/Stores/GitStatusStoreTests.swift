@@ -85,6 +85,28 @@ struct GitStatusStoreTests {
         #expect(store.isLoading == false)
     }
 
+    @Test func invalidationPreservesVisibleStatusWhenRefreshCannotStart() {
+        let store = GitStatusStore()
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 3))
+
+        store.invalidate(workspaceId: "ws-1")
+
+        #expect(store.gitStatus?.dirtyCount == 3, "Invalidation should not blank the context bar")
+        #expect(store.isLoading == false)
+    }
+
+    @Test func invalidationWithDisabledGitClearsVisibleStatus() {
+        let store = GitStatusStore()
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 3))
+
+        store.invalidate(workspaceId: "ws-1", gitStatusEnabled: false)
+
+        #expect(store.gitStatus == nil)
+        #expect(store.isLoading == false)
+    }
+
     @Test func pushAfterResetIsIgnored() {
         let store = GitStatusStore()
         store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)

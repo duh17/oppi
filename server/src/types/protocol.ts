@@ -281,6 +281,98 @@ export interface ExtensionUIWorkingIndicator {
   intervalMs?: number;
 }
 
+// ─── Global App Event Stream Messages ───
+
+export type AppEventSessionLifecycleType =
+  | "session_created"
+  | "session_imported"
+  | "session_discovered";
+
+export interface AppEventBase {
+  type: string;
+  emittedAt: number;
+}
+
+export interface AppEventSessionBase extends AppEventBase {
+  sessionId: string;
+  workspaceId?: string;
+}
+
+export type AppEventMessage =
+  | {
+      type: "app_events_connected";
+      serverTime: number;
+      snapshotRequired: true;
+    }
+  | (AppEventSessionBase & {
+      type: AppEventSessionLifecycleType;
+      summary: SessionSummary;
+    })
+  | (AppEventSessionBase & {
+      type: "session_summary";
+      summary: SessionSummary;
+    })
+  | (AppEventSessionBase & {
+      type: "session_deleted";
+    })
+  | (AppEventSessionBase & {
+      type: "session_ended";
+      reason: string;
+    })
+  | (AppEventSessionBase & {
+      type: "stop_requested" | "stop_confirmed" | "stop_failed";
+      source?: string;
+      reason?: string;
+    })
+  | (AppEventSessionBase & {
+      type: "session_error";
+      message: string;
+      code?: string;
+      fatal?: boolean;
+    })
+  | (AppEventSessionBase & {
+      type: "extension_ui_request";
+      id: string;
+      method: string;
+      title?: string;
+      options?: string[];
+      message?: string;
+      placeholder?: string;
+      prefill?: string;
+      timeout?: number;
+      timeoutAt?: number;
+      questions?: AskQuestion[];
+      allowCustom?: boolean;
+    })
+  | (AppEventSessionBase & {
+      type: "extension_ui_notification";
+      method: string;
+      message?: string;
+      notifyType?: ExtensionUINotifyType;
+      statusKey?: string;
+      statusText?: string;
+      title?: string;
+      text?: string;
+      widgetKey?: string;
+      widgetLines?: string[];
+      widgetPlacement?: ExtensionUIWidgetPlacement;
+      nativeSurface?: ExtensionUINativeSurface;
+      workingIndicator?: ExtensionUIWorkingIndicator;
+      workingVisible?: boolean;
+      hiddenThinkingLabel?: string;
+      toolsExpanded?: boolean;
+    })
+  | (AppEventSessionBase & {
+      type: "extension_ui_settled";
+      id: string;
+    })
+  | (AppEventBase & {
+      type: "workspace_git_changed";
+      workspaceId: string;
+      sessionId?: string;
+      reason?: string;
+    });
+
 // Server → Client
 export type ServerMessage = // ── Connection ──
   (

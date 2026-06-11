@@ -905,7 +905,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         }
         ctx.storage.saveSession(existingSession);
         invalidateLocalSessionsCache();
-        helpers.json(res, { session: ctx.ensureSessionContextWindow(existingSession) });
+        const hydratedExisting = ctx.ensureSessionContextWindow(existingSession);
+        ctx.appEvents?.emitSessionImported(hydratedExisting);
+        helpers.json(res, { session: hydratedExisting });
         return;
       }
 
@@ -938,6 +940,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       invalidateLocalSessionsCache();
 
       const hydrated = ctx.ensureSessionContextWindow(session);
+      ctx.appEvents?.emitSessionImported(hydrated);
       helpers.json(res, { session: hydrated }, 201);
       return;
     }
@@ -958,6 +961,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session.thinkingLevel = body.thinking;
     }
     ctx.storage.saveSession(session);
+    ctx.appEvents?.emitSessionCreated(ctx.ensureSessionContextWindow(session));
 
     // ── Optional prompt: auto-resume + send first message ──
     const prompt = body.prompt?.trim();
@@ -980,6 +984,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         });
         session.firstMessage = prompt.slice(0, 200);
         ctx.storage.saveSession(session);
+        ctx.appEvents?.emitSessionSummary(ctx.ensureSessionContextWindow(session));
       } catch (_err: unknown) {
         // Session was created but prompt delivery failed — return it
         // with prompted: false so the client knows to retry or send manually.
@@ -1248,7 +1253,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const created = ctx.storage.getSession(forkSession.id) || forkSession;
-    helpers.json(res, { session: ctx.ensureSessionContextWindow(created) }, 201);
+    const hydratedCreated = ctx.ensureSessionContextWindow(created);
+    ctx.appEvents?.emitSessionCreated(hydratedCreated);
+    helpers.json(res, { session: hydratedCreated }, 201);
   }
 
   async function handleStopSession(
@@ -1260,7 +1267,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (!session) return;
 
     const hydratedSession = ctx.ensureSessionContextWindow(session);
+    let storedStopOnly = false;
     const markStoredSessionStopped = (reason?: string): void => {
+      storedStopOnly = true;
       const stoppedAt = Date.now();
       hydratedSession.status = "stopped";
       hydratedSession.currentTurnStartedAt = undefined;
@@ -1308,6 +1317,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const hydratedUpdated = updatedSession
       ? ctx.ensureSessionContextWindow(updatedSession)
       : updatedSession;
+    if (storedStopOnly && hydratedUpdated) {
+      ctx.appEvents?.emitStopConfirmed(hydratedUpdated, "user");
+    }
     helpers.json(res, { ok: true, session: hydratedUpdated });
   }
 
@@ -1705,6 +1717,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       ctx.storage.getDataDir(),
       sessionId,
     );
+    ctx.appEvents?.emitSessionDeleted(session);
 
     helpers.json(res, {
       ok: true,
