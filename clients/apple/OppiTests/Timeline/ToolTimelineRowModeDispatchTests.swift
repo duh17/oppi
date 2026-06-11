@@ -821,6 +821,39 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(label.isHidden, "Label should be hidden in markdown mode")
     }
 
+    @Test func cellReuseFromCompactVideoToTextRestoresLabelViewport() throws {
+        let videoConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .readMedia(
+                output: "Read video file [video/mp4]",
+                filePath: "clips/demo.mp4",
+                startLine: 1,
+                attachments: []
+            ),
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: videoConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let compactHost = try #require(privateView(named: "compactHostedSurfaceHostView", in: view))
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        #expect(!compactHost.isHidden, "Video read-media should start in the compact hosted surface")
+        #expect(expandedScrollView.isHidden, "Compact video rows should hide the expanded scroll viewport")
+
+        let textConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
+            expandedContent: .text(text: "Plain follow-up result", language: nil),
+            isExpanded: true
+        )
+        view.configuration = textConfig
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view))
+        #expect(compactHost.isHidden, "Reusing a compact video row for text should hide the stale compact host")
+        #expect(!expandedScrollView.isHidden, "Text reuse should restore the expanded scroll viewport")
+        #expect(!label.isHidden, "Text reuse should show the expanded label")
+    }
+
     @Test func cellReuseFromCodeToHostedPlotResetsLabelWidthPriority() throws {
         // Code → plot (hosted view) also needs label width reset
         let longCodeLine = String(repeating: "0123456789abcdef", count: 32)

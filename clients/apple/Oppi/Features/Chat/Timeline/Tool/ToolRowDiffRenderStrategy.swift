@@ -13,7 +13,8 @@ struct ToolRowDiffRenderStrategy {
         previousAutoFollow: Bool,
         isCurrentModeDiff: Bool,
         wasExpandedVisible: Bool,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        viewportPolicy: ToolRowViewportPolicy = .diff
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.diffSignature(
             lines: lines, path: path, isStreaming: isStreaming
@@ -111,8 +112,7 @@ struct ToolRowDiffRenderStrategy {
             renderSignature: shouldRerender ? signature : previousSignature,
             renderedText: renderedText,
             shouldAutoFollow: autoFollow,
-            surface: .label,
-            viewportMode: .diff,
+            viewportPolicy: viewportPolicy,
             verticalLock: !isStreaming,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byClipping,

@@ -17,7 +17,8 @@ struct ToolRowTextRenderStrategy {
         isCurrentModeText: Bool,
         isUsingMarkdownLayout: Bool,
         isUsingReadMediaLayout: Bool,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        viewportPolicy: ToolRowViewportPolicy = .text
     ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let signature = ToolTimelineRowRenderMetrics.textSignature(
@@ -115,8 +116,7 @@ struct ToolRowTextRenderStrategy {
             renderSignature: shouldRerender ? signature : previousSignature,
             renderedText: renderedText,
             shouldAutoFollow: autoFollow,
-            surface: .label,
-            viewportMode: .text,
+            viewportPolicy: viewportPolicy,
             verticalLock: false,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byCharWrapping,

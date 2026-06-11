@@ -23,9 +23,11 @@ import {
   type AgentSessionEvent,
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
+  type ExtensionContext,
   type ExtensionFactory,
   type ResourceDiagnostic,
   type Skill,
+  type ToolDefinition,
   SessionManager as PiSessionManager,
   DefaultResourceLoader,
   AuthStorage,
@@ -36,6 +38,7 @@ import {
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
+import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import {
   BUILT_IN_EXTENSION_NAMES,
   isManagedExtensionName,
@@ -50,6 +53,27 @@ import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { Session, Workspace } from "./types.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
+type AttachmentToolExecute = ToolDefinition["execute"] & {
+  __oppiAttachmentHelperWrapped?: true;
+};
+
+type AttachmentAddFileInput = {
+  path: string;
+  kind?: SessionAttachmentKind;
+  mimeType?: string;
+  fileName?: string;
+  durationSeconds?: number;
+  width?: number;
+  height?: number;
+  text?: string;
+  deleteSource?: boolean;
+};
+
+type ExtensionContextWithAttachments = ExtensionContext & {
+  attachments: {
+    addFile(input: AttachmentAddFileInput): Record<string, unknown>;
+  };
+};
 
 function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
   switch (level) {
@@ -242,6 +266,8 @@ export interface SdkBackendConfig {
   skillPaths?: string[];
   /** Additional session-local extension factories. */
   extraExtensionFactories?: ExtensionFactory[];
+  /** Oppi server data directory for session-owned tool attachments. */
+  dataDir?: string;
   /** Operational metrics collector for SDK timing. */
   metrics?: ServerMetricCollector;
 }
@@ -347,15 +373,21 @@ export class SdkBackend {
   private readonly shutdownCleanupListeners = new Set<() => void>();
   private readonly sessionCwdExistsOverride?: string;
   private readonly sessionManagerDisplayCwd?: string;
+  private readonly oppiSessionId: string;
+  private readonly dataDir?: string;
   private disposed = false;
 
   private constructor(
     runtime: AgentSessionRuntime,
     emitEvent: (event: SessionBackendEvent) => void,
+    oppiSessionId: string,
+    dataDir?: string,
     cwdOverrides?: { existsCwd: string; displayCwd: string },
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
+    this.oppiSessionId = oppiSessionId;
+    this.dataDir = dataDir;
     this.sessionCwdExistsOverride = cwdOverrides?.existsCwd;
     this.sessionManagerDisplayCwd = cwdOverrides?.displayCwd;
     this.uiBridge = new SdkUiBridge(emitEvent, () => this.disposed);
@@ -656,6 +688,8 @@ export class SdkBackend {
     const backend = new SdkBackend(
       runtime,
       onEvent,
+      session.id,
+      config.dataDir,
       sandboxMode ? { existsCwd: runtimeAssertCwd, displayCwd: initialCwd } : undefined,
     );
 
@@ -706,6 +740,74 @@ export class SdkBackend {
         this.emitEvent(event);
       },
     });
+    this.installSessionAttachmentToolHelpers();
+  }
+
+  private installSessionAttachmentToolHelpers(): void {
+    if (!this.dataDir) return;
+
+    for (const registered of this.piSession.extensionRunner.getAllRegisteredTools()) {
+      const definition = registered.definition;
+      const currentExecute = definition.execute as AttachmentToolExecute;
+      if (currentExecute.__oppiAttachmentHelperWrapped === true) {
+        continue;
+      }
+
+      const originalExecute = currentExecute.bind(definition) as ToolDefinition["execute"];
+      const wrappedExecute: ToolDefinition["execute"] = (
+        toolCallId,
+        params,
+        signal,
+        onUpdate,
+        ctx,
+      ) => {
+        return originalExecute(
+          toolCallId,
+          params,
+          signal,
+          onUpdate,
+          this.contextWithSessionAttachments(ctx, toolCallId),
+        );
+      };
+      (wrappedExecute as AttachmentToolExecute).__oppiAttachmentHelperWrapped = true;
+      definition.execute = wrappedExecute;
+    }
+  }
+
+  private contextWithSessionAttachments(
+    ctx: ExtensionContext,
+    toolCallId: string,
+  ): ExtensionContextWithAttachments {
+    const dataDir = this.dataDir;
+    const context = Object.create(ctx) as ExtensionContextWithAttachments;
+    Object.defineProperty(context, "attachments", {
+      configurable: true,
+      enumerable: true,
+      value: {
+        addFile: (input: AttachmentAddFileInput): Record<string, unknown> => {
+          if (!dataDir) {
+            throw new Error("Oppi session attachment storage is unavailable");
+          }
+          return addSessionAttachmentFile({
+            dataDir,
+            sessionId: this.oppiSessionId,
+            toolCallId,
+            path: input.path,
+            ...(input.kind !== undefined ? { kind: input.kind } : {}),
+            ...(input.mimeType !== undefined ? { mimeType: input.mimeType } : {}),
+            ...(input.fileName !== undefined ? { fileName: input.fileName } : {}),
+            ...(input.durationSeconds !== undefined
+              ? { durationSeconds: input.durationSeconds }
+              : {}),
+            ...(input.width !== undefined ? { width: input.width } : {}),
+            ...(input.height !== undefined ? { height: input.height } : {}),
+            ...(input.text !== undefined ? { text: input.text } : {}),
+            ...(input.deleteSource !== undefined ? { deleteSource: input.deleteSource } : {}),
+          });
+        },
+      },
+    });
+    return context;
   }
 
   private async refreshRuntimeSessionBindings(): Promise<void> {
@@ -734,6 +836,7 @@ export class SdkBackend {
     }
 
     await this.piSession.reload();
+    this.installSessionAttachmentToolHelpers();
     return { success: true };
   }
 

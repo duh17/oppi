@@ -13,7 +13,8 @@ struct ToolRowMarkdownRenderStrategy {
         isUsingMarkdownViewportLayout: Bool,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
-        textSelectionEnabled: Bool
+        textSelectionEnabled: Bool,
+        viewportPolicy: ToolRowViewportPolicy
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text, isStreaming: isStreaming)
         let shouldRerender = signature != previousSignature
@@ -45,8 +46,7 @@ struct ToolRowMarkdownRenderStrategy {
             renderSignature: shouldRerender ? signature : previousSignature,
             renderedText: text,
             shouldAutoFollow: autoFollow,
-            surface: .markdownViewport,
-            viewportMode: .text,
+            viewportPolicy: viewportPolicy,
             verticalLock: false,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byCharWrapping,

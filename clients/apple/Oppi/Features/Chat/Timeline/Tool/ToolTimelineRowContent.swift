@@ -102,7 +102,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     static let maxExpandedViewportHeight: CGFloat = 620
     static let maxOutputViewportHeight: CGFloat = maxExpandedViewportHeight
     static let maxDiffViewportHeight: CGFloat = maxExpandedViewportHeight
-    private static let maxExtensionMarkdownViewportHeight: CGFloat = 480
     /// Fixed viewport height used during streaming. The cell height stays
     /// constant while content grows inside, eliminating the nested-scroll
     /// invalidation cascade (inner content resize → cell height change →
@@ -185,6 +184,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     var expandedUsesMarkdownLayout = false
     var expandedUsesReadMediaLayout = false
     private var expandedReadMediaContentView: UIView?
+    private var activeExpandedViewportPolicy: ToolRowViewportPolicy?
     private var expandedReadMediaViewportHeightConstraint: NSLayoutConstraint?
     private var expandedMarkdownViewportDoubleTapGesture: UITapGestureRecognizer?
     /// Tracks which base64 image is currently being decoded / displayed.
@@ -341,7 +341,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if bashToolRowView.outputUsesViewport,
            let outputViewportHeightConstraint = bashToolRowView.outputViewportHeightConstraint {
-            let mode: ViewportMode = .output
+            let outputPolicy = ToolRowViewportPolicy.bashOutput
+            let mode = outputPolicy.viewportCalculatorMode
             if isStreaming {
                 outputViewportHeightConstraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
                     for: mode, geometry: geometry
@@ -372,84 +373,141 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             }
         }
 
+        if let policy = activeExpandedViewportPolicy,
+           !policy.usesExpandedViewport,
+           let expandedViewportHeightConstraint {
+            expandedViewportHeightConstraint.constant = compactExpandedViewportHeight(for: policy)
+            return
+        }
+
         if expandedUsesViewport,
            let expandedViewportHeightConstraint {
-            if isVoiceMessageExpandedContent(currentConfiguration), expandedUsesReadMediaLayout {
-                let width = max(100, expandedContainer.bounds.width)
-                let measurementView = expandedReadMediaContentView ?? expandedReadMediaContainer
-                let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
-                    for: measurementView,
-                    width: width
-                )
-                expandedViewportHeightConstraint.constant = min(150, max(72, measured))
-                return
-            }
+            let policy = activeExpandedViewportPolicy ?? fallbackExpandedViewportPolicy()
+            updateExpandedViewportHeight(
+                expandedViewportHeightConstraint,
+                policy: policy,
+                isStreaming: isStreaming,
+                geometry: geometry
+            )
+        }
+    }
 
-            let mode: ViewportMode = switch expandedViewportMode {
-            case .diff: .expandedDiff
-            case .code: .expandedCode
-            case .text, .none: .expandedText
-            }
+    private func updateExpandedViewportHeight(
+        _ constraint: NSLayoutConstraint,
+        policy: ToolRowViewportPolicy,
+        isStreaming: Bool,
+        geometry: ToolRowViewportCalculator.GeometryContext
+    ) {
+        switch policy.heightBehavior {
+        case .voiceReadMedia(let minHeight, let maxHeight):
+            constraint.constant = measuredHostedReadMediaHeight(minHeight: minHeight, maxHeight: maxHeight)
+
+        case .compactMeasured:
+            constraint.constant = compactExpandedViewportHeight(for: policy)
+
+        case .markdownViewport(let maxHeight):
+            let mode = policy.viewportCalculatorMode
             if isStreaming {
-                expandedViewportHeightConstraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
-                    for: mode, geometry: geometry
+                constraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                    for: mode,
+                    geometry: geometry
                 )
-            } else if expandedUsesReadMediaLayout,
-                      expandedReadMediaContentView is NativeFullScreenMarkdownBody {
-                let mode: ViewportMode = .expandedText
+            } else {
                 let availableHeight = ToolRowViewportCalculator.availableViewportHeight(
                     for: mode,
                     geometry: geometry
                 )
-                let maxViewportHeight = usesCompactCustomMarkdownViewport
-                    ? Self.maxExtensionMarkdownViewportHeight
-                    : Self.maxOutputViewportHeight
                 let hasSettledWidth = bounds.width > 10 && expandedContainer.bounds.width > 10
-                let targetHeight = hasSettledWidth
-                    ? maxViewportHeight
-                    : Self.streamingViewportHeight
-                expandedViewportHeightConstraint.constant = min(availableHeight, max(mode.minHeight, targetHeight))
-            } else if expandedUsesReadMediaLayout {
-                // Read-media images should size vertically to show the whole
-                // image in the timeline. Do not clamp to the generic text
-                // viewport max; the outer timeline owns vertical scrolling.
-                let expandedContentView = expandedReadMediaContentView ?? expandedReadMediaContainer
-                let width = max(100, expandedContainer.bounds.width)
-                let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
-                    for: expandedContentView,
-                    width: width
-                )
-                expandedViewportHeightConstraint.constant = min(Self.maxValidHeight, max(Self.minOutputViewportHeight, measured))
-            } else {
-                let expandedContentView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
-                let widthBucket = Int(expandedContainer.bounds.width.rounded())
-                let signature = expandedRenderSignature
-
-                let preferredHeight = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
-                    cache: &expandedViewportHeightCache,
-                    signature: signature,
-                    widthBucket: widthBucket,
-                    mode: mode,
-                    inputBytes: expandedRenderedText?.utf8.count ?? 0,
-                    profile: currentExpandedViewportProfile,
-                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry),
-                    sessionId: perfSessionId
-                ) {
-                    ToolRowViewportCalculator.preferredViewportHeight(
-                        for: expandedContentView,
-                        in: self.expandedContainer,
-                        mode: mode,
-                        expandedScrollView: self.expandedScrollView,
-                        expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
-                        outputScrollView: self.outputScrollView,
-                        outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
-                        outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
-                        geometry: geometry
-                    )
-                }
-
-                expandedViewportHeightConstraint.constant = preferredHeight
+                let targetHeight = hasSettledWidth ? maxHeight : Self.streamingViewportHeight
+                constraint.constant = min(availableHeight, max(mode.minHeight, targetHeight))
             }
+
+        case .naturalReadMedia(let minHeight, let maxHeight):
+            if isStreaming {
+                constraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                    for: policy.viewportCalculatorMode,
+                    geometry: geometry
+                )
+            } else {
+                constraint.constant = measuredHostedReadMediaHeight(minHeight: minHeight, maxHeight: maxHeight)
+            }
+
+        case .cachedMeasured(let mode):
+            if isStreaming {
+                constraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                    for: mode,
+                    geometry: geometry
+                )
+            } else {
+                constraint.constant = cachedExpandedViewportHeight(mode: mode, geometry: geometry)
+            }
+        }
+    }
+
+    private func measuredHostedReadMediaHeight(minHeight: CGFloat, maxHeight: CGFloat) -> CGFloat {
+        let measurementView = expandedReadMediaContentView ?? expandedReadMediaContainer
+        let width = max(100, expandedContainer.bounds.width)
+        let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
+            for: measurementView,
+            width: width
+        )
+        return min(maxHeight, max(minHeight, measured))
+    }
+
+    private func compactExpandedViewportHeight(for policy: ToolRowViewportPolicy) -> CGFloat {
+        guard case .compactMeasured(let minHeight, let maxHeight) = policy.heightBehavior else {
+            return 1
+        }
+        let width = max(1, bounds.width > 0 ? bounds.width - 16 : UIScreen.main.bounds.width - 48)
+        let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
+            for: expandedReadMediaContentView ?? expandedReadMediaContainer,
+            width: width
+        )
+        let lowerBounded = max(minHeight, ceil(measured))
+        guard let maxHeight else { return lowerBounded }
+        return min(maxHeight, lowerBounded)
+    }
+
+    private func cachedExpandedViewportHeight(
+        mode: ViewportMode,
+        geometry: ToolRowViewportCalculator.GeometryContext
+    ) -> CGFloat {
+        let expandedContentView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
+        let widthBucket = Int(expandedContainer.bounds.width.rounded())
+        let signature = expandedRenderSignature
+
+        return ToolTimelineRowLayoutPerformance.resolveViewportHeight(
+            cache: &expandedViewportHeightCache,
+            signature: signature,
+            widthBucket: widthBucket,
+            mode: mode,
+            inputBytes: expandedRenderedText?.utf8.count ?? 0,
+            profile: currentExpandedViewportProfile,
+            availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry),
+            sessionId: perfSessionId
+        ) {
+            ToolRowViewportCalculator.preferredViewportHeight(
+                for: expandedContentView,
+                in: self.expandedContainer,
+                mode: mode,
+                expandedScrollView: self.expandedScrollView,
+                expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
+                outputScrollView: self.outputScrollView,
+                outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
+                outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
+                geometry: geometry
+            )
+        }
+    }
+
+    private func fallbackExpandedViewportPolicy() -> ToolRowViewportPolicy {
+        switch expandedViewportMode {
+        case .diff:
+            return .diff
+        case .code:
+            return .code
+        case .text, .none:
+            return .text
         }
     }
 
@@ -503,13 +561,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var currentOutputViewportProfile: ToolTimelineRowViewportProfile? {
         guard bashToolRowView.outputUsesViewport else { return nil }
         return ToolTimelineRowViewportProfile(kind: .bashOutput, text: bashToolRowView.outputRenderedText)
-    }
-
-    private var usesCompactCustomMarkdownViewport: Bool {
-        guard case .markdown = currentConfiguration.expandedContent else { return false }
-        let builtInPrefixes: Set<String> = ["$", "read", "write", "edit"]
-        guard let prefix = currentConfiguration.toolNamePrefix else { return true }
-        return !builtInPrefixes.contains(prefix)
     }
 
     private var currentExpandedViewportProfile: ToolTimelineRowViewportProfile? {
@@ -832,6 +883,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Prepare for label-based expanded content (diff, code, plain text).
     func showExpandedLabel() {
+        compactHostedSurfaceHostView.clearActiveSurface()
+        compactHostedSurfaceHostView.isHidden = true
+        expandedScrollView.isHidden = false
         expandedSurfaceHostView.activateSurfaceView(expandedLabel)
         expandedMarkdownView.isHidden = true
         expandedLabel.isHidden = false
@@ -888,14 +942,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     /// Activate the expanded viewport height constraint.
-    func showExpandedViewport() {
-        // Label and markdown viewports are the row's visible clamp. Keep that
-        // clamp required so self-sizing cells cannot expand to the full code or
-        // text content height. Read-media remains softer because image/media
-        // attachments intentionally size to their natural timeline height.
-        expandedViewportHeightConstraint?.priority = expandedUsesReadMediaLayout ? .defaultHigh : .required
+    func showExpandedViewport(policy: ToolRowViewportPolicy? = nil) {
+        let policy = policy ?? activeExpandedViewportPolicy ?? fallbackExpandedViewportPolicy()
+        expandedViewportHeightConstraint?.priority = policy.constraintPriority
         expandedViewportHeightConstraint?.isActive = true
-        expandedUsesViewport = true
+        expandedUsesViewport = policy.usesExpandedViewport
     }
 
     /// Reset expanded container to hidden/default state.
@@ -920,6 +971,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedScrollView.isScrollEnabled = false
         setExpandedVerticalLockEnabled(false)
         expandedViewportMode = .none
+        activeExpandedViewportPolicy = nil
         expandedRenderedText = nil
         expandedRenderSignature = nil
         updateExpandedLabelWidthIfNeeded()
@@ -1255,17 +1307,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func isVoiceMessageExpandedContent(_ configuration: ToolTimelineRowConfiguration) -> Bool {
-        switch configuration.expandedContent {
-        case .audioMessage:
-            return true
-        case .readMedia(_, let filePath, _, _):
-            return filePath == "Voice message"
-        case .bash, .diff, .code, .markdown, .status, .text, .none:
-            return false
-        }
-    }
-
     /// Show/hide containers based on which content is active.
     private func applyContainerVisibility(
         showExpanded: Bool,
@@ -1397,6 +1438,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         wasExpandedVisible: Bool
     ) -> ExpandedRenderOutput {
         let isStreaming = !configuration.isDone
+        let viewportPolicy = ToolRowViewportPolicy.forExpandedContent(
+            expandedContent,
+            toolNamePrefix: configuration.toolNamePrefix
+        )
 
         switch expandedContent {
         case .bash:
@@ -1415,7 +1460,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousAutoFollow: expandedShouldAutoFollow,
                 isCurrentModeDiff: expandedViewportMode == .diff,
                 wasExpandedVisible: wasExpandedVisible,
-                sessionId: perfSessionId
+                sessionId: perfSessionId,
+                viewportPolicy: viewportPolicy
             )
 
         case .code(let text, let language, let startLine, _):
@@ -1431,7 +1477,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousAutoFollow: expandedShouldAutoFollow,
                 isCurrentModeCode: expandedViewportMode == .code,
                 wasExpandedVisible: wasExpandedVisible,
-                sessionId: perfSessionId
+                sessionId: perfSessionId,
+                viewportPolicy: viewportPolicy
             )
 
         case .markdown(let text):
@@ -1458,7 +1505,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     && expandedReadMediaContentView is NativeFullScreenMarkdownBody,
                 reviewCommentSelectionRouter: markdownSelectionEnabled ? reviewCommentSelectionRouter : nil,
                 reviewCommentSourceContext: markdownSelectionEnabled ? reviewCommentSourceContext : nil,
-                textSelectionEnabled: markdownSelectionEnabled
+                textSelectionEnabled: markdownSelectionEnabled,
+                viewportPolicy: viewportPolicy
             )
 
         case .readMedia(let output, let filePath, let startLine, let attachments):
@@ -1474,7 +1522,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 hasSessionFileMediaSourceProvider: configuration.sessionFileMediaSourceProvider != nil,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
+                hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
+                viewportPolicy: viewportPolicy
             )
 
         case .audioMessage(let text, let attachmentId, let mimeType, _, let playbackBehavior):
@@ -1487,8 +1536,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 renderSignature: hasher.finalize(),
                 renderedText: trimmedText,
                 shouldAutoFollow: false,
-                surface: trimmedText.isEmpty ? .label : .compactHostedView,
-                viewportMode: .text,
+                viewportPolicy: viewportPolicy,
                 verticalLock: false,
                 scrollBehavior: .preserve,
                 lineBreakMode: .byWordWrapping,
@@ -1514,7 +1562,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isCurrentModeText: expandedViewportMode == .text,
                 isUsingMarkdownLayout: expandedUsesMarkdownLayout,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                sessionId: perfSessionId
+                sessionId: perfSessionId,
+                viewportPolicy: viewportPolicy
             )
 
         case .text(let text, let language):
@@ -1533,7 +1582,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isCurrentModeText: expandedViewportMode == .text,
                 isUsingMarkdownLayout: expandedUsesMarkdownLayout,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                sessionId: perfSessionId
+                sessionId: perfSessionId,
+                viewportPolicy: viewportPolicy
             )
         }
     }
@@ -1581,6 +1631,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = output.renderSignature
         expandedRenderedText = output.renderedText
         expandedShouldAutoFollow = output.shouldAutoFollow
+        activeExpandedViewportPolicy = output.viewportPolicy
         expandedViewportMode = output.viewportMode
 
         expandedLabel.textContainer.lineBreakMode = output.lineBreakMode
@@ -1589,25 +1640,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         setExpandedVerticalLockEnabled(output.verticalLock)
         updateExpandedLabelWidthIfNeeded()
-        if output.surface == .markdownViewport {
-            expandedScrollView.isScrollEnabled = false
-            expandedUsesViewport = true
-            expandedViewportHeightConstraint?.priority = .required
-            expandedViewportHeightConstraint?.isActive = true
-            setExpandedContainerGestureInterceptionEnabled(true)
-        } else if output.surface == .compactHostedView {
-            expandedUsesViewport = false
-            expandedViewportHeightConstraint?.priority = .defaultHigh
-            let width = max(1, bounds.width > 0 ? bounds.width - 16 : UIScreen.main.bounds.width - 48)
-            let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
-                for: expandedReadMediaContentView ?? expandedReadMediaContainer,
-                width: width
-            )
-            expandedViewportHeightConstraint?.constant = max(1, ceil(measured))
-            expandedViewportHeightConstraint?.isActive = true
-        } else {
-            showExpandedViewport()
-        }
+        applyExpandedViewportPolicy(output.viewportPolicy)
 
         if let deferred = output.deferredHighlight {
             scheduleDeferredCodeHighlightIfNeeded(deferred, sessionId: perfSessionId)
@@ -1624,6 +1657,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if output.invalidateLayout {
             setNeedsLayout()
             ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
+    }
+
+    private func applyExpandedViewportPolicy(_ policy: ToolRowViewportPolicy) {
+        if policy.usesExpandedViewport {
+            showExpandedViewport(policy: policy)
+        } else {
+            expandedUsesViewport = false
+            expandedViewportHeightConstraint?.priority = policy.constraintPriority
+            expandedViewportHeightConstraint?.constant = compactExpandedViewportHeight(for: policy)
+            expandedViewportHeightConstraint?.isActive = true
+        }
+
+        if policy.surface == .markdownViewport {
+            expandedScrollView.isScrollEnabled = false
+            setExpandedContainerGestureInterceptionEnabled(true)
         }
     }
 

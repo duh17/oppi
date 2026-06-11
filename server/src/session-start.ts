@@ -66,6 +66,7 @@ export class SessionStartCoordinator {
           skillPaths,
           extraExtensionFactories:
             extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
+          dataDir: this.deps.storage.getDataDir(),
           metrics: this.deps.metrics,
         });
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
