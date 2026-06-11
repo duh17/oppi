@@ -588,6 +588,55 @@ describe("SessionAgentEventCoordinator", () => {
     expect(toolEnd?.details?.image?.sha256).toEqual(expect.any(String));
   });
 
+  it("materializes final details.media video entries and strips base64 before broadcast", () => {
+    const active = makeActiveSession();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-agent-events-"));
+    tempDirs.push(dataDir);
+    const { broadcast, coordinator } = makeCoordinator(active, { dataDir });
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "video-tool-1",
+      toolName: "browser_automation_video",
+      result: {
+        content: [{ type: "text", text: "Recorded browser run" }],
+        details: {
+          media: [
+            {
+              kind: "video",
+              mimeType: "video/mp4",
+              base64: Buffer.from("mp4-video").toString("base64"),
+              fileName: "browser-run.mp4",
+            },
+          ],
+        },
+      },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+
+    const toolEnd = broadcast.mock.calls
+      .map(([, message]) => message)
+      .find((message) => message.type === "tool_end") as
+      | {
+          details?: {
+            media?: Array<{
+              id?: string;
+              kind?: string;
+              storageKey?: string;
+              base64?: string;
+              path?: string;
+            }>;
+          };
+        }
+      | undefined;
+
+    expect(toolEnd?.details?.media?.[0]?.id).toContain("att_video-tool-1_");
+    expect(toolEnd?.details?.media?.[0]?.kind).toBe("video");
+    expect(toolEnd?.details?.media?.[0]?.storageKey).toContain("child-1/");
+    expect(toolEnd?.details?.media?.[0]?.base64).toBeUndefined();
+    expect(toolEnd?.details?.media?.[0]?.path).toBeUndefined();
+  });
+
   it("materializes session attachments for any tool that returns audio details", () => {
     const active = makeActiveSession();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-agent-events-"));

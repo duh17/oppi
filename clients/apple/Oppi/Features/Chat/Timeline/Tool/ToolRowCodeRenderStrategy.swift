@@ -22,7 +22,8 @@ struct ToolRowCodeRenderStrategy {
         previousAutoFollow: Bool,
         isCurrentModeCode: Bool,
         wasExpandedVisible: Bool,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        viewportPolicy: ToolRowViewportPolicy = .code
     ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let resolvedStartLine = startLine ?? 1
@@ -136,8 +137,7 @@ struct ToolRowCodeRenderStrategy {
             renderSignature: shouldRerender ? signature : previousSignature,
             renderedText: renderedText,
             shouldAutoFollow: autoFollow,
-            surface: .label,
-            viewportMode: .code,
+            viewportPolicy: viewportPolicy,
             verticalLock: !isStreaming,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byClipping,

@@ -5,6 +5,183 @@ import UIKit
 @Suite("Tool timeline row viewport policy")
 @MainActor
 struct ToolTimelineRowViewportPolicyTests {
+    @Test func expandedContentViewportPoliciesCoverEveryContentType() {
+        struct PolicyCase {
+            let name: String
+            let content: ToolPresentationBuilder.ToolExpandedContent
+            let toolNamePrefix: String?
+            let expectedSurface: ExpandedRenderOutput.ExpandedSurface
+            let expectedMode: ToolTimelineRowContentView.ExpandedViewportMode
+            let expectedHeightBehavior: ToolRowViewportPolicy.HeightBehavior
+            let expectedPriority: UILayoutPriority
+        }
+
+        let videoAttachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "video",
+            id: "video-1",
+            mimeType: "video/mp4",
+            fileName: "demo.mp4",
+            sizeBytes: nil,
+            width: nil,
+            height: nil
+        )
+
+        let cases: [PolicyCase] = [
+            PolicyCase(
+                name: "bash output",
+                content: .bash(command: "echo hi", output: "hi", unwrapped: true),
+                toolNamePrefix: "$",
+                expectedSurface: .label,
+                expectedMode: .text,
+                expectedHeightBehavior: .cachedMeasured(mode: .output),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "diff",
+                content: .diff(lines: [DiffLine(kind: .added, text: "let x = 1")], path: "App.swift"),
+                toolNamePrefix: "edit",
+                expectedSurface: .label,
+                expectedMode: .diff,
+                expectedHeightBehavior: .cachedMeasured(mode: .expandedDiff),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "code",
+                content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "App.swift"),
+                toolNamePrefix: "read",
+                expectedSurface: .label,
+                expectedMode: .code,
+                expectedHeightBehavior: .cachedMeasured(mode: .expandedCode),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "built-in markdown",
+                content: .markdown(text: "# Notes"),
+                toolNamePrefix: "read",
+                expectedSurface: .markdownViewport,
+                expectedMode: .text,
+                expectedHeightBehavior: .markdownViewport(maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "extension markdown",
+                content: .markdown(text: "# Extension Notes"),
+                toolNamePrefix: "extension.notes",
+                expectedSurface: .markdownViewport,
+                expectedMode: .text,
+                expectedHeightBehavior: .markdownViewport(maxHeight: ToolRowViewportPolicy.maxExtensionMarkdownViewportHeight),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "image read media",
+                content: .readMedia(output: "data:image/png;base64,abc", filePath: "image.png", startLine: 1, attachments: []),
+                toolNamePrefix: "read",
+                expectedSurface: .hostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .naturalReadMedia(
+                    minHeight: ToolTimelineRowContentView.minOutputViewportHeight,
+                    maxHeight: ToolRowViewportPolicy.maxNaturalReadMediaHeight
+                ),
+                expectedPriority: .defaultHigh
+            ),
+            PolicyCase(
+                name: "video read media",
+                content: .readMedia(output: "Read video file [video/mp4]", filePath: "demo.mp4", startLine: 1, attachments: [videoAttachment]),
+                toolNamePrefix: "read",
+                expectedSurface: .compactHostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "voice read media compatibility",
+                content: .readMedia(output: "Voice message", filePath: "Voice message", startLine: 1, attachments: []),
+                toolNamePrefix: "voice_speak",
+                expectedSurface: .hostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .voiceReadMedia(
+                    minHeight: ToolRowViewportPolicy.minVoiceReadMediaHeight,
+                    maxHeight: ToolRowViewportPolicy.maxVoiceReadMediaHeight
+                ),
+                expectedPriority: .defaultHigh
+            ),
+            PolicyCase(
+                name: "audio message",
+                content: .audioMessage(text: "spoken reply", attachmentId: "audio-1", mimeType: "audio/wav", durationSeconds: 1.0, playbackBehavior: nil),
+                toolNamePrefix: "voice_speak",
+                expectedSurface: .compactHostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "status",
+                content: .status(message: "Running…"),
+                toolNamePrefix: nil,
+                expectedSurface: .label,
+                expectedMode: .text,
+                expectedHeightBehavior: .cachedMeasured(mode: .expandedText),
+                expectedPriority: .required
+            ),
+            PolicyCase(
+                name: "text",
+                content: .text(text: "plain output", language: nil),
+                toolNamePrefix: "extension.notes",
+                expectedSurface: .label,
+                expectedMode: .text,
+                expectedHeightBehavior: .cachedMeasured(mode: .expandedText),
+                expectedPriority: .required
+            ),
+        ]
+
+        for testCase in cases {
+            let policy = ToolRowViewportPolicy.forExpandedContent(
+                testCase.content,
+                toolNamePrefix: testCase.toolNamePrefix
+            )
+            #expect(policy.surface == testCase.expectedSurface, "Surface mismatch for \(testCase.name)")
+            #expect(policy.viewportMode == testCase.expectedMode, "Viewport mode mismatch for \(testCase.name)")
+            #expect(policy.heightBehavior == testCase.expectedHeightBehavior, "Height behavior mismatch for \(testCase.name)")
+            #expect(policy.constraintPriority == testCase.expectedPriority, "Priority mismatch for \(testCase.name)")
+        }
+    }
+
+    @Test func readMediaFactsDistinguishConcreteMediaTypes() {
+        let imageAttachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "image-1",
+            mimeType: "image/png",
+            fileName: "preview.png",
+            sizeBytes: nil,
+            width: nil,
+            height: nil
+        )
+        let videoFacts = ToolRowViewportPolicy.readMediaFacts(
+            output: "Read video file [video/mp4]",
+            filePath: "clip.mp4",
+            attachments: []
+        )
+        let mixedFacts = ToolRowViewportPolicy.readMediaFacts(
+            output: "Read video file [video/mp4]",
+            filePath: "clip.mp4",
+            attachments: [imageAttachment]
+        )
+        let svgFacts = ToolRowViewportPolicy.readMediaFacts(
+            output: "<svg viewBox=\"0 0 10 10\"></svg>",
+            filePath: "chart.svg",
+            attachments: []
+        )
+
+        #expect(videoFacts.hasVideo)
+        #expect(videoFacts.shouldUseCompactVideoLauncher)
+        #expect(mixedFacts.hasVideo)
+        #expect(mixedFacts.hasImage)
+        #expect(!mixedFacts.shouldUseCompactVideoLauncher)
+        #expect(svgFacts.hasImage)
+        #expect(svgFacts.hasInlineImage)
+        #expect(!svgFacts.shouldUseCompactVideoLauncher)
+    }
+
     @Test func bucketedCodeViewportSkipsMeasurementClosure() {
         var cache = ToolTimelineRowViewportHeightCache()
         var measured = false

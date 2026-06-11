@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  addSessionAttachmentFile,
   getSessionAttachment,
   materializeToolAudioDetails,
   materializeToolMediaContentBlocks,
@@ -146,12 +147,7 @@ describe("session attachments", () => {
     const res = new MockWritableResponse();
     const finished = once(res, "finish");
 
-    streamSessionAttachment(
-      attachment!,
-      makeIncoming(),
-      res as unknown as ServerResponse,
-      "HEAD",
-    );
+    streamSessionAttachment(attachment!, makeIncoming(), res as unknown as ServerResponse, "HEAD");
     await finished;
 
     expect(res.statusCode).toBe(200);
@@ -469,6 +465,174 @@ describe("session attachments", () => {
     expect(details.image.id).toBeUndefined();
     expect(details.image.path).toBeUndefined();
     expect(sessionAttachmentMediaDetailsForToolCall(root, "s-path", "tool-path")).toEqual([]);
+  });
+
+  it("adds a video file as a session attachment for details.media", async () => {
+    const videoPath = join(root, "browser-run.mp4");
+    const bytes = Buffer.from("mp4-video-bytes");
+    await writeFile(videoPath, bytes);
+
+    const video = addSessionAttachmentFile({
+      dataDir: root,
+      sessionId: "s-video-add-file",
+      toolCallId: "tool-video-add-file",
+      path: videoPath,
+      kind: "video",
+      mimeType: "video/mp4",
+      fileName: "browser-run.mp4",
+      durationSeconds: 2.5,
+      width: 640,
+      height: 360,
+    }) as { id: string; kind: string; mimeType: string; width?: number; height?: number };
+
+    expect(video.id).toContain("att_tool-video-add-file_");
+    expect(video.kind).toBe("video");
+    expect(video.mimeType).toBe("video/mp4");
+    expect(video.width).toBe(640);
+    expect(video.height).toBe(360);
+
+    const media = sessionAttachmentMediaDetailsForToolCall(
+      root,
+      "s-video-add-file",
+      "tool-video-add-file",
+    );
+    expect(media[0]?.kind).toBe("video");
+    expect(media[0]?.width).toBe(640);
+
+    const attachment = await getSessionAttachment(root, "s-video-add-file", video.id);
+    expect(attachment ? await readFile(attachment.path) : null).toEqual(bytes);
+  });
+
+  it("materializes video entries from details.media and strips inline bytes", async () => {
+    const bytes = Buffer.from("mp4-inline-video");
+    const details = materializeToolMediaDetails({
+      dataDir: root,
+      sessionId: "s-video-media",
+      toolCallId: "tool-video-media",
+      details: {
+        message: "Recorded browser run",
+        media: [
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            base64: bytes.toString("base64"),
+            fileName: "recording.mp4",
+            durationSeconds: 1.25,
+          },
+        ],
+      },
+    }) as { media: Array<{ id?: string; base64?: string; path?: string; kind?: string }> };
+
+    expect(details.media[0]?.id).toContain("att_tool-video-media_");
+    expect(details.media[0]?.kind).toBe("video");
+    expect(details.media[0]?.base64).toBeUndefined();
+    expect(details.media[0]?.path).toBeUndefined();
+
+    const replayed = sessionAttachmentDetailsForToolCall(
+      root,
+      "s-video-media",
+      "tool-video-media",
+      {
+        media: [
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            base64: bytes.toString("base64"),
+            fileName: "recording.mp4",
+          },
+        ],
+      },
+    ) as { media: Array<{ id?: string; base64?: string; path?: string; kind?: string }> };
+    expect(replayed.media[0]?.id).toBe(details.media[0]?.id);
+    expect(replayed.media[0]?.base64).toBeUndefined();
+
+    const attachment = await getSessionAttachment(root, "s-video-media", details.media[0]!.id!);
+    expect(attachment ? await readFile(attachment.path) : null).toEqual(bytes);
+  });
+
+  it("does not materialize video entries from arbitrary server paths", async () => {
+    const outsidePath = join(root, "outside.mp4");
+    await writeFile(outsidePath, Buffer.from("secret-video"));
+
+    const details = materializeToolMediaDetails({
+      dataDir: root,
+      sessionId: "s-video-path",
+      toolCallId: "tool-video-path",
+      details: {
+        media: [
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            path: outsidePath,
+            fileName: "outside.mp4",
+          },
+        ],
+      },
+    }) as { media: Array<{ id?: string; path?: string }> };
+
+    expect(details.media[0]?.id).toBeUndefined();
+    expect(details.media[0]?.path).toBeUndefined();
+    expect(
+      sessionAttachmentMediaDetailsForToolCall(root, "s-video-path", "tool-video-path"),
+    ).toEqual([]);
+  });
+
+  it("does not replay an invalid media array entry as another same-kind attachment", async () => {
+    const validBytes = Buffer.from("valid-video");
+    const outsidePath = join(root, "outside-replay.mp4");
+    await writeFile(outsidePath, Buffer.from("outside-video"));
+
+    const materialized = materializeToolMediaDetails({
+      dataDir: root,
+      sessionId: "s-video-replay-array",
+      toolCallId: "tool-video-replay-array",
+      details: {
+        media: [
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            base64: validBytes.toString("base64"),
+            fileName: "valid.mp4",
+          },
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            path: outsidePath,
+            fileName: "outside.mp4",
+          },
+        ],
+      },
+    }) as { media: Array<{ id?: string; path?: string; kind?: string }> };
+
+    expect(materialized.media[0]?.id).toContain("att_tool-video-replay-array_");
+    expect(materialized.media[1]?.id).toBeUndefined();
+    expect(materialized.media[1]?.path).toBeUndefined();
+
+    const replayed = sessionAttachmentDetailsForToolCall(
+      root,
+      "s-video-replay-array",
+      "tool-video-replay-array",
+      {
+        media: [
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            id: materialized.media[0]?.id,
+            fileName: "valid.mp4",
+          },
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            path: outsidePath,
+            fileName: "outside.mp4",
+          },
+        ],
+      },
+    ) as { media: Array<{ id?: string; path?: string; kind?: string }> };
+
+    expect(replayed.media[0]?.id).toBe(materialized.media[0]?.id);
+    expect(replayed.media[1]?.id).toBeUndefined();
+    expect(replayed.media[1]?.path).toBeUndefined();
   });
 
   it("sanitizes legacy trace details when the manifest is missing", () => {

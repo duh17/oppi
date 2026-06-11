@@ -16,15 +16,18 @@ export function hasToolMediaDetails(details: unknown): boolean {
   if (!details || typeof details !== "object" || Array.isArray(details)) {
     return false;
   }
-  const root = details as { audio?: unknown; image?: unknown };
-  return [root.audio, root.image].some((media) =>
+  const root = details as { audio?: unknown; image?: unknown; media?: unknown };
+  const isMedia = (media: unknown): boolean =>
     Boolean(
       media &&
       typeof media === "object" &&
       !Array.isArray(media) &&
-      ((media as { kind?: unknown }).kind === "audio" ||
-        (media as { kind?: unknown }).kind === "image"),
-    ),
+      (["audio", "image", "video"] as unknown[]).includes((media as { kind?: unknown }).kind),
+    );
+
+  return (
+    [root.audio, root.image].some(isMedia) ||
+    (Array.isArray(root.media) && root.media.some(isMedia))
   );
 }
 

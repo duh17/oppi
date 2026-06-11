@@ -51,6 +51,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
   const storage = {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
+    getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
   } as unknown as Storage;
 
   const runtimeManager = {

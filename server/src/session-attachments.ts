@@ -20,8 +20,9 @@ const MANIFEST_VERSION = 1;
 const MAX_SESSION_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const DEFAULT_AUDIO_MIME_TYPE = "audio/wav";
 const DEFAULT_IMAGE_MIME_TYPE = "image/png";
+const DEFAULT_VIDEO_MIME_TYPE = "video/mp4";
 
-type SessionAttachmentKind = "audio" | "image";
+export type SessionAttachmentKind = "audio" | "image" | "video";
 
 export interface SessionAttachmentRecord {
   id: string;
@@ -50,8 +51,8 @@ export interface MaterializeToolAudioOptions {
   toolCallId?: string;
   details: unknown;
   /**
-   * Explicit roots from which server-side audio paths may be copied.
-   * When omitted, audio.path is treated as untrusted metadata and ignored.
+   * Explicit roots from which server-side media paths may be copied.
+   * When omitted, media path fields are treated as untrusted metadata and ignored.
    */
   trustedSourceRoots?: string[];
 }
@@ -62,6 +63,21 @@ export interface MaterializeToolMediaContentOptions {
   toolCallId?: string;
   contents: unknown[];
   fallbackFileName?: string;
+}
+
+export interface AddSessionAttachmentFileOptions {
+  dataDir: string;
+  sessionId: string;
+  toolCallId?: string;
+  path: string;
+  kind?: SessionAttachmentKind;
+  mimeType?: string;
+  fileName?: string;
+  durationSeconds?: number;
+  width?: number;
+  height?: number;
+  text?: string;
+  deleteSource?: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -146,13 +162,29 @@ function mimeExtension(mimeType: string, fallbackFileName?: string): string {
     case "image/vnd.microsoft.icon":
     case "image/icon":
       return "ico";
+    case "video/mp4":
+    case "application/mp4":
+      return "mp4";
+    case "video/quicktime":
+      return "mov";
+    case "video/webm":
+      return "webm";
+    case "video/x-matroska":
+      return "mkv";
     default:
       return "bin";
   }
 }
 
 function defaultFileStem(kind: SessionAttachmentKind): string {
-  return kind === "image" ? "tool-image" : "tool-audio";
+  switch (kind) {
+    case "image":
+      return "tool-image";
+    case "video":
+      return "tool-video";
+    case "audio":
+      return "tool-audio";
+  }
 }
 
 function normalizeAudioMimeType(value: unknown): string {
@@ -163,6 +195,36 @@ function normalizeAudioMimeType(value: unknown): string {
 function normalizeImageMimeType(value: unknown): string {
   const mimeType = typeof value === "string" ? value.trim().toLowerCase() : "";
   return mimeType.startsWith("image/") ? mimeType : DEFAULT_IMAGE_MIME_TYPE;
+}
+
+function normalizeVideoMimeType(value: unknown): string {
+  const mimeType = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return mimeType.startsWith("video/") || mimeType === "application/mp4"
+    ? mimeType
+    : DEFAULT_VIDEO_MIME_TYPE;
+}
+
+function normalizeMimeTypeForKind(kind: SessionAttachmentKind, value: unknown): string {
+  switch (kind) {
+    case "audio":
+      return normalizeAudioMimeType(value);
+    case "image":
+      return normalizeImageMimeType(value);
+    case "video":
+      return normalizeVideoMimeType(value);
+  }
+}
+
+function sessionAttachmentKindFromValue(value: unknown): SessionAttachmentKind | undefined {
+  return value === "audio" || value === "image" || value === "video" ? value : undefined;
+}
+
+function sessionAttachmentKindFromMimeType(value: unknown): SessionAttachmentKind | undefined {
+  const mimeType = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/") || mimeType === "application/mp4") return "video";
+  return undefined;
 }
 
 function readUInt24LE(bytes: Buffer, offset: number): number {
@@ -247,16 +309,20 @@ function base64FromMediaRecord(media: Record<string, unknown>): string | undefin
   return raw ? raw : undefined;
 }
 
+function sanitizedMediaRecord(media: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...media } as Record<string, unknown>;
+  delete sanitized.base64;
+  delete sanitized.data;
+  delete sanitized.path;
+  return sanitized;
+}
+
 function sanitizeMediaDetails(
   root: Record<string, unknown>,
   key: "audio" | "image",
   media: Record<string, unknown>,
 ): Record<string, unknown> {
-  const sanitized = { ...media } as Record<string, unknown>;
-  delete sanitized.base64;
-  delete sanitized.data;
-  delete sanitized.path;
-  return { ...root, [key]: sanitized };
+  return { ...root, [key]: sanitizedMediaRecord(media) };
 }
 
 function validDimensions(
@@ -485,6 +551,8 @@ function storeAttachment(options: {
   fileName: string;
   bytes: Buffer;
   durationSeconds?: number;
+  width?: number;
+  height?: number;
   text?: string;
 }): SessionAttachmentRecord {
   const { dataDir, sessionId, toolCallId, kind, mimeType, fileName, bytes } = options;
@@ -499,7 +567,9 @@ function storeAttachment(options: {
     writeFileSync(filePath, bytes, { mode: 0o600 });
   }
 
-  const dimensions = kind === "image" ? imageDimensions(bytes, mimeType) : undefined;
+  const detectedDimensions = kind === "image" ? imageDimensions(bytes, mimeType) : undefined;
+  const providedDimensions = validDimensions(options.width ?? 0, options.height ?? 0);
+  const dimensions = providedDimensions ?? detectedDimensions;
   const record: SessionAttachmentRecord = {
     id,
     kind,
@@ -524,6 +594,48 @@ function storeAttachment(options: {
   }
   writeManifest(dataDir, sessionId, manifest);
   return record;
+}
+
+export function addSessionAttachmentFile(
+  options: AddSessionAttachmentFileOptions,
+): Record<string, unknown> {
+  const realPath = realpathSync(options.path);
+  const info = statSync(realPath);
+  if (!info.isFile()) {
+    throw new Error("Attachment source must be a file");
+  }
+  if (info.size <= 0) {
+    throw new Error("Attachment source is empty");
+  }
+  if (info.size > MAX_SESSION_ATTACHMENT_BYTES) {
+    throw new Error(`Attachment source exceeds ${MAX_SESSION_ATTACHMENT_BYTES} bytes`);
+  }
+
+  const kind = options.kind ?? sessionAttachmentKindFromMimeType(options.mimeType);
+  if (!kind) {
+    throw new Error("Attachment kind or media MIME type is required");
+  }
+  const mimeType = normalizeMimeTypeForKind(kind, options.mimeType);
+  const bytes = readFileSync(realPath);
+  const record = storeAttachment({
+    dataDir: options.dataDir,
+    sessionId: options.sessionId,
+    toolCallId: options.toolCallId,
+    kind,
+    mimeType,
+    fileName: safeFileName(options.fileName ?? options.path, mimeType, kind),
+    bytes,
+    ...(options.durationSeconds !== undefined ? { durationSeconds: options.durationSeconds } : {}),
+    ...(options.width !== undefined ? { width: options.width } : {}),
+    ...(options.height !== undefined ? { height: options.height } : {}),
+    ...(options.text !== undefined ? { text: options.text } : {}),
+  });
+
+  if (options.deleteSource === true) {
+    rmSync(options.path, { force: true });
+  }
+
+  return attachmentDetails(record);
 }
 
 export function materializeToolAudioDetails(options: MaterializeToolAudioOptions): unknown {
@@ -594,6 +706,47 @@ export function materializeToolMediaDetails({
     }
   }
 
+  const mediaArray = Array.isArray(root.media) ? root.media : undefined;
+  if (mediaArray) {
+    let changed = false;
+    const nextMedia = mediaArray.map((entry) => {
+      const media = asRecord(entry);
+      const kind = media ? sessionAttachmentKindFromValue(media.kind) : undefined;
+      if (!media || !kind) return entry;
+
+      changed = true;
+      if (typeof media.id === "string" && media.id.trim()) {
+        return sanitizedMediaRecord(media);
+      }
+
+      const bytes = bytesFromMediaDetails(kind, media, trustedSourceRoots);
+      if (!bytes) {
+        return sanitizedMediaRecord(media);
+      }
+
+      const mimeType = normalizeMimeTypeForKind(kind, media.mimeType);
+      const record = storeAttachment({
+        dataDir,
+        sessionId,
+        toolCallId,
+        kind,
+        mimeType,
+        fileName: safeFileName(media.fileName ?? media.path, mimeType, kind),
+        bytes,
+        ...(typeof media.durationSeconds === "number"
+          ? { durationSeconds: media.durationSeconds }
+          : {}),
+        ...(typeof media.width === "number" ? { width: media.width } : {}),
+        ...(typeof media.height === "number" ? { height: media.height } : {}),
+        ...(typeof root.message === "string" ? { text: root.message } : {}),
+      });
+      return attachmentDetails(record);
+    });
+    if (changed) {
+      nextRoot = { ...nextRoot, media: nextMedia };
+    }
+  }
+
   return nextRoot;
 }
 
@@ -606,6 +759,38 @@ function bytesFromImageLike(image: Record<string, unknown>): Buffer | null {
   const bytes = Buffer.from(base64, "base64");
   if (bytes.length <= 0 || bytes.length > MAX_SESSION_ATTACHMENT_BYTES) return null;
   return bytes;
+}
+
+function bytesFromVideoLike(
+  video: Record<string, unknown>,
+  trustedSourceRoots: string[] | undefined,
+): Buffer | null {
+  const path = typeof video.path === "string" ? video.path : undefined;
+  if (path) {
+    const bytes = bytesFromTrustedPath(path, trustedSourceRoots);
+    if (bytes) return bytes;
+  }
+
+  const base64 = base64FromMediaRecord(video) ?? "";
+  if (!base64) return null;
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length <= 0 || bytes.length > MAX_SESSION_ATTACHMENT_BYTES) return null;
+  return bytes;
+}
+
+function bytesFromMediaDetails(
+  kind: SessionAttachmentKind,
+  media: Record<string, unknown>,
+  trustedSourceRoots: string[] | undefined,
+): Buffer | null {
+  switch (kind) {
+    case "audio":
+      return bytesFromAudioDetails(media, trustedSourceRoots);
+    case "image":
+      return bytesFromImageLike(media);
+    case "video":
+      return bytesFromVideoLike(media, trustedSourceRoots);
+  }
 }
 
 export function materializeToolMediaContentBlocks({
@@ -664,34 +849,43 @@ function attachmentIdFromMediaRecord(
     return undefined;
   }
 
-  const bytes =
-    media.kind === "audio" ? bytesFromAudioDetails(media, undefined) : bytesFromImageLike(media);
+  const kind = sessionAttachmentKindFromValue(media.kind);
+  if (!kind) {
+    return undefined;
+  }
+
+  const bytes = bytesFromMediaDetails(kind, media, undefined);
   return bytes ? attachmentIdFor(toolCallId, bytes) : undefined;
 }
 
 function findAttachmentRecordForMedia(
   manifest: SessionAttachmentManifest,
   toolCallId: string,
-  key: "audio" | "image",
+  kind: SessionAttachmentKind,
   media: Record<string, unknown>,
+  options: { allowToolCallKindFallback?: boolean } = {},
 ): SessionAttachmentRecord | undefined {
   const explicitId = attachmentIdFromMediaRecord(toolCallId, media);
   if (explicitId) {
-    const byId = manifest.attachments.find((item) => item.id === explicitId && item.kind === key);
+    const byId = manifest.attachments.find((item) => item.id === explicitId && item.kind === kind);
     if (byId) {
       return byId;
     }
   }
 
-  return manifest.attachments.find((item) => item.toolCallId === toolCallId && item.kind === key);
+  if (options.allowToolCallKindFallback === false) {
+    return undefined;
+  }
+
+  return manifest.attachments.find((item) => item.toolCallId === toolCallId && item.kind === kind);
 }
 
 function mediaDetailsForReplayRecord(
   record: SessionAttachmentRecord,
-  key: "audio" | "image",
+  kind: SessionAttachmentKind,
   _media: Record<string, unknown>,
 ): Record<string, unknown> {
-  return key === "image" ? imageAttachmentDetails(record) : attachmentDetails(record);
+  return kind === "image" ? imageAttachmentDetails(record) : attachmentDetails(record);
 }
 
 function referencedAttachmentIdsFromContents(
@@ -707,12 +901,12 @@ function referencedAttachmentIdsFromContents(
     const record = asRecord(block);
     if (!record) continue;
     const type = record.type;
-    if (type !== "image" && type !== "audio" && type !== "output_audio") {
+    if (type !== "image" && type !== "audio" && type !== "output_audio" && type !== "video") {
       continue;
     }
     const id = attachmentIdFromMediaRecord(toolCallId, {
       ...record,
-      kind: type === "image" ? "image" : "audio",
+      kind: type === "image" ? "image" : type === "video" ? "video" : "audio",
     });
     if (id) {
       ids.add(id);
@@ -744,7 +938,7 @@ function referencedAttachmentIdsFromDetails(
   const mediaArray = Array.isArray(root.media) ? root.media : [];
   for (const entry of mediaArray) {
     const media = asRecord(entry);
-    if (!media) continue;
+    if (!media || !sessionAttachmentKindFromValue(media.kind)) continue;
     const id = attachmentIdFromMediaRecord(toolCallId, media);
     if (id) {
       ids.add(id);
@@ -774,6 +968,27 @@ export function sessionAttachmentDetailsForToolCall(
     nextRoot = record
       ? { ...nextRoot, [key]: mediaDetailsForReplayRecord(record, key, media) }
       : sanitizeMediaDetails(nextRoot, key, media);
+  }
+
+  const mediaArray = Array.isArray(root.media) ? root.media : undefined;
+  if (mediaArray) {
+    let changed = false;
+    const nextMedia = mediaArray.map((entry) => {
+      const media = asRecord(entry);
+      const kind = media ? sessionAttachmentKindFromValue(media.kind) : undefined;
+      if (!media || !kind) return entry;
+
+      changed = true;
+      const record = findAttachmentRecordForMedia(manifest, toolCallId, kind, media, {
+        allowToolCallKindFallback: false,
+      });
+      return record
+        ? mediaDetailsForReplayRecord(record, kind, media)
+        : sanitizedMediaRecord(media);
+    });
+    if (changed) {
+      nextRoot = { ...nextRoot, media: nextMedia };
+    }
   }
 
   return nextRoot;

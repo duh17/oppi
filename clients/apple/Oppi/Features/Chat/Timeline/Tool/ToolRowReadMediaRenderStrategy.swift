@@ -14,7 +14,8 @@ struct ToolRowReadMediaRenderStrategy {
         hasSessionFileMediaSourceProvider: Bool,
         previousSignature: Int?,
         isUsingReadMediaLayout: Bool,
-        hasExpandedReadMediaContentView: Bool
+        hasExpandedReadMediaContentView: Bool,
+        viewportPolicy: ToolRowViewportPolicy
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.readMediaSignature(
             output: output,
@@ -35,8 +36,7 @@ struct ToolRowReadMediaRenderStrategy {
             renderSignature: shouldReinstall ? signature : previousSignature,
             renderedText: output,
             shouldAutoFollow: false,
-            surface: .hostedView,
-            viewportMode: .text,
+            viewportPolicy: viewportPolicy,
             verticalLock: false,
             scrollBehavior: shouldReinstall ? .resetToTop : .preserve,
             lineBreakMode: .byCharWrapping,

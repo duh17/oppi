@@ -10,8 +10,7 @@ struct ExpandedRenderOutput {
     let renderSignature: Int?
     let renderedText: String?
     let shouldAutoFollow: Bool
-    let surface: ExpandedSurface
-    let viewportMode: ToolTimelineRowContentView.ExpandedViewportMode
+    let viewportPolicy: ToolRowViewportPolicy
     let verticalLock: Bool
     let scrollBehavior: ScrollBehavior
     let lineBreakMode: NSLineBreakMode
@@ -20,7 +19,10 @@ struct ExpandedRenderOutput {
     let invalidateLayout: Bool
     let installAction: InstallAction
 
-    enum ExpandedSurface {
+    var surface: ExpandedSurface { viewportPolicy.surface }
+    var viewportMode: ToolTimelineRowContentView.ExpandedViewportMode { viewportPolicy.viewportMode }
+
+    enum ExpandedSurface: Equatable {
         case label
         case hostedView
         case compactHostedView

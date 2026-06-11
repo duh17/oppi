@@ -17,7 +17,7 @@ import { materializeToolMediaDetails } from "../session-attachments.js";
 import type { AskQuestion, ServerMessage } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
-const MAX_E2E_UI_MESSAGE_BYTES = 32 * 1024;
+const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MAX_E2E_FIXTURE_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_E2E_FIXTURE_BODY_BYTES = 8 * 1024 * 1024;
 
