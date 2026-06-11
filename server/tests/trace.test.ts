@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   getSessionAttachment,
+  materializeToolAudioDetails,
   materializeToolMediaContentBlocks,
 } from "../src/session-attachments.js";
 import {
@@ -852,6 +853,66 @@ describe("trace media replay", () => {
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("normalizes replayed audio details as an audio presentation", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-trace-"));
+    tempDirs.push(dataDir);
+    const sessionId = "session-voice";
+    const toolCallId = "tool-voice";
+    const wavBase64 = Buffer.from("fixture audio").toString("base64");
+    const details = materializeToolAudioDetails({
+      dataDir,
+      sessionId,
+      toolCallId,
+      details: {
+        serverUrl: "http://127.0.0.1:7937",
+        audio: {
+          kind: "audio",
+          mimeType: "audio/wav",
+          fileName: "voice.wav",
+          base64: wavBase64,
+          durationSeconds: 1.2,
+        },
+        message: "hello from voice",
+      },
+    });
+
+    const trace = parseJsonl(
+      `${JSON.stringify({
+        type: "message",
+        id: "entry-voice",
+        timestamp: "2026-05-13T00:00:00.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId,
+          toolName: "voice_speak",
+          content: "hello from voice",
+          details,
+        },
+      })}\n`,
+      { attachmentDataDir: dataDir, attachmentSessionId: sessionId },
+    );
+
+    const toolResult = trace[0] as {
+      type: string;
+      details?: {
+        kind?: string;
+        text?: string;
+        audio?: { id?: string; kind?: string; mimeType?: string; durationSeconds?: number };
+      };
+    };
+    expect(toolResult.type).toBe("toolResult");
+    expect(toolResult.details).toMatchObject({
+      kind: "audio_presentation",
+      text: "hello from voice",
+      audio: {
+        kind: "audio",
+        mimeType: "audio/wav",
+        durationSeconds: 1.2,
+      },
+    });
+    expect(toolResult.details?.audio?.id).toBeTruthy();
   });
 
   it("does not replay update-only attachments when final toolResult has no media", () => {

@@ -41,6 +41,32 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function audioPresentationText(root: Record<string, unknown>): string | undefined {
+  const candidates = [root.text, root.message, root.transcript];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const text = candidate.trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function normalizeAudioPresentationDetails(details: unknown): unknown {
+  const root = asRecord(details);
+  if (!root || Array.isArray(root)) return details;
+  if (root.kind === "audio_presentation") return details;
+
+  const audio = asRecord(root.audio);
+  if (!audio || Array.isArray(audio) || audio.kind !== "audio") return details;
+
+  const text = audioPresentationText(root);
+  return {
+    ...root,
+    kind: "audio_presentation",
+    ...(text ? { text } : {}),
+  };
+}
+
 // ─── Trace Event Types ───
 
 export interface TraceEvent {
@@ -566,10 +592,11 @@ function emitMessageEvents(
             rawDetails,
           )
         : rawDetails;
-    const details =
+    const details = normalizeAudioPresentationDetails(
       mediaDetails.length > 0
         ? { ...(asRecord(replayDetails) ?? {}), media: mediaDetails }
-        : replayDetails;
+        : replayDetails,
+    );
     events.push({
       id: `result-${entry.id}`,
       type: "toolResult",
