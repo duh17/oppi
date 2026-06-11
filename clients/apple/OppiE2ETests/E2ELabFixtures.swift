@@ -138,6 +138,12 @@ extension E2ETestCase {
         return object as? [String: Any] ?? [:]
     }
 
+    /// Calls the paired E2E server API for binary endpoints using the harness token.
+    func e2eLabAPIBytes(method: String, path: String, body: [String: Any] = [:]) throws -> (statusCode: Int, body: Data) {
+        let response = try e2eLabAPIData(method: method, path: path, body: body)
+        return (response.statusCode, response.body)
+    }
+
     /// Saves a full-device screenshot to `/tmp/oppi-screenshots` and attaches it
     /// to the XCTest result bundle.
     @discardableResult

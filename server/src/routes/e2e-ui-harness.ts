@@ -12,6 +12,8 @@ import {
   buildExtensionUIRequestMessage,
   normalizeExtensionUIWidgetNativeSurface,
 } from "../extension-ui-contract.js";
+import { hasToolMediaDetails } from "../session-agent-event-media.js";
+import { materializeToolMediaDetails } from "../session-attachments.js";
 import type { AskQuestion, ServerMessage } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
@@ -150,11 +152,13 @@ async function handleHarnessMessage(
   const body = await helpers.parseBody<Record<string, unknown>>(req, {
     maxBytes: MAX_E2E_UI_MESSAGE_BYTES,
   });
-  const message = normalizeHarnessMessage(sessionId, body);
+  let message = normalizeHarnessMessage(sessionId, body);
   if (!message) {
     helpers.error(res, 400, "Unsupported E2E UI harness message");
     return;
   }
+
+  message = materializeHarnessToolMedia(ctx, sessionId, message);
 
   if (message.type === "extension_ui_request") {
     recordSyntheticE2EUIRequest(sessionId, message.id);
@@ -162,6 +166,30 @@ async function handleHarnessMessage(
 
   const subscriberCount = ctx.sessions.broadcastSessionMessage(sessionId, message);
   helpers.json(res, { ok: true, subscriberCount, message });
+}
+
+function materializeHarnessToolMedia(
+  ctx: RouteContext,
+  sessionId: string,
+  message: ServerMessage,
+): ServerMessage {
+  if (message.type !== "tool_end" || !message.details || !hasToolMediaDetails(message.details)) {
+    return message;
+  }
+
+  try {
+    return {
+      ...message,
+      details: materializeToolMediaDetails({
+        dataDir: ctx.storage.getDataDir(),
+        sessionId,
+        toolCallId: message.toolCallId,
+        details: message.details,
+      }) as Record<string, unknown>,
+    };
+  } catch {
+    return message;
+  }
 }
 
 function normalizeHarnessMessage(

@@ -35,15 +35,15 @@ final class ToolRowAudioController: NSObject {
         let hasLiveStreamPlayback = configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false
         guard hasReplayableVoiceAudio || hasLiveStreamPlayback else {
             button.isHidden = true
+            button.accessibilityIdentifier = nil
+            button.accessibilityLabel = nil
             return
         }
 
         bindAudioStateObservationIfNeeded()
         button.isHidden = false
         button.tintColor = UIColor(Color.themePurple)
-        button.accessibilityLabel = isCollapsedVoiceAudioPlaying(configuration: configuration)
-            ? "Stop voice message"
-            : "Play voice message"
+        button.accessibilityIdentifier = "chat.timeline.row.\(configuration.itemID).audio.play"
         updateButtonImage(configuration: configuration)
     }
 
@@ -66,6 +66,7 @@ final class ToolRowAudioController: NSObject {
 
     private func updateButtonImage(configuration: ToolTimelineRowConfiguration) {
         let isPlaying = isCollapsedVoiceAudioPlaying(configuration: configuration)
+        button.accessibilityLabel = isPlaying ? "Stop voice message" : "Play voice message"
         let imageName = isPlaying ? "stop.fill" : "play.fill"
         let image = UIImage(
             systemName: imageName,
