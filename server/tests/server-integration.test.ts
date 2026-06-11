@@ -192,6 +192,7 @@ describe("GET /server/info", () => {
     expect(body.os).toBeTypeOf("string");
     expect(body.runtimeUpdate).toBeTypeOf("object");
     expect(body.capabilities?.sessionStream?.version).toBe(1);
+    expect(body.capabilities?.appEventStream?.version).toBe(1);
     expect(body.capabilities?.extensionNativeUI).toEqual({
       version: 1,
       capabilities: [

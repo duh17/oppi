@@ -140,6 +140,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       },
       capabilities: {
         sessionStream: { version: 1 },
+        appEventStream: { version: 1 },
         dictationStream: config.asr?.sttEndpoint ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,

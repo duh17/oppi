@@ -49,8 +49,8 @@ final class WebSocketClient {
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
-    private let maxReconnectAttempts = 10
-    private let pingInterval: Duration = .seconds(30)
+    private let maxReconnectAttempts = WebSocketRecoveryPolicy.maxReconnectAttempts
+    private let pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval
     private let waitForConnectionTimeout: Duration
     private let sendTimeout: Duration
 
@@ -465,27 +465,11 @@ final class WebSocketClient {
     }
 
     private func isNonRetryableHandshakeStatus(_ statusCode: Int) -> Bool {
-        [400, 401, 403, 404, 410, 426].contains(statusCode)
+        WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode)
     }
 
     private func isRecoverableReceiveError(_ error: Error, ws: URLSessionWebSocketTask) -> Bool {
-        let closeCode = ws.closeCode.rawValue
-        if closeCode == URLSessionWebSocketTask.CloseCode.normalClosure.rawValue ||
-            closeCode == URLSessionWebSocketTask.CloseCode.goingAway.rawValue {
-            return true
-        }
-
-        let nsError = error as NSError
-        if nsError.domain == NSPOSIXErrorDomain {
-            // Socket closed/not connected during app/network handoff. Reconnect is the signal;
-            // per-close errors are expected noise unless retries exhaust.
-            return [53, 57, 89].contains(nsError.code)
-        }
-        if nsError.domain == NSURLErrorDomain {
-            return [NSURLErrorCancelled, NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost]
-                .contains(nsError.code)
-        }
-        return false
+        WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode)
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
@@ -625,7 +609,7 @@ final class WebSocketClient {
                 guard ws.state == .running else { break }
 
                 let failed = await withUnsafeContinuation { (cont: UnsafeContinuation<Bool, Never>) in
-                    let oneShot = OneShotPingContinuation(cont)
+                    let oneShot = OneShotBoolContinuation(cont)
                     ws.sendPing { error in
                         oneShot.resume(returning: error != nil)
                     }
@@ -700,16 +684,7 @@ final class WebSocketClient {
     ///
     /// ±25% jitter prevents synchronized retries if multiple connections exist.
     nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {
-        let base: Double
-        switch attempt {
-        case 1...3: base = 0.5
-        case 4:     base = 2
-        case 5:     base = 4
-        case 6:     base = 8
-        default:    base = 15
-        }
-        let jitterFactor = Double.random(in: 0.75...1.25)
-        return base * jitterFactor
+        WebSocketRecoveryPolicy.reconnectDelay(attempt: attempt)
     }
 
     /// Convert `Duration` to positive milliseconds for GCD timers.
@@ -764,29 +739,6 @@ final class WebSocketClient {
             timeoutWorkItem?.cancel()
             continuation.resume(with: result)
         }
-    }
-}
-
-// MARK: - One-Shot Ping Continuation
-
-private final class OneShotPingContinuation: @unchecked Sendable {
-    // SAFETY (`@unchecked Sendable`):
-    // - `continuation` is protected by `lock` and consumed exactly once.
-    // - Resume is always executed after lock release.
-    // - Double-resume is prevented by nil-ing `continuation` under lock.
-    private var continuation: UnsafeContinuation<Bool, Never>?
-    private let lock = NSLock()
-
-    init(_ continuation: UnsafeContinuation<Bool, Never>) {
-        self.continuation = continuation
-    }
-
-    func resume(returning value: Bool) {
-        lock.lock()
-        let cont = continuation
-        continuation = nil
-        lock.unlock()
-        cont?.resume(returning: value)
     }
 }
 

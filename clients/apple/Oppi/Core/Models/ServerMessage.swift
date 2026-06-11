@@ -127,6 +127,7 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     var prefill: String?
     var timeout: Int?
     var timeoutAt: Date?
+    var workspaceId: String?
     // Ask extension fields (method: "ask")
     var askQuestions: [AskQuestion]?
     var allowCustom: Bool?
@@ -142,6 +143,7 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
         prefill: String? = nil,
         timeout: Int? = nil,
         timeoutAt: Date? = nil,
+        workspaceId: String? = nil,
         askQuestions: [AskQuestion]? = nil,
         allowCustom: Bool? = nil
     ) {
@@ -155,6 +157,7 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
         self.prefill = prefill
         self.timeout = timeout
         self.timeoutAt = timeoutAt
+        self.workspaceId = workspaceId
         self.askQuestions = askQuestions
         self.allowCustom = allowCustom
     }
@@ -434,6 +437,7 @@ extension ServerMessage: Decodable {
                 prefill: try c.decodeIfPresent(String.self, forKey: .prefill),
                 timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
                 timeoutAt: try c.decodeIfPresent(Double.self, forKey: .timeoutAt).map { Date(timeIntervalSince1970: $0 / 1000) },
+                workspaceId: try c.decodeIfPresent(String.self, forKey: .workspaceId),
                 askQuestions: askQuestions,
                 allowCustom: allowCustom
             )

@@ -195,7 +195,9 @@ export class SessionBroadcaster {
       message.type === "state" ||
       message.type === "session_summary" ||
       message.type === "extension_ui_request" ||
-      message.type === "extension_ui_settled"
+      message.type === "extension_ui_settled" ||
+      message.type === "extension_ui_notification" ||
+      message.type === "git_status"
     ) {
       this.deps.emitSessionEvent({
         sessionId: active.session.id,

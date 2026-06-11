@@ -278,6 +278,39 @@ actor APIClient: ClientLogUploading {
         _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(sessionId)")
     }
 
+    /// Send a session command over HTTP when no focused session WebSocket is available.
+    func sendWorkspaceSessionCommand(
+        workspaceId: String,
+        sessionId: String,
+        message: ClientMessage
+    ) async throws {
+        _ = try await post(
+            "/workspaces/\(workspaceId)/sessions/\(sessionId)/command",
+            body: message
+        )
+    }
+
+    /// Respond to an extension UI request in another session without focusing its stream.
+    func sendExtensionUIResponse(
+        workspaceId: String,
+        sessionId: String,
+        id: String,
+        payload: ExtensionUIResponsePayload,
+        requestId: String? = nil
+    ) async throws {
+        try await sendWorkspaceSessionCommand(
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            message: .extensionUIResponse(
+                id: id,
+                value: payload.value,
+                confirmed: payload.confirmed,
+                cancelled: payload.cancelled,
+                requestId: requestId
+            )
+        )
+    }
+
     // MARK: - Models
 
     /// Fetch available models from the server.
@@ -761,6 +794,7 @@ actor APIClient: ClientLogUploading {
     struct WorkspaceSessionManagedRow: Decodable, Sendable, Equatable {
         let summary: SessionSummary
         let pendingAskCount: Int
+        let hasPendingAskCount: Bool
 
         private enum CodingKeys: String, CodingKey {
             case pendingAskCount
@@ -769,7 +803,9 @@ actor APIClient: ClientLogUploading {
         init(from decoder: Decoder) throws {
             summary = try SessionSummary(from: decoder)
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            pendingAskCount = try container.decodeIfPresent(Int.self, forKey: .pendingAskCount) ?? 0
+            let decodedPendingAskCount = try container.decodeIfPresent(Int.self, forKey: .pendingAskCount)
+            pendingAskCount = decodedPendingAskCount ?? 0
+            hasPendingAskCount = decodedPendingAskCount != nil
         }
     }
 

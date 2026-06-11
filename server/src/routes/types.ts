@@ -9,6 +9,7 @@ import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update
 import type { SearchIndex } from "../search-index.js";
 import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager.js";
 import type { CodexUsageStatus } from "../codex-usage.js";
+import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
 
 /** Services needed by route handlers — injected by Server. */
@@ -26,6 +27,7 @@ export interface RouteContext {
   runRuntimeUpdate: () => Promise<RuntimeUpdateResult>;
   getCodexUsageStatus?: () => Promise<CodexUsageStatus>;
   searchIndex?: SearchIndex;
+  appEvents?: AppEventEmitter;
   serverStartedAt: number;
   serverVersion: string;
   piVersion: string;

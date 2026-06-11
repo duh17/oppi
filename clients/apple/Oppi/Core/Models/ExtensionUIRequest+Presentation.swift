@@ -49,7 +49,8 @@ extension ExtensionUIRequest {
                 sessionId: sessionId,
                 questions: questions,
                 allowCustom: allowCustom ?? true,
-                timeout: timeout
+                timeout: timeout,
+                workspaceId: workspaceId
             )
 
         case .inlineAskCard:
@@ -113,6 +114,7 @@ extension ExtensionUIRequest {
             ],
             allowCustom: allowCustom,
             timeout: timeout,
+            workspaceId: workspaceId,
             customPlaceholder: customPlaceholder,
             responseEncoding: responseEncoding
         )

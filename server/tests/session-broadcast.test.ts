@@ -117,6 +117,16 @@ describe("SessionBroadcaster", () => {
       expect(emitted).toHaveLength(2);
       expect(emitted[1]!.event.type).toBe("extension_ui_request");
       expect(emitted[1]!.durable).toBe(false);
+
+      broadcaster.broadcast("k1", {
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "review",
+        statusText: "waiting",
+      } as ServerMessage);
+      expect(emitted).toHaveLength(3);
+      expect(emitted[2]!.event.type).toBe("extension_ui_notification");
+      expect(emitted[2]!.durable).toBe(false);
     });
 
     // Verify every durable type is actually in the set

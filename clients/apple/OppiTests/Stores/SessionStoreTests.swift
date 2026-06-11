@@ -2,6 +2,11 @@ import Testing
 import Foundation
 @testable import Oppi
 
+private func decodeSessionSummaryJSON(_ json: String) throws -> SessionSummary {
+    let data = Data(json.utf8)
+    return try JSONDecoder().decode(SessionSummary.self, from: data)
+}
+
 @Suite("SessionStore Partitioning")
 @MainActor
 struct SessionStorePartitioningTests {
@@ -109,6 +114,63 @@ struct SessionStorePartitioningTests {
         store.switchServer(to: "srv1")
         summary.pendingAskCount = 0
         #expect(store.upsertManySummaries([summary]))
+        #expect(store.listPendingAskCount(for: "s1") == 0)
+    }
+
+    @Test func summaryMissingPendingAskCountPreservesExistingAttention() throws {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        var initial = SessionSummary(from: makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
+        initial.pendingAskCount = 2
+        store.upsertManySummaries([initial])
+
+        let missingCountSummary = try decodeSessionSummaryJSON(
+            #"""
+            {
+              "id": "s1",
+              "workspaceId": "w1",
+              "status": "busy",
+              "createdAt": 1700000000000,
+              "lastActivity": 1700000001000,
+              "messageCount": 1,
+              "tokens": { "input": 0, "output": 0 },
+              "cost": 0
+            }
+            """#
+        )
+        #expect(!missingCountSummary.hasPendingAskCount)
+
+        store.applySummary(missingCountSummary)
+
+        #expect(store.listPendingAskCount(for: "s1") == 2)
+    }
+
+    @Test func summaryPendingAskCountZeroAuthoritativelyClearsAttention() throws {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        var initial = SessionSummary(from: makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
+        initial.pendingAskCount = 2
+        store.upsertManySummaries([initial])
+
+        let clearingSummary = try decodeSessionSummaryJSON(
+            #"""
+            {
+              "id": "s1",
+              "workspaceId": "w1",
+              "status": "busy",
+              "createdAt": 1700000000000,
+              "lastActivity": 1700000001000,
+              "messageCount": 1,
+              "tokens": { "input": 0, "output": 0 },
+              "cost": 0,
+              "pendingAskCount": 0
+            }
+            """#
+        )
+        #expect(clearingSummary.hasPendingAskCount)
+
+        store.applySummary(clearingSummary)
+
         #expect(store.listPendingAskCount(for: "s1") == 0)
     }
 

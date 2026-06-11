@@ -80,6 +80,7 @@ final class ConnectionCoordinator {
             if existing.credentials != server.credentials {
                 logger.warning("Reconfiguring connection for re-paired server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
                 existing.disconnectStream()
+                existing.disconnectAppEventStream()
                 existing.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
                 guard existing.configure(credentials: server.credentials) else {
                     logger.error("Failed to reconfigure connection for \(server.name, privacy: .public)")
@@ -404,6 +405,7 @@ final class ConnectionCoordinator {
         if let conn = connections[id] {
             conn.disconnectSession()
             conn.disconnectStream()
+            conn.disconnectAppEventStream()
         }
         connections.removeValue(forKey: id)
 
