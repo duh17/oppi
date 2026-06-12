@@ -1,0 +1,45 @@
+{
+  "name": "ask",
+  "version": "0.41.0",
+  "description": "Pi ask extension example with multi-question and multi-select support for Oppi and TUI sessions.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Chaos Donkey",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi",
+    "ask",
+    "multi-select"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "pi-extensions/ask"
+  },
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/ask#readme",
+  "files": [
+    "extensions/",
+    "index.ts",
+    "README.md",
+    "package.json"
+  ],
+  "dependencies": {
+    "@earendil-works/pi-tui": "0.79.1",
+    "typebox": "1.1.28"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/ask.ts"
+    ]
+  }
+}

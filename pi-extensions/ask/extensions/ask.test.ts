@@ -27,27 +27,49 @@ type RegisteredTool = {
           questions: Array<{
             id: string;
             question: string;
-            options: Array<{ value: string; label: string; description?: string }>;
+            options: Array<{
+              value: string;
+              label: string;
+              description?: string;
+            }>;
             multiSelect?: boolean;
           }>,
           allowCustom?: boolean,
           opts?: { signal?: AbortSignal },
-        ) => Promise<{ answers: Record<string, string | string[]>; allIgnored: boolean }>;
+        ) => Promise<{
+          answers: Record<string, string | string[]>;
+          allIgnored: boolean;
+        }>;
         custom: (...args: unknown[]) => Promise<unknown>;
-        select: (question: string, options: string[]) => Promise<string | undefined>;
-        input: (question: string, placeholder?: string) => Promise<string | undefined>;
+        select: (
+          question: string,
+          options: string[],
+        ) => Promise<string | undefined>;
+        input: (
+          question: string,
+          placeholder?: string,
+        ) => Promise<string | undefined>;
       };
     },
-  ) => Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
+  ) => Promise<{
+    content: Array<{ type: string; text: string }>;
+    details?: unknown;
+  }>;
   executionMode?: string;
   renderCall?: (
     args: Record<string, unknown>,
-    theme: { fg: (token: string, text: string) => string; bold: (text: string) => string },
+    theme: {
+      fg: (token: string, text: string) => string;
+      bold: (text: string) => string;
+    },
   ) => { render: (width: number) => string[] };
   renderResult?: (
     result: { details?: unknown },
     options: unknown,
-    theme: { fg: (token: string, text: string) => string; bold: (text: string) => string },
+    theme: {
+      fg: (token: string, text: string) => string;
+      bold: (text: string) => string;
+    },
   ) => { render: (width: number) => string[] };
 };
 
@@ -113,15 +135,27 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const first = await tool!.execute("tc-1", params, undefined, undefined, ctx);
+    const first = await tool!.execute(
+      "tc-1",
+      params,
+      undefined,
+      undefined,
+      ctx,
+    );
     expect(first.content[0]?.text).toContain("Defaults");
 
-    await expect(tool!.execute("tc-2", params, undefined, undefined, ctx)).rejects.toThrow(
-      /Only one ask call per turn/,
-    );
+    await expect(
+      tool!.execute("tc-2", params, undefined, undefined, ctx),
+    ).rejects.toThrow(/Only one ask call per turn/);
 
     await api.resetTurn();
-    const second = await tool!.execute("tc-3", params, undefined, undefined, ctx);
+    const second = await tool!.execute(
+      "tc-3",
+      params,
+      undefined,
+      undefined,
+      ctx,
+    );
     expect(second.content[0]?.text).toContain("Defaults");
   });
 
@@ -171,8 +205,16 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const result = await tool.execute("tc-multi", params, undefined, undefined, ctx);
-    const details = result.details as { answers: Record<string, string | string[]> };
+    const result = await tool.execute(
+      "tc-multi",
+      params,
+      undefined,
+      undefined,
+      ctx,
+    );
+    const details = result.details as {
+      answers: Record<string, string | string[]>;
+    };
     expect(details.answers["tools"]).toEqual(["ruff", "mypy"]);
     expect(askCalls).toBe(1);
     expect(customCalls).toBe(0);
@@ -219,7 +261,13 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const result = await tool.execute("tc-tui", params, undefined, undefined, ctx);
+    const result = await tool.execute(
+      "tc-tui",
+      params,
+      undefined,
+      undefined,
+      ctx,
+    );
     expect(result.details).toMatchObject({
       answers: { tools: ["ruff", "mypy"] },
       allIgnored: false,
@@ -260,7 +308,13 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const result = await tool.execute("tc-missing-ask", params, undefined, undefined, ctx);
+    const result = await tool.execute(
+      "tc-missing-ask",
+      params,
+      undefined,
+      undefined,
+      ctx,
+    );
     expect(result.details).toMatchObject({
       answers: { approach: "unit" },
       allIgnored: false,
@@ -424,7 +478,10 @@ describe("createAskFactory", () => {
                 id: "ups_rule",
                 question: "How should I handle UPS mail?",
                 options: [
-                  { value: "ups_split_recommended", label: "Split recommended" },
+                  {
+                    value: "ups_split_recommended",
+                    label: "Split recommended",
+                  },
                   { value: "ups_archive_all", label: "Archive all" },
                 ],
               },

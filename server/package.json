@@ -41,8 +41,8 @@
   ],
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "bash -c 'npm run clean && tsc && chmod +x dist/src/cli.js'",
-    "prepare": "bash -c 'npm run clean && tsc && chmod +x dist/src/cli.js'",
+    "build": "bash -c 'npm run clean && tsc && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
+    "prepare": "bash -c 'npm run clean && tsc && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
     "dev": "tsx watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",

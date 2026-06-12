@@ -7,10 +7,9 @@
 
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   createAgentSession,
@@ -39,16 +38,13 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
-import {
-  BUILT_IN_EXTENSION_NAMES,
-  isManagedExtensionName,
-  isWorkspaceBuiltInExtensionEnabled,
-} from "../extensions/built-ins.js";
+import { isManagedExtensionName } from "../extensions/built-ins.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { extensionNameForAllowlist } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
+import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { Session, Workspace } from "./types.js";
 
@@ -255,6 +251,26 @@ Guidelines:
 - Show sandbox file paths clearly when working with files.`;
 }
 
+function buildSdkAppendSystemPrompt(
+  workspace: Workspace | undefined,
+  options: { includeOppiDocsHint: boolean },
+): string[] | undefined {
+  const prompts: string[] = [];
+
+  // Host-backed sessions can read the packaged docs path directly. Sandbox sessions
+  // use a custom prompt that intentionally avoids exposing host/server paths.
+  const oppiDocsHint = options.includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined;
+  if (oppiDocsHint) {
+    prompts.push(oppiDocsHint);
+  }
+
+  if (workspace?.systemPrompt) {
+    prompts.push(workspace.systemPrompt);
+  }
+
+  return prompts.length > 0 ? prompts : undefined;
+}
+
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
@@ -273,66 +289,6 @@ export interface SdkBackendConfig {
 }
 
 const log = createLogger({ base: { component: "sdk_backend" } });
-
-type ExtensionFactoryModule = Record<string, unknown>;
-
-function moduleCacheKey(path: string): string {
-  const stat = statSync(path, { bigint: true });
-  return `${stat.mtimeNs}-${stat.size}`;
-}
-
-function hotReloadImportUrl(path: string): string {
-  const url = pathToFileURL(path);
-  url.searchParams.set("mtime", moduleCacheKey(path));
-  return url.href;
-}
-
-function resolveAskModulePath(): string {
-  const compiledPath = fileURLToPath(new URL("../extensions/ask.js", import.meta.url));
-  if (existsSync(compiledPath)) {
-    return compiledPath;
-  }
-
-  const sourcePath = compiledPath.endsWith(".js")
-    ? `${compiledPath.slice(0, -".js".length)}.ts`
-    : compiledPath;
-  return existsSync(sourcePath) ? sourcePath : compiledPath;
-}
-
-export function createHotReloadingExtensionFactory(
-  resolveModulePath: () => string,
-  createFactoryExport: string,
-): ExtensionFactory {
-  return async (pi) => {
-    const modulePath = resolveModulePath();
-    const mod = (await import(hotReloadImportUrl(modulePath))) as ExtensionFactoryModule;
-    const createFactory = mod[createFactoryExport];
-    if (typeof createFactory !== "function") {
-      throw new Error(`${modulePath} does not export ${createFactoryExport}()`);
-    }
-
-    const factory = createFactory() as ExtensionFactory;
-    await factory(pi);
-  };
-}
-
-function createBuiltInExtensionFactories(workspace: Workspace | undefined): ExtensionFactory[] {
-  const factories: ExtensionFactory[] = [];
-  for (const name of BUILT_IN_EXTENSION_NAMES) {
-    if (!isWorkspaceBuiltInExtensionEnabled(workspace, name)) {
-      continue;
-    }
-
-    switch (name) {
-      case "ask":
-        factories.push(
-          createHotReloadingExtensionFactory(resolveAskModulePath, "createAskFactory"),
-        );
-        break;
-    }
-  }
-  return factories;
-}
 
 function syncSessionIdentityFromManager(session: Session, manager: PiSessionManager): void {
   const sessionFile = manager.getSessionFile();
@@ -486,21 +442,18 @@ export class SdkBackend {
         });
       }
 
-      // Build extension factories for Oppi-owned in-process tools.
-      // Approval behavior stays in normal Pi extensions loaded through the
-      // resource loader and workspace/user Pi configuration.
-      const extensionFactories: ExtensionFactory[] = [
-        ...createBuiltInExtensionFactories(workspace),
-      ];
+      // Build session-local extension factories supplied by tests or embedding code.
+      // Normal tools, including `ask`, load through Pi's resource loader and the
+      // workspace/user Pi configuration.
+      const extensionFactories: ExtensionFactory[] = [];
       if (config.extraExtensionFactories) {
         extensionFactories.push(...config.extraExtensionFactories);
       }
 
       // Resource loader — suppress skill/theme auto-discovery, but keep
       // prompt templates enabled because Oppi exposes them as slash commands.
-      // Built-in Oppi extensions are injected as in-process factories when the
-      // workspace explicitly enables them. Host extensions keep Pi's normal
-      // discovery/settings/package behavior, including approval UI requests.
+      // Host extensions keep Pi's normal discovery/settings/package behavior,
+      // including approval UI requests.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -509,7 +462,9 @@ export class SdkBackend {
         noSkills: true,
         noThemes: true,
         extensionFactories,
-        appendSystemPrompt: workspace?.systemPrompt ? [workspace.systemPrompt] : undefined,
+        appendSystemPrompt: buildSdkAppendSystemPrompt(workspace, {
+          includeOppiDocsHint: !sandboxMode,
+        }),
         ...(sandboxMode
           ? {
               systemPrompt: sandboxSystemPrompt(),
@@ -548,8 +503,7 @@ export class SdkBackend {
             }
           : {}),
         extensionsOverride: (base) => {
-          // Filter out names owned directly by oppi-server from host paths.
-          // Built-ins are injected above as inline factories when enabled.
+          // Apply the workspace allowlist to Pi-discovered host extensions.
           const allowedNames = workspace?.extensions;
           const filtered = filterSdkLoadedExtensions(base.extensions, {
             workspaceExtensions: allowedNames,

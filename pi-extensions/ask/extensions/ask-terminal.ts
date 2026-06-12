@@ -1,4 +1,10 @@
-import { Editor, Key, matchesKey, truncateToWidth, type EditorTheme } from "@earendil-works/pi-tui";
+import {
+  Editor,
+  Key,
+  matchesKey,
+  truncateToWidth,
+  type EditorTheme,
+} from "@earendil-works/pi-tui";
 
 import {
   singleLine,
@@ -76,9 +82,12 @@ export async function runTerminalAskDialog(
     };
     const editor = new Editor(tui as never, editorTheme);
 
-    const pageCount = (): number => (questions.length > 1 ? questions.length + 1 : 1);
-    const isReviewPage = (): boolean => questions.length > 1 && currentPage === questions.length;
-    const currentQuestion = (): AskQuestion | undefined => questions[currentPage];
+    const pageCount = (): number =>
+      questions.length > 1 ? questions.length + 1 : 1;
+    const isReviewPage = (): boolean =>
+      questions.length > 1 && currentPage === questions.length;
+    const currentQuestion = (): AskQuestion | undefined =>
+      questions[currentPage];
     const canGoBack = (): boolean => questions.length > 1 && currentPage > 0;
 
     const refresh = (): void => {
@@ -87,7 +96,10 @@ export async function runTerminalAskDialog(
     };
 
     const buildEntries = (question: AskQuestion): AskEntry[] => {
-      const entries: AskEntry[] = question.options.map((option) => ({ kind: "option", option }));
+      const entries: AskEntry[] = question.options.map((option) => ({
+        kind: "option",
+        option,
+      }));
       if (allowCustom) {
         entries.push({ kind: "custom" });
       }
@@ -101,7 +113,9 @@ export async function runTerminalAskDialog(
       return entries;
     };
 
-    const getStatus = (questionId: string): "pending" | "answered" | "skipped" => {
+    const getStatus = (
+      questionId: string,
+    ): "pending" | "answered" | "skipped" => {
       const state = states.get(questionId);
       if (!state) {
         return "pending";
@@ -143,13 +157,23 @@ export async function runTerminalAskDialog(
       }
 
       lines.push("");
-      lines.push(truncateToWidth(theme.fg("accent", theme.bold(" Answers so far")), width));
+      lines.push(
+        truncateToWidth(
+          theme.fg("accent", theme.bold(" Answers so far")),
+          width,
+        ),
+      );
       for (let i = 0; i < questions.length; i++) {
         const question = questions[i];
         const status = getStatus(question.id);
-        const badge = status === "answered" ? "✓" : status === "skipped" ? "–" : "○";
+        const badge =
+          status === "answered" ? "✓" : status === "skipped" ? "–" : "○";
         const badgeColor =
-          status === "answered" ? "success" : status === "skipped" ? "warning" : "dim";
+          status === "answered"
+            ? "success"
+            : status === "skipped"
+              ? "warning"
+              : "dim";
         const summaryColor = status === "answered" ? "text" : "dim";
         lines.push(
           truncateToWidth(
@@ -187,21 +211,31 @@ export async function runTerminalAskDialog(
       }
 
       if (state.wasCustom && allowCustom) {
-        const customIndex = entries.findIndex((entry) => entry.kind === "custom");
+        const customIndex = entries.findIndex(
+          (entry) => entry.kind === "custom",
+        );
         if (customIndex >= 0) {
           return customIndex;
         }
       }
 
-      if (!question.multiSelect && typeof state.value === "string" && !state.wasCustom) {
-        const selectedIndex = question.options.findIndex((option) => option.value === state.value);
+      if (
+        !question.multiSelect &&
+        typeof state.value === "string" &&
+        !state.wasCustom
+      ) {
+        const selectedIndex = question.options.findIndex(
+          (option) => option.value === state.value,
+        );
         if (selectedIndex >= 0) {
           return selectedIndex;
         }
       }
 
       if (question.multiSelect) {
-        const continueIndex = entries.findIndex((entry) => entry.kind === "continue");
+        const continueIndex = entries.findIndex(
+          (entry) => entry.kind === "continue",
+        );
         if (continueIndex >= 0) {
           return continueIndex;
         }
@@ -238,7 +272,10 @@ export async function runTerminalAskDialog(
     };
 
     const movePage = (delta: number): void => {
-      const nextPage = Math.max(0, Math.min(pageCount() - 1, currentPage + delta));
+      const nextPage = Math.max(
+        0,
+        Math.min(pageCount() - 1, currentPage + delta),
+      );
       if (nextPage === currentPage) {
         refresh();
         return;
@@ -247,7 +284,10 @@ export async function runTerminalAskDialog(
       resetPage();
     };
 
-    const setSingleAnswer = (question: AskQuestion, option: AskOption): void => {
+    const setSingleAnswer = (
+      question: AskQuestion,
+      option: AskOption,
+    ): void => {
       states.set(question.id, {
         value: option.value,
         display: option.label,
@@ -288,7 +328,9 @@ export async function runTerminalAskDialog(
         return;
       }
 
-      const selectedOptions = question.options.filter((option) => draft.has(option.value));
+      const selectedOptions = question.options.filter((option) =>
+        draft.has(option.value),
+      );
       states.set(question.id, {
         value: selectedOptions.map((option) => option.value),
         display: selectedOptions.map((option) => option.label).join(", "),
@@ -320,9 +362,14 @@ export async function runTerminalAskDialog(
       const tabs: string[] = [];
       for (let i = 0; i < questions.length; i++) {
         const status = getStatus(questions[i].id);
-        const symbol = status === "answered" ? "■" : status === "skipped" ? "–" : "□";
+        const symbol =
+          status === "answered" ? "■" : status === "skipped" ? "–" : "□";
         const color =
-          status === "answered" ? "success" : status === "skipped" ? "warning" : "muted";
+          status === "answered"
+            ? "success"
+            : status === "skipped"
+              ? "warning"
+              : "muted";
         const pill = ` ${symbol} ${i + 1} `;
         tabs.push(
           i === currentPage
@@ -342,7 +389,11 @@ export async function runTerminalAskDialog(
       lines.push("");
     };
 
-    const renderQuestion = (width: number, lines: string[], question: AskQuestion): void => {
+    const renderQuestion = (
+      width: number,
+      lines: string[],
+      question: AskQuestion,
+    ): void => {
       const state = states.get(question.id);
       const entries = buildEntries(question);
       const multiDraft = question.multiSelect ? getDraft(question) : undefined;
@@ -353,7 +404,9 @@ export async function runTerminalAskDialog(
           width,
         ),
       );
-      const affordances = [question.multiSelect ? "multi-select" : "single-select"];
+      const affordances = [
+        question.multiSelect ? "multi-select" : "single-select",
+      ];
       if (allowCustom) {
         affordances.push("custom answer");
       }
@@ -364,18 +417,28 @@ export async function runTerminalAskDialog(
         ? " Toggle options, then Continue when you're happy."
         : " Pick one option, type your own answer, or skip.";
       lines.push(
-        truncateToWidth(theme.fg("muted", `${instructions} ${affordances.join(" • ")}`), width),
+        truncateToWidth(
+          theme.fg("muted", `${instructions} ${affordances.join(" • ")}`),
+          width,
+        ),
       );
 
       if (state?.display) {
         lines.push(
           truncateToWidth(
-            theme.fg("dim", state.skipped ? " Current: (skipped)" : ` Current: ${state.display}`),
+            theme.fg(
+              "dim",
+              state.skipped
+                ? " Current: (skipped)"
+                : ` Current: ${state.display}`,
+            ),
             width,
           ),
         );
       } else if (state?.skipped) {
-        lines.push(truncateToWidth(theme.fg("dim", " Current: (skipped)"), width));
+        lines.push(
+          truncateToWidth(theme.fg("dim", " Current: (skipped)"), width),
+        );
       }
 
       lines.push("");
@@ -395,7 +458,13 @@ export async function runTerminalAskDialog(
           const chosen = question.multiSelect
             ? Boolean(multiDraft?.has(entry.option.value))
             : state?.value === entry.option.value && !state.wasCustom;
-          const mark = question.multiSelect ? (chosen ? "[x]" : "[ ]") : chosen ? "◉" : "○";
+          const mark = question.multiSelect
+            ? chosen
+              ? "[x]"
+              : "[ ]"
+            : chosen
+              ? "◉"
+              : "○";
           const color = selected ? "accent" : chosen ? "success" : "text";
           lines.push(
             truncateToWidth(
@@ -415,22 +484,39 @@ export async function runTerminalAskDialog(
         }
 
         if (entry.kind === "custom") {
-          const color = selected ? "accent" : state?.wasCustom ? "success" : "text";
+          const color = selected
+            ? "accent"
+            : state?.wasCustom
+              ? "success"
+              : "text";
           lines.push(
-            truncateToWidth(`${prefix}${theme.fg(color, "✎ Write custom answer…")}`, width),
+            truncateToWidth(
+              `${prefix}${theme.fg(color, "✎ Write custom answer…")}`,
+              width,
+            ),
           );
           if (state?.wasCustom && state.display) {
             lines.push(
-              truncateToWidth(`    ${theme.fg("muted", `Current: ${state.display}`)}`, width),
+              truncateToWidth(
+                `    ${theme.fg("muted", `Current: ${state.display}`)}`,
+                width,
+              ),
             );
           }
           continue;
         }
 
         if (entry.kind === "skip") {
-          const color = selected ? "accent" : state?.skipped ? "warning" : "text";
+          const color = selected
+            ? "accent"
+            : state?.skipped
+              ? "warning"
+              : "text";
           lines.push(
-            truncateToWidth(`${prefix}${theme.fg(color, "↷ Skip — decide for me")}`, width),
+            truncateToWidth(
+              `${prefix}${theme.fg(color, "↷ Skip — decide for me")}`,
+              width,
+            ),
           );
           continue;
         }
@@ -438,7 +524,10 @@ export async function runTerminalAskDialog(
         if (entry.kind === "back") {
           const color = selected ? "accent" : "text";
           lines.push(
-            truncateToWidth(`${prefix}${theme.fg(color, "← Back to previous question")}`, width),
+            truncateToWidth(
+              `${prefix}${theme.fg(color, "← Back to previous question")}`,
+              width,
+            ),
           );
           continue;
         }
@@ -448,21 +537,33 @@ export async function runTerminalAskDialog(
           selectedCount > 0
             ? `→ Continue with ${selectedCount} selected`
             : "→ Continue without selecting anything";
-        const color = selected ? "accent" : selectedCount > 0 ? "success" : "dim";
-        lines.push(truncateToWidth(`${prefix}${theme.fg(color, label)}`, width));
+        const color = selected
+          ? "accent"
+          : selectedCount > 0
+            ? "success"
+            : "dim";
+        lines.push(
+          truncateToWidth(`${prefix}${theme.fg(color, label)}`, width),
+        );
       }
 
       renderProgressSummary(width, lines);
     };
 
-    const renderInput = (width: number, lines: string[], question: AskQuestion): void => {
+    const renderInput = (
+      width: number,
+      lines: string[],
+      question: AskQuestion,
+    ): void => {
       lines.push(
         truncateToWidth(
           theme.fg("text", ` ${singleLine(question.question || question.id)}`),
           width,
         ),
       );
-      lines.push(truncateToWidth(theme.fg("muted", " Write your answer below."), width));
+      lines.push(
+        truncateToWidth(theme.fg("muted", " Write your answer below."), width),
+      );
       lines.push("");
       for (const line of editor.render(Math.max(20, width - 2))) {
         lines.push(truncateToWidth(` ${line}`, width));
@@ -470,16 +571,26 @@ export async function runTerminalAskDialog(
     };
 
     const renderReview = (width: number, lines: string[]): void => {
-      lines.push(truncateToWidth(theme.fg("accent", theme.bold(" Review answers")), width));
+      lines.push(
+        truncateToWidth(
+          theme.fg("accent", theme.bold(" Review answers")),
+          width,
+        ),
+      );
       lines.push("");
 
       for (let i = 0; i < questions.length; i++) {
         const question = questions[i];
         const state = states.get(question.id);
         const status = getStatus(question.id);
-        const badge = status === "answered" ? "✓" : status === "skipped" ? "–" : "○";
+        const badge =
+          status === "answered" ? "✓" : status === "skipped" ? "–" : "○";
         const badgeColor =
-          status === "answered" ? "success" : status === "skipped" ? "warning" : "dim";
+          status === "answered"
+            ? "success"
+            : status === "skipped"
+              ? "warning"
+              : "dim";
 
         lines.push(
           truncateToWidth(
@@ -489,11 +600,20 @@ export async function runTerminalAskDialog(
         );
 
         if (state?.value !== undefined) {
-          lines.push(truncateToWidth(`   ${theme.fg("accent", state.display ?? "")}`, width));
+          lines.push(
+            truncateToWidth(
+              `   ${theme.fg("accent", state.display ?? "")}`,
+              width,
+            ),
+          );
         } else if (state?.skipped) {
-          lines.push(truncateToWidth(`   ${theme.fg("dim", "(skipped)")}`, width));
+          lines.push(
+            truncateToWidth(`   ${theme.fg("dim", "(skipped)")}`, width),
+          );
         } else {
-          lines.push(truncateToWidth(`   ${theme.fg("dim", "(unanswered)")}`, width));
+          lines.push(
+            truncateToWidth(`   ${theme.fg("dim", "(unanswered)")}`, width),
+          );
         }
 
         lines.push("");
@@ -502,12 +622,20 @@ export async function runTerminalAskDialog(
       if (Object.keys(buildDialogResult().answers).length === 0) {
         lines.push(
           truncateToWidth(
-            theme.fg("warning", " No answers yet — submit to let the agent use its best judgment."),
+            theme.fg(
+              "warning",
+              " No answers yet — submit to let the agent use its best judgment.",
+            ),
             width,
           ),
         );
       } else {
-        lines.push(truncateToWidth(theme.fg("success", " Press Enter to submit."), width));
+        lines.push(
+          truncateToWidth(
+            theme.fg("success", " Press Enter to submit."),
+            width,
+          ),
+        );
       }
     };
 

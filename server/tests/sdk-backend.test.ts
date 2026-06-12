@@ -11,7 +11,6 @@ import {
   resolveSdkSessionCwd,
   resolveSdkSessionDisplayCwd,
   filterSdkLoadedExtensions,
-  createHotReloadingExtensionFactory,
   SdkBackend,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
@@ -96,39 +95,6 @@ describe("hostMountValidationError", () => {
       expect(hostMountValidationError(file)).toContain("Host working directory is not a directory");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("createHotReloadingExtensionFactory", () => {
-  it("loads the updated module after its file changes", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-hot-extension-"));
-    const modulePath = join(dir, "test-extension.mjs");
-    const registered: string[] = [];
-    const writeModule = (toolName: string) => {
-      writeFileSync(
-        modulePath,
-        `export function createTestFactory() { return (pi) => pi.registerTool({ name: ${JSON.stringify(
-          toolName,
-        )}, description: "test", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [] }) }); }\n`,
-      );
-    };
-
-    try {
-      writeModule("first");
-      const factory = createHotReloadingExtensionFactory(() => modulePath, "createTestFactory");
-      await factory({
-        registerTool: (definition: { name: string }) => registered.push(definition.name),
-      } as never);
-
-      writeModule("second-after-reload");
-      await factory({
-        registerTool: (definition: { name: string }) => registered.push(definition.name),
-      } as never);
-
-      expect(registered).toEqual(["first", "second-after-reload"]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
@@ -331,14 +297,14 @@ describe("SdkBackend sandbox", () => {
   });
 });
 
-describe("SdkBackend built-in extensions", () => {
-  it("registers explicitly enabled ask without file package paths", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-builtins-"));
+describe("SdkBackend host extensions", () => {
+  it("does not inject ask when no host extension provides it", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtins-"));
     const backend = await SdkBackend.create({
       session: makeSession(),
       workspace: {
         id: "w1",
-        name: "Built-ins Test",
+        name: "No Built-ins Test",
         runtime: "host",
         hostMount: cwd,
         extensions: ["ask"],
@@ -357,8 +323,7 @@ describe("SdkBackend built-in extensions", () => {
 
       expect(
         extensions.some((ext) => ext.path.startsWith("<inline:") && ext.tools.has("ask")),
-      ).toBe(true);
-      expect(extensions.some((ext) => ext.resolvedPath.includes("oppi-extensions"))).toBe(false);
+      ).toBe(false);
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
