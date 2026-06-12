@@ -70,6 +70,41 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "ask-card-expanded-sheet")
     }
 
+    func testAskCardMultiSelectLongOptionsPreview() throws {
+        launchPreview(screen: "ask-card-multiselect-long")
+
+        let mode = app.staticTexts["Select multiple"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 5), "Multi-select mode hint not visible")
+
+        let longOption = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "alternate descent cached")).firstMatch
+        XCTAssertTrue(longOption.waitForExistence(timeout: 5), "Full long option label not visible")
+        let longDescription = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "airplane mode")).firstMatch
+        XCTAssertTrue(longDescription.waitForExistence(timeout: 5), "Full long option description not visible")
+        let shortOption = app.staticTexts["Weather window confirmed"]
+        XCTAssertTrue(shortOption.waitForExistence(timeout: 5), "Short comparison option not visible")
+        let shortDescription = app.staticTexts["Clear forecast."]
+        XCTAssertTrue(shortDescription.waitForExistence(timeout: 5), "Short comparison description not visible")
+
+        XCTAssertGreaterThan(
+            longOption.frame.height,
+            shortOption.frame.height + 8,
+            "Long option label should render as multiple visible lines, not just expose a full accessibility label"
+        )
+        XCTAssertGreaterThan(
+            longDescription.frame.height,
+            shortDescription.frame.height + 6,
+            "Long option description should render as multiple visible lines, not just expose a full accessibility label"
+        )
+
+        XCTAssertTrue(longOption.isHittable, "Long multi-select option label should be tappable")
+        longOption.tap()
+
+        let done = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Done (1 selected)")).firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 3), "Selecting a multi-select option should stay on the page and show Done")
+
+        saveScreenshot(name: "ask-card-multiselect-long")
+    }
+
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 

@@ -214,6 +214,8 @@ struct AskCard: View {
                 expandButton
             }
 
+            AskSelectionModePill(question: question)
+
             if let commandPreview = display.commandPreview {
                 AskCommandPreview(command: commandPreview)
             }

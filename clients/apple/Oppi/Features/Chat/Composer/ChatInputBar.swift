@@ -820,14 +820,15 @@ struct ChatInputBar<ActionRow: View>: View {
             return "Send \(pendingReviewCommentCount) review \(pendingReviewCommentCount == 1 ? "comment" : "comments")…"
         }
         if let askRequest {
+            let includesMultiSelect = askRequest.questions.contains { $0.multiSelect }
             if askRequest.allowCustom {
                 if let placeholder = askRequest.customPlaceholder?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !placeholder.isEmpty {
                     return placeholder
                 }
-                return "Type answer…"
+                return includesMultiSelect ? "Select options or type…" : "Type answer…"
             }
-            return "Choose an option…"
+            return includesMultiSelect ? "Select options…" : "Choose an option…"
         }
         guard isBusy else { return "Message…" }
         return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
