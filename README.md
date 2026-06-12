@@ -146,6 +146,7 @@ For normal use, run the server with the CLI above and pair from the iPhone/iPad 
 - [Dictation / ASR](server/docs/asr.md) - server dictation setup
 - [Voice replies / TTS](server/docs/tts.md) - voice extension setup
 - [Extensions](docs/extensions.md) - Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
+- [Attachment rendering](docs/attachment-rendering.md) - message and tool-output rendering for image, audio, video, and file attachments
 - [Document viewers](docs/document-viewers.md) - full-screen reading controls for markdown, code, diffs, terminal output, and rendered documents
 - [TUI session bridge](docs/oppi-mirror.md) - live terminal Pi sessions in Oppi and the separate `oppi-mirror` package
 - [Sandbox workspaces](docs/sandbox.md) - Gondolin VM isolation, network boundaries, tools, and safe defaults

@@ -2,7 +2,7 @@
 
 This page explains Oppi's runtime behavior for pi extensions: what Oppi loads, what workspaces can enable, what standalone pi sees, and how terminal-oriented extension UI appears on mobile.
 
-For Oppi's public native UI block contract and Apple presentation mapping, see [`extension-native-ui.md`](extension-native-ui.md).
+For Oppi's public native UI block contract and Apple presentation mapping, see [`extension-native-ui.md`](extension-native-ui.md). For media attachments in messages and expanded tool output, see [`attachment-rendering.md`](attachment-rendering.md).
 
 It is for Oppi workspace admins and Oppi developers. It is not an extension-authoring guide. For pi package layout, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
 
@@ -12,7 +12,7 @@ It is for Oppi workspace admins and Oppi developers. It is not an extension-auth
 
 ## Core rule
 
-Oppi ships a default `ask` extension for SDK sessions. Other extension tools load from Pi's own resource system, then pass through the workspace allowlist.
+Oppi does not inject extension tools into SDK sessions. Extension tools, including `ask`, load from Pi's own resource system, then pass through the workspace allowlist.
 
 Approval behavior is extension-owned. If a session needs approval before an action, use a Pi extension that handles `tool_call` or session events and asks through `ctx.ui`.
 
@@ -20,17 +20,17 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 
 ## Extension surfaces
 
-| Surface                 | Enabled by                                                  | Declared in                        | Loaded by                          | Notes                                                                                                      |
-| ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader                 | Must work without Oppi server services                                                                     |
-| Oppi `ask` built-in     | Workspace `extensions` allowlist                            | `server/extensions/ask.ts`         | Oppi `SdkBackend` inline factory   | Provides portable multi-question and multi-select prompts                                                  |
-| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client                 | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
+| Surface                 | Enabled by                                                  | Declared in                        | Loaded by          | Notes                                                                                                      |
+| ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader | Must work without Oppi server services                                                                     |
+| Ask extension example   | Local/package install + workspace `extensions` allowlist    | `pi-extensions/ask`                | pi resource loader | Provides portable multi-question and multi-select prompts                                                  |
+| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
 
-## If we add a pi package later
+## Pi package layout
 
-Pi's standard package model is the source of truth. A future package can declare resources under the `pi` key:
+Pi's standard package model is the source of truth. A package can declare resources under the `pi` key:
 
 ```json
 {
@@ -46,7 +46,7 @@ Pi's standard package model is the source of truth. A future package can declare
 
 Only put an entry in `pi.extensions` when that extension works in plain pi. Tools that need Oppi storage, session spawning, trace inspection, workspace admin APIs, or mobile-only behavior need a separate server API instead of hidden `SdkBackend` injection.
 
-If Oppi later ships a standalone package, users must opt in explicitly:
+Users must opt in explicitly:
 
 ```bash
 pi install <package-or-path>
@@ -58,11 +58,10 @@ pi -e <package-or-path>
 
 Oppi keeps pi's extension system, then adds these rules:
 
-1. **Built-in Ask extension** through the workspace `extensions` allowlist.
-2. **Workspace allowlist filtering** through `workspace.extensions`.
-3. **Mobile UI compatibility** for most standard extension input, confirm, and approval UI calls.
+1. **Workspace allowlist filtering** through `workspace.extensions`.
+2. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
 
-Oppi does not replace pi discovery. It filters host-loaded extensions and injects `ask` when the workspace explicitly enables it. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
+Oppi does not replace pi discovery. It filters host-loaded extensions through the workspace allowlist. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
 
 ## Approval prompts
 
@@ -90,11 +89,11 @@ Oppi then prunes and filters that list before the session uses it:
 - directory-style entries such as `extensions/foo/index.ts` use `foo` as the extension name
 - when `workspace.extensions` is set, host extensions must appear in that allowlist
 
-After pruning, Oppi injects its default `ask` as an in-process factory when enabled. A user/project Pi extension can also register a tool named `ask`; Pi's normal extension ordering decides which tool registration wins.
+After pruning, Oppi loads the remaining Pi extensions without injecting an extra Ask tool. Install or enable a Pi extension named `ask` when a workspace needs the ask tool.
 
 ## Reload behavior
 
-`/reload` reloads host pi extensions, skills, prompts, and themes through pi's resource loader. It also rebuilds the enabled `ask` inline factory from the current `server/extensions/ask.ts` source in development or compiled `extensions/ask.js` module in production.
+`/reload` reloads host pi extensions, skills, prompts, and themes through pi's resource loader.
 
 ## Workspace allowlist behavior
 
@@ -102,11 +101,11 @@ If a workspace sets `extensions`, that field is authoritative for optional works
 
 That means:
 
-- include `ask` explicitly if you want an Ask tool; this can be Oppi's default Ask tool or a user/project Pi extension named `ask`
+- include `ask` explicitly if you want an Ask tool from an installed Pi extension named `ask`
 - include a Pi extension name explicitly if you want it when the workspace has an allowlist
 - omitting an extension name disables it for that workspace
 
-If `workspace.extensions` is unset, Oppi keeps normal pi discovery but leaves `ask` off by default.
+If `workspace.extensions` is unset, Oppi keeps normal pi discovery.
 
 ## Extension picker behavior
 
@@ -119,9 +118,8 @@ The picker response:
 - includes auto-discovered global and project-local extensions
 - includes package-installed extensions
 - includes settings-declared extension paths
-- includes Oppi's `ask` built-in when no Pi extension with that name is listed first
 - allows host/project/package extensions named `ask`
-- deduplicates by extension name using pi resource-loader precedence first, then Oppi's `ask` fallback
+- deduplicates by extension name using pi resource-loader precedence
 
 ## Native extension UI contract
 
@@ -156,13 +154,14 @@ For extension tools without a dedicated mobile renderer, Oppi renders useful nat
 
 Extension authors can improve the default expanded view by returning these `details` keys from the tool result:
 
-| Key                  | Purpose                                                      |
-| -------------------- | ------------------------------------------------------------ |
-| `expandedText`       | Text shown in the expanded mobile view instead of raw output |
-| `presentationFormat` | One of `markdown`, `json`, `code`, or `diff`                 |
-| `language`           | Syntax hint for `presentationFormat: "code"`                 |
-| `filePath`           | File path hint for language detection and diff/code metadata |
-| `startLine`          | Starting line number for code views                          |
+| Key                  | Purpose                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `expandedText`       | Text shown in the expanded mobile view instead of raw output                                                 |
+| `presentationFormat` | One of `markdown`, `json`, `code`, or `diff`                                                                 |
+| `language`           | Syntax hint for `presentationFormat: "code"`                                                                 |
+| `filePath`           | File path hint for language detection and diff/code metadata                                                 |
+| `startLine`          | Starting line number for code views                                                                          |
+| `media`              | Stored media attachment metadata for expanded rows; see [`attachment-rendering.md`](attachment-rendering.md) |
 
 Example:
 
@@ -245,15 +244,14 @@ Mirror mode uses the same protocol surface from an interactive terminal Pi proce
 
 ## Relevant implementation files
 
-| File                                  | Why it matters                                                           |
-| ------------------------------------- | ------------------------------------------------------------------------ |
-| `server/extensions/built-ins.ts`      | Built-in Ask name and workspace enablement rules                         |
-| `server/extensions/ask.ts`            | Built-in Ask tool                                                        |
-| `server/src/routes/skills.ts`         | Workspace extension picker (`GET /extensions`)                           |
-| `server/src/sdk-backend.ts`           | Pi resource loading, Ask injection, and allowlist rules                 |
-| `server/src/sdk-ui-bridge.ts`         | Extension UI bridge from pi APIs to Oppi protocol events                 |
-| `server/src/extension-ui-contract.ts` | Shared extension UI request, notification, and settled message builders  |
-| `server/src/mobile-renderer.ts`       | Mobile tool-row rendering                                                |
+| File                                  | Why it matters                                                          |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| `pi-extensions/ask`                   | Ask extension example with multi-select support                         |
+| `server/src/routes/skills.ts`         | Workspace extension picker (`GET /extensions`)                          |
+| `server/src/sdk-backend.ts`           | Pi resource loading and allowlist rules                                 |
+| `server/src/sdk-ui-bridge.ts`         | Extension UI bridge from pi APIs to Oppi protocol events                |
+| `server/src/extension-ui-contract.ts` | Shared extension UI request, notification, and settled message builders |
+| `server/src/mobile-renderer.ts`       | Mobile tool-row rendering                                               |
 
 ## When to read pi docs instead
 
