@@ -41,12 +41,26 @@ struct SessionRowPresentationBuilderTests {
         )
     }
 
-    @Test func stoppedPresentationDoesNotDuplicateFileSummaryText() {
+    @Test func stoppedPresentationDoesNotRenderAttentionText() {
         let session = makeSession(id: "root", filesChanged: 3)
         let presentation = SessionRowPresentationBuilder.make(session: session)
 
-        #expect(presentation.activitySummary == nil)
+        #expect(presentation.attentionText == nil)
         #expect(presentation.session.changeStats?.filesChanged == 3)
+    }
+
+    @Test func pendingAskPresentationShowsFirstQuestion() {
+        let session = makeSession(id: "root", status: .busy)
+        let ask = AskRequest(
+            id: "ask-1",
+            sessionId: session.id,
+            questions: [AskQuestion(id: "q1", question: "Which branch should I use?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let presentation = SessionRowPresentationBuilder.make(session: session, pendingAsk: ask)
+
+        #expect(presentation.attentionText == "question: Which branch should I use?")
     }
 
     @Test func attentionCountsUseSessionPendingCount() {

@@ -116,7 +116,6 @@ struct WorkspaceDetailView: View {
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AppNavigation.self) private var navigation
     @Environment(GitStatusStore.self) private var gitStatusStore
-    @Environment(SessionActivityStore.self) private var activityStore
 
     @State private var isCreating = false
     @State private var error: String?
@@ -579,7 +578,6 @@ struct WorkspaceDetailView: View {
             session: session,
             pendingAskCount: attention.askCount,
             pendingAsk: askRequestStore.pending(for: session.id),
-            activity: activityStore.lastActivity(for: session.id),
             lineageHint: lineageHint,
             searchSnippet: searchStore.snippetsBySessionId[session.id]
         )

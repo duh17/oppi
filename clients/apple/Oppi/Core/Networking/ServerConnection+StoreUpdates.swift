@@ -58,13 +58,6 @@ extension ServerConnection {
     ) -> StoreUpdateResult {
         switch message {
 
-        // MARK: Tool activity tracking
-
-        case .toolStart(let tool, let args, _, _),
-             .toolUpdate(let tool, let args, _, _):
-            activityStore.recordToolStart(sessionId: sessionId, tool: tool, args: args)
-            return .notHandled  // let active-session path also process (watchdog, coalescer)
-
         // MARK: Agent lifecycle
 
         case .agentStart:
@@ -95,7 +88,6 @@ extension ServerConnection {
                 }
             }
             sessionStore.recordTurnEnded(sessionId: sessionId)
-            activityStore.clear(sessionId: sessionId)
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             syncLiveActivityState()
             return StoreUpdateResult(handled: true)
@@ -147,7 +139,6 @@ extension ServerConnection {
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
-            activityStore.clear(sessionId: sessionId)
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
             syncLiveActivityState()
             return StoreUpdateResult(handled: true)
@@ -160,7 +151,6 @@ extension ServerConnection {
             }
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             sessionUsageMetricLastEmittedAt.removeValue(forKey: deletedId)
-            activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
             syncLiveActivityState()
             return StoreUpdateResult(handled: true)
@@ -210,7 +200,6 @@ extension ServerConnection {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
             sessionStore.recordTurnEnded(sessionId: currentSession.id)
-            activityStore.clear(sessionId: currentSession.id)
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
         }
 

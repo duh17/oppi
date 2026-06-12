@@ -192,7 +192,6 @@ extension View {
             .environment(connection.gitStatusStore)
             .environment(connection.fileIndexStore)
             .environment(connection.messageQueueStore)
-            .environment(connection.activityStore)
     }
 }
 
@@ -852,8 +851,7 @@ struct WorkspaceHomeView: View {
             presentation: SessionRowPresentationBuilder.make(
                 session: session,
                 pendingAskCount: attention.askCount,
-                pendingAsk: connection.askRequestStore.pending(for: session.id),
-                activity: connection.activityStore.lastActivity(for: session.id)
+                pendingAsk: connection.askRequestStore.pending(for: session.id)
             )
         )
     }

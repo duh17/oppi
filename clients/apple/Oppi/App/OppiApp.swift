@@ -207,7 +207,6 @@ struct OppiApp: App {
             .environment(coordinator.activeConnection.gitStatusStore)
             .environment(coordinator.activeConnection.fileIndexStore)
             .environment(coordinator.activeConnection.messageQueueStore)
-            .environment(coordinator.activeConnection.activityStore)
             .environment(navigation)
             .environment(coordinator.serverStore)
             .environment(themeStore)

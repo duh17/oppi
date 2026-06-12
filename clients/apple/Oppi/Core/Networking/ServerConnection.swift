@@ -102,7 +102,6 @@ final class ServerConnection {
     let gitStatusStore = GitStatusStore()
     let fileIndexStore = FileIndexStore()
     let messageQueueStore = MessageQueueStore()
-    let activityStore = SessionActivityStore()
 
     // Audio
     let audioPlayer = AudioPlayerService()
@@ -792,8 +791,6 @@ final class ServerConnection {
         switch message {
         case .agentStart,
              .agentEnd,
-             .toolStart,
-             .toolUpdate,
              .state,
              .sessionSummary,
              .sessionEnded,
