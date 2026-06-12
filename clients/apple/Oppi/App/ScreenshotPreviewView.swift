@@ -27,6 +27,8 @@ struct ScreenshotPreviewView: View {
             ExtensionSurfacePreview()
         case "ask-card":
             AskCardPreview()
+        case "ask-card-multiselect-long":
+            AskCardMultiSelectLongOptionsPreview()
         case "ask-card-expanded-sheet":
             AskCardExpandedSheetPreview()
         case "context-bar-overlap":
@@ -231,6 +233,49 @@ private enum AskCardPreviewFixture {
             responseEncoding: .extensionSelect
         )
     }()
+
+    static let multiSelectLongOptionsRequest = AskRequest(
+        id: "preview-multi-select-long-options",
+        sessionId: "preview-session",
+        questions: [
+            AskQuestion(
+                id: "sun_light_nav",
+                question: "Sun, light, navigation, comms — select what is ready.",
+                options: [
+                    AskOption(
+                        value: "offline_maps_gpx",
+                        label: "Offline maps/GPX loaded on phone/GPS with route, waypoints, and alternate descent cached",
+                        description: "CalTopo or Gaia route opens in airplane mode; phone/GPS battery plan tested."
+                    ),
+                    AskOption(
+                        value: "weather_window",
+                        label: "Weather window confirmed",
+                        description: "Clear forecast."
+                    ),
+                    AskOption(
+                        value: "inreach_radio_power",
+                        label: "inReach/radios/battery bank tested with messages, charging cables, and team channel confirmed"
+                    ),
+                    AskOption(
+                        value: "headlamp_backup",
+                        label: "Headlamp + spare batteries/backup lamp in top pocket, not buried in the pack"
+                    ),
+                ],
+                multiSelect: true
+            ),
+            AskQuestion(
+                id: "food_water",
+                question: "Food and water — select what is ready.",
+                options: [
+                    AskOption(value: "water_capacity", label: "4–5 L water capacity"),
+                    AskOption(value: "electrolytes", label: "Electrolytes / salt plan"),
+                ],
+                multiSelect: true
+            ),
+        ],
+        allowCustom: true,
+        timeout: nil
+    )
 }
 
 private struct AskCardPreview: View {
@@ -325,6 +370,94 @@ private struct AskCardPreview: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.bottom, 14)
+                }
+                .background(Color.themeBg.opacity(0.96), in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .stroke(Color.themeComment.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 24)
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct AskCardMultiSelectLongOptionsPreview: View {
+    @State private var currentPage = 0
+    @State private var answers: [String: AskAnswer] = [:]
+    @State private var lastAction = "Waiting for answer"
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    WorkingSpinnerView(tintColor: .themeComment.opacity(0.8), style: .brailleDots)
+                        .frame(width: 14, height: 14)
+                    Text("working…")
+                        .font(.title2.weight(.medium))
+                        .foregroundStyle(.themeComment.opacity(0.7))
+                }
+                .padding(.horizontal, 18)
+
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 0) {
+                    AskCard(
+                        request: AskCardPreviewFixture.multiSelectLongOptionsRequest,
+                        currentPage: $currentPage,
+                        answers: $answers,
+                        onSubmit: { submittedAnswers in
+                            lastAction = AskResponseEncoder.encode(submittedAnswers)
+                        },
+                        onIgnoreAll: {
+                            lastAction = "Ignored"
+                        }
+                    )
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+
+                    HStack(alignment: .center, spacing: 14) {
+                        Circle()
+                            .fill(Color.themeBgHighlight)
+                            .overlay(
+                                Image(systemName: "mic")
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(.themeFg)
+                            )
+                            .frame(width: 58, height: 58)
+                            .overlay(Circle().stroke(Color.themeComment.opacity(0.3), lineWidth: 1))
+
+                        Text("Select options or type…")
+                            .font(.title2)
+                            .foregroundStyle(.themeComment)
+
+                        Spacer()
+
+                        Circle()
+                            .fill(Color.themeBgHighlight)
+                            .overlay(
+                                Image(systemName: "xmark")
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(.themeFg)
+                            )
+                            .frame(width: 58, height: 58)
+                            .overlay(Circle().stroke(Color.themeComment.opacity(0.3), lineWidth: 1))
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+
+                    Text(lastAction)
+                        .font(.caption)
+                        .foregroundStyle(.themeComment.opacity(0.75))
+                        .lineLimit(1)
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 14)
                 }
                 .background(Color.themeBg.opacity(0.96), in: RoundedRectangle(cornerRadius: 34, style: .continuous))
                 .overlay(

@@ -175,6 +175,8 @@ struct AskCardExpanded: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            AskSelectionModePill(question: question)
+
             VStack(spacing: 10) {
                 ForEach(question.options, id: \.value) { option in
                     expandedOptionCard(option, question: question)

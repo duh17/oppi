@@ -190,6 +190,22 @@ struct AskCardTests {
         #expect(display.commandPreview == nil)
     }
 
+    // MARK: - Selection Mode
+
+    @Test("Multi-select questions expose explicit selection mode hint")
+    func multiSelectQuestionsExposeSelectionHint() {
+        let request = Self.multiSelectOnlyRequest()
+        let question = request.questions[0]
+        #expect(AskCardShared.selectionModeHint(for: question) == "Select multiple")
+    }
+
+    @Test("Single-select questions do not expose multi-select hint")
+    func singleSelectQuestionsDoNotExposeSelectionHint() {
+        let request = Self.singleSelectRequest()
+        let question = request.questions[0]
+        #expect(AskCardShared.selectionModeHint(for: question) == nil)
+    }
+
     // MARK: - Page Count
 
     @Test("Single question single-select skips pager — 1 page")

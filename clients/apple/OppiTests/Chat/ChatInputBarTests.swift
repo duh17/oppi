@@ -346,6 +346,46 @@ struct ChatInputBarTests {
         #expect(placeholder == "Choose an option…")
     }
 
+    @Test("Multi-select ask placeholder says to select options")
+    func multiSelectAskPlaceholderSaysToSelectOptions() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Pick ready items", options: [], multiSelect: true)],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+            askRequest: request,
+            pendingReviewCommentCount: 0,
+            isBusy: true,
+            busyStreamingBehavior: .steer
+        )
+
+        #expect(placeholder == "Select options or type…")
+    }
+
+    @Test("Multi-select ask without custom input keeps option wording")
+    func multiSelectAskWithoutCustomInputKeepsOptionWording() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Pick ready items", options: [], multiSelect: true)],
+            allowCustom: false,
+            timeout: nil
+        )
+
+        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+            askRequest: request,
+            pendingReviewCommentCount: 0,
+            isBusy: true,
+            busyStreamingBehavior: .steer
+        )
+
+        #expect(placeholder == "Select options…")
+    }
+
     @Test("Review comment placeholder includes staged count")
     func reviewCommentPlaceholderIncludesStagedCount() {
         let singular = ChatInputBar<EmptyView>.composerPlaceholder(
