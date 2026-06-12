@@ -59,17 +59,16 @@ enum SessionModelSummaryBuilder {
 /// Three-line layout:
 /// ```
 /// Title (bold if needs attention)                [time]
-/// model summary activity
+/// model summary question prompt
 /// ▬ 25% · $27.45 · [doc] 4  [status pill]
 /// ```
 ///
-/// Activity summary is passed in by the caller (computed from
-/// SessionActivityStore + ask state) to keep this view testable and avoid
-/// environment collisions with parallel work.
+/// Attention text is passed in by the caller to keep this view testable and
+/// avoid environment collisions with parallel work.
 struct SessionRow: View {
     let session: Session
     let pendingAskCount: Int
-    let activitySummary: String?
+    let attentionText: String?
     let lineageHint: String?
     let modelSummaries: [SessionModelSummary]
     let searchSnippet: AttributedString?
@@ -77,14 +76,14 @@ struct SessionRow: View {
     init(
         session: Session,
         pendingAskCount: Int = 0,
-        activitySummary: String? = nil,
+        attentionText: String? = nil,
         lineageHint: String? = nil,
         modelSummaries: [SessionModelSummary] = [],
         searchSnippet: AttributedString? = nil
     ) {
         self.session = session
         self.pendingAskCount = pendingAskCount
-        self.activitySummary = activitySummary
+        self.attentionText = attentionText
         self.lineageHint = lineageHint
         self.modelSummaries = modelSummaries
         self.searchSnippet = searchSnippet
@@ -169,7 +168,7 @@ struct SessionRow: View {
                     .lineLimit(2)
             }
 
-            // Row 2: model + activity summary
+            // Row 2: model + optional ask prompt
             HStack(spacing: 6) {
                 if let firstModel = visibleModelSummaries.first {
                     modelSummaryView(firstModel)
@@ -180,8 +179,8 @@ struct SessionRow: View {
                     compactionBadgeView(displayCompactionCount)
                 }
 
-                if let activitySummary, !activitySummary.isEmpty {
-                    Text(activitySummary)
+                if let attentionText, !attentionText.isEmpty {
+                    Text(attentionText)
                         .font(.caption2)
                         .foregroundStyle(.themeFgDim)
                         .lineLimit(1)
@@ -336,90 +335,6 @@ enum SessionRowMetricsFormatting {
 
     static func compactionAccessibilityLabel(_ compactionCount: Int) -> String {
         compactionCount == 1 ? "1 compaction" : "\(compactionCount) compactions"
-    }
-}
-
-// MARK: - Activity Summary
-
-/// Generate activity summary text from session state and activity data.
-///
-/// Called by `SessionRowPresentationBuilder` before passing inputs to
-/// `SessionRow`. Keeps SessionRow pure and testable.
-enum SessionActivitySummary {
-    static func text(
-        session: Session,
-        pendingAsk: AskRequest? = nil,
-        activity: SessionActivityStore.Activity?
-    ) -> String? {
-        if let ask = pendingAsk, let first = ask.questions.first {
-            return askDescription(first)
-        }
-
-        if session.isAwaitingFirstPrompt {
-            return nil
-        }
-
-        // Working: show current tool
-        if session.status == .busy || session.status == .starting || session.status == .stopping {
-            if let activity {
-                return formatToolActivity(activity)
-            }
-            return nil
-        }
-
-        // Ready: keep row quiet unless something more specific is happening.
-        if session.status == .ready {
-            return nil
-        }
-
-        // Stopped: keep activity text quiet. Change metrics are rendered once
-        // in SessionRow's compact metrics line so home previews and workspace
-        // detail rows do not duplicate "files changed" text.
-        if session.status == .stopped {
-            return nil
-        }
-
-        // Error
-        if session.status == .error {
-            return "agent error"
-        }
-
-        return nil
-    }
-
-    private static func askDescription(_ question: AskQuestion) -> String {
-        let text = question.question
-        let truncated = text.count > 40 ? String(text.prefix(40)) + "..." : text
-        return "question: \(truncated)"
-    }
-
-    static func formatToolActivity(_ activity: SessionActivityStore.Activity) -> String {
-        let verb = toolVerb(activity.toolName)
-        if let arg = activity.keyArg {
-            return "\(verb) \(shortenPath(arg))"
-        }
-        return verb
-    }
-
-    private static func toolVerb(_ tool: String) -> String {
-        switch tool.lowercased() {
-        case "read": return "reading"
-        case "write": return "writing"
-        case "edit": return "editing"
-        case "bash", "execute": return "running"
-        case "search", "grep": return "searching"
-        case "glob", "find": return "finding"
-        default: return tool.lowercased()
-        }
-    }
-
-    private static func shortenPath(_ path: String) -> String {
-        // Show last two path components for readability
-        let components = path.split(separator: "/")
-        if components.count <= 2 {
-            return path
-        }
-        return components.suffix(2).joined(separator: "/")
     }
 }
 

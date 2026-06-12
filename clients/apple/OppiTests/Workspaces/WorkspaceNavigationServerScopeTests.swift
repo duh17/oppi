@@ -249,7 +249,6 @@ struct WorkspaceNavigationServerScopeTests {
             .environment(connection.gitStatusStore)
             .environment(connection.fileIndexStore)
             .environment(connection.messageQueueStore)
-            .environment(connection.activityStore)
             .environment(navigation)
         )
 
@@ -290,7 +289,6 @@ struct WorkspaceNavigationServerScopeTests {
             .environment(connection.gitStatusStore)
             .environment(connection.fileIndexStore)
             .environment(connection.messageQueueStore)
-            .environment(connection.activityStore)
             .environment(navigation)
             .environment(serverStore)
         )

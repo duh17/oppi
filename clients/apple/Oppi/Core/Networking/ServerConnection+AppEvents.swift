@@ -151,7 +151,6 @@ extension ServerConnection {
         if status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
         } else {
-            activityStore.clear(sessionId: sessionId)
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
         }
         syncLiveActivityState()
@@ -172,7 +171,6 @@ extension ServerConnection {
         clearExtensionDialog(for: sessionId)
         clearExtensionSurface(for: sessionId)
         messageQueueStore.clear(sessionId: sessionId)
-        activityStore.clear(sessionId: sessionId)
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
         sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
         sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)

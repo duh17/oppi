@@ -8,7 +8,7 @@ import Foundation
 struct SessionRowPresentation {
     let session: Session
     let pendingAskCount: Int
-    let activitySummary: String?
+    let attentionText: String?
     let lineageHint: String?
     let modelSummaries: [SessionModelSummary]
     let searchSnippet: AttributedString?
@@ -19,18 +19,13 @@ enum SessionRowPresentationBuilder {
         session: Session,
         pendingAskCount: Int = 0,
         pendingAsk: AskRequest? = nil,
-        activity: SessionActivityStore.Activity? = nil,
         lineageHint: String? = nil,
         searchSnippet: AttributedString? = nil
     ) -> SessionRowPresentation {
         SessionRowPresentation(
             session: session,
             pendingAskCount: pendingAskCount,
-            activitySummary: SessionActivitySummary.text(
-                session: session,
-                pendingAsk: pendingAsk,
-                activity: activity
-            ),
+            attentionText: attentionText(for: pendingAsk),
             lineageHint: lineageHint,
             modelSummaries: modelSummaries(for: session),
             searchSnippet: searchSnippet
@@ -42,6 +37,14 @@ enum SessionRowPresentationBuilder {
         pendingAskCountForSession: (String) -> Int
     ) -> SessionListAttentionCounts {
         SessionListAttentionCounts(askCount: pendingAskCountForSession(sessionId))
+    }
+
+    static func attentionText(for pendingAsk: AskRequest?) -> String? {
+        guard let question = pendingAsk?.questions.first?.question else { return nil }
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let truncated = trimmed.count > 40 ? String(trimmed.prefix(40)) + "..." : trimmed
+        return "question: \(truncated)"
     }
 
     static func modelSummaries(for session: Session) -> [SessionModelSummary] {
@@ -57,7 +60,7 @@ extension SessionRow {
         self.init(
             session: presentation.session,
             pendingAskCount: presentation.pendingAskCount,
-            activitySummary: presentation.activitySummary,
+            attentionText: presentation.attentionText,
             lineageHint: presentation.lineageHint,
             modelSummaries: presentation.modelSummaries,
             searchSnippet: presentation.searchSnippet

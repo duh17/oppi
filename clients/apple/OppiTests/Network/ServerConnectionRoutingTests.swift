@@ -38,7 +38,7 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
     }
 
-    @Test func stateUpdateCarriesPreviousContextAndReleasesRecoveredActivity() {
+    @Test func stateUpdateCarriesPreviousContextAndReleasesSleepPrevention() {
         let (conn, _) = makeTestConnection()
         var idleTimerUpdates: [Bool] = []
         conn.screenAwakeController = ScreenAwakeController(
@@ -51,13 +51,8 @@ struct ServerConnectionRoutingTests {
         previous.workspaceId = "w1"
         conn.sessionStore.upsert(previous)
 
-        _ = conn.applySharedStoreUpdate(
-            for: .toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil),
-            sessionId: "s1"
-        )
         _ = conn.applySharedStoreUpdate(for: .agentStart, sessionId: "s1")
 
-        #expect(conn.activityStore.lastActivity(for: "s1") != nil)
         #expect(conn.screenAwakeController.isPreventingSleep)
 
         var current = previous
@@ -69,7 +64,6 @@ struct ServerConnectionRoutingTests {
         #expect(result.previousWorkspaceId == "w1")
         #expect(result.previousStatus == .busy)
         #expect(result.didTransitionOutOfRunning)
-        #expect(conn.activityStore.lastActivity(for: "s1") == nil)
         #expect(!conn.screenAwakeController.isPreventingSleep)
         #expect(idleTimerUpdates.last == false)
     }
@@ -84,10 +78,6 @@ struct ServerConnectionRoutingTests {
         )
 
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
-        _ = conn.applySharedStoreUpdate(
-            for: .toolStart(tool: "bash", args: ["command": "pwd"], toolCallId: "tc-1", callSegments: nil),
-            sessionId: "s1"
-        )
         pipe.handle(.agentStart, sessionId: "s1")
         conn.handleActiveSessionUI(
             .extensionUIRequest(ExtensionUIRequest(
@@ -100,7 +90,6 @@ struct ServerConnectionRoutingTests {
             sessionId: "s1"
         )
 
-        #expect(conn.activityStore.lastActivity(for: "s1") != nil)
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
         #expect(conn.silenceWatchdog.lastEventTime == nil)
 
@@ -109,7 +98,6 @@ struct ServerConnectionRoutingTests {
 
         conn.applyFetchedSessionState(makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
 
-        #expect(conn.activityStore.lastActivity(for: "s1") == nil)
         #expect(conn.askRequestStore.pending(for: "s1") == nil)
         #expect(conn.silenceWatchdog.lastEventTime == nil)
         #expect(!conn.screenAwakeController.isPreventingSleep)
