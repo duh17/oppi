@@ -19,7 +19,9 @@ import { runTerminalAskDialog } from "./ask-terminal.js";
 const AskOptionSchema = Type.Object({
   value: Type.String({ description: "Return value when selected" }),
   label: Type.String({ description: "Display label" }),
-  description: Type.Optional(Type.String({ description: "Short description below label" })),
+  description: Type.Optional(
+    Type.String({ description: "Short description below label" }),
+  ),
 });
 
 const AskQuestionSchema = Type.Object({
@@ -29,21 +31,29 @@ const AskQuestionSchema = Type.Object({
     description: "Options for the user to choose from (2-6 recommended)",
   }),
   multiSelect: Type.Optional(
-    Type.Boolean({ description: "Allow selecting multiple options. Default: false" }),
+    Type.Boolean({
+      description: "Allow selecting multiple options. Default: false",
+    }),
   ),
 });
 
 const AskParams = Type.Object({
   questions: Type.Array(AskQuestionSchema, {
     minItems: 1,
-    description: "One or more questions to ask. Presented as a horizontal pager on mobile.",
+    description:
+      "One or more questions to ask. Presented as a horizontal pager on mobile.",
   }),
   allowCustom: Type.Optional(
-    Type.Boolean({ description: "Allow typing a custom answer per question. Default: true" }),
+    Type.Boolean({
+      description: "Allow typing a custom answer per question. Default: true",
+    }),
   ),
 });
 
-function questionModeLabel(question: AskQuestion, allowCustom: boolean): string {
+function questionModeLabel(
+  question: AskQuestion,
+  allowCustom: boolean,
+): string {
   const parts = [question.multiSelect ? "multi-select" : "single-select"];
   if (allowCustom) {
     parts.push("custom");
@@ -51,7 +61,10 @@ function questionModeLabel(question: AskQuestion, allowCustom: boolean): string 
   return parts.join(" + ");
 }
 
-function displayAnswerValue(question: AskQuestion | undefined, value: string): string {
+function displayAnswerValue(
+  question: AskQuestion | undefined,
+  value: string,
+): string {
   if (!question) {
     return value;
   }
@@ -64,9 +77,14 @@ function displayAnswerValue(question: AskQuestion | undefined, value: string): s
   return `"${singleLine(value)}"`;
 }
 
-function displayAnswer(question: AskQuestion | undefined, answer: AskAnswer): string {
+function displayAnswer(
+  question: AskQuestion | undefined,
+  answer: AskAnswer,
+): string {
   if (Array.isArray(answer)) {
-    return answer.map((value) => displayAnswerValue(question, value)).join(", ");
+    return answer
+      .map((value) => displayAnswerValue(question, value))
+      .join(", ");
   }
   return displayAnswerValue(question, answer);
 }
@@ -82,9 +100,14 @@ type AskUIContext = ExtensionContext["ui"] & {
 const CUSTOM_CHOICE = "✎ Custom answer…";
 const SKIP_CHOICE = "↷ Skip";
 
-function optionChoiceLabel(option: { label: string; description?: string }, index: number): string {
+function optionChoiceLabel(
+  option: { label: string; description?: string },
+  index: number,
+): string {
   const label = `${index + 1}. ${singleLine(option.label)}`;
-  return option.description ? `${label} — ${singleLine(option.description)}` : label;
+  return option.description
+    ? `${label} — ${singleLine(option.description)}`
+    : label;
 }
 
 function multiOptionChoiceLabel(
@@ -125,7 +148,8 @@ async function runPortableSingleSelectFallback(
     : [...optionChoices, SKIP_CHOICE];
   const selected = await ctx.ui.select(title, choices, opts);
   if (!selected || selected === SKIP_CHOICE) return undefined;
-  if (selected === CUSTOM_CHOICE) return promptForCustomAnswer(ctx, title, opts);
+  if (selected === CUSTOM_CHOICE)
+    return promptForCustomAnswer(ctx, title, opts);
 
   const optionIndex = optionChoices.indexOf(selected);
   return optionIndex >= 0 ? question.options[optionIndex].value : selected;
@@ -142,7 +166,9 @@ async function runPortableMultiSelectFallback(
   const customAnswers: string[] = [];
 
   if (question.options.length === 0) {
-    const custom = allowCustom ? await promptForCustomAnswer(ctx, title, opts) : undefined;
+    const custom = allowCustom
+      ? await promptForCustomAnswer(ctx, title, opts)
+      : undefined;
     return custom ? [custom] : undefined;
   }
 
@@ -151,7 +177,8 @@ async function runPortableMultiSelectFallback(
       multiOptionChoiceLabel(question, index, selected),
     );
     const selectedCount = selected.size + customAnswers.length;
-    const doneChoice = selectedCount > 0 ? `✓ Done (${selectedCount} selected)` : "✓ Done";
+    const doneChoice =
+      selectedCount > 0 ? `✓ Done (${selectedCount} selected)` : "✓ Done";
     const choices = allowCustom
       ? [...optionChoices, CUSTOM_CHOICE, doneChoice, SKIP_CHOICE]
       : [...optionChoices, doneChoice, SKIP_CHOICE];
@@ -222,8 +249,15 @@ async function runAskDialog(
   }
 
   if (ctx.mode === "tui") {
-    const custom = ctx.ui.custom.bind(ctx.ui) as Parameters<typeof runTerminalAskDialog>[0];
-    const result = await runTerminalAskDialog(custom, questions, allowCustom, opts);
+    const custom = ctx.ui.custom.bind(ctx.ui) as Parameters<
+      typeof runTerminalAskDialog
+    >[0];
+    const result = await runTerminalAskDialog(
+      custom,
+      questions,
+      allowCustom,
+      opts,
+    );
     return result ?? { answers: {}, allIgnored: true };
   }
 
@@ -231,16 +265,12 @@ async function runAskDialog(
 }
 
 /**
- * Oppi's default ask extension.
+ * Ask extension example.
  *
  * The tool supports multiple questions, multi-select options, custom answers,
- * and native AskCard rendering on iOS. Oppi does not reserve the `ask` name:
- * user/project Pi extensions can also register `ask`, and Pi's normal extension
- * ordering decides which tool registration wins.
- *
- * The flow has a clean split:
- * - ask.ts: shared tool contract + Oppi/iOS path
- * - ask-terminal.ts: terminal-only custom dialog
+ * and native AskCard rendering on Oppi clients that expose `ctx.ui.ask()`.
+ * TUI sessions use the terminal custom dialog, and other Pi UI contexts fall
+ * back to standard select/input prompts.
  */
 export function createAskFactory(): ExtensionFactory {
   return (pi) => {
@@ -288,7 +318,9 @@ export function createAskFactory(): ExtensionFactory {
         }
 
         if (askedThisTurn) {
-          throw new Error("Only one ask call per turn. Bundle all questions into a single call.");
+          throw new Error(
+            "Only one ask call per turn. Bundle all questions into a single call.",
+          );
         }
         askedThisTurn = true;
 
@@ -301,24 +333,38 @@ export function createAskFactory(): ExtensionFactory {
                 text: `No UI available. Defaults: ${JSON.stringify(fallback)}`,
               },
             ],
-            details: { questions: params.questions, answers: fallback, allIgnored: false },
+            details: {
+              questions: params.questions,
+              answers: fallback,
+              allIgnored: false,
+            },
           };
         }
 
         const allowCustom = params.allowCustom ?? true;
         const dialogOptions = signal ? { signal } : undefined;
-        const askResult = await runAskDialog(ctx, params.questions, allowCustom, dialogOptions);
+        const askResult = await runAskDialog(
+          ctx,
+          params.questions,
+          allowCustom,
+          dialogOptions,
+        );
         return buildAskToolResult(params.questions, askResult.answers);
       },
 
       renderCall(args, theme) {
-        const questions = Array.isArray(args.questions) ? (args.questions as AskQuestion[]) : [];
+        const questions = Array.isArray(args.questions)
+          ? (args.questions as AskQuestion[])
+          : [];
         const allowCustom = args.allowCustom !== false;
         let text = theme.fg("toolTitle", theme.bold("ask "));
 
         if (questions.length === 1) {
           const question = questions[0];
-          text += theme.fg("muted", singleLine(question.question || question.id));
+          text += theme.fg(
+            "muted",
+            singleLine(question.question || question.id),
+          );
           text += `\n${theme.fg("dim", `  ${questionModeLabel(question, allowCustom)}`)}`;
           const labels = question.options.map((option) => option.label);
           if (labels.length > 0) {
@@ -358,14 +404,20 @@ export function createAskFactory(): ExtensionFactory {
 
         const answers = details?.answers ?? {};
         const questions = details?.questions ?? [];
-        const questionById = new Map(questions.map((question) => [question.id, question]));
+        const questionById = new Map(
+          questions.map((question) => [question.id, question]),
+        );
         const orderedKeys =
-          questions.length > 0 ? questions.map((question) => question.id) : Object.keys(answers);
+          questions.length > 0
+            ? questions.map((question) => question.id)
+            : Object.keys(answers);
         if (orderedKeys.length === 0) {
           return new Text(theme.fg("warning", "No answers"), 0, 0);
         }
 
-        const extraKeys = Object.keys(answers).filter((key) => !orderedKeys.includes(key));
+        const extraKeys = Object.keys(answers).filter(
+          (key) => !orderedKeys.includes(key),
+        );
         const lines = [...orderedKeys, ...extraKeys].map((key) => {
           const question = questionById.get(key);
           const label = singleLine(question?.question ?? key);
@@ -382,3 +434,5 @@ export function createAskFactory(): ExtensionFactory {
     });
   };
 }
+
+export default createAskFactory();

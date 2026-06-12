@@ -9,7 +9,6 @@ import {
   scanDirectories,
 } from "../host.js";
 import { listConfiguredHostExtensions } from "../extension-loader.js";
-import { BUILT_IN_EXTENSION_NAMES } from "../../extensions/built-ins.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
@@ -32,18 +31,8 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         ...ext,
         source: "pi" as const,
       }));
-    const oppiExtensions = BUILT_IN_EXTENSION_NAMES.map((name) => ({
-      name,
-      path: "oppi-server",
-      kind: "built-in" as const,
-      source: "oppi" as const,
-    }));
-
-    const byName = new Map<
-      string,
-      (typeof oppiExtensions)[number] | (typeof piExtensions)[number]
-    >();
-    for (const ext of [...piExtensions, ...oppiExtensions]) {
+    const byName = new Map<string, (typeof piExtensions)[number]>();
+    for (const ext of piExtensions) {
       if (!byName.has(ext.name)) {
         byName.set(ext.name, ext);
       }

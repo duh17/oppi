@@ -34,7 +34,9 @@ export function singleLine(text: string): string {
     .trim();
 }
 
-export function buildFallbackAnswers(questions: AskQuestion[]): Record<string, AskAnswer> {
+export function buildFallbackAnswers(
+  questions: AskQuestion[],
+): Record<string, AskAnswer> {
   const fallback: Record<string, AskAnswer> = {};
   for (const question of questions) {
     if (question.options.length === 0) {
@@ -72,13 +74,17 @@ export function mapDeferredSelectResults(
       }
 
       answers[question.id] = labels.map((label) => {
-        const matched = question.options.find((option) => option.label === label);
+        const matched = question.options.find(
+          (option) => option.label === label,
+        );
         return matched?.value ?? label;
       });
       continue;
     }
 
-    const matched = question.options.find((option) => option.label === selected);
+    const matched = question.options.find(
+      (option) => option.label === selected,
+    );
     answers[question.id] = matched?.value ?? selected;
   }
 

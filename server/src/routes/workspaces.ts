@@ -20,6 +20,7 @@ import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
 import { ReviewCommentStoreError } from "../storage/review-comment-dao.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { hostMountValidationError } from "../host.js";
 import type {
@@ -113,7 +114,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     // If a custom SYSTEM.md exists, return that.
     const custom = loader.getSystemPrompt();
-    if (custom) return custom;
+    if (custom) return appendOppiSystemPromptHint(custom);
 
     // Otherwise, generate the built-in Pi base system prompt.
     // buildSystemPrompt isn't in the package's exports map, so import via
@@ -134,9 +135,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       throw new Error("Unable to locate pi system prompt module in node_modules");
     }
     const { buildSystemPrompt } = (await import(`file://${modFile}`)) as {
-      buildSystemPrompt: (opts?: { cwd?: string }) => string;
+      buildSystemPrompt: (opts?: { cwd?: string; appendSystemPrompt?: string }) => string;
     };
-    return buildSystemPrompt({ cwd });
+    return buildSystemPrompt({ cwd, appendSystemPrompt: buildOppiSystemPromptAppend() });
   }
 
   async function handleListLocalSessions(res: ServerResponse): Promise<void> {
