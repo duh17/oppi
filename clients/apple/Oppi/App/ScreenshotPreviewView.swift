@@ -25,6 +25,8 @@ struct ScreenshotPreviewView: View {
             SessionTimelinePreview()
         case "extension-widget":
             ExtensionSurfacePreview()
+        case "streaming-flicker":
+            StreamingFlickerPreviewView()
         case "ask-card":
             AskCardPreview()
         case "ask-card-multiselect-long":
