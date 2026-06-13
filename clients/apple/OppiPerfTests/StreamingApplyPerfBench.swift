@@ -201,6 +201,35 @@ struct StreamingApplyPerfBench {
         return (items, streamingID)
     }
 
+    /// Build a long, already-finalized markdown prefix plus a live paragraph tail.
+    /// This matches the slow production case better than a single growing paragraph:
+    /// dozens of frozen text/code segments stay visible while only the final tail changes.
+    private static func makeLongStreamingMarkdownPrefix(sectionCount: Int) -> String {
+        var sections: [String] = []
+        sections.reserveCapacity(sectionCount * 2)
+
+        for section in 1...sectionCount {
+            sections.append("""
+            ## Section \(section)
+
+            This finalized paragraph includes **bold text**, `inline code`, and a [reference link](https://example.com/\(section)) so the renderer builds realistic attributed text.
+            """)
+
+            if section.isMultiple(of: 8) {
+                sections.append("""
+                ```swift
+                struct Worker\(section) {
+                    let id: Int
+                    func run() -> String { "section-\(section)" }
+                }
+                ```
+                """)
+            }
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
     // MARK: - Stats
 
     private struct Stats {
@@ -322,5 +351,61 @@ struct StreamingApplyPerfBench {
         } else {
             Issue.record("Expected streaming assistant item at end of bench")
         }
+    }
+
+    @Test("Long markdown streaming apply: frozen prefix, growing tail")
+    func longMarkdownStreamingApplyPipeline() {
+        ChatTimelinePerf.reset()
+        let h = Harness()
+        let baseItems = Self.buildTimeline(turnCount: Self.turnCount)
+        let prefix = Self.makeLongStreamingMarkdownPrefix(sectionCount: 48)
+        let initialText = prefix + "\n\nThe live streaming tail starts short. "
+
+        let (initialItems, streamingID) = Self.withStreamingTail(
+            base: baseItems,
+            streamingText: initialText
+        )
+        h.apply(items: initialItems, streamingAssistantID: streamingID)
+        h.collectionView.layoutIfNeeded()
+
+        let itemCount = h.coordinator.currentIDs.count
+        #expect(itemCount >= 80, "Need 80+ items for realistic bench, got \(itemCount)")
+
+        let lastIndex = IndexPath(item: h.coordinator.currentIDs.count - 1, section: 0)
+        h.collectionView.scrollToItem(at: lastIndex, at: .bottom, animated: false)
+        h.collectionView.layoutIfNeeded()
+
+        var durationsNs: [UInt64] = []
+        durationsNs.reserveCapacity(Self.measureTicks)
+
+        var currentText = initialText
+        let totalTicks = Self.warmupTicks + Self.measureTicks
+        for tick in 0..<totalTicks {
+            currentText += " Additional streamed prose keeps appending to the final paragraph while the finalized prefix remains unchanged. Tick \(tick)."
+
+            let (tickItems, _) = Self.withStreamingTail(
+                base: baseItems,
+                streamingText: currentText
+            )
+
+            let startNs = DispatchTime.now().uptimeNanoseconds
+            h.apply(items: tickItems, streamingAssistantID: streamingID)
+            let endNs = DispatchTime.now().uptimeNanoseconds
+
+            if tick >= Self.warmupTicks {
+                durationsNs.append(endNs &- startNs)
+            }
+        }
+
+        let stats = Stats(durationsNs: durationsNs)
+        let timelineStats = ChatTimelinePerf.snapshot()
+        print("METRIC long_streaming_p95_us=\(String(format: "%.1f", stats.p95Us))")
+        print("METRIC long_streaming_max_us=\(String(format: "%.1f", stats.maxUs))")
+        print("METRIC long_streaming_p50_us=\(String(format: "%.1f", stats.p50Us))")
+        print("METRIC long_streaming_avg_us=\(String(format: "%.1f", stats.avgUs))")
+        print("METRIC long_streaming_jank_pct_over_33ms=\(String(format: "%.1f", stats.jankPctOver33ms))")
+        print("METRIC long_timeline_apply_max_ms=\(timelineStats.applyMaxMs)")
+        print("METRIC long_timeline_layout_max_ms=\(timelineStats.layoutMaxMs)")
+        print("METRIC long_cell_configure_max_ms=\(timelineStats.cellConfigureMaxMs)")
     }
 }

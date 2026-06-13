@@ -267,6 +267,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var isApplyingDetachedProgrammaticCorrection = false
         var isTimelineBusy = false
         var lastDistanceFromBottom: CGFloat = 0
+        private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
         let toolOutputLoader = ExpandedToolOutputLoader()
 
         #if DEBUG
@@ -585,7 +586,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
                 // Update the streaming item map entry.
                 currentItemByID[streamingID] = nextItem
-                previousItemByID[streamingID] = nextItem
 
                 // Also detect changed mutable items (in-flight tools, active
                 // thinking rows) alongside the streaming assistant. Check both
@@ -1252,6 +1252,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
             if #available(iOS 17.4, *), collectionView.isScrollAnimating {
                 return
+            }
+
+            if isBusy {
+                let now = DispatchTime.now().uptimeNanoseconds
+                if now &- lastBusyAmbientScrollReconcileNs < 260_000_000 {
+                    return
+                }
+                lastBusyAmbientScrollReconcileNs = now
             }
 
             let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: itemCount, sessionId: sessionId)

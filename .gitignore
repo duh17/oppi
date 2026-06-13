@@ -52,6 +52,7 @@ session-traces/
 ScreenRecording_*.mov
 
 # Autoresearch session artifacts (regenerated each run)
+.auto/
 **/autoresearch.md
 **/autoresearch.jsonl
 **/autoresearch.sh

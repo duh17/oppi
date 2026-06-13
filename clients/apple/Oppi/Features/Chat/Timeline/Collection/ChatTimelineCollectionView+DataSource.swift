@@ -34,14 +34,15 @@ final class SafeSizingCell: UICollectionViewCell {
     var isStreamingAssistant = false
     var cachedStreamingHeight: CGFloat?
     /// Last time preferredLayoutAttributesFitting did a full computation.
-    /// Used to throttle self-sizing during streaming — recompute every ~100ms
+    /// Used to throttle self-sizing during streaming — recompute periodically
     /// instead of every streaming tick. Between recomputations, text appends add
-    /// at most ~2 lines, well within the cached height.
+    /// only a few lines, and structural markdown changes explicitly invalidate
+    /// the cache.
     var lastFullSizeComputeNs: UInt64 = 0
     /// Minimum interval between full self-sizing computations during streaming.
-    /// Between recomputations, text appends don't change height significantly
-    /// (≤2 lines per 100ms at typical token rates).
-    private static let streamingSizeThrottleNs: UInt64 = 100_000_000 // 100ms
+    /// Text-only tail growth can reuse the previous height briefly; structural
+    /// changes still call `invalidateStreamingHeightCache()` for immediate sizing.
+    private static let streamingSizeThrottleNs: UInt64 = 340_000_000 // 340ms
 
     private let navigationHighlightOverlay = UIView()
     private var navigationHighlightToken: UInt = 0
@@ -139,10 +140,9 @@ final class SafeSizingCell: UICollectionViewCell {
             return layoutAttributes
         }
 
-        // Streaming throttle: recompute self-sizing at most once per 100ms
-        // instead of every streaming tick. Between recomputations, text appends
-        // add at most ~2 lines, well within the cached height. This reduces
-        // text layout cost from ~10ms/tick to ~10ms/100ms (3.3ms/tick average).
+        // Streaming throttle: avoid full self-sizing on every tick. Text-only
+        // tail growth reuses the cached height briefly; structural markdown
+        // changes clear the cache before the next sizing pass.
         if isStreamingAssistant, let cached = cachedStreamingHeight {
             let now = DispatchTime.now().uptimeNanoseconds
             if now &- lastFullSizeComputeNs < Self.streamingSizeThrottleNs {
