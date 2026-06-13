@@ -74,7 +74,25 @@ struct ScreenshotPreviewView: View {
 // MARK: - Extension Surface Preview
 
 private struct ExtensionSurfacePreview: View {
+    private static let autoresearchLines = [
+        "━━ 🔬 autoresearch: Streaming markdown rendering latency experiment",
+        "Runs: 21   9 kept   (conf: 17.1×)   12 discarded",
+        "Baseline: ★ streaming_p95_us: 10,376.10µs #1",
+        "Progress: ★ streaming_p95_us: 3,486.90µs #19   streaming_max_us: 8,256.20µs  −51.3%   streaming_avg_us: 2,415.90µs  −63.6%",
+        "zero_change_max_us: 34.80µs  +5.8%   long_streaming_p95_us: 3,026.20µs   tail_segment_reparse_us: 712.40µs",
+        "Checks: OppiTests/StreamingInlineReparseTests  ✓   OppiTests/StreamFinishFormattingTests  ✓   OppiTests/AssistantMarkdownLayoutTests  ✓",
+        "Next: Add device validation loop after install/use before claiming CPU improvement.",
+        "… (14 more lines)",
+    ]
+
     private static let surface = ExtensionSurfaceState(
+        widgets: [
+            "autoresearch": ExtensionWidgetState(
+                key: "autoresearch",
+                lines: autoresearchLines,
+                placement: "aboveEditor"
+            ),
+        ],
         nativeSurfaces: [
             "tasks": ExtensionNativeSurfaceState(
                 key: "tasks",
@@ -170,7 +188,7 @@ private struct ExtensionSurfacePreview: View {
                     Text("Extension surface")
                         .font(.headline)
                         .foregroundStyle(.themeFg)
-                    Text("Native activity widget rendered through Oppi's generic extension surface.")
+                    Text("Native and terminal-compatible extension widgets use the same trailing disclosure control.")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }

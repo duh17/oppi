@@ -47,18 +47,36 @@ private struct ExtensionProgressBar: View {
     }
 }
 
-private struct ExtensionWidgetLinesView: View {
-    let lines: [String]
+private struct ExtensionDisclosureChevron: View {
+    let isExpanded: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                ExtensionWidgetLineView(line: line)
+        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.themeComment)
+            .frame(width: 24, height: 24)
+            .background(Color.themeFg.opacity(0.06), in: Circle())
+            .accessibilityHidden(true)
+    }
+}
+
+private struct ExtensionWidgetLinesView: View {
+    let lines: [String]
+    var scrollIdentifier: String? = nil
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    ExtensionWidgetLineView(line: line)
+                }
             }
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier(scrollIdentifier ?? "extension-widget-lines-scroll")
         .extensionGlassInset(cornerRadius: 12)
     }
 }
@@ -122,20 +140,14 @@ struct ExtensionNativeSurfaceView: View {
                         )
                     }
 
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.themeComment)
-                        .frame(width: 24, height: 24)
-                        .background(Color.themeFg.opacity(0.06), in: Circle())
-                        .accessibilityHidden(true)
+                    ExtensionDisclosureChevron(isExpanded: isExpanded)
                 }
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(titleText)
+            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(titleText) surface")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-            .accessibilityHint(isExpanded ? "Collapse extension surface" : "Expand extension surface")
 
             if isExpanded {
                 if displayBlocks.isEmpty {
@@ -307,19 +319,22 @@ private struct ExtensionNativeTerminalLinesView: View {
     var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                ExtensionNativeTextSpansView(
-                    spans: line,
-                    font: .caption2.monospaced(),
-                    onOpenURL: onOpenURL
-                )
-                .lineLimit(1)
-                .truncationMode(.tail)
+        ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    ExtensionNativeTextSpansView(
+                        spans: line,
+                        font: .caption2.monospaced(),
+                        onOpenURL: onOpenURL
+                    )
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
             }
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .extensionGlassInset(cornerRadius: 12)
     }
@@ -456,6 +471,7 @@ private struct ExtensionNativeActivityRowView: View {
         let content = ExtensionNativeActivityRowContent(
             row: row,
             showsNavigationCue: linkedURL != nil,
+            showsDisclosureCue: linkedURL == nil && canExpandInline,
             isExpanded: isExpanded
         )
         if let url = linkedURL {
@@ -496,6 +512,7 @@ private struct ExtensionNativeActivityRowView: View {
 private struct ExtensionNativeActivityRowContent: View {
     let row: ExtensionUIActivityRow
     let showsNavigationCue: Bool
+    let showsDisclosureCue: Bool
     let isExpanded: Bool
 
     var body: some View {
@@ -538,8 +555,8 @@ private struct ExtensionNativeActivityRowContent: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if showsNavigationCue {
-                Image(systemName: "chevron.right")
+            if showsNavigationCue || showsDisclosureCue {
+                Image(systemName: showsDisclosureCue && isExpanded ? "chevron.down" : "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.themeComment)
                     .padding(.top, 3)
@@ -548,7 +565,7 @@ private struct ExtensionNativeActivityRowContent: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 5)
-        .frame(minHeight: showsNavigationCue ? 44 : 34, alignment: .center)
+        .frame(minHeight: showsNavigationCue || showsDisclosureCue ? 44 : 34, alignment: .center)
         .background(
             Color.themeFg.opacity(rowHighlightOpacity),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -688,15 +705,14 @@ private struct ExtensionWidgetLineView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
-                    .truncationMode(.tail)
             } else {
                 Text(line)
                     .font(.caption2.monospaced())
                     .foregroundStyle(isActivity ? .themeComment : .themeFg)
                     .lineLimit(1)
-                    .truncationMode(.tail)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel(trimmedLine.isEmpty ? line : trimmedLine)
     }
 }
@@ -804,21 +820,99 @@ private struct ExtensionSurfaceMetadataCard: View {
 
 private struct ExtensionWidgetCard: View {
     let widget: ExtensionWidgetState
-    let showsKey: Bool
+
+    @State private var isExpanded = true
+
+    private var identifierSuffix: String {
+        widget.key.extensionAccessibilityIdentifierComponent
+    }
+
+    private var titleText: String {
+        let trimmedKey = widget.key.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedKey.isEmpty ? "Extension widget" : trimmedKey
+    }
+
+    private var lineCountText: String {
+        widget.lines.count == 1 ? "1 line" : "\(widget.lines.count) lines"
+    }
+
+    private var collapsedPreview: String? {
+        widget.lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if showsKey {
-                Text(widget.key)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.themeComment)
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(titleText)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if !isExpanded, let collapsedPreview {
+                            Text(collapsedPreview)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.themeComment)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    StatusPill(
+                        text: lineCountText,
+                        tone: .neutral,
+                        emphasis: .quiet,
+                        size: .small,
+                        monospacedDigit: true
+                    )
+
+                    ExtensionDisclosureChevron(isExpanded: isExpanded)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
-            ExtensionWidgetLinesView(lines: widget.lines)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("extension-widget-\(identifierSuffix)-toggle")
+            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(titleText) widget")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded {
+                ExtensionWidgetLinesView(
+                    lines: widget.lines,
+                    scrollIdentifier: "extension-widget-\(identifierSuffix)-scroll"
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .extensionGlassPanel(cornerRadius: 18)
+    }
+}
+
+private extension String {
+    var extensionAccessibilityIdentifierComponent: String {
+        let raw = lowercased().map { character -> Character in
+            if character.isLetter || character.isNumber {
+                return character
+            }
+            return "-"
+        }
+        let collapsed = String(raw)
+            .split(separator: "-")
+            .joined(separator: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return collapsed.isEmpty ? "widget" : collapsed
     }
 }
 
@@ -855,10 +949,7 @@ struct ExtensionSurfacePanel: View {
                         .padding(.vertical, 6)
                         .extensionGlassPanel(cornerRadius: 18)
                 case .widget(let widget):
-                    ExtensionWidgetCard(
-                        widget: widget,
-                        showsKey: entries.count > 1
-                    )
+                    ExtensionWidgetCard(widget: widget)
                 }
             }
         }
