@@ -838,6 +838,7 @@ struct UIHangHarnessView: View {
             frameIntervalMonitor.start()
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
             seedVisualToolFixtures()
+            ensureAssistantOverlapFixtureExists()
             startDiagnosticsLoop()
             restartStreamingLoop()
 
@@ -856,6 +857,7 @@ struct UIHangHarnessView: View {
         .onChange(of: selectedSession) { _, _ in
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
             seedVisualToolFixtures()
+            ensureAssistantOverlapFixtureExists()
             heartbeat &+= 1
             restartStreamingLoop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -1386,6 +1388,7 @@ struct UIHangHarnessView: View {
     }
 
     private func focusAssistantOverlapFixture() {
+        ensureAssistantOverlapFixtureExists()
         guard currentItems.contains(where: { $0.id == assistantOverlapItemID }) else { return }
         renderWindow = currentItems.count
         heartbeat &+= 1
@@ -1393,7 +1396,23 @@ struct UIHangHarnessView: View {
         scheduleAssistantOverlapDiagnosticsRefresh()
     }
 
+    private func ensureAssistantOverlapFixtureExists() {
+        guard UIHangHarnessConfig.assistantOverlapFixture,
+              !currentItems.contains(where: { $0.id == assistantOverlapItemID }) else {
+            return
+        }
+
+        var items = currentItems
+        items.append(.assistantMessage(
+            id: assistantOverlapItemID,
+            text: Self.assistantOverlapFixtureText(phase: assistantOverlapPhaseValue, session: selectedSession),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000 + Double(items.count + 9_000))
+        ))
+        sessionItems[selectedSession] = items
+    }
+
     private func advanceAssistantOverlapFixture() {
+        ensureAssistantOverlapFixtureExists()
         guard UIHangHarnessConfig.assistantOverlapFixture,
               assistantOverlapPhaseValue < Self.assistantOverlapLastPhase,
               let index = currentItems.firstIndex(where: { $0.id == assistantOverlapItemID }),
@@ -1415,11 +1434,16 @@ struct UIHangHarnessView: View {
     }
 
     private func debugAssistantOverlapRowView(itemID: String) -> AssistantTimelineRowContentView? {
+        let rowIdentifier = "chat.timeline.assistant.\(itemID)"
         let cellIdentifier = "chat.timeline.row.\(itemID)"
 
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows.reversed() {
+                window.layoutIfNeeded()
+                if let row = debugFindAssistantOverlapRow(in: window, identifier: rowIdentifier) {
+                    return row
+                }
                 guard let cell = debugFindTimelineCell(in: window, identifier: cellIdentifier) else { continue }
                 if let row = debugFindAssistantOverlapRow(in: cell) {
                     return row
@@ -1445,13 +1469,17 @@ struct UIHangHarnessView: View {
         return nil
     }
 
-    private func debugFindAssistantOverlapRow(in root: UIView) -> AssistantTimelineRowContentView? {
-        if let row = root as? AssistantTimelineRowContentView {
+    private func debugFindAssistantOverlapRow(
+        in root: UIView,
+        identifier: String? = nil
+    ) -> AssistantTimelineRowContentView? {
+        if let row = root as? AssistantTimelineRowContentView,
+           identifier == nil || row.accessibilityIdentifier == identifier {
             return row
         }
 
         for subview in root.subviews {
-            if let row = debugFindAssistantOverlapRow(in: subview) {
+            if let row = debugFindAssistantOverlapRow(in: subview, identifier: identifier) {
                 return row
             }
         }
