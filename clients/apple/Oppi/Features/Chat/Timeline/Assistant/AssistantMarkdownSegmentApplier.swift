@@ -26,6 +26,14 @@ final class AssistantMarkdownSegmentApplier {
     /// incrementally (append-only) to avoid O(total) NSAttributedString conversion
     /// on every streaming tick.
     private var cachedStreamingTailNS: NSMutableAttributedString?
+    /// Plain-text mirror of `cachedStreamingTailNS` for prefix validation.
+    /// Reading `NSMutableAttributedString.string` rebuilds a Swift string; keep
+    /// the append-only plain text beside the attributed cache instead.
+    private var cachedStreamingTailPlain: NSMutableString?
+    /// Full raw markdown content that produced the cached streaming tail.
+    /// Used only to detect append-only prose deltas that cannot close inline
+    /// markdown syntax and therefore do not need rendered-prefix validation.
+    private var cachedStreamingSourceContent: String?
 
     /// Closure for fetching workspace files (for inline markdown images).
     /// Injected by the owning view chain, wrapping `APIClient` at the site
@@ -42,6 +50,8 @@ final class AssistantMarkdownSegmentApplier {
 
     func clear() {
         cachedStreamingTailNS = nil
+        cachedStreamingTailPlain = nil
+        cachedStreamingSourceContent = nil
 
         for task in highlightTasks.values {
             task.cancel()
@@ -70,6 +80,8 @@ final class AssistantMarkdownSegmentApplier {
         self.sourceLineRanges = sourceLineRanges
         if !config.isStreaming {
             cachedStreamingTailNS = nil
+            cachedStreamingTailPlain = nil
+            cachedStreamingSourceContent = nil
         }
 
         let signatures = segments.map(SegmentSignature.init)
@@ -108,6 +120,8 @@ final class AssistantMarkdownSegmentApplier {
         }), let tv = textViews[lastIdx] {
             let fullText = tv.attributedText ?? NSAttributedString()
             cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullText)
+            cachedStreamingTailPlain = NSMutableString(string: fullText.string)
+            cachedStreamingSourceContent = config.content
         }
     }
 
@@ -300,12 +314,16 @@ final class AssistantMarkdownSegmentApplier {
 
         // Reset incremental cache on structural change.
         cachedStreamingTailNS = nil
+        cachedStreamingTailPlain = nil
+        cachedStreamingSourceContent = nil
 
         // Seed the incremental cache for the rebuilt tail.
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
         if let lastIdx = lastTextIndex, let tv = textViews[lastIdx] {
             let fullText = tv.attributedText ?? NSAttributedString()
             cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullText)
+            cachedStreamingTailPlain = NSMutableString(string: fullText.string)
+            cachedStreamingSourceContent = config.content
         }
 
         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: stackView)
@@ -315,8 +333,19 @@ final class AssistantMarkdownSegmentApplier {
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration
     ) {
-        let palette = config.themeID.palette
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
+
+        if config.isStreaming,
+           let lastTextIndex,
+           lastTextIndex == segments.count - 1,
+           case .text(let attributed) = segments[lastTextIndex],
+           let textView = textViews[lastTextIndex] {
+            configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: lastTextIndex))
+            updateStreamingTextTail(attributed, in: textView, config: config)
+            return
+        }
+
+        let palette = config.themeID.palette
 
         for (index, segment) in segments.enumerated() {
             // During streaming, only the last text segment grows. All other
@@ -337,71 +366,7 @@ final class AssistantMarkdownSegmentApplier {
                         }
 
                         if isStreamingTail {
-                            // Disable data detectors during streaming to avoid O(n) text
-                            // scanning on every textStorage change. Data detection runs
-                            // against the ENTIRE text content on each modification, which
-                            // is increasingly expensive as the response grows. Detectors
-                            // are re-enabled when streaming ends (next non-streaming apply).
-                            if textView.dataDetectorTypes != [] {
-                                textView.dataDetectorTypes = []
-                            }
-                            // Streaming fast path: avoid full O(total) NSAttributedString
-                            // conversion on every tick. Build the full conversion only on
-                            // the first tick or when text shrinks; on subsequent ticks,
-                            // convert only the delta and extend the cached version.
-                            let oldLength = textView.textStorage.length
-
-                            if let cached = cachedStreamingTailNS, cached.length == oldLength {
-                                // Incremental path: convert only the delta
-                                let fullNS = NSAttributedString(attributed)
-                                let newLength = fullNS.length
-
-                                if newLength > oldLength {
-                                    // Verify the rendered plain text prefix is unchanged.
-                                    // CommonMark re-parsing can change earlier character
-                                    // positions when inline syntax closes (e.g. **bold**,
-                                    // `code`, [link](url)). When this happens, the delta
-                                    // from position oldLength in the new string doesn't
-                                    // match what's in the textStorage, producing garbled
-                                    // output. Fall back to full replacement in that case.
-                                    let prefixValid = fullNS.string.hasPrefix(cached.string)
-
-                                    if prefixValid {
-                                        let delta = fullNS.attributedSubstring(
-                                            from: NSRange(location: oldLength, length: newLength - oldLength)
-                                        )
-                                        textView.textStorage.beginEditing()
-                                        textView.textStorage.append(delta)
-                                        textView.textStorage.endEditing()
-                                        cached.append(delta)
-                                        refreshTextViewLayoutAfterContentChange(textView)
-                                    } else {
-                                        // Markdown structure changed — full replacement.
-                                        textView.attributedText = fullNS
-                                        refreshTextViewLayoutAfterContentChange(textView)
-                                        cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                                    }
-                                } else if newLength != oldLength {
-                                    textView.attributedText = fullNS
-                                    refreshTextViewLayoutAfterContentChange(textView)
-                                    cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                                } else if !fullNS.isEqual(cached) {
-                                    // Same rendered length but different content/attributes —
-                                    // markdown structure changed without changing character count
-                                    // (for example, inline markers closed while new characters
-                                    // arrived in the same tick). Fall back to full replacement.
-                                    textView.attributedText = fullNS
-                                    refreshTextViewLayoutAfterContentChange(textView)
-                                    cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                                }
-                                // else: same length and same attributed content — truly no change, skip
-                            } else {
-                                // First tick or cache mismatch — full initialization
-                                let fullNS = NSAttributedString(attributed)
-                                textView.attributedText = fullNS
-                                refreshTextViewLayoutAfterContentChange(textView)
-                                cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                            }
+                            updateStreamingTextTail(attributed, in: textView, config: config)
                         } else {
                             // Non-streaming: re-enable data detectors if they were disabled
                             // during streaming, then do full replacement.
@@ -511,6 +476,97 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
+
+    private func updateStreamingTextTail(
+        _ attributed: AttributedString,
+        in textView: BaselineSafeTextView,
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        // Disable data detectors during streaming to avoid O(n) text
+        // scanning on every textStorage change. Data detection runs
+        // against the ENTIRE text content on each modification, which
+        // is increasingly expensive as the response grows. Detectors
+        // are re-enabled when streaming ends (next non-streaming apply).
+        if textView.dataDetectorTypes != [] {
+            textView.dataDetectorTypes = []
+        }
+        // Streaming fast path: avoid full O(total) NSAttributedString
+        // conversion on every tick. Build the full conversion only on
+        // the first tick or when text shrinks; on subsequent ticks,
+        // convert only the delta and extend the cached version.
+        let oldLength = textView.textStorage.length
+
+        if let cached = cachedStreamingTailNS,
+           let cachedPlain = cachedStreamingTailPlain,
+           cached.length == oldLength {
+            // Incremental path: convert only the delta
+            let fullNS = NSAttributedString(attributed)
+            let newLength = fullNS.length
+
+            if newLength > oldLength {
+                // Verify the rendered plain text prefix is unchanged.
+                // CommonMark re-parsing can change earlier character
+                // positions when inline syntax closes (e.g. **bold**,
+                // `code`, [link](url)). When this happens, the delta
+                // from position oldLength in the new string doesn't
+                // match what's in the textStorage, producing garbled
+                // output. Fall back to full replacement in that case.
+                let prefixValid = Self.isMarkdownNeutralAppend(
+                    previousContent: cachedStreamingSourceContent,
+                    currentContent: config.content
+                ) || fullNS.string.hasPrefix(cachedPlain as String)
+
+                if prefixValid {
+                    let delta = fullNS.attributedSubstring(
+                        from: NSRange(location: oldLength, length: newLength - oldLength)
+                    )
+                    textView.textStorage.beginEditing()
+                    textView.textStorage.append(delta)
+                    textView.textStorage.endEditing()
+                    cached.append(delta)
+                    cachedPlain.append(delta.string)
+                    cachedStreamingSourceContent = config.content
+                    refreshTextViewLayoutAfterContentChange(textView)
+                } else {
+                    // Markdown structure changed — full replacement.
+                    let fullPlain = fullNS.string
+                    textView.attributedText = fullNS
+                    refreshTextViewLayoutAfterContentChange(textView)
+                    cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                    cachedStreamingTailPlain = NSMutableString(string: fullPlain)
+                    cachedStreamingSourceContent = config.content
+                }
+            } else if newLength != oldLength {
+                let fullPlain = fullNS.string
+                textView.attributedText = fullNS
+                refreshTextViewLayoutAfterContentChange(textView)
+                cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                cachedStreamingTailPlain = NSMutableString(string: fullPlain)
+                cachedStreamingSourceContent = config.content
+            } else if !fullNS.isEqual(cached) {
+                // Same rendered length but different content/attributes —
+                // markdown structure changed without changing character count
+                // (for example, inline markers closed while new characters
+                // arrived in the same tick). Fall back to full replacement.
+                let fullPlain = fullNS.string
+                textView.attributedText = fullNS
+                refreshTextViewLayoutAfterContentChange(textView)
+                cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                cachedStreamingTailPlain = NSMutableString(string: fullPlain)
+                cachedStreamingSourceContent = config.content
+            }
+            // else: same length and same attributed content — truly no change, skip
+        } else {
+            // First tick or cache mismatch — full initialization
+            let fullNS = NSAttributedString(attributed)
+            textView.attributedText = fullNS
+            refreshTextViewLayoutAfterContentChange(textView)
+            cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+            cachedStreamingTailPlain = NSMutableString(string: fullNS.string)
+            cachedStreamingSourceContent = config.content
+        }
+    }
+
     private func makeTextView(palette: ThemePalette) -> BaselineSafeTextView {
         let textView = BaselineSafeTextView()
         textView.isEditable = false
@@ -542,6 +598,30 @@ final class AssistantMarkdownSegmentApplier {
         textView.setNeedsLayout()
         stackView.setNeedsLayout()
         stackView.superview?.setNeedsLayout()
+    }
+
+    private static func isMarkdownNeutralAppend(
+        previousContent: String?,
+        currentContent: String
+    ) -> Bool {
+        guard let previousContent else { return false }
+
+        let previousBytes = previousContent.utf8
+        let currentBytes = currentContent.utf8
+        guard currentBytes.count > previousBytes.count,
+              currentBytes.starts(with: previousBytes) else {
+            return false
+        }
+
+        for byte in currentBytes.dropFirst(previousBytes.count) {
+            switch byte {
+            case 33, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
+                return false
+            default:
+                continue
+            }
+        }
+        return true
     }
 
     private func sourceLineRange(at index: Int) -> ClosedRange<Int>? {
