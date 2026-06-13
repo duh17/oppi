@@ -65,10 +65,42 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     }
 
     func testAssistantRichMarkdownStreamingCanClipAfterCachedHeightReuse() throws {
-        throw XCTSkip(
-            "WIP: assistant overlap UI harness fixture exists, but the XCUITest debug-surface assertion path is still unstable. " +
-                "Coverage currently lives in AssistantMarkdownLayoutTests for the streaming cached-height regression."
+        launchHarness(noStream: true, assistantOverlapFixture: true)
+
+        let focus = app.descendants(matching: .any)["harness.assistantOverlap.focus"]
+        XCTAssertTrue(focus.waitForExistence(timeout: 4))
+        focus.tap()
+
+        let row = app.descendants(matching: .any)["chat.timeline.assistant.alpha-assistant-overlap"]
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        for _ in 0..<24 where !row.exists {
+            timeline.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 3), "Assistant overlap row should be reachable in the harness timeline")
+
+        let diag = app.descendants(matching: .any)["harness.diag.tick"]
+        XCTAssertTrue(diag.waitForExistence(timeout: 4))
+        diag.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.assistantOverlapReady", equals: 1, timeout: 6), 1)
+        let baselineHeight = waitForDiagnosticAtLeast("diag.assistantRowHeightPx", minimum: 40, timeout: 6)
+        XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantRenderedOverlapPx", timeout: 2), 1)
+        XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantOverflowPx", timeout: 2), 1)
+
+        let advance = app.descendants(matching: .any)["harness.assistantOverlap.advance"]
+        XCTAssertTrue(advance.waitForExistence(timeout: 4))
+        advance.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.assistantOverlapPhase", equals: 1, timeout: 6), 1)
+        XCTAssertEqual(waitForDiagnostic("diag.assistantOverlapReady", equals: 1, timeout: 6), 1)
+        let expandedHeight = waitForDiagnosticAtLeast(
+            "diag.assistantRowHeightPx",
+            minimum: baselineHeight + 180,
+            timeout: 8
         )
+        XCTAssertGreaterThan(expandedHeight, baselineHeight)
+        XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantRenderedOverlapPx", timeout: 3), 1)
+        XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantOverflowPx", timeout: 3), 1)
     }
 
     func testStreamingKeepsBottomPinnedWhenNearBottom() throws {
