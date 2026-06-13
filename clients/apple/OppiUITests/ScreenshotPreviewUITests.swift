@@ -40,10 +40,38 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
         let title = app.staticTexts["Extension surface"]
         XCTAssertTrue(title.waitForExistence(timeout: 5), "Extension surface title not found")
-        let tasksHeader = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Tasks")).firstMatch
-        XCTAssertTrue(tasksHeader.waitForExistence(timeout: 5), "Extension widget task header not visible")
 
-        saveScreenshot(name: "extension-widget")
+        let textWidgetToggle = app.buttons["Collapse autoresearch widget"]
+        XCTAssertTrue(textWidgetToggle.waitForExistence(timeout: 5), "Text widget collapse toggle not visible")
+
+        let nativeSurfaceToggle = app.buttons["Collapse 1 of 5 tasks completed surface"]
+        XCTAssertTrue(nativeSurfaceToggle.waitForExistence(timeout: 5), "Native surface collapse toggle not visible")
+
+        let longMetricLine = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "streaming_max_us")).firstMatch
+        XCTAssertTrue(longMetricLine.waitForExistence(timeout: 5), "Long terminal-compatible widget line not visible")
+        saveScreenshot(name: "extension-widget-expanded-left")
+
+        longMetricLine.swipeLeft()
+        saveScreenshot(name: "extension-widget-expanded-right")
+
+        textWidgetToggle.tap()
+        let bodyMetricLine = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "zero_change_max_us")).firstMatch
+        XCTAssertFalse(bodyMetricLine.waitForExistence(timeout: 1), "Collapsed text widget should hide body lines")
+        saveScreenshot(name: "extension-widget-text-collapsed")
+
+        let expandTextWidget = app.buttons["Expand autoresearch widget"]
+        XCTAssertTrue(expandTextWidget.waitForExistence(timeout: 3), "Collapsed text widget expand toggle not visible")
+        expandTextWidget.tap()
+
+        nativeSurfaceToggle.tap()
+        let runningTask = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Read HTTP Range semantics")).firstMatch
+        XCTAssertFalse(runningTask.waitForExistence(timeout: 1), "Collapsed native surface should hide activity rows")
+        saveScreenshot(name: "extension-widget-native-collapsed")
+
+        let expandNativeSurface = app.buttons["Expand 1 of 5 tasks completed surface"]
+        XCTAssertTrue(expandNativeSurface.waitForExistence(timeout: 3), "Collapsed native surface expand toggle not visible")
+        expandNativeSurface.tap()
+        XCTAssertTrue(runningTask.waitForExistence(timeout: 3), "Expanded native surface content should return")
     }
 
     func testAskCardPreview() throws {
