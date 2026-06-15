@@ -329,6 +329,135 @@ private final class AuthenticatedMediaResourceLoader: NSObject, AVAssetResourceL
     }
 }
 
+enum MediaPlaybackTelemetry {
+    static func mediaKind(mimeType: String?, sourceFileExtension: String?) -> String {
+        let normalizedMime = mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if normalizedMime.hasPrefix("video/") { return "video" }
+        if normalizedMime.hasPrefix("audio/") { return "audio" }
+        if normalizedMime.hasPrefix("image/") { return "image" }
+
+        let ext = sourceFileExtension?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if ["mp4", "mov", "webm", "mkv"].contains(ext) { return "video" }
+        if ["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"].contains(ext) { return "audio" }
+        if ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"].contains(ext) { return "image" }
+        return "unknown"
+    }
+
+    static func recordStart(
+        startedNs: UInt64,
+        kind: String,
+        source: String,
+        mode: String,
+        sessionId: String?
+    ) {
+        let durationMs = Double((DispatchTime.now().uptimeNanoseconds &- startedNs) / 1_000_000)
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .mediaPlaybackStartMs,
+                value: durationMs,
+                unit: .ms,
+                sessionId: sessionId,
+                tags: [
+                    "kind": kind,
+                    "source": source,
+                    "mode": mode,
+                    "status": "ok",
+                ]
+            )
+        }
+    }
+
+    static func recordError(
+        kind: String,
+        source: String,
+        phase: String,
+        error: Error?,
+        sessionId: String?
+    ) {
+        let errorKind = error.map { Self.errorKind($0) } ?? "other"
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .mediaPlaybackError,
+                value: 1,
+                unit: .count,
+                sessionId: sessionId,
+                tags: [
+                    "kind": kind,
+                    "source": source,
+                    "phase": phase,
+                    "error_kind": errorKind,
+                ]
+            )
+        }
+    }
+
+    static func logError(
+        kind: String,
+        source: String,
+        mode: String,
+        phase: String,
+        error: Error?,
+        message: String = "Media playback failed"
+    ) {
+        ClientLog.warning(
+            "MediaPlayback",
+            message,
+            metadata: clientLogMetadata(
+                kind: kind,
+                source: source,
+                phase: phase,
+                error: error,
+                extra: ["mode": mode]
+            )
+        )
+    }
+
+    static func clientLogMetadata(
+        kind: String,
+        source: String,
+        phase: String,
+        error: Error? = nil,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var metadata: [String: String] = [
+            "kind": kind,
+            "source": source,
+            "phase": phase,
+        ]
+        if let error {
+            metadata.merge(ClientLog.networkErrorMetadata(error)) { current, _ in current }
+            metadata["error_kind"] = Self.errorKind(error)
+        }
+        for (key, value) in extra {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private static func errorKind(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorTimedOut:
+                return "timeout"
+            case NSURLErrorCancelled:
+                return "cancelled"
+            case NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet:
+                return "network"
+            default:
+                return "network"
+            }
+        }
+        if nsError.domain == AVFoundationErrorDomain {
+            return "avfoundation"
+        }
+        if nsError.domain == "dev.chenda.oppi.authenticated-media" {
+            return "http"
+        }
+        return "other"
+    }
+}
+
 @MainActor
 final class AuthenticatedMediaPlaybackSession {
     let player: AVPlayer
@@ -378,15 +507,30 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
     private var playbackSession: AuthenticatedMediaPlaybackSession?
     private var statusObservation: NSKeyValueObservation?
     private var preparedIdentity: String?
+    private var recordedStartIdentity: String?
+    private var recordedErrorIdentity: String?
 
-    func prepare(source: AuthenticatedMediaSource, autoplay: Bool) {
+    func prepare(
+        source: AuthenticatedMediaSource,
+        autoplay: Bool,
+        telemetrySource: String,
+        telemetryMode: String,
+        telemetrySessionId: String?
+    ) {
         guard preparedIdentity != source.identity else { return }
 
         teardown(resetPreparedIdentity: false)
         preparedIdentity = source.identity
+        recordedStartIdentity = nil
+        recordedErrorIdentity = nil
         isLoading = true
         errorMessage = nil
 
+        let startedNs = DispatchTime.now().uptimeNanoseconds
+        let mediaKind = MediaPlaybackTelemetry.mediaKind(
+            mimeType: source.contentTypeHint,
+            sourceFileExtension: source.sourceFileExtension
+        )
         let playbackSession = AuthenticatedMediaPlaybackSession(source: source)
         let player = playbackSession.player
         self.playbackSession = playbackSession
@@ -399,12 +543,39 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
                 case .readyToPlay:
                     self.isLoading = false
                     self.errorMessage = nil
+                    if self.recordedStartIdentity != source.identity {
+                        self.recordedStartIdentity = source.identity
+                        MediaPlaybackTelemetry.recordStart(
+                            startedNs: startedNs,
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            mode: telemetryMode,
+                            sessionId: telemetrySessionId
+                        )
+                    }
                     if autoplay {
                         player.play()
                     }
                 case .failed:
                     self.isLoading = false
                     self.errorMessage = item.error?.localizedDescription ?? "Media failed to load"
+                    if self.recordedErrorIdentity != source.identity {
+                        self.recordedErrorIdentity = source.identity
+                        MediaPlaybackTelemetry.recordError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            phase: "player_item",
+                            error: item.error,
+                            sessionId: telemetrySessionId
+                        )
+                        MediaPlaybackTelemetry.logError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            mode: telemetryMode,
+                            phase: "player_item",
+                            error: item.error
+                        )
+                    }
                     player.pause()
                     self.player = nil
                 case .unknown:
@@ -412,6 +583,24 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
                 @unknown default:
                     self.isLoading = false
                     self.errorMessage = "Unsupported media state"
+                    if self.recordedErrorIdentity != source.identity {
+                        self.recordedErrorIdentity = source.identity
+                        MediaPlaybackTelemetry.recordError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            phase: "player_state",
+                            error: nil,
+                            sessionId: telemetrySessionId
+                        )
+                        MediaPlaybackTelemetry.logError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            mode: telemetryMode,
+                            phase: "player_state",
+                            error: nil,
+                            message: "Unsupported media player state"
+                        )
+                    }
                     player.pause()
                     self.player = nil
                 }
@@ -429,6 +618,8 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
 
         if resetPreparedIdentity {
             preparedIdentity = nil
+            recordedStartIdentity = nil
+            recordedErrorIdentity = nil
         }
     }
 }
@@ -440,6 +631,9 @@ struct AuthenticatedMediaPlayerView: View {
     var autoplay = false
     var unavailableTitle = "Media preview unavailable"
     var unavailableSystemImage = "play.slash"
+    var telemetrySource = "authenticated_media"
+    var telemetryMode = "inline"
+    var telemetrySessionId: String? = nil
 
     @StateObject private var model = AuthenticatedMediaPlayerModel()
 
@@ -481,7 +675,13 @@ struct AuthenticatedMediaPlayerView: View {
             }
         }
         .task(id: source.identity) {
-            model.prepare(source: source, autoplay: autoplay)
+            model.prepare(
+                source: source,
+                autoplay: autoplay,
+                telemetrySource: telemetrySource,
+                telemetryMode: telemetryMode,
+                telemetrySessionId: telemetrySessionId
+            )
         }
         .onDisappear {
             model.teardown()
@@ -492,8 +692,27 @@ struct AuthenticatedMediaPlayerView: View {
 @MainActor
 final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
     private var playbackSession: AuthenticatedMediaPlaybackSession?
+    private var statusObservation: NSKeyValueObservation?
+    private var recordedStartIdentity: String?
+    private var recordedErrorIdentity: String?
 
-    func configure(source: AuthenticatedMediaSource, autoplay: Bool) {
+    func configure(
+        source: AuthenticatedMediaSource,
+        autoplay: Bool,
+        telemetrySource: String = "authenticated_media",
+        telemetrySessionId: String? = nil,
+        startedNs: UInt64? = nil
+    ) {
+        statusObservation?.invalidate()
+        statusObservation = nil
+        recordedStartIdentity = nil
+        recordedErrorIdentity = nil
+
+        let playbackStartedNs = startedNs ?? DispatchTime.now().uptimeNanoseconds
+        let mediaKind = MediaPlaybackTelemetry.mediaKind(
+            mimeType: source.contentTypeHint,
+            sourceFileExtension: source.sourceFileExtension
+        )
         let playbackSession = AuthenticatedMediaPlaybackSession(source: source)
         self.playbackSession = playbackSession
         player = playbackSession.player
@@ -503,6 +722,63 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
         entersFullScreenWhenPlaybackBegins = false
         exitsFullScreenWhenPlaybackEnds = false
         view.accessibilityIdentifier = "videoPlayer.native"
+        statusObservation = playbackSession.player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                switch item.status {
+                case .readyToPlay:
+                    if self.recordedStartIdentity != source.identity {
+                        self.recordedStartIdentity = source.identity
+                        MediaPlaybackTelemetry.recordStart(
+                            startedNs: playbackStartedNs,
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            mode: "fullscreen",
+                            sessionId: telemetrySessionId
+                        )
+                    }
+                case .failed:
+                    if self.recordedErrorIdentity != source.identity {
+                        self.recordedErrorIdentity = source.identity
+                        MediaPlaybackTelemetry.recordError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            phase: "player_item",
+                            error: item.error,
+                            sessionId: telemetrySessionId
+                        )
+                        MediaPlaybackTelemetry.logError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            mode: "fullscreen",
+                            phase: "player_item",
+                            error: item.error
+                        )
+                    }
+                case .unknown:
+                    break
+                @unknown default:
+                    if self.recordedErrorIdentity != source.identity {
+                        self.recordedErrorIdentity = source.identity
+                        MediaPlaybackTelemetry.recordError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            phase: "player_state",
+                            error: nil,
+                            sessionId: telemetrySessionId
+                        )
+                        MediaPlaybackTelemetry.logError(
+                            kind: mediaKind,
+                            source: telemetrySource,
+                            mode: "fullscreen",
+                            phase: "player_state",
+                            error: nil,
+                            message: "Unsupported media player state"
+                        )
+                    }
+                }
+            }
+        }
         if autoplay {
             playbackSession.player.play()
         }
@@ -511,8 +787,12 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            statusObservation?.invalidate()
+            statusObservation = nil
             playbackSession?.teardown()
             playbackSession = nil
+            recordedStartIdentity = nil
+            recordedErrorIdentity = nil
         }
     }
 }

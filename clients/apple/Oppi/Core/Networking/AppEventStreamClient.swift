@@ -29,6 +29,8 @@ final class AppEventStreamClient {
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var continuation: AsyncStream<AppEventMessage>.Continuation?
+    private var openStartedNs: UInt64?
+    private var reconnectAttempt = 0
 
     /// Monotonic ID incremented on each `connect()` call.
     /// Prevents stale stream termination handlers from closing a newer socket.
@@ -54,6 +56,7 @@ final class AppEventStreamClient {
         connectionID &+= 1
         let thisConnection = connectionID
         status = .connecting
+        reconnectAttempt = 0
 
         return AsyncStream { [weak self] continuation in
             guard let self else {
@@ -93,6 +96,7 @@ final class AppEventStreamClient {
 
         let ws = urlSession.webSocketTask(with: request)
         webSocket = ws
+        openStartedNs = DispatchTime.now().uptimeNanoseconds
         ws.resume()
         startReceiveLoop(ws: ws, continuation: continuation)
         startPingTimer(ws: ws)
@@ -104,6 +108,8 @@ final class AppEventStreamClient {
     ) {
         receiveTask = Task { [weak self] in
             var shouldAttemptReconnect = true
+            var reconnectReason = "receive_error"
+            var reconnectCloseCode: String?
             while !Task.isCancelled {
                 do {
                     let message = try await ws.receive()
@@ -122,6 +128,10 @@ final class AppEventStreamClient {
                         event = try AppEventMessage.decode(from: text)
                     } catch {
                         appEventClientLogger.error("App event decode failed: \(error.localizedDescription, privacy: .public)")
+                        await MainActor.run { [weak self] in
+                            self?.recordDecodeErrorMetric(error: error)
+                            self?.logStreamWarning("Decode failed", error: error)
+                        }
                         continue
                     }
 
@@ -132,6 +142,10 @@ final class AppEventStreamClient {
                         case .connected, .disconnected, nil:
                             break
                         }
+
+                        if case .connected(_, let snapshotRequired) = event {
+                            self?.recordConnectMetric(snapshotRequired: snapshotRequired)
+                        }
                     }
                     continuation.yield(event)
                 } catch {
@@ -141,13 +155,27 @@ final class AppEventStreamClient {
                     }
 
                     let statusCode = (ws.response as? HTTPURLResponse)?.statusCode
+                    reconnectReason = "receive_error"
+                    reconnectCloseCode = String(ws.closeCode.rawValue)
                     if let statusCode, WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode) {
                         shouldAttemptReconnect = false
+                        reconnectReason = "handshake_http"
                         appEventClientLogger.error("App event stream handshake rejected with HTTP \(statusCode, privacy: .public)")
+                        await MainActor.run { [weak self] in
+                            self?.logStreamError(
+                                "Handshake rejected",
+                                error: error,
+                                extra: ["httpStatusCode": String(statusCode)]
+                            )
+                        }
                     } else if WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode) {
+                        reconnectReason = "recoverable_receive"
                         appEventClientLogger.info("App event stream recoverable close: \(String(describing: error), privacy: .public)")
                     } else {
                         appEventClientLogger.warning("App event stream receive error: \(String(describing: error), privacy: .public)")
+                        await MainActor.run { [weak self] in
+                            self?.logStreamWarning("Receive error", error: error)
+                        }
                     }
                     break
                 }
@@ -156,7 +184,7 @@ final class AppEventStreamClient {
             await MainActor.run { [weak self] in
                 guard let self, self.webSocket === ws else { return }
                 if shouldAttemptReconnect {
-                    self.attemptReconnect()
+                    self.attemptReconnect(reason: reconnectReason, closeCode: reconnectCloseCode)
                 } else {
                     self.disconnect()
                 }
@@ -189,7 +217,11 @@ final class AppEventStreamClient {
                             self.receiveTask = nil
                             ws.cancel(with: .goingAway, reason: nil)
                             self.webSocket = nil
-                            self.attemptReconnect()
+                            self.logStreamWarning(
+                                "Ping watchdog reconnect",
+                                extra: ["consecutiveFailures": String(consecutiveFailures)]
+                            )
+                            self.attemptReconnect(reason: "ping_watchdog")
                         }
                         break
                     }
@@ -200,7 +232,91 @@ final class AppEventStreamClient {
         }
     }
 
-    private func attemptReconnect() {
+    private func recordConnectMetric(snapshotRequired: Bool) {
+        guard let startedNs = openStartedNs else { return }
+        openStartedNs = nil
+        let durationMs = Double((DispatchTime.now().uptimeNanoseconds &- startedNs) / 1_000_000)
+        let attempt = reconnectAttempt
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .appEventStreamConnectMs,
+                value: durationMs,
+                unit: .ms,
+                tags: [
+                    "status": "ok",
+                    "attempt": String(attempt),
+                    "snapshot_required": snapshotRequired ? "1" : "0",
+                ]
+            )
+        }
+    }
+
+    private func recordDecodeErrorMetric(error: Error) {
+        let errorKind = streamErrorKind(error)
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .appEventStreamDecodeError,
+                value: 1,
+                unit: .count,
+                tags: ["error_kind": errorKind]
+            )
+        }
+    }
+
+    private func recordReconnectMetric(status: String, reason: String, attempt: Int, closeCode: String?) {
+        var tags = [
+            "status": status,
+            "reason": reason,
+            "attempt": String(attempt),
+        ]
+        if let closeCode {
+            tags["close_code"] = closeCode
+        }
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .appEventStreamReconnect,
+                value: 1,
+                unit: .count,
+                tags: tags
+            )
+        }
+    }
+
+    private func streamErrorKind(_ error: Error) -> String {
+        if error is DecodingError { return "decode" }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain { return "network" }
+        return "other"
+    }
+
+    private func streamLogMetadata(extra: [String: String] = [:]) -> [String: String] {
+        var metadata = ClientLog.endpointMetadata(url, prefix: "appStream")
+        metadata["streamRole"] = "app_event_stream"
+        metadata["status"] = String(describing: status)
+        metadata["connectionID"] = String(connectionID)
+        for (key, value) in extra {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func logStreamWarning(_ message: String, error: Error? = nil, extra: [String: String] = [:]) {
+        var metadata = error.map(ClientLog.networkErrorMetadata) ?? [:]
+        for (key, value) in extra {
+            metadata[key] = value
+        }
+        ClientLog.warning("AppEventStream", message, metadata: streamLogMetadata(extra: metadata))
+    }
+
+    private func logStreamError(_ message: String, error: Error? = nil, extra: [String: String] = [:]) {
+        var metadata = error.map(ClientLog.networkErrorMetadata) ?? [:]
+        for (key, value) in extra {
+            metadata[key] = value
+        }
+        ClientLog.error("AppEventStream", message, metadata: streamLogMetadata(extra: metadata))
+    }
+
+    private func attemptReconnect(reason: String, closeCode: String? = nil) {
         guard status != .disconnected else { return }
 
         var attempt = 0
@@ -210,11 +326,15 @@ final class AppEventStreamClient {
 
         guard attempt < WebSocketRecoveryPolicy.maxReconnectAttempts else {
             appEventClientLogger.error("App event stream max reconnect attempts reached")
+            recordReconnectMetric(status: "max_attempts", reason: reason, attempt: attempt, closeCode: closeCode)
+            logStreamError("Max reconnect attempts reached", extra: ["reason": reason, "attempt": String(attempt)])
             disconnect()
             return
         }
 
         let nextAttempt = attempt + 1
+        reconnectAttempt = nextAttempt
+        recordReconnectMetric(status: "scheduled", reason: reason, attempt: nextAttempt, closeCode: closeCode)
         status = .reconnecting(attempt: nextAttempt)
         let delay = reconnectDelay(nextAttempt)
 

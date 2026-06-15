@@ -1183,9 +1183,22 @@ struct DataVideoPlayerView: View {
 
 @MainActor
 enum SystemVideoPlaybackPresenter {
-    static func present(source: AuthenticatedMediaSource, title: String?, from presenter: UIViewController) {
+    static func present(
+        source: AuthenticatedMediaSource,
+        title: String?,
+        from presenter: UIViewController,
+        telemetrySource: String = "authenticated_media",
+        telemetrySessionId: String? = nil,
+        startedNs: UInt64? = nil
+    ) {
         let controller = AuthenticatedMediaPlayerViewController()
-        controller.configure(source: source, autoplay: false)
+        controller.configure(
+            source: source,
+            autoplay: false,
+            telemetrySource: telemetrySource,
+            telemetrySessionId: telemetrySessionId,
+            startedNs: startedNs
+        )
         controller.modalPresentationStyle = .fullScreen
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true) {

@@ -48,6 +48,7 @@ final class NativeExpandedReadMediaView: UIView {
         attachments: [ToolPresentationBuilder.ToolMediaAttachment],
         themeID: ThemeID,
         audioPlayer: AudioPlayerService?,
+        sessionId: String? = nil,
         attachmentFetcher: ((String) async throws -> Data)?,
         attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil,
         sessionFileDataFetcher: ((String) async throws -> Data)?,
@@ -59,6 +60,7 @@ final class NativeExpandedReadMediaView: UIView {
         hasher.combine(isError)
         hasher.combine(filePath ?? "")
         hasher.combine(startLine)
+        hasher.combine(sessionId ?? "")
         for attachment in attachments {
             hasher.combine(attachment.id)
             hasher.combine(attachment.mimeType)
@@ -251,6 +253,7 @@ final class NativeExpandedReadMediaView: UIView {
                     mimeType: mimeType,
                     sourceFileExtension: pathExtension,
                     mediaSourceProvider: sessionFileMediaSourceProvider.map { provider in { try await provider(filePath) } },
+                    sessionId: sessionId,
                     palette: palette
                 )
                 contentStack.addArrangedSubview(row)
@@ -273,6 +276,7 @@ final class NativeExpandedReadMediaView: UIView {
                         mediaSourceProvider: attachmentMediaSourceProvider.map { provider in
                             { try await provider(attachment.id, attachment.mimeType, sourceFileExtension) }
                         },
+                        sessionId: sessionId,
                         palette: palette
                     )
                     contentStack.addArrangedSubview(row)
@@ -642,6 +646,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
     private var mimeType: String?
     private var sourceFileExtension: String?
     private var mediaSourceProvider: (() async throws -> AuthenticatedMediaSource)?
+    private var sessionId: String?
     private var fetchTask: Task<Void, Never>?
     private var lastError: String?
 
@@ -664,6 +669,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
         mimeType: String?,
         sourceFileExtension: String?,
         mediaSourceProvider: (() async throws -> AuthenticatedMediaSource)?,
+        sessionId: String? = nil,
         palette: ThemePalette
     ) {
         if self.id != id {
@@ -675,6 +681,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
         self.mimeType = mimeType
         self.sourceFileExtension = sourceFileExtension
         self.mediaSourceProvider = mediaSourceProvider
+        self.sessionId = sessionId
 
         accessibilityIdentifier = "toolRow.videoAttachment"
         titleLabel.accessibilityIdentifier = "toolRow.videoAttachment.title"
@@ -775,6 +782,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
 
         fetchTask?.cancel()
         lastError = nil
+        let playStartedNs = DispatchTime.now().uptimeNanoseconds
         updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: true)
         fetchTask = Task { [weak self] in
             do {
@@ -783,7 +791,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
                     guard let self, self.id == id else { return }
                     self.fetchTask = nil
                     self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
-                    self.presentVideo(source)
+                    self.presentVideo(source, startedNs: playStartedNs)
                 }
             } catch {
                 await MainActor.run { [weak self] in
@@ -792,15 +800,42 @@ final class NativeExpandedVideoAttachmentView: UIView {
                     self.lastError = error.localizedDescription
                     self.subtitleLabel.text = error.localizedDescription
                     self.subtitleLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().red)
+                    self.recordSourceError(error)
                     self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
                 }
             }
         }
     }
 
-    private func presentVideo(_ source: AuthenticatedMediaSource) {
+    private func presentVideo(_ source: AuthenticatedMediaSource, startedNs: UInt64) {
         guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
-        SystemVideoPlaybackPresenter.present(source: source, title: titleLabel.text, from: presenter)
+        SystemVideoPlaybackPresenter.present(
+            source: source,
+            title: titleLabel.text,
+            from: presenter,
+            telemetrySource: "tool_video_attachment",
+            telemetrySessionId: sessionId,
+            startedNs: startedNs
+        )
+    }
+
+    private func recordSourceError(_ error: Error) {
+        let kind = MediaPlaybackTelemetry.mediaKind(mimeType: mimeType, sourceFileExtension: sourceFileExtension)
+        MediaPlaybackTelemetry.recordError(
+            kind: kind,
+            source: "tool_video_attachment",
+            phase: "source",
+            error: error,
+            sessionId: sessionId
+        )
+        MediaPlaybackTelemetry.logError(
+            kind: kind,
+            source: "tool_video_attachment",
+            mode: "fullscreen",
+            phase: "source",
+            error: error,
+            message: "Video source unavailable"
+        )
     }
 }
 

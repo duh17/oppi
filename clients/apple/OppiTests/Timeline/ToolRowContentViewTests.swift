@@ -6,6 +6,13 @@ import UIKit
 @Suite("ToolTimelineRowContentView")
 struct ToolTimelineRowContentViewTests {
 
+    @Test func mediaPlaybackTelemetryClassifiesKindWithoutContent() {
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: "video/mp4", sourceFileExtension: nil) == "video")
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: nil, sourceFileExtension: "wav") == "audio")
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: "application/octet-stream", sourceFileExtension: "PNG") == "image")
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: nil, sourceFileExtension: nil) == "unknown")
+    }
+
     @MainActor
     @Test func emptyCollapsedBodyProducesFiniteCompactHeight() {
         let config = makeTimelineToolConfiguration(isExpanded: false)
@@ -700,6 +707,7 @@ struct ToolTimelineRowContentViewTests {
             attachments: [],
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: nil,
+            sessionId: nil,
             attachmentFetcher: nil,
             sessionFileDataFetcher: nil,
             sessionFileMediaSourceProvider: { path in
@@ -730,6 +738,7 @@ struct ToolTimelineRowContentViewTests {
             attachments: [],
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: nil,
+            sessionId: nil,
             attachmentFetcher: nil,
             sessionFileDataFetcher: { _ in
                 Issue.record("Video rows should not download full session file data")
