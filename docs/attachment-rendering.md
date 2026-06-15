@@ -162,7 +162,7 @@ return {
 
 The expanded tool row renders stored video attachments as video cards and streams playback through authenticated range-capable media sources.
 
-For Apple compatibility, use H.264 MP4 for generated video.
+For Apple compatibility, use H.264 MP4 for generated video. The `pi-extensions/browser-automation-video` example is an Oppi-compatible Pi package: it records a WebM with `agent-browser`, converts it to H.264 MP4, stores it through Oppi's documented `ctx.attachments.addFile()` helper when available, and returns the stored record in `details.media[]`.
 
 ## Generic expanded media rows
 
@@ -207,7 +207,9 @@ Markdown image syntax does not resolve stored tool attachments. A tool that retu
 
 ## Extension authoring API
 
-Extension authors should use the server-provided helper to create stored tool attachments. They do not write `manifest.json`, inline large base64 payloads, or put generated media in the workspace just to make it render.
+For Oppi-rendered stored attachments, use the server-provided helper. The helper is an Oppi context addition, not a portable Pi API. Portable Pi extensions need a fallback such as a user-provided output path when the helper is absent.
+
+Tools do not write `manifest.json`, inline large base64 payloads, or put generated media in the workspace just to make it render.
 
 Minimal API:
 

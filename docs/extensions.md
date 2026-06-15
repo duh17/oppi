@@ -20,13 +20,26 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 
 ## Extension surfaces
 
-| Surface                 | Enabled by                                                  | Declared in                        | Loaded by          | Notes                                                                                                      |
-| ----------------------- | ----------------------------------------------------------- | ---------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
-| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths | pi resource loader | Must work without Oppi server services                                                                     |
-| Ask extension example   | Local/package install + workspace `extensions` allowlist    | `pi-extensions/ask`                | pi resource loader | Provides portable multi-question and multi-select prompts                                                  |
-| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code        | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
+| Surface                 | Enabled by                                                  | Declared in                              | Loaded by          | Notes                                                                                                      |
+| ----------------------- | ----------------------------------------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                     |
+| Ask extension example   | Local/package install + workspace `extensions` allowlist    | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs     |
+| Browser video example   | Local/package install + workspace `extensions` allowlist    | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available     |
+| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
+
+## Ask extension example
+
+`pi-extensions/ask` is a portable Pi package. It registers the `ask` tool through public `pi.registerTool()` APIs and supports multiple questions, `multiSelect`, and custom text answers.
+
+Rendering path:
+
+1. **Oppi / RPC:** use the documented `ctx.ui.ask()` request, rendered by iOS as a native AskCard.
+2. **Terminal Pi:** use `ctx.ui.custom()` for a keyboard-driven terminal dialog.
+3. **Other Pi UI contexts:** use `ctx.ui.select()` and `ctx.ui.input()` fallbacks.
+
+`ctx.ui.ask()` is an Oppi-defined UI request because plain Pi's standard dialog API does not include a multi-question or multi-select form. The extension stays portable by checking for `ctx.ui.ask()` and using Pi UI fallbacks when it is absent.
 
 ## Pi package layout
 
@@ -44,7 +57,7 @@ Pi's standard package model is the source of truth. A package can declare resour
 }
 ```
 
-Only put an entry in `pi.extensions` when that extension works in plain pi. Tools that need Oppi storage, session spawning, trace inspection, workspace admin APIs, or mobile-only behavior need a separate server API instead of hidden `SdkBackend` injection.
+Only put an entry in `pi.extensions` when the extension has a documented plain Pi path. An Oppi-compatible Pi extension can detect documented Oppi helpers such as `ctx.attachments.addFile()`, but it needs a plain Pi path when that helper is absent. Tools that require Oppi storage, session spawning, trace inspection, workspace admin APIs, or mobile-only behavior need a server API instead of private `SdkBackend` state.
 
 Users must opt in explicitly:
 
@@ -56,12 +69,13 @@ pi -e <package-or-path>
 
 ## What Oppi changes
 
-Oppi keeps pi's extension system, then adds these rules:
+Oppi keeps Pi's extension system, then adds these rules:
 
 1. **Workspace allowlist filtering** through `workspace.extensions`.
 2. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
+3. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
 
-Oppi does not replace pi discovery. It filters host-loaded extensions through the workspace allowlist. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
+Oppi does not replace Pi discovery. It filters host-loaded extensions through the workspace allowlist. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
 
 ## Approval prompts
 
@@ -70,7 +84,7 @@ Approval behavior belongs to Pi extensions. Command classification, route decisi
 The behavior is the same shape for Oppi-owned sessions and mirrored terminal sessions:
 
 - A Pi extension can intercept `tool_call`, `session_before_switch`, `session_before_fork`, or other Pi events.
-- The extension can ask with `ctx.ui.confirm()`, `ctx.ui.select()`, `ctx.ui.input()`, or `ctx.ui.editor()`.
+- The extension can ask with `ctx.ui.ask()`, `ctx.ui.confirm()`, `ctx.ui.select()`, `ctx.ui.input()`, or `ctx.ui.editor()`.
 - Oppi mobile renders those standard extension UI requests natively and sends responses through `extension_ui_response`.
 - Standalone terminal Pi uses the same extension logic through its normal TUI.
 
@@ -244,14 +258,15 @@ Mirror mode uses the same protocol surface from an interactive terminal Pi proce
 
 ## Relevant implementation files
 
-| File                                  | Why it matters                                                          |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| `pi-extensions/ask`                   | Ask extension example with multi-select support                         |
-| `server/src/routes/skills.ts`         | Workspace extension picker (`GET /extensions`)                          |
-| `server/src/sdk-backend.ts`           | Pi resource loading and allowlist rules                                 |
-| `server/src/sdk-ui-bridge.ts`         | Extension UI bridge from pi APIs to Oppi protocol events                |
-| `server/src/extension-ui-contract.ts` | Shared extension UI request, notification, and settled message builders |
-| `server/src/mobile-renderer.ts`       | Mobile tool-row rendering                                               |
+| File                                     | Why it matters                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------- |
+| `pi-extensions/ask`                      | Ask extension example with multi-select support                           |
+| `pi-extensions/browser-automation-video` | Oppi-compatible Pi extension package using the documented attachment helper |
+| `server/src/routes/skills.ts`            | Workspace extension picker (`GET /extensions`)                            |
+| `server/src/sdk-backend.ts`              | Pi resource loading and allowlist rules                                   |
+| `server/src/sdk-ui-bridge.ts`            | Extension UI bridge from pi APIs to Oppi protocol events                  |
+| `server/src/extension-ui-contract.ts`    | Shared extension UI request, notification, and settled message builders   |
+| `server/src/mobile-renderer.ts`          | Mobile tool-row rendering                                                 |
 
 ## When to read pi docs instead
 

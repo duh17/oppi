@@ -1,0 +1,55 @@
+{
+  "name": "browser-automation-video",
+  "version": "0.41.0",
+  "description": "Oppi-compatible Pi extension package that records browser runs and returns video attachments when Oppi storage is available.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Chaos Donkey",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi",
+    "browser-automation",
+    "video",
+    "agent-browser"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "pi-extensions/browser-automation-video"
+  },
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/browser-automation-video#readme",
+  "files": [
+    "extensions/browser-automation-video.ts",
+    "index.ts",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 --types node extensions/browser-automation-video.ts",
+    "test": "vitest run extensions/browser-automation-video.test.ts"
+  },
+  "dependencies": {
+    "typebox": "1.1.28"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.79.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/browser-automation-video.ts"
+    ]
+  }
+}
