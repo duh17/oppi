@@ -136,6 +136,8 @@ Blocking prompts are not native-surface blocks. They stay Pi-shaped in `extensio
 
 `ask` is an Oppi-defined request method. It exists because Pi's standard dialog API does not include a portable multi-select or multi-question form request; terminal-only extensions can use `ctx.ui.custom()`, but RPC/mobile clients need semantic fields such as `questions`, `options`, `multiSelect`, and `allowCustom`.
 
+The reference package is `pi-extensions/ask`. It registers a public Pi tool, uses `ctx.ui.ask()` when available, and falls back to `ctx.ui.custom()`, `ctx.ui.select()`, and `ctx.ui.input()` in plain Pi contexts.
+
 This keeps prompt behavior compatible with Pi extension APIs and avoids a second interactive form protocol. Future native form or action support must add explicit event routing before becoming part of this contract.
 
 ### Activity lists
