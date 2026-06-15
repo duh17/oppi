@@ -226,6 +226,80 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitDetailPath.count == 1)
     }
 
+    @Test func linkedFileOpenedFromSplitSessionSurvivesCompactRotation() {
+        let navigation = AppNavigation()
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        let fileTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceSession(sessionTarget)
+        navigation.openWorkspaceLinkedFile(fileTarget)
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 2)
+    }
+
+    @Test func linkedFileChainOpenedFromSplitFileSurvivesCompactRotation() {
+        let navigation = AppNavigation()
+        let firstTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/first.md", fileName: "first.md")
+        )
+        let secondTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceLinkedFile(firstTarget)
+        navigation.openWorkspaceLinkedFile(secondTarget)
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 2)
+    }
+
+    @Test func splitFileBrowserDirectoryDrillSurvivesCompactRotation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        let rootTarget = FileBrowserNavTarget(workspaceId: "workspace-1", path: "")
+        let childTarget = FileBrowserNavTarget(workspaceId: "workspace-1", path: "notes/")
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceFileBrowser(rootTarget, workspace: workspaceTarget)
+        navigation.pushSplitDetailFileBrowser(childTarget)
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 3)
+    }
+
+    @Test func splitSystemBackBeforeCompactRotationDropsPoppedLinkedFile() {
+        let navigation = AppNavigation()
+        let firstTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/first.md", fileName: "first.md")
+        )
+        let secondTarget = WorkspaceLinkedFileNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceLinkedFile(firstTarget)
+        navigation.openWorkspaceLinkedFile(secondTarget)
+        navigation.splitDetailPath.removeLast()
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 1)
+    }
+
     @Test func givenWorkspaceFileInsideHostMountWhenResolvingThenItOpensThatWorkspaceFile() {
         let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
         let payload = FileLinkPayload(
