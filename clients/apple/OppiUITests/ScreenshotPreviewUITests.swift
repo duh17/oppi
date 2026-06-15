@@ -232,6 +232,30 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "share-redaction-settings")
     }
 
+    func testSplitFileNavigationRegressionPreview() throws {
+        launchPreview(screen: "split-file-navigation-regression")
+
+        let openFlow = app.buttons["splitFileNavigation.open"]
+        XCTAssertTrue(openFlow.waitForExistence(timeout: 5), "Split navigation regression trigger not visible")
+        openFlow.tap()
+
+        let linkedFile = app.staticTexts["splitFileNavigation.linkedFile"]
+        XCTAssertTrue(linkedFile.waitForExistence(timeout: 5), "Linked file destination was not reconstructed")
+        XCTAssertEqual(linkedFile.label, "Linked file: notes/second.md")
+
+        saveScreenshot(name: "split-file-navigation-linked-file")
+
+        let backToSession = app.buttons["splitFileNavigation.backToSession"]
+        XCTAssertTrue(backToSession.waitForExistence(timeout: 3), "Back-to-session control not visible")
+        backToSession.tap()
+
+        let session = app.staticTexts["splitFileNavigation.session"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5), "Session back target was not preserved")
+        XCTAssertEqual(session.label, "Session: session-1")
+
+        saveScreenshot(name: "split-file-navigation-back-session")
+    }
+
     // MARK: - Helpers
 
     private func launchPreview(screen: String) {
