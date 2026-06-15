@@ -226,6 +226,32 @@ struct AskCardTests {
         #expect(AskCard.pageCount(for: request) == 1)
     }
 
+    // MARK: - Telemetry Tags
+
+    @Test("Ask response telemetry tags are bounded and content-free")
+    func askResponseTelemetryTagsAreBoundedAndContentFree() {
+        let request = Self.multiQuestionRequest()
+        let tags = AskCard.responseMetricTags(
+            request: request,
+            answers: [
+                "approach": .single("unit"),
+                "frameworks": .multi(["jest", "vitest"]),
+            ],
+            outcome: "answered",
+            surface: "inline"
+        )
+
+        #expect(tags["outcome"] == "answered")
+        #expect(tags["surface"] == "inline")
+        #expect(tags["question_count"] == "2")
+        #expect(tags["answered_count"] == "2")
+        #expect(tags["ignored_count"] == "0")
+        #expect(tags["multi_select"] == "1")
+        #expect(tags["selected_count"] == "3")
+        #expect(tags.values.contains("unit") == false)
+        #expect(tags.values.contains("jest") == false)
+    }
+
     // MARK: - Answer Map
 
     @Test("Ignored question omitted from answer map values")

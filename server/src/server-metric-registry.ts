@@ -92,10 +92,11 @@ export const SERVER_METRIC_REGISTRY = {
       "Legacy ops-metric mirror for peak concurrent active sessions. Current sampler writes peak in server resource samples instead.",
   },
 
-  // ── P1: Turn / LLM Performance ──
+  // ── P1: Agent workload / responsiveness ──
   "server.turn_duration_ms": {
     unit: "ms",
-    description: "Agent turn duration (agent_start to agent_end).",
+    description:
+      "Full agent work duration (agent_start to agent_end). This is workload/progress telemetry, not UX latency by itself.",
   },
   "server.turn_ttft_ms": {
     unit: "ms",
@@ -118,7 +119,7 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.turn_tool_calls": {
     unit: "count",
-    description: "Tool calls executed in a single turn.",
+    description: "Tool calls executed in a single turn; useful for interpreting turn workload.",
   },
   "server.turn_error": {
     unit: "count",

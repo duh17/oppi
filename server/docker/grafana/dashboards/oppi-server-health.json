@@ -437,7 +437,7 @@
     },
     {
       "title": "WebSocket Handshake (ms)",
-      "description": "Server-side WebSocket upgrade duration. Compare with iOS-side ws_connect_ms for full picture.",
+      "description": "Server-side WebSocket upgrade duration. Compare with iOS chat.ws_wait_for_connected_ms for user-visible connection readiness.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -623,8 +623,8 @@
       }
     },
     {
-      "title": "Agent Turn Duration (ms)",
-      "description": "End-to-end agent turn duration. Key indicator of response time budget.",
+      "title": "Agent Active Work Duration (not UX latency)",
+      "description": "Full agent turn wall-clock time from agent_start to agent_end. Long values usually mean active work; call it a UX problem only when correlated with high TTFT, no progress, tool hangs, errors, or disconnected clients.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -663,7 +663,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Turn Duration"
+                "value": "active work duration"
               }
             ]
           }
@@ -687,8 +687,8 @@
       }
     },
     {
-      "title": "Server TTFT (ms)",
-      "description": "Server-side time-to-first-token. Compare with iOS chat.ttft_ms for end-to-end picture.",
+      "title": "Server TTFT / first output wait (ms)",
+      "description": "Server-side wait from agent_start to first text_delta. This is responsiveness; keep it separate from full active work duration.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -944,7 +944,7 @@
     },
     {
       "title": "Turn Tokens",
-      "description": "Input and output token counts per agent turn.",
+      "description": "Input and output token counts per agent turn. Use this with active work duration to distinguish large productive turns from stalls.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1034,7 +1034,7 @@
     },
     {
       "title": "Turn Tool Calls + Errors",
-      "description": "Tool call count and errors per agent turn.",
+      "description": "Tool call count and errors per agent turn. High tool counts can explain long active work duration; errors are reliability signals.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",

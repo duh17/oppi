@@ -93,6 +93,20 @@ Retention defaults:
 | Server resource metrics | 30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS` |
 | Server ops metrics | 30 days | `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` |
 
+## Metric taxonomy
+
+Use this split when reading dashboards or telemetry reviews:
+
+| Category | Meaning | Examples | How to read it |
+|---|---|---|---|
+| UX responsiveness | The user is waiting for the app, stream, or media to become usable. | `chat.ttft_ms`, `chat.session_load_ms`, `chat.ws_wait_for_connected_ms`, `chat.media_playback_start_ms` | High values are user-visible latency. These belong on the front page and can have SLOs. |
+| Reliability counters | A user action, stream, or render path failed or recovered. | `chat.message_queue_stale_drop`, `chat.app_event_stream_reconnect`, `chat.media_playback_error`, client logs | Trend toward zero; drill into logs and tags. |
+| Agent workload and progress | The agent is actively doing work. | `server.turn_duration_ms`, `server.turn_tool_calls`, `server.turn_input_tokens`, `chat.session_files_changed` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. |
+| Resource health | Local client/server pressure that can make UX worse. | `device.memory_mb`, `server.heap_mb`, `server.event_loop_lag_ms` | Diagnose capacity or leaks; do not confuse with agent productivity. |
+| Drill-down internals | Mechanical sub-steps used to explain a front-page metric. | `chat.queue_sync_ms`, `server.session_subscribe_ms`, `chat.render_strategy_ms` | Keep available, but do not let them define product health by themselves. |
+
+`server.turn_duration_ms` is workload telemetry. It measures the full wall-clock duration of an agent turn. A long turn can mean the agent is handling a large task, running tools, editing files, waiting on tests, or processing a large context. Treat it as a problem only when it combines with missing progress signals, high first-token latency, stuck tool calls, errors, blocked asks, or disconnected clients.
+
 ## Experience metrics that belong on the front page
 
 The front page should focus on metrics that map directly to user experience. Low-level counters stay available for drill-down, but they should not define the product health story.
@@ -118,8 +132,20 @@ The front page should focus on metrics that map directly to user experience. Low
 | `chat.queue_sync_ms` | Time to refresh queued steer/follow-up state. |
 | `chat.message_queue_ack_ms` | Time from queue command send to server acknowledgement. |
 | `chat.message_queue_stale_drop` | User input was dropped because the client had stale session state. |
+| `chat.app_event_stream_connect_ms` | Time until global app updates, attention cards, and session list events are live. |
+| `chat.app_event_stream_reconnect` | Global app-event stream reconnect attempts and exhaustion. |
+| `chat.app_event_stream_decode_error` | Global app-event stream payload/schema failures. |
 | `server.ws_ping_timeout` | Dead connection detection. |
-| Client logs: `WebSocket`, `Network` | Reconnect storms, HTTP 1011s, POSIX disconnects, and endpoint changes. |
+| Client logs: `WebSocket`, `AppEventStream`, `Network` | Reconnect storms, HTTP 1011s, POSIX disconnects, endpoint changes, and app-event stream failures. |
+
+### Attention and media interactions
+
+| Metric | Why it matters |
+|---|---|
+| `chat.ask_response_ms` | How long the visible ask card blocked the agent before answer or ignore. |
+| `chat.media_playback_start_ms` | Time from media preview/player setup to playable video or audio. |
+| `chat.media_playback_error` | User-visible media preview/player failures by media kind and phase. |
+| Client logs: `MediaPlayback` | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
 
 ### Timeline rendering and scrolling
 

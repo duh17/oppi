@@ -763,6 +763,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             attachments: attachments,
             themeID: ThemeRuntimeState.currentThemeID(),
             audioPlayer: currentConfiguration.audioPlayer,
+            sessionId: perfSessionId,
             attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
             attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
             sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher,

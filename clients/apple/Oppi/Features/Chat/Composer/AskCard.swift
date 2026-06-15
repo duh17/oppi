@@ -76,6 +76,8 @@ struct AskCard: View {
 
     @State private var isExpanded: Bool = false
     @State private var expandedSheetDetent: PresentationDetent = .large
+    @State private var presentedAtNs: UInt64 = 0
+    @State private var didRecordResponseMetric = false
 
     private let cardCornerRadius: CGFloat = 14
     private let autoAdvanceDelay: Duration = .milliseconds(200)
@@ -113,6 +115,11 @@ struct AskCard: View {
                     .padding(.bottom, 4)
             }
         }
+        .onAppear {
+            if presentedAtNs == 0 {
+                presentedAtNs = Self.timestampNs()
+            }
+        }
         .padding(.vertical, 10)
         .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
         .overlay(
@@ -139,8 +146,8 @@ struct AskCard: View {
                 answers: $answers,
                 isExpanded: $isExpanded,
                 voiceInputManager: voiceInputManager,
-                onSubmit: onSubmit,
-                onIgnoreAll: onIgnoreAll
+                onSubmit: { submitAnswers($0, surface: "expanded") },
+                onIgnoreAll: { ignoreAll(surface: "expanded") }
             )
             .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
             .presentationDragIndicator(.visible)
@@ -285,7 +292,7 @@ struct AskCard: View {
         return Button {
             AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
                 if isSingleQuestionSingleSelect {
-                    onSubmit(answers)
+                    submitAnswers(answers, surface: "inline")
                 } else if !isLastQuestionPage {
                     Task {
                         try? await Task.sleep(for: autoAdvanceDelay)
@@ -325,7 +332,7 @@ struct AskCard: View {
 
             if isLastQuestionPage {
                 Button {
-                    onSubmit(answers)
+                    submitAnswers(answers, surface: "inline")
                 } label: {
                     Text("Send")
                         .font(.caption.weight(.semibold))
@@ -388,10 +395,10 @@ struct AskCard: View {
 
         if isSingleQuestionSingleSelect {
             // Single question ignored = ignore all
-            onIgnoreAll()
+            ignoreAll(surface: "inline")
         } else if isLastQuestionPage {
             // Last question ignored — submit immediately with this answer omitted.
-            onSubmit(answers)
+            submitAnswers(answers, surface: "inline")
         } else {
             withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
                 advanceToNextPage()
@@ -404,6 +411,46 @@ struct AskCard: View {
             currentPage += 1
         }
     }
+
+    private func submitAnswers(_ submittedAnswers: [String: AskAnswer], surface: String) {
+        recordResponseMetric(outcome: submittedAnswers.isEmpty ? "empty" : "answered", surface: surface, submittedAnswers: submittedAnswers)
+        onSubmit(submittedAnswers)
+    }
+
+    private func ignoreAll(surface: String) {
+        recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
+        onIgnoreAll()
+    }
+
+    private func recordResponseMetric(
+        outcome: String,
+        surface: String,
+        submittedAnswers: [String: AskAnswer]
+    ) {
+        guard !didRecordResponseMetric else { return }
+        didRecordResponseMetric = true
+
+        let startedNs = presentedAtNs == 0 ? Self.timestampNs() : presentedAtNs
+        let durationMs = Double((Self.timestampNs() &- startedNs) / 1_000_000)
+        let tags = Self.responseMetricTags(
+            request: request,
+            answers: submittedAnswers,
+            outcome: outcome,
+            surface: surface
+        )
+        let sessionId = request.sessionId
+        let workspaceId = request.workspaceId
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .askResponseMs,
+                value: durationMs,
+                unit: .ms,
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                tags: tags
+            )
+        }
+    }
 }
 
 // MARK: - Page Count Helper (testable)
@@ -413,6 +460,68 @@ extension AskCard {
     /// Ask cards now use one page per question (no extra review page).
     static func pageCount(for request: AskRequest) -> Int {
         max(1, request.questions.count)
+    }
+
+    static func timestampNs() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds
+    }
+
+    static func responseMetricTags(
+        request: AskRequest,
+        answers: [String: AskAnswer],
+        outcome: String,
+        surface: String
+    ) -> [String: String] {
+        let questionCount = request.questions.count
+        let answeredCount = answers.count
+        let ignoredCount = max(0, questionCount - answeredCount)
+        let multiSelectQuestionCount = request.questions.filter(\.multiSelect).count
+        let selectedCount = answers.values.reduce(0) { count, answer in
+            switch answer {
+            case .single:
+                return count + 1
+            case .multi(let values):
+                return count + values.count
+            case .custom:
+                return count + 1
+            }
+        }
+        let hasCustomAnswer = answers.values.contains { answer in
+            if case .custom = answer { return true }
+            return false
+        }
+
+        return [
+            "outcome": outcome,
+            "surface": surface,
+            "question_count": countBucket(questionCount),
+            "answered_count": countBucket(answeredCount),
+            "ignored_count": countBucket(ignoredCount),
+            "multi_select": multiSelectQuestionCount > 0 ? "1" : "0",
+            "multi_select_count": countBucket(multiSelectQuestionCount),
+            "custom": hasCustomAnswer ? "1" : "0",
+            "allow_custom": request.allowCustom ? "1" : "0",
+            "selected_count": countBucket(selectedCount),
+            "response_encoding": responseEncodingTag(request.responseEncoding),
+        ]
+    }
+
+    private static func countBucket(_ count: Int) -> String {
+        switch count {
+        case ..<0: return "0"
+        case 0...5: return String(count)
+        case 6...10: return "6-10"
+        default: return "11+"
+        }
+    }
+
+    private static func responseEncodingTag(_ encoding: AskResponseEncoding) -> String {
+        switch encoding {
+        case .ask: return "ask"
+        case .extensionSelect: return "select"
+        case .extensionConfirm: return "confirm"
+        case .extensionInput: return "input"
+        }
     }
 
     static func inlineQuestionDisplay(for question: String) -> (summary: String, commandPreview: String?) {

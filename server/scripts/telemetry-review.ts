@@ -134,101 +134,129 @@ export const STATUS_FILTERED_METRICS = new Set(["chat.queue_sync_ms", "chat.mess
 // than historical p95-era thresholds while keeping headroom over recent
 // two-week daily TM99 behavior.
 export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
-  "chat.ttft_ms": { p95: 20_000, label: "Time to first token", group: "UX Quality", short: "ttft" },
+  "chat.ttft_ms": {
+    p95: 20_000,
+    label: "Time to first token",
+    group: "UX Responsiveness",
+    short: "ttft",
+  },
   "chat.fresh_content_lag_ms": {
     p95: 1_000,
     label: "Fresh content lag",
-    group: "UX Quality",
+    group: "UX Responsiveness",
     short: "content_lag",
   },
   "chat.catchup_ms": {
     p95: 500,
     label: "Reconnection catch-up",
-    group: "UX Quality",
+    group: "UX Responsiveness",
     short: "catchup",
   },
   "chat.full_reload_ms": {
     p95: 1_500,
     label: "Full reload",
-    group: "UX Quality",
+    group: "UX Responsiveness",
     short: "full_reload",
   },
-  "chat.cache_load_ms": { p95: 200, label: "Cache load", group: "UX Quality", short: "cache_load" },
+  "chat.cache_load_ms": {
+    p95: 200,
+    label: "Cache load",
+    group: "UX Responsiveness",
+    short: "cache_load",
+  },
   "chat.reducer_load_ms": {
     p95: 200,
     label: "Timeline rebuild",
-    group: "UX Quality",
+    group: "UX Responsiveness",
     short: "reducer",
   },
   "chat.session_load_ms": {
     p95: 600,
     label: "Session switch",
-    group: "UX Quality",
+    group: "UX Responsiveness",
     short: "sess_load",
   },
   "chat.app_launch_ms": {
     p95: 1_000,
     label: "App cold start",
-    group: "UX Quality",
+    group: "UX Responsiveness",
     short: "app_launch",
   },
 
   "chat.ws_wait_for_connected_ms": {
     p95: 1_000,
     label: "Client WS connected wait",
-    group: "Network",
+    group: "Connection Reliability",
     short: "ws_wait",
   },
   "server.ws_handshake_ms": {
     p95: 100,
     label: "Server WS handshake",
-    group: "Network",
+    group: "Connection Reliability",
     short: "ws_handshake",
   },
   "server.session_subscribe_ms": {
     p95: 300,
     label: "Server session subscribe",
-    group: "Network",
+    group: "Connection Reliability",
     short: "srv_sub",
   },
   "chat.queue_sync_ms": {
     p95: 500,
     label: "Queue sync (ok only)",
-    group: "Network",
+    group: "Connection Reliability",
     short: "queue_sync",
   },
   "chat.message_queue_ack_ms": {
     p95: 300,
     label: "Message queue ack (ok)",
-    group: "Network",
+    group: "Connection Reliability",
     short: "msg_ack",
+  },
+  "chat.app_event_stream_connect_ms": {
+    p95: 1_000,
+    label: "App-event stream ready",
+    group: "Connection Reliability",
+    short: "app_evt",
   },
 
   "chat.timeline_apply_ms": {
     p95: 20,
     label: "Timeline apply (30fps)",
-    group: "Render",
+    group: "Rendering Smoothness",
     short: "tl_apply",
   },
   "chat.timeline_layout_ms": {
     p95: 16,
     label: "Timeline layout (60fps)",
-    group: "Render",
+    group: "Rendering Smoothness",
     short: "tl_layout",
   },
   "chat.cell_configure_ms": {
     p95: 8,
     label: "Cell configure",
-    group: "Render",
+    group: "Rendering Smoothness",
     short: "cell_config",
   },
   "chat.markdown_streaming_ms": {
     p95: 16,
     label: "Streaming markdown",
-    group: "Render",
+    group: "Rendering Smoothness",
     short: "md_stream",
   },
-  "chat.jank_pct": { p95: 25, label: "Scroll jank %", group: "Render", short: "jank_pct" },
+  "chat.jank_pct": {
+    p95: 25,
+    label: "Scroll jank %",
+    group: "Rendering Smoothness",
+    short: "jank_pct",
+  },
+
+  "chat.media_playback_start_ms": {
+    p95: 2_000,
+    label: "Media playback start",
+    group: "Attention and Media UX",
+    short: "media_start",
+  },
 
   "chat.voice_setup_ms": {
     p95: 150,
@@ -1335,9 +1363,78 @@ function makeColors(enabled: boolean) {
 }
 
 const GROUP_NOTES: Record<string, string> = {
+  "UX Responsiveness": "User-visible wait time. Do not put full agent work duration in this group.",
+  "Connection Reliability":
+    "Command/session readiness and stream health. These are user-blocking when they fail or tail out.",
+  "Attention and Media UX":
+    "Human-in-the-loop and media playback timings. Ask response is tracked separately as user dwell time, not app latency.",
   "Voice Compatibility":
     "chat.voice_* metrics are legacy aliases kept for older dashboards; Dictation UX is the canonical voice-input namespace.",
 };
+
+const AGENT_WORKLOAD_METRICS = new Set([
+  "server.turn_duration_ms",
+  "server.turn_tool_calls",
+  "server.turn_input_tokens",
+  "server.turn_output_tokens",
+  "server.turn_cost",
+  "chat.session_message_count",
+  "chat.session_input_tokens",
+  "chat.session_output_tokens",
+  "chat.session_mutating_tool_calls",
+  "chat.session_files_changed",
+  "chat.session_added_lines",
+  "chat.session_removed_lines",
+  "chat.session_context_tokens",
+  "chat.session_context_window",
+  "server.compaction_ms",
+  "server.compaction_result",
+]);
+
+function informationalGroup(metric: string): string {
+  if (
+    metric === "server.turn_ttft_ms" ||
+    metric === "chat.session_switch_ms" ||
+    metric === "chat.workspace_load_ms"
+  ) {
+    return "UX responsiveness drill-down (no SLO)";
+  }
+  if (AGENT_WORKLOAD_METRICS.has(metric)) return "Agent workload / progress (not UX latency)";
+  if (
+    metric.startsWith("server.ws_") ||
+    metric.startsWith("server.session_") ||
+    metric.startsWith("chat.app_event_stream_") ||
+    metric.startsWith("chat.command_") ||
+    metric.startsWith("chat.message_queue_")
+  ) {
+    return "Connection and command drill-down (no SLO)";
+  }
+  if (
+    metric.startsWith("chat.timeline_") ||
+    metric.startsWith("chat.render_") ||
+    metric.startsWith("chat.coalescer_")
+  ) {
+    return "Rendering drill-down (no SLO)";
+  }
+  if (
+    metric.startsWith("server.turn_") ||
+    metric.startsWith("server.auto_retry") ||
+    metric.startsWith("server.compaction_")
+  ) {
+    return "Agent workload / progress (not UX latency)";
+  }
+  if (metric.startsWith("server.") || metric.startsWith("device.")) {
+    return "Server and device diagnostics (no SLO)";
+  }
+  if (
+    metric.startsWith("chat.ask_") ||
+    metric.startsWith("chat.media_") ||
+    metric.startsWith("chat.voice_playback_")
+  ) {
+    return "Attention and media drill-down (no SLO)";
+  }
+  return "Other informational (no SLO)";
+}
 
 function printGroupNote(groupName: string, c: ReturnType<typeof makeColors>): void {
   const note = GROUP_NOTES[groupName];
@@ -1549,13 +1646,28 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
     .filter(([, r]) => r.status === "no_slo")
     .sort(([, a], [, b]) => b.count - a.count);
   if (informational.length > 0) {
-    console.log(`${c.bold}${c.cyan}Informational (no SLO)${c.reset}`);
-    for (const [metric, r] of informational) {
-      console.log(
-        `  ${metric.padEnd(40)} ${String(r.count).padStart(8)} ${fmtValue(r.p50, r.unit).padStart(10)} ${fmtValue(r.p95, r.unit).padStart(10)} ${fmtValue(r.max, r.unit).padStart(10)}`,
-      );
+    const grouped = new Map<string, Array<[string, MetricResult]>>();
+    for (const entry of informational) {
+      const groupName = informationalGroup(entry[0]);
+      const entries = grouped.get(groupName) ?? [];
+      entries.push(entry);
+      grouped.set(groupName, entries);
     }
-    console.log();
+
+    for (const [groupName, entries] of grouped) {
+      console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
+      if (groupName.startsWith("Agent workload")) {
+        console.log(
+          `  ${c.dim}Long values here usually mean the agent was working. Call them bad only when correlated with no progress, high TTFT, tool hangs, errors, or missing UI updates.${c.reset}`,
+        );
+      }
+      for (const [metric, r] of entries) {
+        console.log(
+          `  ${metric.padEnd(40)} ${String(r.count).padStart(8)} ${fmtValue(r.p50, r.unit).padStart(10)} ${fmtValue(r.p95, r.unit).padStart(10)} ${fmtValue(r.max, r.unit).padStart(10)}`,
+        );
+      }
+      console.log();
+    }
   }
 
   if (args.dictation && result.breakdowns.length > 0) printBreakdowns(result, c);

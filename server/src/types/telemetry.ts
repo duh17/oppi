@@ -336,6 +336,34 @@ export const CHAT_METRIC_REGISTRY = {
     description:
       "Ephemeral tool update messages received by the active chat session. Tags: tool, has_segments.",
   },
+  "chat.app_event_stream_connect_ms": {
+    unit: "ms",
+    description:
+      "Global app-event stream time from socket open to connected frame. Tags: status, attempt, snapshot_required.",
+  },
+  "chat.app_event_stream_reconnect": {
+    unit: "count",
+    description:
+      "Global app-event stream reconnect attempts or exhaustion. Tags: status, reason, attempt, close_code.",
+  },
+  "chat.app_event_stream_decode_error": {
+    unit: "count",
+    description: "Global app-event stream frame decode failures. Tags: error_kind.",
+  },
+  "chat.ask_response_ms": {
+    unit: "ms",
+    description:
+      "Ask card visible duration until answer or ignore. Tags: outcome, surface, question_count, answered_count, ignored_count, multi_select, multi_select_count, custom, allow_custom, selected_count, response_encoding.",
+  },
+  "chat.media_playback_start_ms": {
+    unit: "ms",
+    description:
+      "Media preview/player startup latency until playable. Tags: kind, source, mode, status.",
+  },
+  "chat.media_playback_error": {
+    unit: "count",
+    description: "Media preview/player failure count. Tags: kind, source, phase, error_kind.",
+  },
 
   // ── Session list rendering ──
   "chat.session_list_compute_ms": {

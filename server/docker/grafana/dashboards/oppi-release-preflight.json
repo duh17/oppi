@@ -24,8 +24,8 @@
     {
       "id": 50,
       "type": "stat",
-      "title": "Session Quality",
-      "description": "Composite score (0-100) across smoothness, content delivery, and reliability. Excludes TTFT (provider-bound). Based on sessions with 3+ turns.",
+      "title": "UX Responsiveness",
+      "description": "Composite score (0-100) for user-visible responsiveness: content freshness, render smoothness, command ack, and reliability counters. Excludes full agent turn duration because long turns can be productive work.",
       "gridPos": {
         "h": 4,
         "w": 5,
@@ -40,7 +40,7 @@
         {
           "refId": "A",
           "queryType": "table",
-          "rawQueryText": "WITH session_stats AS (\n  SELECT\n    session_id,\n    MIN(ts_ms) as first_ts,\n    AVG(CASE WHEN metric='chat.jank_pct' THEN value END) as jank,\n    AVG(CASE WHEN metric='chat.fresh_content_lag_ms' THEN value END) as lag,\n    COUNT(CASE WHEN metric='chat.message_queue_stale_drop' THEN 1 END) as drops,\n    AVG(CASE WHEN metric='chat.subscribe_ack_ms' THEN value END) as sub_ack,\n    CAST(COUNT(CASE WHEN metric='chat.timeline_apply_ms' AND value > 50 THEN 1 END) AS REAL) /\n      MAX(1, COUNT(CASE WHEN metric='chat.timeline_apply_ms' THEN 1 END)) * 100 as hitch_pct,\n    COUNT(CASE WHEN metric='chat.catchup_ring_miss' AND value > 0 THEN 1 END) as ring_misses,\n    COUNT(CASE WHEN metric='chat.ttft_ms' THEN 1 END) as turns\n  FROM chat_metric_samples\n  WHERE session_id IS NOT NULL AND session_id != ''\n    AND ts_ms BETWEEN $__from AND $__to\n  GROUP BY session_id\n  HAVING turns >= 3\n)\nSELECT ROUND(AVG(100.0\n  - MIN(25, MAX(0, (COALESCE(jank, 0) - 5) * 25.0 / 25))\n  - MIN(15, MAX(0, (hitch_pct - 2) * 15.0 / 13))\n  - MIN(20, MAX(0, (COALESCE(lag, 1000) - 300) * 20.0 / 2700))\n  - MIN(10, MAX(0, (COALESCE(sub_ack, 500) - 200) * 10.0 / 1800))\n  - MIN(25, drops * 5.0)\n  - MIN(5, ring_misses * 5.0)), 0) AS value\nFROM session_stats"
+          "rawQueryText": "WITH session_stats AS (\n  SELECT\n    session_id,\n    MIN(ts_ms) as first_ts,\n    AVG(CASE WHEN metric='chat.jank_pct' THEN value END) as jank,\n    AVG(CASE WHEN metric='chat.fresh_content_lag_ms' THEN value END) as lag,\n    SUM(CASE WHEN metric='chat.message_queue_stale_drop' THEN value ELSE 0 END) as drops,\n    SUM(CASE WHEN metric IN ('chat.message_queue_start_miss', 'chat.media_playback_error') THEN value ELSE 0 END) as failures,\n    AVG(CASE WHEN metric='chat.message_queue_ack_ms' THEN value END) as ack,\n    CAST(COUNT(CASE WHEN metric='chat.timeline_apply_ms' AND value > 50 THEN 1 END) AS REAL) /\n      MAX(1, COUNT(CASE WHEN metric='chat.timeline_apply_ms' THEN 1 END)) * 100 as hitch_pct,\n    COUNT(CASE WHEN metric='chat.catchup_ring_miss' AND value > 0 THEN 1 END) as ring_misses,\n    COUNT(CASE WHEN metric='chat.ttft_ms' THEN 1 END) as turns\n  FROM chat_metric_samples\n  WHERE session_id IS NOT NULL AND session_id != ''\n    AND ts_ms BETWEEN $__from AND $__to\n  GROUP BY session_id\n  HAVING turns >= 3\n)\nSELECT ROUND(AVG(100.0\n  - MIN(25, MAX(0, (COALESCE(jank, 0) - 5) * 25.0 / 25))\n  - MIN(15, MAX(0, (hitch_pct - 2) * 15.0 / 13))\n  - MIN(20, MAX(0, (COALESCE(lag, 1000) - 300) * 20.0 / 2700))\n  - MIN(10, MAX(0, (COALESCE(ack, 300) - 300) * 10.0 / 1700))\n  - MIN(25, drops * 5.0)\n  - MIN(15, failures * 5.0)\n  - MIN(5, ring_misses * 5.0)), 0) AS value\nFROM session_stats"
         }
       ],
       "fieldConfig": {
@@ -204,7 +204,7 @@
           "refId": "A"
         }
       ],
-      "title": "First Token",
+      "title": "First Token Wait",
       "type": "stat"
     },
     {
@@ -391,7 +391,7 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "none",
+          "unit": "ms",
           "custom": {
             "drawStyle": "points",
             "lineWidth": 0,
@@ -432,7 +432,8 @@
           "refId": "A"
         }
       ],
-      "title": "TTFT (chat.ttft_ms, raw ms)",
+      "title": "First token wait (chat.ttft_ms)",
+      "description": "User-visible wait from send/start to first assistant token. Do not compare this with full turn duration; turn duration is workload/progress telemetry.",
       "type": "timeseries"
     },
     {
@@ -445,7 +446,7 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "none",
+          "unit": "ms",
           "custom": {
             "drawStyle": "points",
             "lineWidth": 0,
@@ -453,7 +454,32 @@
             "showPoints": "always"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "focused session ready"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "app-event stream ready"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -480,13 +506,25 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ws_connect_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ws_connect_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ws_wait_for_connected_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ws_wait_for_connected_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": ["time"],
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_event_stream_connect_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_event_stream_connect_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "B"
         }
       ],
-      "title": "WS connect (chat.ws_connect_ms, raw ms)",
+      "title": "Connection readiness (focused + app stream)",
+      "description": "User-blocking wait for focused-session command transport and global app-event stream readiness.",
       "type": "timeseries"
     },
     {
@@ -1969,7 +2007,8 @@
           "refId": "A"
         }
       ],
-      "title": "Session usage by provider/model",
+      "title": "Agent workload by session (not UX latency)",
+      "description": "Session size, token, tool, and file-change counters explain how much work the agent did. High values are not bad by themselves; correlate them with TTFT, errors, tool hangs, or missing progress.",
       "type": "table"
     },
     {
@@ -2494,7 +2533,44 @@
             "showPoints": "always"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ask_response"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "media_playback_start"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "share_export"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -2521,13 +2597,36 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ask_response_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ask_response_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.media_playback_start_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.media_playback_start_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.share_export_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.share_export_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": ["time"],
-          "refId": "A"
+          "refId": "C"
         }
       ],
-      "title": "Share Export Render (chat.share_export_ms)",
+      "title": "Attention, media, and share UX",
+      "description": "User-facing interaction timings outside the main chat stream: ask-card dwell time, media playback startup, and share export render.",
       "type": "timeseries"
     },
     {
@@ -2751,6 +2850,42 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "app_stream_reconnect"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "app_stream_decode_error"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "E"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "media_playback_error"
+              }
+            ]
           }
         ]
       },
@@ -2794,9 +2929,43 @@
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_start_miss'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": ["time"],
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_event_stream_reconnect'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_event_stream_reconnect'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_event_stream_decode_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_event_stream_decode_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.media_playback_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.media_playback_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "E"
         }
       ],
-      "title": "Message Queue Drops (stale_drop + start_miss)",
+      "title": "User-visible reliability counters",
+      "description": "Counts where a user action, app stream, or media playback failed/recovered. These should trend toward zero.",
       "type": "timeseries"
     },
     {
@@ -3343,8 +3512,8 @@
     {
       "id": 51,
       "type": "timeseries",
-      "title": "Session Quality Trend",
-      "description": "Daily average session quality score with session count.",
+      "title": "UX Responsiveness Trend",
+      "description": "Daily average UX responsiveness score. This excludes full agent turn duration; long turns are tracked as workload/progress.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -3359,7 +3528,7 @@
         {
           "refId": "A",
           "queryType": "table",
-          "rawQueryText": "WITH session_stats AS (\n  SELECT\n    session_id,\n    MIN(ts_ms) as first_ts,\n    AVG(CASE WHEN metric='chat.jank_pct' THEN value END) as jank,\n    AVG(CASE WHEN metric='chat.fresh_content_lag_ms' THEN value END) as lag,\n    COUNT(CASE WHEN metric='chat.message_queue_stale_drop' THEN 1 END) as drops,\n    AVG(CASE WHEN metric='chat.subscribe_ack_ms' THEN value END) as sub_ack,\n    CAST(COUNT(CASE WHEN metric='chat.timeline_apply_ms' AND value > 50 THEN 1 END) AS REAL) /\n      MAX(1, COUNT(CASE WHEN metric='chat.timeline_apply_ms' THEN 1 END)) * 100 as hitch_pct,\n    COUNT(CASE WHEN metric='chat.catchup_ring_miss' AND value > 0 THEN 1 END) as ring_misses,\n    COUNT(CASE WHEN metric='chat.ttft_ms' THEN 1 END) as turns\n  FROM chat_metric_samples\n  WHERE session_id IS NOT NULL AND session_id != ''\n    AND ts_ms BETWEEN $__from AND $__to\n  GROUP BY session_id\n  HAVING turns >= 3\n),\nscored AS (\n  SELECT\n    first_ts / 1000 as ts,\n    100.0\n  - MIN(25, MAX(0, (COALESCE(jank, 0) - 5) * 25.0 / 25))\n  - MIN(15, MAX(0, (hitch_pct - 2) * 15.0 / 13))\n  - MIN(20, MAX(0, (COALESCE(lag, 1000) - 300) * 20.0 / 2700))\n  - MIN(10, MAX(0, (COALESCE(sub_ack, 500) - 200) * 10.0 / 1800))\n  - MIN(25, drops * 5.0)\n  - MIN(5, ring_misses * 5.0) as score\n  FROM session_stats\n)\nSELECT ts as time, ROUND(score, 0) as quality_score\nFROM scored\nORDER BY ts"
+          "rawQueryText": "WITH session_stats AS (\n  SELECT\n    session_id,\n    MIN(ts_ms) as first_ts,\n    AVG(CASE WHEN metric='chat.jank_pct' THEN value END) as jank,\n    AVG(CASE WHEN metric='chat.fresh_content_lag_ms' THEN value END) as lag,\n    SUM(CASE WHEN metric='chat.message_queue_stale_drop' THEN value ELSE 0 END) as drops,\n    SUM(CASE WHEN metric IN ('chat.message_queue_start_miss', 'chat.media_playback_error') THEN value ELSE 0 END) as failures,\n    AVG(CASE WHEN metric='chat.message_queue_ack_ms' THEN value END) as ack,\n    CAST(COUNT(CASE WHEN metric='chat.timeline_apply_ms' AND value > 50 THEN 1 END) AS REAL) /\n      MAX(1, COUNT(CASE WHEN metric='chat.timeline_apply_ms' THEN 1 END)) * 100 as hitch_pct,\n    COUNT(CASE WHEN metric='chat.catchup_ring_miss' AND value > 0 THEN 1 END) as ring_misses,\n    COUNT(CASE WHEN metric='chat.ttft_ms' THEN 1 END) as turns\n  FROM chat_metric_samples\n  WHERE session_id IS NOT NULL AND session_id != ''\n    AND ts_ms BETWEEN $__from AND $__to\n  GROUP BY session_id\n  HAVING turns >= 3\n),\nscored AS (\n  SELECT\n    first_ts / 1000 as ts,\n    100.0\n  - MIN(25, MAX(0, (COALESCE(jank, 0) - 5) * 25.0 / 25))\n  - MIN(15, MAX(0, (hitch_pct - 2) * 15.0 / 13))\n  - MIN(20, MAX(0, (COALESCE(lag, 1000) - 300) * 20.0 / 2700))\n  - MIN(10, MAX(0, (COALESCE(ack, 300) - 300) * 10.0 / 1700))\n  - MIN(25, drops * 5.0)\n  - MIN(15, failures * 5.0)\n  - MIN(5, ring_misses * 5.0) as score\n  FROM session_stats\n)\nSELECT ts as time, ROUND(score, 0) as quality_score\nFROM scored\nORDER BY ts"
         }
       ],
       "fieldConfig": {
@@ -3418,8 +3587,8 @@
     {
       "id": 52,
       "type": "table",
-      "title": "Session Quality Breakdown",
-      "description": "Per-session quality breakdown. Worst sessions first. Shows which dimension dragged the score down.",
+      "title": "UX Responsiveness Breakdown",
+      "description": "Per-session responsiveness breakdown. Worst sessions first. Long agent work duration is intentionally not part of this score.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -3434,7 +3603,7 @@
         {
           "refId": "A",
           "queryType": "table",
-          "rawQueryText": "WITH session_stats AS (\n  SELECT\n    session_id,\n    MIN(ts_ms) as first_ts,\n    AVG(CASE WHEN metric='chat.jank_pct' THEN value END) as jank,\n    AVG(CASE WHEN metric='chat.fresh_content_lag_ms' THEN value END) as lag,\n    COUNT(CASE WHEN metric='chat.message_queue_stale_drop' THEN 1 END) as drops,\n    AVG(CASE WHEN metric='chat.subscribe_ack_ms' THEN value END) as sub_ack,\n    CAST(COUNT(CASE WHEN metric='chat.timeline_apply_ms' AND value > 50 THEN 1 END) AS REAL) /\n      MAX(1, COUNT(CASE WHEN metric='chat.timeline_apply_ms' THEN 1 END)) * 100 as hitch_pct,\n    COUNT(CASE WHEN metric='chat.catchup_ring_miss' AND value > 0 THEN 1 END) as ring_misses,\n    COUNT(CASE WHEN metric='chat.ttft_ms' THEN 1 END) as turns\n  FROM chat_metric_samples\n  WHERE session_id IS NOT NULL AND session_id != ''\n    AND ts_ms BETWEEN $__from AND $__to\n  GROUP BY session_id\n  HAVING turns >= 3\n)\nSELECT\n  session_id,\n  turns,\n  ROUND(COALESCE(jank, 0), 1) as jank_pct,\n  ROUND(hitch_pct, 1) as hitch_pct,\n  ROUND(COALESCE(lag, 1000)) as lag_ms,\n  ROUND(COALESCE(sub_ack, 500)) as sub_ack_ms,\n  drops as stale_drops,\n  ROUND(100.0\n  - MIN(25, MAX(0, (COALESCE(jank, 0) - 5) * 25.0 / 25))\n  - MIN(15, MAX(0, (hitch_pct - 2) * 15.0 / 13))\n  - MIN(20, MAX(0, (COALESCE(lag, 1000) - 300) * 20.0 / 2700))\n  - MIN(10, MAX(0, (COALESCE(sub_ack, 500) - 200) * 10.0 / 1800))\n  - MIN(25, drops * 5.0)\n  - MIN(5, ring_misses * 5.0), 0) as score\nFROM session_stats\nORDER BY score ASC\nLIMIT 20"
+          "rawQueryText": "WITH session_stats AS (\n  SELECT\n    session_id,\n    MIN(ts_ms) as first_ts,\n    AVG(CASE WHEN metric='chat.jank_pct' THEN value END) as jank,\n    AVG(CASE WHEN metric='chat.fresh_content_lag_ms' THEN value END) as lag,\n    SUM(CASE WHEN metric='chat.message_queue_stale_drop' THEN value ELSE 0 END) as drops,\n    SUM(CASE WHEN metric IN ('chat.message_queue_start_miss', 'chat.media_playback_error') THEN value ELSE 0 END) as failures,\n    AVG(CASE WHEN metric='chat.message_queue_ack_ms' THEN value END) as ack,\n    CAST(COUNT(CASE WHEN metric='chat.timeline_apply_ms' AND value > 50 THEN 1 END) AS REAL) /\n      MAX(1, COUNT(CASE WHEN metric='chat.timeline_apply_ms' THEN 1 END)) * 100 as hitch_pct,\n    COUNT(CASE WHEN metric='chat.catchup_ring_miss' AND value > 0 THEN 1 END) as ring_misses,\n    COUNT(CASE WHEN metric='chat.ttft_ms' THEN 1 END) as turns\n  FROM chat_metric_samples\n  WHERE session_id IS NOT NULL AND session_id != ''\n    AND ts_ms BETWEEN $__from AND $__to\n  GROUP BY session_id\n  HAVING turns >= 3\n)\nSELECT\n  session_id,\n  turns,\n  ROUND(COALESCE(jank, 0), 1) as jank_pct,\n  ROUND(hitch_pct, 1) as hitch_pct,\n  ROUND(COALESCE(lag, 1000)) as lag_ms,\n  ROUND(COALESCE(ack, 300)) as ack_ms,\n  drops as stale_drops,\n  failures,\n  ROUND(100.0\n  - MIN(25, MAX(0, (COALESCE(jank, 0) - 5) * 25.0 / 25))\n  - MIN(15, MAX(0, (hitch_pct - 2) * 15.0 / 13))\n  - MIN(20, MAX(0, (COALESCE(lag, 1000) - 300) * 20.0 / 2700))\n  - MIN(10, MAX(0, (COALESCE(ack, 300) - 300) * 10.0 / 1700))\n  - MIN(25, drops * 5.0)\n  - MIN(15, failures * 5.0)\n  - MIN(5, ring_misses * 5.0), 0) as score\nFROM session_stats\nORDER BY score ASC\nLIMIT 20"
         }
       ],
       "fieldConfig": {
