@@ -208,7 +208,7 @@ const TEXT_FILENAMES = new Set([
   "brewfile",
 ]);
 
-export const IGNORE_DIRS = new Set([
+export const SEARCH_IGNORE_DIRS = new Set([
   ".git",
   "node_modules",
   ".next",
@@ -404,14 +404,10 @@ export async function listDirectoryEntries(
       break;
     }
 
-    if (dirent.name === ".DS_Store") continue;
-
     const entryPath = join(resolvedDir, dirent.name);
     try {
       const entryStat = await stat(entryPath);
       const isDir = entryStat.isDirectory();
-
-      if (isDir && IGNORE_DIRS.has(dirent.name)) continue;
 
       entries.push({
         name: dirent.name,
@@ -449,7 +445,7 @@ async function walkDirectoryForSearch(root: string): Promise<string[]> {
       if (results.length >= WALK_MAX_FILES) return;
 
       if (dirent.isDirectory()) {
-        if (IGNORE_DIRS.has(dirent.name)) continue;
+        if (SEARCH_IGNORE_DIRS.has(dirent.name)) continue;
         await walk(join(dir, dirent.name), depth + 1);
       } else {
         if (dirent.name === ".DS_Store") continue;

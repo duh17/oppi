@@ -19,7 +19,7 @@ export interface DirectoryListingResponse {
 
 /** Flat file index for client-side fuzzy search (GET /workspaces/:id/paths). */
 export interface FileIndexResponse {
-  /** Workspace-relative file paths (no directories, no ignored/sensitive paths). */
+  /** Workspace-relative file paths for fuzzy search; bulky generated paths may be omitted. */
   paths: string[];
   truncated: boolean;
 }
