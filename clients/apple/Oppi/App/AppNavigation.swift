@@ -29,6 +29,11 @@ enum WorkspaceSplitDetailTarget: Hashable {
     case utility(WorkspaceUtilityNavTarget)
 }
 
+enum WorkspaceSplitDetailPathElement: Hashable {
+    case fileBrowser(FileBrowserNavTarget)
+    case linkedFile(WorkspaceLinkedFileNavTarget)
+}
+
 /// Navigation state for the app.
 @MainActor @Observable
 final class AppNavigation {
@@ -48,7 +53,10 @@ final class AppNavigation {
     ///
     /// Keeps detail-only pushes, such as file browser directory drilling, out of
     /// the workspace sidebar/content stack.
-    var splitDetailPath = NavigationPath()
+    var splitDetailPath = NavigationPath() {
+        didSet { trimSplitDetailElementsToPathCount() }
+    }
+    private var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = []
 
     /// Backward-compatible session selection facade for existing tests and call sites.
     var splitSelectedSession: WorkspaceSessionNavTarget? {
@@ -59,10 +67,10 @@ final class AppNavigation {
         set {
             if let newValue {
                 splitDetailTarget = .session(newValue)
-                splitDetailPath = NavigationPath()
+                resetSplitDetailPath()
             } else if case .session = splitDetailTarget {
                 splitDetailTarget = nil
-                splitDetailPath = NavigationPath()
+                resetSplitDetailPath()
             }
         }
     }
@@ -98,11 +106,11 @@ final class AppNavigation {
             }
             splitSelectedWorkspace = nil
             splitDetailTarget = nil
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .automatic
         case .split:
             workspacePath = NavigationPath()
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .all
         }
     }
@@ -115,7 +123,7 @@ final class AppNavigation {
         case .split:
             splitSelectedWorkspace = target
             splitDetailTarget = nil
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .all
         }
     }
@@ -130,7 +138,7 @@ final class AppNavigation {
                 splitSelectedWorkspace = workspace
             }
             splitDetailTarget = .session(target)
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .detailOnly
         }
     }
@@ -145,7 +153,7 @@ final class AppNavigation {
                 splitSelectedWorkspace = workspace
             }
             splitDetailTarget = .fileBrowser(target)
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .detailOnly
         }
     }
@@ -161,9 +169,9 @@ final class AppNavigation {
             }
             if splitDetailTarget == nil {
                 splitDetailTarget = .linkedFile(target)
-                splitDetailPath = NavigationPath()
+                resetSplitDetailPath()
             } else {
-                splitDetailPath.append(target)
+                pushSplitDetailLinkedFile(target)
             }
             splitColumnVisibility = .detailOnly
         }
@@ -176,7 +184,7 @@ final class AppNavigation {
             workspacePath.append(target)
         case .split:
             splitDetailTarget = .utility(target)
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .all
         }
     }
@@ -189,7 +197,7 @@ final class AppNavigation {
         case .split:
             splitSelectedWorkspace = target
             splitDetailTarget = .workspaceConfiguration(target)
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .all
         }
     }
@@ -206,14 +214,14 @@ final class AppNavigation {
         guard workspaceNavigationPresentation == .split else { return }
         guard splitDetailTarget == .workspaceConfiguration(target) else { return }
         splitDetailTarget = nil
-        splitDetailPath = NavigationPath()
+        resetSplitDetailPath()
     }
 
     func clearWorkspaceSelections() {
         workspacePath = NavigationPath()
         splitSelectedWorkspace = nil
         splitDetailTarget = nil
-        splitDetailPath = NavigationPath()
+        resetSplitDetailPath()
         splitColumnVisibility = workspaceNavigationPresentation == .split ? .all : .automatic
     }
 
@@ -229,7 +237,7 @@ final class AppNavigation {
             workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId)
         case .split:
             splitDetailTarget = .session(target)
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
             splitColumnVisibility = .detailOnly
         }
     }
@@ -298,10 +306,36 @@ final class AppNavigation {
             workspacePath.append(target)
         case .split:
             splitDetailTarget = .utility(target)
-            splitDetailPath = NavigationPath()
+            resetSplitDetailPath()
         }
         selectedTab = .workspaces
         return target
+    }
+
+    func pushSplitDetailFileBrowser(_ target: FileBrowserNavTarget) {
+        splitDetailPath.append(target)
+        splitDetailPathElements.append(.fileBrowser(target))
+    }
+
+    func removeLastSplitDetailPath(_ count: Int) {
+        guard count > 0 else { return }
+        splitDetailPath.removeLast(count)
+        trimSplitDetailElementsToPathCount()
+    }
+
+    private func pushSplitDetailLinkedFile(_ target: WorkspaceLinkedFileNavTarget) {
+        splitDetailPath.append(target)
+        splitDetailPathElements.append(.linkedFile(target))
+    }
+
+    private func resetSplitDetailPath() {
+        splitDetailPathElements = []
+        splitDetailPath = NavigationPath()
+    }
+
+    private func trimSplitDetailElementsToPathCount() {
+        guard splitDetailPathElements.count > splitDetailPath.count else { return }
+        splitDetailPathElements.removeLast(splitDetailPathElements.count - splitDetailPath.count)
     }
 
     private func stackPathForCurrentSplitSelection() -> NavigationPath? {
@@ -324,6 +358,15 @@ final class AppNavigation {
         case nil:
             if let workspace = splitSelectedWorkspace {
                 path.append(workspace)
+            }
+        }
+
+        for element in splitDetailPathElements {
+            switch element {
+            case .fileBrowser(let target):
+                path.append(target)
+            case .linkedFile(let target):
+                path.append(target)
             }
         }
 

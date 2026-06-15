@@ -806,7 +806,7 @@ struct FileBrowserView: View {
         case .stack:
             navigation.workspacePath.append(target)
         case .split:
-            navigation.splitDetailPath.append(target)
+            navigation.pushSplitDetailFileBrowser(target)
         }
     }
 
@@ -843,7 +843,7 @@ struct FileBrowserView: View {
             navigation.workspacePath.removeLast(popCount)
         case .split:
             guard navigation.splitDetailPath.count >= popCount else { return }
-            navigation.splitDetailPath.removeLast(popCount)
+            navigation.removeLastSplitDetailPath(popCount)
         }
     }
 
