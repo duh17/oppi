@@ -502,7 +502,6 @@ describe("workspace file serving", () => {
     const res = await fetch(`${baseUrl}/workspaces/${wsId}/raw/chart.png?token=${token}`);
     expect(res.status).toBe(401);
   });
-
 });
 
 // ── Workspace File Browser (raw files, directory listing, search) ──
@@ -515,6 +514,7 @@ describe("workspace file browser", () => {
     wsRoot = mkdtempSync(join(tmpdir(), "oppi-ws-browser-"));
     mkdirSync(join(wsRoot, "src", "components"), { recursive: true });
     mkdirSync(join(wsRoot, "node_modules", "dep"), { recursive: true });
+    mkdirSync(join(wsRoot, ".build", "videos"), { recursive: true });
     mkdirSync(join(wsRoot, ".git", "objects"), { recursive: true });
     writeFileSync(join(wsRoot, "README.md"), "# Hello world");
     writeFileSync(join(wsRoot, "package.json"), '{"name":"test"}');
@@ -527,6 +527,7 @@ describe("workspace file browser", () => {
       "export const Button = () => {}",
     );
     writeFileSync(join(wsRoot, "node_modules", "dep", "index.js"), "module.exports = {}");
+    writeFileSync(join(wsRoot, ".build", "videos", "recording.mp4"), "video");
     writeFileSync(join(wsRoot, ".git", "HEAD"), "ref: refs/heads/main");
 
     const res = await post("/workspaces", {
@@ -623,9 +624,10 @@ describe("workspace file browser", () => {
     const names = body.entries.map((e: { name: string }) => e.name);
     expect(names).toContain("src");
     expect(names).toContain("README.md");
-    // IGNORE_DIRS filtered out
-    expect(names).not.toContain("node_modules");
-    expect(names).not.toContain(".git");
+    // Directory browsing shows real filesystem entries; raw reads enforce sensitive-content rules.
+    expect(names).toContain("node_modules");
+    expect(names).toContain(".build");
+    expect(names).toContain(".git");
   });
 
   it("lists subdirectory entries", async () => {

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { parseByteRangeHeader } from "../src/http-range.js";
 import {
   ALLOWED_EXTENSIONS,
-  IGNORE_DIRS,
+  SEARCH_IGNORE_DIRS,
   SENSITIVE_FILE_PATTERNS,
   resolveWorkspaceFilePath,
   isSensitivePath,
@@ -140,24 +140,30 @@ describe("resolveWorkspaceFilePath", () => {
   });
 });
 
-// MARK: - IGNORE_DIRS
+// MARK: - File-browser visibility filters
 
-describe("IGNORE_DIRS", () => {
-  test("contains common build/dependency directories", () => {
+describe("file-browser visibility filters", () => {
+  test("search skips common bulky generated/dependency directories", () => {
     for (const dir of [".git", "node_modules", ".next", "dist", "build", "__pycache__"]) {
-      expect(IGNORE_DIRS.has(dir), `should ignore ${dir}`).toBe(true);
+      expect(SEARCH_IGNORE_DIRS.has(dir), `search should ignore ${dir}`).toBe(true);
     }
   });
 
-  test("contains platform-specific directories", () => {
+  test("search skips platform-specific generated directories", () => {
     for (const dir of ["DerivedData", ".build", "Pods"]) {
-      expect(IGNORE_DIRS.has(dir), `should ignore ${dir}`).toBe(true);
+      expect(SEARCH_IGNORE_DIRS.has(dir), `search should ignore ${dir}`).toBe(true);
     }
   });
 
-  test("does not contain normal project directories", () => {
+  test("search does not control directory browsing visibility", () => {
+    for (const dir of [".git", "node_modules", ".build", "dist"]) {
+      expect(SEARCH_IGNORE_DIRS.has(dir), `search may ignore ${dir}`).toBe(true);
+    }
+  });
+
+  test("search does not ignore normal project directories", () => {
     for (const dir of ["src", "lib", "test", "docs", ".github", ".vscode"]) {
-      expect(IGNORE_DIRS.has(dir), `should not ignore ${dir}`).toBe(false);
+      expect(SEARCH_IGNORE_DIRS.has(dir), `search should not ignore ${dir}`).toBe(false);
     }
   });
 });
@@ -387,6 +393,7 @@ describe("listDirectoryEntries", () => {
     mkdirSync(join(tmpRoot, "src"), { recursive: true });
     mkdirSync(join(tmpRoot, ".github"), { recursive: true });
     mkdirSync(join(tmpRoot, "node_modules", "dep"), { recursive: true });
+    mkdirSync(join(tmpRoot, ".build", "videos"), { recursive: true });
     mkdirSync(join(tmpRoot, ".git", "objects"), { recursive: true });
     writeFileSync(join(tmpRoot, "README.md"), "# Hello");
     writeFileSync(join(tmpRoot, "package.json"), '{"name":"test"}');
@@ -394,6 +401,7 @@ describe("listDirectoryEntries", () => {
     writeFileSync(join(tmpRoot, "src", "utils.ts"), "export function foo() {}");
     writeFileSync(join(tmpRoot, ".github", "ci.yml"), "name: CI");
     writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "module.exports = {}");
+    writeFileSync(join(tmpRoot, ".build", "videos", "recording.mp4"), "video");
     writeFileSync(join(tmpRoot, ".git", "HEAD"), "ref: refs/heads/main");
   });
 
@@ -411,12 +419,13 @@ describe("listDirectoryEntries", () => {
     expect(names).toContain("package.json");
   });
 
-  test("skips ignored directories", async () => {
+  test("shows generated, dependency, and dot directories", async () => {
     const result = await listDirectoryEntries(tmpRoot, "");
     expect(result).not.toBeNull();
     const names = result!.entries.map((e) => e.name);
-    expect(names).not.toContain("node_modules");
-    expect(names).not.toContain(".git");
+    expect(names).toContain("node_modules");
+    expect(names).toContain(".build");
+    expect(names).toContain(".git");
   });
 
   test("does not skip non-ignored dotdirs", async () => {
@@ -497,12 +506,12 @@ describe("listDirectoryEntries", () => {
     expect(result!.truncated).toBe(false);
   });
 
-  test("skips .DS_Store files", async () => {
+  test("shows dotfiles in directory listings", async () => {
     writeFileSync(join(tmpRoot, ".DS_Store"), Buffer.alloc(4));
     const result = await listDirectoryEntries(tmpRoot, "");
     expect(result).not.toBeNull();
     const names = result!.entries.map((e) => e.name);
-    expect(names).not.toContain(".DS_Store");
+    expect(names).toContain(".DS_Store");
   });
 });
 
