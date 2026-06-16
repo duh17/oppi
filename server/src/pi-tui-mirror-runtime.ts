@@ -383,6 +383,19 @@ function mergePiSessionFile(session: Session, file: string | undefined): void {
   session.piSessionFiles = [...files];
 }
 
+function sessionActivityProjectionFingerprint(session: Session): string {
+  const summary = buildSessionSummary(session);
+  return sessionSummaryFingerprint({
+    ...summary,
+    lastActivity: 0,
+    mirror: summary.mirror ? { status: summary.mirror.status } : undefined,
+  });
+}
+
+function sessionStorageFingerprint(session: Session): string {
+  return JSON.stringify(session);
+}
+
 function queueCounts(queue: MessageQueueState): {
   version: number;
   steeringCount: number;
@@ -1108,8 +1121,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         this.broadcast(connection.sessionId, { type: "state", session: active.session });
         return;
 
-      case "heartbeat":
-        this.applyBridgeState(active, message.state ?? {}, connection);
+      case "heartbeat": {
+        const stateChanged = this.applyBridgeState(active, message.state ?? {}, connection);
         if (message.queue) {
           this.applyBridgeQueueState(
             active,
@@ -1117,8 +1130,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
             "heartbeat",
           );
         }
-        this.broadcast(connection.sessionId, { type: "state", session: active.session });
+        if (stateChanged) {
+          this.broadcast(connection.sessionId, { type: "state", session: active.session });
+        }
         return;
+      }
 
       case "queue_state":
         this.applyBridgeQueueState(
@@ -1627,6 +1643,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     connection: BridgeConnection,
     state: PiBridgeStateSnapshot,
   ): void {
+    const wasConnected = active.session.mirror?.status === "connected";
     active.session.runtime = "pi-tui";
     active.session.mirror = {
       status: "connected",
@@ -1640,15 +1657,22 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       },
     };
     this.applyBridgeState(active, state, connection);
+    if (!wasConnected) {
+      active.session.lastActivity = connection.connectedAt;
+    }
+    this.storage.saveSession(active.session);
   }
 
   private applyBridgeState(
     active: MirrorActiveSession,
     state: PiBridgeStateSnapshot,
     connection?: BridgeConnection,
-  ): void {
+  ): boolean {
     const session = active.session;
     const now = Date.now();
+    const activityBefore = sessionActivityProjectionFingerprint(session);
+    const storageBefore = sessionStorageFingerprint(session);
+
     session.runtime = "pi-tui";
     const nextName = meaningfulSessionName(state.sessionName, session.id);
     if (nextName) session.name = nextName;
@@ -1673,7 +1697,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       session.status = state.isIdle ? "ready" : "busy";
       session.currentTurnStartedAt = state.isIdle ? undefined : session.currentTurnStartedAt;
     }
-    session.lastActivity = now;
 
     if (connection) {
       connection.lastSeenAt = now;
@@ -1687,12 +1710,20 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
           bridgeId: connection.bridgeId,
           cwd: state.cwd ?? connection.cwd ?? session.mirror?.terminal?.cwd,
           connectedAt: connection.connectedAt,
-          lastSeenAt: now,
+          lastSeenAt: session.mirror?.terminal?.lastSeenAt ?? connection.connectedAt,
         },
       };
     }
 
-    this.storage.saveSession(session);
+    if (sessionActivityProjectionFingerprint(session) !== activityBefore) {
+      session.lastActivity = now;
+    }
+
+    const didChangeSession = sessionStorageFingerprint(session) !== storageBefore;
+    if (didChangeSession) {
+      this.storage.saveSession(session);
+    }
+    return didChangeSession;
   }
 
   private applyContextUsage(session: Session, usage: PiBridgeStateSnapshot["contextUsage"]): void {

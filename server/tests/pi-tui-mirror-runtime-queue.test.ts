@@ -433,6 +433,39 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
+  it("does not treat heartbeat-only mirror state as session activity", () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const session = runtime.getActiveSession(sessionId);
+    expect(session).toBeTruthy();
+    session!.lastActivity = 1;
+    session!.mirror = {
+      ...(session!.mirror ?? { status: "connected" }),
+      status: "connected",
+      terminal: {
+        ...(session!.mirror?.terminal ?? {}),
+        lastSeenAt: 1,
+      },
+    };
+    sessions.set(sessionId, session!);
+
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "heartbeat",
+      state: {
+        piSessionId: "pi-1",
+        sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+      },
+    });
+
+    const updated = runtime.getActiveSession(sessionId);
+    expect(updated?.lastActivity).toBe(1);
+    expect(updated?.mirror?.terminal?.lastSeenAt).toBe(1);
+    expect(received.some((message) => message.type === "state")).toBe(false);
+  });
+
   it("requires terminal confirmation before taking over an active Oppi session", () => {
     const { runtime, sessions } = makeRuntime({
       hostMount: "/tmp/oppi-mirror-test",
