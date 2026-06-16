@@ -1,5 +1,6 @@
 import OSLog
 import SwiftUI
+import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSession")
 
@@ -255,12 +256,38 @@ struct QuickSessionSheet: View {
             configureVoiceInputForSelectedServer(manager)
         }
 
+        if let sharedPayload = QuickSessionTrigger.shared.consumePendingSharePayload() {
+            applySharedPayload(sharedPayload)
+        }
+
         // Auto-focus the text input
         composerFocusRequestID += 1
 
         // Ensure model cache is fresh for the selected server.
         if let api = selectedServerConnection().apiClient {
             await chatState.refreshModelCache(api: api)
+        }
+    }
+
+    private func applySharedPayload(_ payload: ShareQuickSessionPayload) {
+        if let sharedText = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines), !sharedText.isEmpty {
+            text = sharedText
+        }
+
+        for file in payload.files {
+            guard let inboxURL = ShareQuickSessionPayload.inboxURL else { continue }
+            let url = inboxURL.appendingPathComponent(file.relativePath, isDirectory: false)
+            guard let data = try? Data(contentsOf: url) else { continue }
+
+            if file.mimeType.hasPrefix("image/"), let image = UIImage(data: data) {
+                pendingAttachments.append(PendingImage.from(data: data, mimeType: file.mimeType, image: image).pendingAttachment)
+            } else {
+                pendingAttachments.append(PendingAttachment.localFile(
+                    name: file.name,
+                    data: data,
+                    mimeType: file.mimeType
+                ))
+            }
         }
     }
 

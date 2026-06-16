@@ -344,6 +344,9 @@ struct OppiApp: App {
         if handleIncomingWorkspaceURL(url) {
             return
         }
+        if handleIncomingQuickSessionShareURL(url) {
+            return
+        }
         await handleIncomingInviteURL(url)
     }
 
@@ -414,6 +417,24 @@ struct OppiApp: App {
         // Session not found locally — just open the app to workspaces tab.
         navigation.selectedTab = .workspaces
         navigation.workspacePath = NavigationPath()
+        return true
+    }
+
+    @MainActor
+    private func handleIncomingQuickSessionShareURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "oppi",
+              url.host?.lowercased() == "quick-session-share" else {
+            return false
+        }
+        let payloadId = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name.lowercased() == "id" }?
+            .value
+        guard let payloadId, !payloadId.isEmpty else {
+            connection.extensionToast = "Could not open the shared item"
+            return true
+        }
+        QuickSessionTrigger.shared.requestPresentation(sharePayloadId: payloadId)
         return true
     }
 

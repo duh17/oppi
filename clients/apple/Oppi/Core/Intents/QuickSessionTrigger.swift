@@ -23,6 +23,10 @@ final class QuickSessionTrigger {
     /// Prevents duplicate presentations from rapid intent firings.
     var isPresented: Bool = false
 
+    /// Optional share-sheet payload for the next Quick Session sheet.
+    /// Consumed once by `QuickSessionSheet` when it builds its initial draft.
+    var pendingSharePayload: ShareQuickSessionPayload?
+
     private init() {}
 
     /// Called by `StartQuickSessionIntent.perform()` to request sheet presentation.
@@ -35,17 +39,31 @@ final class QuickSessionTrigger {
         logger.notice("Quick session presentation requested (id=\(self.presentationRequestID, privacy: .public))")
     }
 
-    /// Check shared UserDefaults for a pending request from the widget extension.
+    /// Check shared UserDefaults for a pending request from an extension.
     /// Called on app foreground.
     func checkForPendingRequest() {
         let defaults = SharedConstants.sharedDefaults
         let pending = defaults.bool(forKey: SharedConstants.quickSessionPendingKey)
         guard pending else { return }
 
-        // Clear the flag immediately
-        defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
+        if let payloadId = defaults.string(forKey: ShareQuickSessionPayload.pendingPayloadIdKey),
+           let payload = ShareQuickSessionPayload.consume(id: payloadId) {
+            pendingSharePayload = payload
+        } else {
+            defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
+        }
 
         logger.notice("Found pending quick session request from extension")
         requestPresentation()
+    }
+
+    func requestPresentation(sharePayloadId: String) {
+        pendingSharePayload = ShareQuickSessionPayload.consume(id: sharePayloadId)
+        requestPresentation()
+    }
+
+    func consumePendingSharePayload() -> ShareQuickSessionPayload? {
+        defer { pendingSharePayload = nil }
+        return pendingSharePayload
     }
 }

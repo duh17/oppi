@@ -115,6 +115,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $nav.showQuickSession, onDismiss: {
+            QuickSessionTrigger.shared.isPresented = false
             completePendingQuickSessionNavigation()
             quickSessionMeasuredContentHeight = 0
             quickSessionSelectedDetent = .height(QuickSessionSheetLayout.compactDetentHeight)
@@ -138,7 +139,13 @@ struct ContentView: View {
             .presentationCornerRadius(24)
         })
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
-            handleQuickSessionPresentationRequestChange(newValue)
+            presentQuickSessionIfPossible(requestID: newValue)
+        }
+        .onChange(of: navigation.launchPhase) { _, _ in
+            presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
+        }
+        .onChange(of: navigation.showOnboarding) { _, _ in
+            presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
         }
         .onChange(of: navigation.selectedTab) { _, _ in
             navigation.routeLegacySelectedTabIfNeeded()
@@ -170,10 +177,11 @@ struct ContentView: View {
         EmptyView()
     }
 
-    private func handleQuickSessionPresentationRequestChange(_ newValue: Int) {
-        let shouldPresent = newValue > 0
-        let showingOnboarding = navigation.showOnboarding
-        guard shouldPresent, !showingOnboarding else { return }
+    private func presentQuickSessionIfPossible(requestID: Int) {
+        guard requestID > 0 else { return }
+        guard navigation.launchPhase == .ready, !navigation.showOnboarding else { return }
+        guard !navigation.showQuickSession else { return }
+        QuickSessionTrigger.shared.isPresented = true
         navigation.showQuickSession = true
     }
 

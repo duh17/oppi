@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// Prevents the flash of wrong content on cold launch (onboarding screen
 /// briefly visible for paired users, empty workspace list before cache loads).
-enum AppLaunchPhase: Sendable {
+enum AppLaunchPhase: Sendable, Equatable {
     /// Credential check + cache load in progress. UI shows blank canvas.
     case resolving
     /// Launch resolved. `showOnboarding` is authoritative.
