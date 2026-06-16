@@ -239,7 +239,7 @@ function runScan(config: ScanConfig): ScanResult | undefined {
     outputDir,
     "--ignore",
     config.ignore.join(","),
-    "--noTips",
+    "--no-tips",
     "--silent",
   ];
 
