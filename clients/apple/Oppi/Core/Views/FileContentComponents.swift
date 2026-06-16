@@ -167,8 +167,8 @@ struct NativeCodeBodyView: UIViewRepresentable {
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
     @Environment(\.reviewCommentSourceContext) private var environmentReviewCommentSourceContext
 
-    /// Approximate line height for FullScreenCodeTypography.codeFont (12pt mono).
-    private static let estimatedLineHeight: CGFloat = 15.0
+    /// Approximate line height for the current fullscreen code font.
+    private static var estimatedLineHeight: CGFloat { ceil(FullScreenCodeTypography.codeFont.lineHeight) }
     /// textContainerInset top + bottom (8 + 8).
     private static let estimatedVerticalPadding: CGFloat = 16.0
 
