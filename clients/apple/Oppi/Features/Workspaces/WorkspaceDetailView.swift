@@ -579,6 +579,7 @@ struct WorkspaceDetailView: View {
             pendingAskCount: attention.askCount,
             pendingAsk: askRequestStore.pending(for: session.id),
             lineageHint: lineageHint,
+            unreadCompletionAt: sessionStore.unreadCompletionDate(for: session.id),
             searchSnippet: searchStore.snippetsBySessionId[session.id]
         )
     }

@@ -22,11 +22,12 @@ enum SessionListAttentionMerger {
         hasPendingAsk: Bool,
         hasPendingExtensionDialog: Bool
     ) -> Int {
-        max(
-            listCount,
-            hasPendingAsk ? 1 : 0,
-            hasPendingExtensionDialog ? 1 : 0
-        )
+        // `pendingAskCount` drives the “Question” badge. Sheet-backed
+        // extension dialogs are not necessarily questions; widget/status
+        // surfaces and background agent UI must not make a row look like it is
+        // waiting for a user answer.
+        _ = hasPendingExtensionDialog
+        return max(listCount, hasPendingAsk ? 1 : 0)
     }
 }
 

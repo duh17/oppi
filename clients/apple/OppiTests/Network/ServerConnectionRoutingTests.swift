@@ -38,6 +38,27 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
     }
 
+    @Test func inactiveAgentEndRecordsUnreadCompletion() {
+        let (conn, _) = makeTestConnection(sessionId: "focused")
+        conn.sessionStore.switchServer(to: "srv1")
+        conn.sessionStore.upsert(makeTestSession(id: "background", status: .busy))
+
+        _ = conn.applySharedStoreUpdate(for: .agentEnd, sessionId: "background")
+
+        #expect(conn.sessionStore.unreadCompletionDate(for: "background") != nil)
+    }
+
+    @Test func focusedAgentEndDoesNotRecordUnreadCompletion() {
+        let (conn, pipe) = makeTestConnection(sessionId: "focused")
+        conn.sessionStore.switchServer(to: "srv1")
+        conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready))
+
+        pipe.handle(.agentStart, sessionId: "focused")
+        pipe.handle(.agentEnd, sessionId: "focused")
+
+        #expect(conn.sessionStore.unreadCompletionDate(for: "focused") == nil)
+    }
+
     @Test func stateUpdateCarriesPreviousContextAndReleasesSleepPrevention() {
         let (conn, _) = makeTestConnection()
         var idleTimerUpdates: [Bool] = []

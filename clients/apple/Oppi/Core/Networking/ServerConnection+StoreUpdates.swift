@@ -77,17 +77,23 @@ extension ServerConnection {
             return StoreUpdateResult(handled: true)
 
         case .agentEnd:
+            let completedAt = Date()
+            var didCompleteTurn = false
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
                current.status.isRunning {
+                didCompleteTurn = true
                 current.status = .ready
                 current.currentTurnStartedAt = nil
-                current.lastActivity = Date()
+                current.lastActivity = completedAt
                 sessionStore.upsert(current)
                 if let workspaceId = current.workspaceId {
                     syncWorkspaceSummary(workspaceId: workspaceId)
                 }
             }
-            sessionStore.recordTurnEnded(sessionId: sessionId)
+            if didCompleteTurn {
+                sessionStore.recordTurnEnded(sessionId: sessionId, at: completedAt)
+                recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
+            }
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             syncLiveActivityState()
             return StoreUpdateResult(handled: true)
@@ -130,12 +136,15 @@ extension ServerConnection {
 
         case .sessionEnded:
             let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
+            let completedAt = Date()
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 current.status = .stopped
                 current.currentTurnStartedAt = nil
-                current.lastActivity = Date()
+                current.lastActivity = completedAt
                 sessionStore.upsert(current)
             }
+            sessionStore.recordTurnEnded(sessionId: sessionId, at: completedAt)
+            recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
@@ -199,12 +208,22 @@ extension ServerConnection {
         if currentSession.status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
-            sessionStore.recordTurnEnded(sessionId: currentSession.id)
+            let completedAt = currentSession.lastAgentReplyAt ?? currentSession.lastActivity
+            sessionStore.recordTurnEnded(sessionId: currentSession.id, at: completedAt)
+            recordUnreadCompletionIfNeeded(sessionId: currentSession.id, at: completedAt)
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
         }
 
         syncLiveActivityState()
         return StoreUpdateResult(stateContext: stateContext, handled: true)
+    }
+
+    func recordUnreadCompletionIfNeeded(sessionId: String, at date: Date) {
+        if isFocusedSession(sessionId) {
+            sessionStore.markSessionRead(sessionId: sessionId)
+        } else {
+            sessionStore.recordUnreadCompletion(sessionId: sessionId, at: date)
+        }
     }
 
     func attentionWorkspaceId(explicitWorkspaceId: String?, sessionId: String?) -> String? {

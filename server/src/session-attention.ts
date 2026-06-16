@@ -21,7 +21,7 @@ export function pendingBlockingUIRequestCount(
   provider: PendingUIRequestProvider,
   sessionId: string,
 ): number {
-  return provider.getPendingUIRequestMessages(sessionId).filter(isPendingBlockingUIRequest).length;
+  return provider.getPendingUIRequestMessages(sessionId).filter(isPendingUserReplyRequest).length;
 }
 
 export function hasPendingBlockingUIRequest(
@@ -65,9 +65,20 @@ export function pendingAskSnapshots(
   return asks;
 }
 
-function isPendingBlockingUIRequest(message: ServerMessage): boolean {
+function isPendingUserReplyRequest(message: ServerMessage): boolean {
   if (message.type !== "extension_ui_request") {
     return false;
   }
-  return message.method === "ask" ? isPendingAskMessage(message) : true;
+
+  switch (message.method) {
+    case "ask":
+      return isPendingAskMessage(message);
+    case "select":
+      return Array.isArray(message.options) && message.options.length > 0;
+    case "confirm":
+    case "input":
+      return true;
+    default:
+      return false;
+  }
 }

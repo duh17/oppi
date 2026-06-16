@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-
 import {
+  hasPendingBlockingUIRequest,
   pendingAskSnapshots,
   pendingBlockingUIRequestCount,
   type PendingUIRequestProvider,
@@ -30,8 +30,8 @@ function provider(messages: ServerMessage[]): PendingUIRequestProvider {
 }
 
 describe("session attention", () => {
-  it("derives ask snapshots and blocking count from unified pending UI replay messages", () => {
-    const messages: ServerMessage[] = [
+  it("derives ask snapshots and user reply count from unified pending UI replay messages", () => {
+    const pending = provider([
       {
         type: "extension_ui_notification",
         method: "setStatus",
@@ -60,9 +60,7 @@ describe("session attention", () => {
         title: "Dangerous command",
         options: ["Allow once", "Deny"],
       },
-    ];
-
-    const pending = provider(messages);
+    ]);
 
     expect(pendingBlockingUIRequestCount(pending, "s1")).toBe(2);
     expect(pendingAskSnapshots(pending, "w1")).toEqual([
@@ -81,5 +79,33 @@ describe("session attention", () => {
         allowCustom: true,
       },
     ]);
+  });
+
+  it("does not count widget, editor, or unknown surfaces as user reply requests", () => {
+    const pending = provider([
+      {
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "agents",
+        widgetLines: ["Agent running"],
+      },
+      {
+        type: "extension_ui_request",
+        id: "editor-1",
+        sessionId: "s1",
+        method: "editor",
+        title: "Draft",
+      },
+      {
+        type: "extension_ui_request",
+        id: "future-1",
+        sessionId: "s1",
+        method: "futureSurface",
+        title: "Unknown surface",
+      },
+    ]);
+
+    expect(pendingBlockingUIRequestCount(pending, "s1")).toBe(0);
+    expect(hasPendingBlockingUIRequest(pending, "s1")).toBe(false);
   });
 });

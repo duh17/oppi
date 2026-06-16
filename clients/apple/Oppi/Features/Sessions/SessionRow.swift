@@ -71,6 +71,7 @@ struct SessionRow: View {
     let attentionText: String?
     let lineageHint: String?
     let modelSummaries: [SessionModelSummary]
+    let unreadCompletionAt: Date?
     let searchSnippet: AttributedString?
 
     init(
@@ -79,6 +80,7 @@ struct SessionRow: View {
         attentionText: String? = nil,
         lineageHint: String? = nil,
         modelSummaries: [SessionModelSummary] = [],
+        unreadCompletionAt: Date? = nil,
         searchSnippet: AttributedString? = nil
     ) {
         self.session = session
@@ -86,6 +88,7 @@ struct SessionRow: View {
         self.attentionText = attentionText
         self.lineageHint = lineageHint
         self.modelSummaries = modelSummaries
+        self.unreadCompletionAt = unreadCompletionAt
         self.searchSnippet = searchSnippet
     }
 
@@ -136,13 +139,17 @@ struct SessionRow: View {
         }
     }
 
+    private var doneReferenceAt: Date {
+        unreadCompletionAt ?? session.lastAgentReplyAt ?? session.lastActivity
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             // Row 1: title + time
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.body)
-                    .fontWeight(pendingAskCount > 0 ? .semibold : .regular)
+                    .fontWeight(pendingAskCount > 0 || unreadCompletionAt != nil ? .semibold : .regular)
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
                     .layoutPriority(1)
@@ -237,18 +244,20 @@ struct SessionRow: View {
     @ViewBuilder
     private var timeLabel: some View {
         if let currentTurnStartedAt {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                Text(SessionFormatting.durationString(since: currentTurnStartedAt))
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(SessionFormatting.durationString(since: currentTurnStartedAt, now: context.date))
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
                     .monospacedDigit()
                     .fixedSize()
             }
         } else {
-            Text(session.lastActivity.relativeString())
-                .font(.caption2)
-                .foregroundStyle(.themeComment)
-                .fixedSize()
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(doneReferenceAt.relativeString(relativeTo: context.date))
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .fixedSize()
+            }
         }
     }
 

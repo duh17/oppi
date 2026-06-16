@@ -117,8 +117,14 @@ extension ServerConnection {
         if normalized.workspaceId == nil, let workspaceId, !workspaceId.isEmpty {
             normalized.workspaceId = workspaceId
         }
-        let previousWorkspaceId = sessionStore.workspaceId(for: normalized.id)
+        let previousSession = sessionStore.session(id: normalized.id)
+        let previousWorkspaceId = previousSession?.workspaceId
         sessionStore.applySummary(normalized)
+        if previousSession?.status.isRunning == true, normalized.status.isTerminal {
+            let completedAt = normalized.lastAgentReplyAt ?? normalized.lastActivity
+            sessionStore.recordTurnEnded(sessionId: normalized.id, at: completedAt)
+            recordUnreadCompletionIfNeeded(sessionId: normalized.id, at: completedAt)
+        }
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
             syncWorkspaceSummary(workspaceId: previousWorkspaceId)
         }
@@ -136,11 +142,13 @@ extension ServerConnection {
     ) {
         guard var current = sessionStore.session(id: sessionId) else { return }
         if let onlyFrom, current.status != onlyFrom { return }
+        let previousStatus = current.status
+        let completedAt = Date()
         current.status = status
         if status == .ready || status == .stopped || status == .error {
             current.currentTurnStartedAt = nil
         }
-        current.lastActivity = Date()
+        current.lastActivity = completedAt
         if current.workspaceId == nil {
             current.workspaceId = workspaceId
         }
@@ -151,6 +159,10 @@ extension ServerConnection {
         if status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
         } else {
+            if previousStatus.isRunning {
+                sessionStore.recordTurnEnded(sessionId: sessionId, at: completedAt)
+                recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
+            }
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
         }
         syncLiveActivityState()

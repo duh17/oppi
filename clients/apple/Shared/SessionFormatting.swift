@@ -79,8 +79,8 @@ enum SessionFormatting {
     }
 
     /// Format elapsed time since a date as a compact string (e.g. "3s", "5m", "2h14m").
-    static func durationString(since date: Date) -> String {
-        let elapsed = Int(Date().timeIntervalSince(date))
+    static func durationString(since date: Date, now: Date = Date()) -> String {
+        let elapsed = max(0, Int(now.timeIntervalSince(date)))
         if elapsed < 60 { return "\(elapsed)s" }
         let minutes = elapsed / 60
         if minutes < 60 { return "\(minutes)m" }

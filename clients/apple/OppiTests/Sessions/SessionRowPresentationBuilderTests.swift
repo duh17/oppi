@@ -63,6 +63,17 @@ struct SessionRowPresentationBuilderTests {
         #expect(presentation.attentionText == "question: Which branch should I use?")
     }
 
+    @Test func unreadCompletionDateIsCarriedToRowPresentation() {
+        let session = makeSession(id: "root", status: .ready)
+        let completedAt = Date(timeIntervalSince1970: 7)
+        let presentation = SessionRowPresentationBuilder.make(
+            session: session,
+            unreadCompletionAt: completedAt
+        )
+
+        #expect(presentation.unreadCompletionAt == completedAt)
+    }
+
     @Test func attentionCountsUseSessionPendingCount() {
         let counts = SessionRowPresentationBuilder.attentionCounts(
             sessionId: "session-1",
