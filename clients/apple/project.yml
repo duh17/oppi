@@ -135,6 +135,7 @@ targets:
             "$SRCROOT/Shared"
             "$SRCROOT/OppiActivityExtension"
             "$SRCROOT/OppiControlWidget"
+            "$SRCROOT/OppiShareExtension"
             "$SRCROOT/OppiTests"
             "$SRCROOT/OppiPerfTests"
             "$SRCROOT/OppiUITests"
@@ -183,6 +184,7 @@ targets:
             "$SRCROOT/Shared"
             "$SRCROOT/OppiActivityExtension"
             "$SRCROOT/OppiControlWidget"
+            "$SRCROOT/OppiShareExtension"
           )
 
           needs_check=0
@@ -230,6 +232,8 @@ targets:
         embed: true
       - target: OppiControlWidget
         embed: true
+      - target: OppiShareExtension
+        embed: true
 
   OppiActivityExtension:
     type: app-extension
@@ -257,6 +261,55 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Oppi
         INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
         INFOPLIST_KEY_NSSupportsLiveActivities: true
+
+  OppiShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OppiShareExtension
+        type: group
+      - path: Shared
+        type: group
+        excludes:
+          - "ModelColorHelpers.swift"
+          - "PiSessionAttributes.swift"
+          - "LiveActivityPresentation.swift"
+          - "ClientLogUploadModels.swift"
+          - "ClientLogUploadQueue.swift"
+          - "NearbyPairing"
+          - "Renderers"
+          - "Models"
+          - "SessionFormatting.swift"
+          - "UserFacingErrorText.swift"
+    entitlements:
+      path: OppiShareExtension/OppiShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(APP_GROUP_IDENTIFIER)
+    info:
+      path: OppiShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Oppi
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsMovieWithMaxCount: 5
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ShareExtension
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: 38
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
 
   OppiControlWidget:
     type: app-extension
@@ -416,6 +469,7 @@ schemes:
         Oppi: all
         OppiActivityExtension: all
         OppiControlWidget: all
+        OppiShareExtension: all
         OppiTests: [test]
     test:
       targets:
@@ -428,6 +482,7 @@ schemes:
         Oppi: all
         OppiActivityExtension: all
         OppiControlWidget: all
+        OppiShareExtension: all
         OppiTests: [test]
         OppiPerfTests: [test]
         OppiUITests: [test]
