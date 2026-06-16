@@ -1,6 +1,111 @@
 import cmark_gfm
 import cmark_gfm_extensions
 
+/// Protects assistant-style inline math delimiters from CommonMark backslash
+/// escaping. cmark-gfm treats `\(` as an escaped `(`, which erases the only
+/// signal the timeline renderer has that the parenthesized text is LaTeX.
+private enum MarkdownMathDelimiterRewriter {
+    private static let inlineOpenSentinel = "\u{E000}"
+    private static let inlineCloseSentinel = "\u{E001}"
+
+    static func sourceForCommonMarkParsing(_ source: String) -> String {
+        guard source.contains(#"\("#), source.contains(#"\)"#) else { return source }
+
+        var result = ""
+        result.reserveCapacity(source.utf8.count)
+        var inFence = false
+        var lineStart = source.startIndex
+
+        while lineStart < source.endIndex {
+            let lineEnd = source[lineStart...].firstIndex(of: "\n") ?? source.endIndex
+            let includesNewline = lineEnd < source.endIndex
+            let line = String(source[lineStart ..< lineEnd])
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if isFenceLine(trimmed) {
+                result += line
+                inFence.toggle()
+            } else if !inFence, !isIndentedCodeLine(line) {
+                result += replacingInlineMathDelimitersOutsideCodeSpans(in: line)
+            } else {
+                result += line
+            }
+
+            if includesNewline {
+                result += "\n"
+                lineStart = source.index(after: lineEnd)
+            } else {
+                lineStart = lineEnd
+            }
+        }
+
+        return result
+    }
+
+    static func restoreCommonMarkText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: inlineOpenSentinel, with: #"\("#)
+            .replacingOccurrences(of: inlineCloseSentinel, with: #"\)"#)
+    }
+
+    private static func replacingInlineMathDelimitersOutsideCodeSpans(in line: String) -> String {
+        var result = ""
+        result.reserveCapacity(line.utf8.count)
+        var cursor = line.startIndex
+        var inCode = false
+
+        while cursor < line.endIndex {
+            if line[cursor] == "`", !isEscaped(at: cursor, in: line) {
+                inCode.toggle()
+                result.append(line[cursor])
+                cursor = line.index(after: cursor)
+                continue
+            }
+
+            if !inCode, matches(#"\("#, in: line, at: cursor) {
+                result += inlineOpenSentinel
+                cursor = line.index(cursor, offsetBy: 2)
+                continue
+            }
+
+            if !inCode, matches(#"\)"#, in: line, at: cursor) {
+                result += inlineCloseSentinel
+                cursor = line.index(cursor, offsetBy: 2)
+                continue
+            }
+
+            result.append(line[cursor])
+            cursor = line.index(after: cursor)
+        }
+
+        return result
+    }
+
+    private static func matches(_ needle: String, in source: String, at index: String.Index) -> Bool {
+        source[index...].hasPrefix(needle)
+    }
+
+    private static func isEscaped(at index: String.Index, in source: String) -> Bool {
+        guard index > source.startIndex else { return false }
+        var slashCount = 0
+        var cursor = source.index(before: index)
+        while source[cursor] == "\\" {
+            slashCount += 1
+            guard cursor > source.startIndex else { break }
+            cursor = source.index(before: cursor)
+        }
+        return slashCount % 2 == 1
+    }
+
+    private static func isFenceLine(_ trimmedLine: String) -> Bool {
+        trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~")
+    }
+
+    private static func isIndentedCodeLine(_ line: String) -> Bool {
+        line.hasPrefix("    ") || line.hasPrefix("\t")
+    }
+}
+
 /// Fast CommonMark parser using the C cmark-gfm library directly.
 ///
 /// Parses directly through cmark-gfm and converts to `[MarkdownBlock]`.
@@ -27,7 +132,9 @@ private func cmarkParsedDocument(_ source: String) -> UnsafeMutablePointer<cmark
 
     // Feed source text. Escape wiki-link label separators before cmark-gfm
     // sees table delimiters so `[[target|label]]` survives inside table cells.
-    let parserSource = MarkdownWikiLinkRewriter.sourceForCommonMarkParsing(source)
+    let parserSource = MarkdownWikiLinkRewriter.sourceForCommonMarkParsing(
+        MarkdownMathDelimiterRewriter.sourceForCommonMarkParsing(source)
+    )
     parserSource.withCString { ptr in
         cmark_parser_feed(parser, ptr, parserSource.utf8.count)
     }
@@ -282,7 +389,7 @@ private func convertCMarkInline(_ node: UnsafeMutablePointer<cmark_node>) -> Mar
     switch nodeType {
     case CMARK_NODE_TEXT:
         guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .text(String(cString: literal))
+        return .text(MarkdownMathDelimiterRewriter.restoreCommonMarkText(String(cString: literal)))
 
     case CMARK_NODE_EMPH:
         return .emphasis(convertCMarkInlines(node))

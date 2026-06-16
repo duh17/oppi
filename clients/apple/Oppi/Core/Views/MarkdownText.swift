@@ -699,14 +699,31 @@ enum FlatSegment: Sendable {
 
     private static func renderInlineLatexParagraph(_ inlines: [MarkdownInline]) -> String? {
         let source = inlineSourcePreservingBreaks(inlines)
-        if let rendered = renderDollarDelimitedInlineLatex(source) {
-            return rendered
+        var renderedSource = source
+        var renderedAny = false
+
+        if let rendered = renderEscapedParenDelimitedInlineLatex(renderedSource) {
+            renderedSource = rendered
+            renderedAny = true
+        }
+
+        if let rendered = renderDollarDelimitedInlineLatex(renderedSource) {
+            renderedSource = rendered
+            renderedAny = true
+        }
+
+        if renderedAny {
+            return renderedSource
         }
 
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains("$"), trimmed.hasPrefix("\\text{") else { return nil }
         let rendered = renderInlineLatexPlainText(trimmed)
         return rendered.isEmpty ? nil : rendered
+    }
+
+    private static func renderEscapedParenDelimitedInlineLatex(_ source: String) -> String? {
+        renderDelimitedInlineLatex(source, open: #"\("#, close: #"\)"#, requiresLikelyMath: false)
     }
 
     private static func renderDollarDelimitedInlineLatex(_ source: String) -> String? {
@@ -730,6 +747,40 @@ enum FlatSegment: Sendable {
             output.append(contentsOf: source[cursor ..< open])
             output.append(renderInlineLatexPlainText(inner))
             cursor = source.index(after: close)
+            renderedAny = true
+        }
+
+        output.append(contentsOf: source[cursor...])
+        return renderedAny ? output : nil
+    }
+
+    private static func renderDelimitedInlineLatex(
+        _ source: String,
+        open: String,
+        close: String,
+        requiresLikelyMath: Bool
+    ) -> String? {
+        var cursor = source.startIndex
+        var output = ""
+        var renderedAny = false
+
+        while cursor < source.endIndex,
+              let openRange = source.range(of: open, range: cursor ..< source.endIndex) {
+            let afterOpen = openRange.upperBound
+            guard let closeRange = source.range(of: close, range: afterOpen ..< source.endIndex) else { break }
+
+            let inner = String(source[afterOpen ..< closeRange.lowerBound])
+            let trimmedInner = inner.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedInner.isEmpty,
+                  !requiresLikelyMath || isLikelyLatexMath(trimmedInner) else {
+                output.append(contentsOf: source[cursor ..< closeRange.upperBound])
+                cursor = closeRange.upperBound
+                continue
+            }
+
+            output.append(contentsOf: source[cursor ..< openRange.lowerBound])
+            output.append(renderInlineLatexPlainText(trimmedInner))
+            cursor = closeRange.upperBound
             renderedAny = true
         }
 
