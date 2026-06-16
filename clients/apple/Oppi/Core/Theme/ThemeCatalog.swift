@@ -141,12 +141,14 @@ extension ThemePalette {
 enum ThemeID: Hashable, Codable, Sendable {
     case dark
     case oled
+    case neutralDark
     case light
+    case neutralLight
     case night
     case custom(String)
 
     /// Built-in themes (shipped in the app). Custom/imported themes added separately.
-    static let builtins: [Self] = [.dark, .oled, .light, .night]
+    static let builtins: [Self] = [.dark, .oled, .neutralDark, .light, .neutralLight, .night]
 
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
@@ -155,7 +157,9 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch self {
         case .dark: return "dark"
         case .oled: return "oled"
+        case .neutralDark: return "neutral-dark"
         case .light: return "light"
+        case .neutralLight: return "neutral-light"
         case .night: return "night"
         case .custom(let name): return "custom:\(name)"
         }
@@ -165,7 +169,9 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch rawValue {
         case "dark": self = .dark
         case "oled": self = .oled
+        case "neutral-dark": self = .neutralDark
         case "light": self = .light
+        case "neutral-light": self = .neutralLight
         case "night": self = .night
         default:
             if rawValue.hasPrefix("custom:") {
@@ -196,7 +202,9 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch self {
         case .dark: return "Dark"
         case .oled: return "OLED"
+        case .neutralDark: return "Neutral Dark"
         case .light: return "Light"
+        case .neutralLight: return "Neutral Light"
         case .night: return "Night"
         case .custom(let name): return name
         }
@@ -208,8 +216,12 @@ enum ThemeID: Hashable, Codable, Sendable {
             return "Deep ink dark with calm editor-style contrast."
         case .oled:
             return "True black OLED dark with modern accents for dark rooms."
+        case .neutralDark:
+            return "Neutral dark chat styling with content-colored headings and readable syntax colors."
         case .light:
             return "Latte-inspired light with soft, lower-chroma accents."
+        case .neutralLight:
+            return "Neutral light chat styling with content-colored headings and readable syntax colors."
         case .night:
             return "Warm low-stimulation dark for late-night reading."
         case .custom:
@@ -219,9 +231,9 @@ enum ThemeID: Hashable, Codable, Sendable {
 
     var preferredColorScheme: ColorScheme {
         switch self {
-        case .dark, .oled, .night:
+        case .dark, .oled, .neutralDark, .night:
             return .dark
-        case .light:
+        case .light, .neutralLight:
             return .light
         case .custom(let name):
             // Infer from saved theme metadata, default dark
@@ -238,8 +250,12 @@ enum ThemeID: Hashable, Codable, Sendable {
             return ThemePalettes.dark
         case .oled:
             return ThemePalettes.oled
+        case .neutralDark:
+            return ThemePalettes.neutralDark
         case .light:
             return ThemePalettes.light
+        case .neutralLight:
+            return ThemePalettes.neutralLight
         case .night:
             return ThemePalettes.night
         case .custom(let name):
@@ -521,6 +537,134 @@ enum ThemePalettes {
         thinkingMedium: c(0x2966A8),
         thinkingHigh: c(0x6A5C90),
         thinkingXhigh: c(0xB06090)
+    )
+
+    /// Neutral Dark — content-first chat theme with restrained chrome.
+    ///
+    /// Headings use the main foreground color so markdown reads like prose, not
+    /// navigation. Links and code keep distinct accents, and syntax colors stay
+    /// above AA contrast on the dark code surface.
+    static let neutralDark = ThemePalette(
+        // Base 13
+        bg: c(0x171717),
+        bgDark: c(0x111111),
+        bgHighlight: c(0x242424),
+        fg: c(0xECECEC),
+        fgDim: c(0xB7B7B0),
+        comment: c(0x8A8A84),
+        blue: c(0x4F8EF7),
+        cyan: c(0x2BA6A0),
+        green: c(0x75A979),
+        orange: c(0xC8894A),
+        purple: c(0xB58AE6),
+        red: c(0xE06C75),
+        yellow: c(0xC9A646),
+        thinkingText: c(0xB7B7B0),
+        // User message
+        userMessageBg: c(0x2A2A2A),
+        userMessageText: c(0xF2F2ED),
+        // Tool state
+        toolPendingBg: c(0x1E2735),
+        toolSuccessBg: c(0x1D2A20),
+        toolErrorBg: c(0x2D1D20),
+        toolTitle: c(0xECECEC),
+        toolOutput: c(0xB7B7B0),
+        // Markdown
+        mdHeading: c(0xECECEC),
+        mdLink: c(0x7DB3FF),
+        mdLinkUrl: c(0x8A8A84),
+        mdCode: c(0xE6B07E),
+        mdCodeBlock: c(0xECECEC),
+        mdCodeBlockBorder: c(0x3A3A36),
+        mdQuote: c(0xB7B7B0),
+        mdQuoteBorder: c(0x3A3A36),
+        mdHr: c(0x3A3A36),
+        mdListBullet: c(0x8A8A84),
+        // Diffs
+        toolDiffAdded: c(0x75A979),
+        toolDiffRemoved: c(0xE06C75),
+        toolDiffContext: c(0x8A8A84),
+        // Syntax — colorful, but quieter than the chrome
+        syntaxComment: c(0x8A8A84),
+        syntaxKeyword: c(0xB58AE6),
+        syntaxFunction: c(0x82AAFF),
+        syntaxVariable: c(0xECECEC),
+        syntaxString: c(0x8FBC8F),
+        syntaxNumber: c(0xD19A66),
+        syntaxType: c(0x56B6C2),
+        syntaxOperator: c(0xD4D4D4),
+        syntaxPunctuation: c(0xA8A8A0),
+        // Thinking
+        thinkingOff: c(0x3A3A36),
+        thinkingMinimal: c(0x5F5F59),
+        thinkingLow: c(0x4F8EF7),
+        thinkingMedium: c(0x2BA6A0),
+        thinkingHigh: c(0xB58AE6),
+        thinkingXhigh: c(0xE06C75)
+    )
+
+    /// Neutral Light — warm off-white chat theme with restrained accents.
+    ///
+    /// Headings stay foreground-colored, while links, inline code, and syntax
+    /// tokens carry the color. The code palette uses darker hues so highlighted
+    /// code remains readable on the light code surface.
+    static let neutralLight = ThemePalette(
+        // Base 13
+        bg: c(0xF7F7F4),
+        bgDark: c(0xEFEFEB),
+        bgHighlight: c(0xE6E6E0),
+        fg: c(0x2F2F2C),
+        fgDim: c(0x5A5954),
+        comment: c(0x5F6368),
+        blue: c(0x1D4ED8),
+        cyan: c(0x0F766E),
+        green: c(0x166534),
+        orange: c(0x9A3412),
+        purple: c(0x6D28D9),
+        red: c(0xB91C1C),
+        yellow: c(0x735C0F),
+        thinkingText: c(0x5A5954),
+        // User message
+        userMessageBg: c(0xECECE7),
+        userMessageText: c(0x2F2F2C),
+        // Tool state
+        toolPendingBg: c(0xE5EAF5),
+        toolSuccessBg: c(0xE3EBDD),
+        toolErrorBg: c(0xF0E1DF),
+        toolTitle: c(0x2F2F2C),
+        toolOutput: c(0x5A5954),
+        // Markdown
+        mdHeading: c(0x2F2F2C),
+        mdLink: c(0x1D4ED8),
+        mdLinkUrl: c(0x5F6368),
+        mdCode: c(0x9A3412),
+        mdCodeBlock: c(0x2F2F2C),
+        mdCodeBlockBorder: c(0xD4D4CC),
+        mdQuote: c(0x5A5954),
+        mdQuoteBorder: c(0xD4D4CC),
+        mdHr: c(0xD4D4CC),
+        mdListBullet: c(0x5F6368),
+        // Diffs
+        toolDiffAdded: c(0x166534),
+        toolDiffRemoved: c(0xB91C1C),
+        toolDiffContext: c(0x5F6368),
+        // Syntax — darker accents for contrast on the light code surface
+        syntaxComment: c(0x5F6368),
+        syntaxKeyword: c(0x6D28D9),
+        syntaxFunction: c(0x1D4ED8),
+        syntaxVariable: c(0x2F2F2C),
+        syntaxString: c(0x166534),
+        syntaxNumber: c(0x9A3412),
+        syntaxType: c(0x0F766E),
+        syntaxOperator: c(0x374151),
+        syntaxPunctuation: c(0x5F6368),
+        // Thinking
+        thinkingOff: c(0xCFCFC8),
+        thinkingMinimal: c(0x77746C),
+        thinkingLow: c(0x1D4ED8),
+        thinkingMedium: c(0x0F766E),
+        thinkingHigh: c(0x6D28D9),
+        thinkingXhigh: c(0xB91C1C)
     )
 }
 // swiftlint:enable function_body_length

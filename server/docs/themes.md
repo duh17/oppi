@@ -124,6 +124,8 @@ The thinking budget indicator changes color based on how much thinking the model
 Start from a bundled example in `server/themes/`. The bundled themes are:
 
 - `night.json` — dark, high-contrast Night theme
+- `neutral-dark.json` — neutral dark theme with content-colored headings
+- `neutral-light.json` — neutral light theme with content-colored headings
 - `latte-things.json` — light, Latte Things theme
 - `nord.json` — dark, Nord color scheme
 - `tokyo-night.json` — dark, Tokyo Night color scheme

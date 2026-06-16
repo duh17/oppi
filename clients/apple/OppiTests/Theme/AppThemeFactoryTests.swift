@@ -163,7 +163,9 @@ struct AppThemeFactoryTests {
         let palettes: [(String, ThemePalette)] = [
             ("dark", ThemePalettes.dark),
             ("oled", ThemePalettes.oled),
+            ("neutral-dark", ThemePalettes.neutralDark),
             ("light", ThemePalettes.light),
+            ("neutral-light", ThemePalettes.neutralLight),
             ("night", ThemePalettes.night),
         ]
         for (name, palette) in palettes {
@@ -189,8 +191,20 @@ struct AppThemeFactoryTests {
         _ = theme.bg.primary
     }
 
+    @Test func themeIDNeutralDarkReturnsAppThemeNeutralDark() {
+        let theme = ThemeID.neutralDark.appTheme
+        #expect(theme.code.fontSize == 11)
+        _ = theme.bg.primary
+    }
+
     @Test func themeIDLightReturnsAppThemeLight() {
         let theme = ThemeID.light.appTheme
+        #expect(theme.code.fontSize == 11)
+        _ = theme.bg.primary
+    }
+
+    @Test func themeIDNeutralLightReturnsAppThemeNeutralLight() {
+        let theme = ThemeID.neutralLight.appTheme
         #expect(theme.code.fontSize == 11)
         _ = theme.bg.primary
     }
@@ -268,7 +282,7 @@ struct ThinkingColorsTests {
     }
 
     @Test func eachBuiltinThemeHasThinkingColors() {
-        let themes: [AppTheme] = [.dark, .light, .night]
+        let themes: [AppTheme] = [.dark, .neutralDark, .light, .neutralLight, .night]
         let levels: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
         for theme in themes {
             for level in levels {

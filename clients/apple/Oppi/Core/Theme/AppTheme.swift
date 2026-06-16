@@ -234,6 +234,13 @@ extension AppTheme {
         diffRemovedBg: c(0xCC7388).opacity(0.08)
     )
 
+    /// Neutral Dark — content-first chat theme with colorful syntax.
+    static let neutralDark = AppTheme.from(
+        palette: ThemePalettes.neutralDark,
+        diffAddedBg: c(0x75A979).opacity(0.10),
+        diffRemovedBg: c(0xE06C75).opacity(0.08)
+    )
+
     /// Light — Latte-inspired surfaces with softened accent contrast.
     static let light = AppTheme.from(
         palette: ThemePalettes.light,
@@ -247,6 +254,13 @@ extension AppTheme {
         diffAddedBg: c(0x6A9060).opacity(0.10),
         diffRemovedBg: c(0xA85858).opacity(0.08)
     )
+
+    /// Neutral Light — content-first light theme with colorful syntax.
+    static let neutralLight = AppTheme.from(
+        palette: ThemePalettes.neutralLight,
+        diffAddedBg: c(0x166534).opacity(0.10),
+        diffRemovedBg: c(0xB91C1C).opacity(0.08)
+    )
 }
 
 extension ThemeID {
@@ -256,8 +270,12 @@ extension ThemeID {
             return .dark
         case .oled:
             return .oled
+        case .neutralDark:
+            return .neutralDark
         case .light:
             return .light
+        case .neutralLight:
+            return .neutralLight
         case .night:
             return .night
         case .custom(let name):
