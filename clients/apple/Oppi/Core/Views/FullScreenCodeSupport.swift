@@ -33,7 +33,7 @@ enum CodeWrapControl {
 }
 
 enum FullScreenCodeTypography {
-    static let codeFont = AppFont.monoMedium
+    static var codeFont: UIFont { AppFont.monoMedium }
 
     static func codeFont(for preferences: FullScreenReaderPreferences) -> UIFont {
         scaledFont(codeFont, scale: preferences.textScale)
