@@ -736,6 +736,48 @@ struct SessionStoreTurnEndedTests {
     }
 }
 
+// MARK: - Unread completion tracking
+
+@Suite("SessionStore Unread Completion Tracking")
+@MainActor
+struct SessionStoreUnreadCompletionTests {
+
+    @Test func recordsUnreadCompletionForInactiveSession() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let date = Date(timeIntervalSince1970: 3000)
+
+        store.recordUnreadCompletion(sessionId: "s1", at: date)
+
+        #expect(store.unreadCompletionDate(for: "s1") == date)
+    }
+
+    @Test func openingSessionClearsUnreadCompletion() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.recordUnreadCompletion(sessionId: "s1", at: Date(timeIntervalSince1970: 3000))
+
+        store.activeSessionId = "s1"
+
+        #expect(store.unreadCompletionDate(for: "s1") == nil)
+    }
+
+    @Test func unreadCompletionDatesArePartitionedByServer() {
+        let store = SessionStore()
+        let serverOneDate = Date(timeIntervalSince1970: 1000)
+        let serverTwoDate = Date(timeIntervalSince1970: 2000)
+
+        store.switchServer(to: "srv1")
+        store.recordUnreadCompletion(sessionId: "s1", at: serverOneDate)
+        store.switchServer(to: "srv2")
+        store.recordUnreadCompletion(sessionId: "s1", at: serverTwoDate)
+
+        #expect(store.unreadCompletionDate(for: "s1") == serverTwoDate)
+        store.switchServer(to: "srv1")
+        #expect(store.unreadCompletionDate(for: "s1") == serverOneDate)
+    }
+}
+
 // MARK: - Context summary clearing
 
 

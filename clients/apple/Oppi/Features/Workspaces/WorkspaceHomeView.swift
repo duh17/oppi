@@ -851,7 +851,8 @@ struct WorkspaceHomeView: View {
             presentation: SessionRowPresentationBuilder.make(
                 session: session,
                 pendingAskCount: attention.askCount,
-                pendingAsk: connection.askRequestStore.pending(for: session.id)
+                pendingAsk: connection.askRequestStore.pending(for: session.id),
+                unreadCompletionAt: connection.sessionStore.unreadCompletionDate(for: session.id)
             )
         )
     }

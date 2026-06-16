@@ -11,6 +11,7 @@ struct SessionRowPresentation {
     let attentionText: String?
     let lineageHint: String?
     let modelSummaries: [SessionModelSummary]
+    let unreadCompletionAt: Date?
     let searchSnippet: AttributedString?
 }
 
@@ -20,6 +21,7 @@ enum SessionRowPresentationBuilder {
         pendingAskCount: Int = 0,
         pendingAsk: AskRequest? = nil,
         lineageHint: String? = nil,
+        unreadCompletionAt: Date? = nil,
         searchSnippet: AttributedString? = nil
     ) -> SessionRowPresentation {
         SessionRowPresentation(
@@ -28,6 +30,7 @@ enum SessionRowPresentationBuilder {
             attentionText: attentionText(for: pendingAsk),
             lineageHint: lineageHint,
             modelSummaries: modelSummaries(for: session),
+            unreadCompletionAt: unreadCompletionAt,
             searchSnippet: searchSnippet
         )
     }
@@ -63,6 +66,7 @@ extension SessionRow {
             attentionText: presentation.attentionText,
             lineageHint: presentation.lineageHint,
             modelSummaries: presentation.modelSummaries,
+            unreadCompletionAt: presentation.unreadCompletionAt,
             searchSnippet: presentation.searchSnippet
         )
     }

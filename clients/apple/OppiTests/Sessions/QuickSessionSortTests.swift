@@ -240,13 +240,13 @@ struct SharedSessionListActiveSectionTests {
         )
     }
 
-    @Test func attentionMergerTreatsExtensionDialogAsAskAttention() {
+    @Test func attentionMergerDoesNotTreatExtensionDialogAsQuestion() {
         #expect(
             SessionListAttentionMerger.askCount(
                 listCount: 0,
                 hasPendingAsk: false,
                 hasPendingExtensionDialog: true
-            ) == 1
+            ) == 0
         )
     }
 }

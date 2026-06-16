@@ -35,7 +35,13 @@ final class SessionStore {
     private(set) var activeServerId: String?
 
     /// The session the user is currently viewing/chatting with.
-    var activeSessionId: String?
+    var activeSessionId: String? {
+        didSet {
+            if let activeSessionId {
+                markSessionRead(sessionId: activeSessionId)
+            }
+        }
+    }
 
     // ── Per-server turn-ended dates (stable sort key) ──
 
@@ -52,6 +58,10 @@ final class SessionStore {
     /// events cannot resurrect a just-deleted row in the workspace list.
     private var serverDeletedSessionTombstones: [String: [String: Date]] = [:]
     private static let deletedSessionTombstoneTTL: TimeInterval = 600
+
+    /// Completion timestamps for turns that finished while the user was not
+    /// viewing the session. Session rows use this as the "done, unread" clock.
+    private var serverUnreadCompletionDates: [String: [String: Date]] = [:]
 
     // ── Per-server freshness tracking ──
 
@@ -152,6 +162,7 @@ final class SessionStore {
         serverListAttentionCounts.removeValue(forKey: serverId)
         serverTurnEndedDates.removeValue(forKey: serverId)
         serverDeletedSessionTombstones.removeValue(forKey: serverId)
+        serverUnreadCompletionDates.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
         serverIsSyncing.removeValue(forKey: serverId)
         serverSyncFailed.removeValue(forKey: serverId)
@@ -176,6 +187,31 @@ final class SessionStore {
     func turnEndedDate(for sessionId: String) -> Date? {
         let key = activeServerKey
         return serverTurnEndedDates[key]?[sessionId]
+    }
+
+    /// Record a completed turn that should be shown as unread in session rows.
+    func recordUnreadCompletion(sessionId: String, at date: Date = Date()) {
+        let key = activeServerKey
+        var dates = serverUnreadCompletionDates[key] ?? [:]
+        dates[sessionId] = date
+        serverUnreadCompletionDates[key] = dates
+    }
+
+    func unreadCompletionDate(for sessionId: String) -> Date? {
+        serverUnreadCompletionDates[activeServerKey]?[sessionId]
+    }
+
+    func markSessionRead(sessionId: String) {
+        let key = activeServerKey
+        guard var dates = serverUnreadCompletionDates[key], dates.removeValue(forKey: sessionId) != nil else {
+            return
+        }
+
+        if dates.isEmpty {
+            serverUnreadCompletionDates.removeValue(forKey: key)
+        } else {
+            serverUnreadCompletionDates[key] = dates
+        }
     }
 
     // ── Freshness (delegates to active server) ──
@@ -354,6 +390,7 @@ final class SessionStore {
         let key = activeServerKey
         for removedId in removedIds {
             serverTurnEndedDates[key]?.removeValue(forKey: removedId)
+            serverUnreadCompletionDates[key]?.removeValue(forKey: removedId)
         }
         if let activeSessionId, removedIds.contains(activeSessionId) {
             self.activeSessionId = nil
@@ -703,6 +740,7 @@ final class SessionStore {
         let key = activeServerKey
         serverListAttentionCounts[key]?.removeValue(forKey: id)
         serverTurnEndedDates[key]?.removeValue(forKey: id)
+        serverUnreadCompletionDates[key]?.removeValue(forKey: id)
         if activeSessionId == id {
             activeSessionId = nil
         }
