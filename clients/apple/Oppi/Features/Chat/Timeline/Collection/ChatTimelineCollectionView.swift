@@ -854,7 +854,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     collectionView,
                     isBusy: configuration.isBusy,
                     itemCount: applyPlan.nextIDs.count,
-                    sessionId: configuration.sessionId
+                    sessionId: configuration.sessionId,
+                    structuralAppend: applyPlan.nextIDs.count > previousIDs.count
                 )
             }
 
@@ -1242,7 +1243,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             _ collectionView: UICollectionView,
             isBusy: Bool,
             itemCount: Int,
-            sessionId: String
+            sessionId: String,
+            structuralAppend: Bool = false
         ) {
             guard scrollController?.isCurrentlyNearBottom ?? true else { return }
             guard !collectionView.isTracking,
@@ -1254,7 +1256,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return
             }
 
-            if isBusy {
+            if isBusy, !structuralAppend {
                 let now = DispatchTime.now().uptimeNanoseconds
                 if now &- lastBusyAmbientScrollReconcileNs < 260_000_000 {
                     return
@@ -1266,7 +1268,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             collectionView.layoutIfNeeded()
             ChatTimelinePerf.endLayoutPass(layoutToken)
 
-            if isBusy {
+            if isBusy, !structuralAppend {
                 keepLiveTailVisible(collectionView)
             } else {
                 settleAttachedBottom(collectionView)
