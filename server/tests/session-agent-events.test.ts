@@ -121,6 +121,45 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
+  it("broadcasts session summaries after Pi session name changes", () => {
+    const active = makeActiveSession({ status: "ready" });
+    const broadcast = vi.fn();
+    const eventProcessor = new SessionEventProcessor({
+      storage: {} as never,
+      mobileRenderers: {
+        renderCall: vi.fn(),
+        renderResult: vi.fn(),
+      } as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+    });
+    const coordinator = new SessionAgentEventCoordinator({
+      getActiveSession: vi.fn(() => active),
+      eventProcessor,
+      stopCoordinator: {
+        finishPendingStopOnAgentEnd: vi.fn(),
+      } as never,
+      turnCoordinator: {
+        markNextTurnStarted: vi.fn(),
+      } as never,
+      broadcast,
+      resetIdleTimer: vi.fn(),
+    });
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "session_info_changed",
+      name: "Review Session Names",
+    } as unknown as SessionBackendEvent);
+
+    expect(active.session.name).toBe("Review Session Names");
+    const summary = buildSessionSummary(active.session);
+    const summaryBroadcasts = broadcast.mock.calls.filter(
+      ([, message]) => message.type === "session_summary",
+    );
+    expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
+  });
+
   it("does not broadcast cold summaries for hot timeline events", () => {
     const active = makeActiveSession({ status: "busy" });
     const { broadcast, coordinator } = makeCoordinator(active);

@@ -265,8 +265,8 @@ export interface SessionTitleGeneratorDeps {
   modelRegistry: ModelRegistry;
   /** Get current session state — returns undefined if session no longer exists. */
   getSession: (sessionId: string) => { id: string; name?: string } | undefined;
-  /** Persist session name update. */
-  updateSessionName: (sessionId: string, name: string) => void;
+  /** Set the Pi session display name; Oppi stores the resulting name as a projection. */
+  setSessionName: (sessionId: string, name: string) => void | Promise<void>;
   /** Broadcast session state to connected clients. */
   broadcastSessionUpdate: (sessionId: string) => void;
   onMetrics?: (metrics: TitleGenerationMetrics) => void;
@@ -308,7 +308,7 @@ export class SessionTitleGenerator {
         const current = this.deps.getSession(sessionId);
         if (!current || (current.name && current.name.length > 0)) return;
 
-        this.deps.updateSessionName(sessionId, title);
+        await this.deps.setSessionName(sessionId, title);
         this.deps.broadcastSessionUpdate(sessionId);
         log.info("session_title_generator.generated", { sessionId, title });
       } catch (err: unknown) {

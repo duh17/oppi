@@ -562,20 +562,15 @@ export class Server {
       getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },
       modelRegistry: this.modelRegistry,
       getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
-      updateSessionName: (sessionId, name) => {
-        // Update the active session object (authoritative in-memory reference)
-        // so subsequent lifecycle persists carry the name. Falling back to the
-        // storage copy handles stopped/inactive sessions.
-        const active = this.sessionRuntimes.getActiveSession(sessionId);
+      setSessionName: async (sessionId, name) => {
+        await this.sessions.runCommand(sessionId, { type: "set_session_name", name });
+
+        // Keep Oppi's Session.name as a projection for list/header broadcasts.
+        // Pi's session_info entry is the source of truth.
+        const active = this.sessions.getActiveSession(sessionId);
         if (active) {
           active.name = name;
           this.storage.saveSession(active);
-        } else {
-          const session = this.storage.getSession(sessionId);
-          if (session) {
-            session.name = name;
-            this.storage.saveSession(session);
-          }
         }
       },
       broadcastSessionUpdate: (sessionId) => {

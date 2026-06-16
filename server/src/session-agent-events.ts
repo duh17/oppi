@@ -69,6 +69,7 @@ export class SessionAgentEventCoordinator {
   private static readonly SUMMARY_BROADCAST_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
+    "session_info_changed",
   ]);
 
   private static readonly CHANGE_SUMMARY_TOOL_NAMES = new Set(["edit", "write"]);
