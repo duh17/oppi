@@ -107,7 +107,7 @@ final class WebSocketClient {
         wsLogInfo(
             "Connect requested to session stream (old=\(oldConn) new=\(thisConnection))",
             metadata: [
-                "url": streamURL?.absoluteString ?? "invalid",
+                "hasStreamURL": String(streamURL != nil),
             ]
         )
 

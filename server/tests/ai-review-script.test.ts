@@ -51,8 +51,8 @@ describe("ai-review script", () => {
     expect(ciCheck?.details).toEqual({ files: ["server/package.json"] });
   });
 
-  it("passes protocol lockstep for non-wire server/src/types.ts-only edits", () => {
-    const checks = buildChecks(["server/src/types.ts"], [], "", {
+  it("passes protocol lockstep for non-wire server/src/types/protocol.ts-only edits", () => {
+    const checks = buildChecks(["server/src/types/protocol.ts"], [], "", {
       serverTypesWireContractChanged: false,
     });
 
@@ -62,7 +62,7 @@ describe("ai-review script", () => {
   });
 
   it("fails protocol lockstep for server-to-client wire changes without ServerMessage.swift", () => {
-    const checks = buildChecks(["server/src/types.ts"], [], "", {
+    const checks = buildChecks(["server/src/types/protocol.ts"], [], "", {
       serverMessageChanged: true,
       clientMessageChanged: false,
     });
@@ -70,13 +70,13 @@ describe("ai-review script", () => {
     const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
     expect(protocolCheck?.status).toBe("fail");
     expect(protocolCheck?.details).toEqual({
-      touched: ["server/src/types.ts"],
+      touched: ["server/src/types/protocol.ts"],
       missing: ["clients/apple/Oppi/Core/Models/ServerMessage.swift"],
     });
   });
 
   it("fails protocol lockstep for client-to-server wire changes without ClientMessage.swift", () => {
-    const checks = buildChecks(["server/src/types.ts"], [], "", {
+    const checks = buildChecks(["server/src/types/protocol.ts"], [], "", {
       serverMessageChanged: false,
       clientMessageChanged: true,
     });
@@ -84,14 +84,14 @@ describe("ai-review script", () => {
     const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
     expect(protocolCheck?.status).toBe("fail");
     expect(protocolCheck?.details).toEqual({
-      touched: ["server/src/types.ts"],
+      touched: ["server/src/types/protocol.ts"],
       missing: ["clients/apple/Oppi/Core/Models/ClientMessage.swift"],
     });
   });
 
   it("passes protocol lockstep for server-to-client changes with ServerMessage.swift", () => {
     const checks = buildChecks(
-      ["server/src/types.ts", "clients/apple/Oppi/Core/Models/ServerMessage.swift"],
+      ["server/src/types/protocol.ts", "clients/apple/Oppi/Core/Models/ServerMessage.swift"],
       [],
       "",
       { serverMessageChanged: true, clientMessageChanged: false },
@@ -108,7 +108,7 @@ describe("ai-review script", () => {
     expect(protocolCheck?.status).toBe("fail");
     expect(protocolCheck?.details).toEqual({
       touched: ["clients/apple/Oppi/Core/Models/ServerMessage.swift"],
-      missing: ["server/src/types.ts"],
+      missing: ["server/src/types/protocol.ts"],
     });
   });
 
