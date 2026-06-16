@@ -183,7 +183,7 @@ describe("SessionTitleGenerator", () => {
       getConfig: () => ({ enabled: true, model: "anthropic/claude-haiku-3" }),
       modelRegistry: { find: vi.fn(() => undefined), getApiKey: vi.fn() } as never,
       getSession: vi.fn((id: string) => ({ id, name: undefined })),
-      updateSessionName: vi.fn(),
+      setSessionName: vi.fn(),
       broadcastSessionUpdate: vi.fn(),
       onMetrics: vi.fn(),
       ...overrides,
@@ -197,7 +197,7 @@ describe("SessionTitleGenerator", () => {
     const gen = new SessionTitleGenerator(deps);
     gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
     // Should not even attempt — no async work
-    expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.setSessionName).not.toHaveBeenCalled();
   });
 
   it("skips when session already has a name", () => {
@@ -208,14 +208,14 @@ describe("SessionTitleGenerator", () => {
       name: "Existing Title",
       firstMessage: "fix the websocket reconnect bug",
     });
-    expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.setSessionName).not.toHaveBeenCalled();
   });
 
   it("skips when firstMessage is too short", () => {
     const deps = makeDeps();
     const gen = new SessionTitleGenerator(deps);
     gen.tryGenerateTitle({ id: "s1", firstMessage: "hi" });
-    expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.setSessionName).not.toHaveBeenCalled();
   });
 
   it("skips when no model configured", () => {
@@ -224,10 +224,36 @@ describe("SessionTitleGenerator", () => {
     });
     const gen = new SessionTitleGenerator(deps);
     gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
-    expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.setSessionName).not.toHaveBeenCalled();
   });
 
-  it("skips save if session name was set during generation", async () => {
+  it("sets generated titles through the Pi session name setter", async () => {
+    mockCompleteSimple.mockResolvedValue({
+      content: [{ type: "text", text: "Fix WebSocket Reconnect" }],
+      usage: { input: 10, output: 4, cacheRead: 0 },
+    });
+    const { onMetrics, metrics } = waitForMetrics();
+    let resolveBroadcast!: () => void;
+    const broadcastCalled = new Promise<void>((resolve) => {
+      resolveBroadcast = resolve;
+    });
+    const deps = makeDeps({
+      modelRegistry: successfulModelRegistry(),
+      onMetrics,
+      setSessionName: vi.fn(),
+      broadcastSessionUpdate: vi.fn(() => resolveBroadcast()),
+    });
+    const gen = new SessionTitleGenerator(deps);
+
+    gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
+    await metrics;
+    await broadcastCalled;
+
+    expect(deps.setSessionName).toHaveBeenCalledWith("s1", "Fix WebSocket Reconnect");
+    expect(deps.broadcastSessionUpdate).toHaveBeenCalledWith("s1");
+  });
+
+  it("skips setting a title if session name was set during generation", async () => {
     mockCompleteSimple.mockResolvedValue({
       content: [{ type: "text", text: "Fix WebSocket Reconnect" }],
       usage: { input: 10, output: 4, cacheRead: 0 },
@@ -243,11 +269,11 @@ describe("SessionTitleGenerator", () => {
     gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
     await metrics;
 
-    expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.setSessionName).not.toHaveBeenCalled();
     expect(deps.broadcastSessionUpdate).not.toHaveBeenCalled();
   });
 
-  it("skips save if session no longer exists", async () => {
+  it("skips setting a title if session no longer exists", async () => {
     mockCompleteSimple.mockResolvedValue({
       content: [{ type: "text", text: "Fix WebSocket Reconnect" }],
       usage: { input: 10, output: 4, cacheRead: 0 },
@@ -263,7 +289,7 @@ describe("SessionTitleGenerator", () => {
     gen.tryGenerateTitle({ id: "s1", firstMessage: "fix the websocket reconnect bug" });
     await metrics;
 
-    expect(deps.updateSessionName).not.toHaveBeenCalled();
+    expect(deps.setSessionName).not.toHaveBeenCalled();
     expect(deps.broadcastSessionUpdate).not.toHaveBeenCalled();
   });
 });

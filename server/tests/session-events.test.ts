@@ -60,4 +60,46 @@ describe("SessionEventProcessor", () => {
       vi.useRealTimers();
     }
   });
+
+  it("mirrors Pi session_info_changed events into session name state", () => {
+    const persistSessionNow = vi.fn();
+    const markSessionDirty = vi.fn();
+    const processor = new SessionEventProcessor({
+      storage: {} as never,
+      mobileRenderers: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow,
+      markSessionDirty,
+    });
+    const active = makeActiveSession(makeSession("sess-1"));
+
+    processor.updateSessionFromEvent("sess-1", active, {
+      type: "session_info_changed",
+      name: "  Pi Session Name  ",
+    } as never);
+
+    expect(active.session.name).toBe("Pi Session Name");
+    expect(persistSessionNow).toHaveBeenCalledWith("sess-1", active.session);
+    expect(markSessionDirty).not.toHaveBeenCalled();
+  });
+
+  it("clears session name when Pi clears session_info", () => {
+    const persistSessionNow = vi.fn();
+    const processor = new SessionEventProcessor({
+      storage: {} as never,
+      mobileRenderers: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow,
+      markSessionDirty: vi.fn(),
+    });
+    const active = makeActiveSession({ ...makeSession("sess-1"), name: "Old Name" });
+
+    processor.updateSessionFromEvent("sess-1", active, {
+      type: "session_info_changed",
+      name: undefined,
+    } as never);
+
+    expect(active.session.name).toBeUndefined();
+    expect(persistSessionNow).toHaveBeenCalledWith("sess-1", active.session);
+  });
 });

@@ -211,6 +211,17 @@ export class SessionEventProcessor {
         active.turnStartedAt = undefined;
         break;
 
+      case "session_info_changed": {
+        const nextName = event.name?.trim();
+        if (nextName) {
+          session.name = nextName;
+        } else {
+          delete session.name;
+        }
+        shouldFlushNow = true;
+        break;
+      }
+
       case "message_start": {
         if (event.message.role === "user") {
           this.addEstimatedContextChars(key, active, estimatePiMessageChars(event.message));
