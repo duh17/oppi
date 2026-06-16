@@ -112,6 +112,12 @@ struct FlatSegmentBuildTests {
         #expect(textSegmentString(segments) == "A → B")
     }
 
+    @Test func inlineEscapedParenLatexRendersAsTextSegment() {
+        let blocks = parseCommonMark("A \\(\\alpha \\leq \\beta\\) B\n")
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(textSegmentString(segments) == "A α ≤ β B")
+    }
+
     @Test func inlineDollarLatexTextChainRendersPlainly() {
         let blocks = parseCommonMark("$\\text{First} \\rightarrow \\text{Second} \\rightarrow \\text{Done}$\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
