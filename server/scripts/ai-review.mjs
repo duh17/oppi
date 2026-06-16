@@ -13,7 +13,7 @@ import {
 
 export { readImportsFromFile } from "./architecture-layer-rules.mjs";
 
-const SERVER_TYPES = "server/src/types.ts";
+const SERVER_PROTOCOL_TYPES = "server/src/types/protocol.ts";
 const APPLE_PROTOCOL_FILES = [
   "clients/apple/Oppi/Core/Models/ServerMessage.swift",
   "clients/apple/Oppi/Core/Models/ClientMessage.swift",
@@ -134,7 +134,7 @@ function changedAppleProtocolFiles(files) {
 
 function checkProtocolLockstep(files, context) {
   const appleProtocolTouched = changedAppleProtocolFiles(files);
-  const serverTypesTouched = files.includes(SERVER_TYPES);
+  const serverTypesTouched = files.includes(SERVER_PROTOCOL_TYPES);
   const clientMessageChanged = Boolean(
     context.clientMessageChanged ?? context.serverTypesWireContractChanged ?? serverTypesTouched,
   );
@@ -150,23 +150,23 @@ function checkProtocolLockstep(files, context) {
     const missing = requiredAppleFiles.filter((file) => !files.includes(file));
     if (missing.length > 0) {
       return fail("protocol-lockstep", "server wire contract changed without Apple protocol lockstep", {
-        touched: [SERVER_TYPES, ...appleProtocolTouched],
+        touched: [SERVER_PROTOCOL_TYPES, ...appleProtocolTouched],
         missing,
       });
     }
   }
 
   if (appleProtocolTouched.length > 0 && !serverTypesTouched) {
-    return fail("protocol-lockstep", "Apple protocol model changed without server/src/types.ts lockstep", {
+    return fail("protocol-lockstep", "Apple protocol model changed without server/src/types/protocol.ts lockstep", {
       touched: appleProtocolTouched,
-      missing: [SERVER_TYPES],
+      missing: [SERVER_PROTOCOL_TYPES],
     });
   }
 
   return pass(
     "protocol-lockstep",
     serverTypesTouched && !serverWireChanged
-      ? "server/src/types.ts changed, but ClientMessage/ServerMessage wire contract shapes did not"
+      ? "server/src/types/protocol.ts changed, but ClientMessage/ServerMessage wire contract shapes did not"
       : "protocol files are unchanged or changed in lockstep",
   );
 }
@@ -235,11 +235,11 @@ function readFileAt(ref, file) {
 }
 
 function computeContext(input) {
-  if (!input.files.includes(SERVER_TYPES)) return {};
+  if (!input.files.includes(SERVER_PROTOCOL_TYPES)) return {};
   const nextSource = input.nextRef === ":"
-    ? readFileAt(":", SERVER_TYPES) || (existsSync(path.join(repoRoot(), SERVER_TYPES)) ? readFileSync(path.join(repoRoot(), SERVER_TYPES), "utf8") : "")
-    : readFileAt(input.nextRef, SERVER_TYPES);
-  const previousSource = readFileAt(input.baseRef, SERVER_TYPES);
+    ? readFileAt(":", SERVER_PROTOCOL_TYPES) || (existsSync(path.join(repoRoot(), SERVER_PROTOCOL_TYPES)) ? readFileSync(path.join(repoRoot(), SERVER_PROTOCOL_TYPES), "utf8") : "")
+    : readFileAt(input.nextRef, SERVER_PROTOCOL_TYPES);
+  const previousSource = readFileAt(input.baseRef, SERVER_PROTOCOL_TYPES);
   const changes = getWebSocketContractChanges(previousSource, nextSource);
   return { serverTypesWireContractChanged: changes.clientMessageChanged || changes.serverMessageChanged, ...changes };
 }

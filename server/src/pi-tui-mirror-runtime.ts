@@ -528,11 +528,19 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const rejectMessage = (error: unknown): void => {
       const message = safeErrorMessage(error);
       const details = error instanceof BridgeRegistrationError ? error.details : {};
-      log.warn("mirror_bridge.message_rejected", {
+      const logContext = {
         runtime: MIRROR_RUNTIME_LOG_TAG,
         error: message,
         ...(error instanceof BridgeRegistrationError ? { code: error.code, ...details } : {}),
-      });
+      };
+      if (
+        error instanceof BridgeRegistrationError &&
+        error.code === "pi_tui_task_record_not_openable"
+      ) {
+        log.debug("mirror_bridge.message_rejected", logContext);
+      } else {
+        log.warn("mirror_bridge.message_rejected", logContext);
+      }
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
