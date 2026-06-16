@@ -178,6 +178,31 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testSessionFilesDirectoryGroupingPreview() throws {
+        launchPreview(screen: "session-timeline")
+
+        let filesTab = app.buttons["Files (3)"]
+        XCTAssertTrue(filesTab.waitForExistence(timeout: 5), "Files tab not visible")
+        filesTab.tap()
+
+        let supportGroup = app.buttons["Collapse clients/apple/Oppi/Features/Chat/Support files"]
+        XCTAssertTrue(supportGroup.waitForExistence(timeout: 3), "Support directory group not visible")
+
+        let serverGroup = app.buttons["Collapse server/src files"]
+        XCTAssertTrue(serverGroup.waitForExistence(timeout: 3), "Server directory collapse control not visible")
+        XCTAssertTrue(app.staticTexts["session-commands.ts"].waitForExistence(timeout: 3), "Server file row not visible before collapse")
+
+        serverGroup.tap()
+        XCTAssertFalse(app.staticTexts["session-commands.ts"].waitForExistence(timeout: 1), "Collapsed directory should hide its file rows")
+
+        let expandServerGroup = app.buttons["Expand server/src files"]
+        XCTAssertTrue(expandServerGroup.waitForExistence(timeout: 3), "Collapsed server directory expand control not visible")
+        expandServerGroup.tap()
+        XCTAssertTrue(app.staticTexts["session-commands.ts"].waitForExistence(timeout: 3), "Expanded directory should restore its file rows")
+
+        saveScreenshot(name: "session-outline-files-grouped")
+    }
+
     func testContextBarOverlapPreview() throws {
         launchPreview(screen: "context-bar-overlap")
 

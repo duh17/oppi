@@ -19,8 +19,10 @@ struct SessionFilesListView: View {
     @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var loadedChangedFiles: [String]?
+    @State private var collapsedDirectories: Set<String> = []
 
     /// Files from git status, keyed by path for fast lookup.
     private var gitFilesByPath: [String: GitFileStatus] {
@@ -36,19 +38,68 @@ struct SessionFilesListView: View {
         "\(workspaceId ?? "")|\(sessionId)"
     }
 
+    private var normalizedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearchActive: Bool {
+        !normalizedSearchText.isEmpty
+    }
+
     /// Filtered + sorted files. When searching, uses FuzzyMatch for scoring.
-    private var displayFiles: [(path: String, positions: [Int])] {
+    private var displayFiles: [SessionFileDisplayItem] {
         let files = currentChangedFiles
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = normalizedSearchText
         if query.isEmpty {
-            return files.map { ($0, []) }
+            return files.map { SessionFileDisplayItem(path: $0, matchPositions: []) }
         }
         return FuzzyMatch.search(query: query, candidates: files, limit: 100)
-            .map { ($0.path, $0.positions) }
+            .map { SessionFileDisplayItem(path: $0.path, matchPositions: $0.positions) }
+    }
+
+    /// Directory groups for the files tab. Default ordering follows the path tree;
+    /// search ordering keeps the highest-scored match's group first.
+    private var displayDirectoryGroups: [SessionFileDirectoryGroup] {
+        let files = displayFiles
+        guard !files.isEmpty else { return [] }
+
+        var filesByDirectory: [String: [SessionFileDisplayItem]] = [:]
+        var firstVisibleIndexByDirectory: [String: Int] = [:]
+
+        for (index, file) in files.enumerated() {
+            let directory = Self.directoryKey(for: file.path)
+            filesByDirectory[directory, default: []].append(file)
+            firstVisibleIndexByDirectory[directory] = min(
+                firstVisibleIndexByDirectory[directory] ?? index,
+                index
+            )
+        }
+
+        let directories = filesByDirectory.keys.sorted { lhs, rhs in
+            if isSearchActive {
+                let lhsIndex = firstVisibleIndexByDirectory[lhs] ?? Int.max
+                let rhsIndex = firstVisibleIndexByDirectory[rhs] ?? Int.max
+                if lhsIndex != rhsIndex { return lhsIndex < rhsIndex }
+            }
+
+            let pathOrder = lhs.localizedTreePathCompare(to: rhs)
+            if pathOrder != .orderedSame {
+                return pathOrder == .orderedAscending
+            }
+            return lhs < rhs
+        }
+
+        return directories.map { directory in
+            SessionFileDirectoryGroup(
+                directory: directory,
+                title: Self.directoryTitle(for: directory),
+                files: filesByDirectory[directory] ?? []
+            )
+        }
     }
 
     var body: some View {
-        let files = displayFiles
+        let groups = displayDirectoryGroups
         Group {
             if currentChangedFiles.isEmpty {
                 ContentUnavailableView(
@@ -57,21 +108,66 @@ struct SessionFilesListView: View {
                     description: Text("This session hasn't created or edited any files yet.")
                 )
                 .background(Color.themeBgDark)
-            } else if files.isEmpty {
+            } else if groups.isEmpty {
                 ContentUnavailableView.search(text: searchText)
                     .background(Color.themeBgDark)
             } else {
                 List {
-                    ForEach(files, id: \.path) { file in
-                        fileRow(path: file.path, matchPositions: file.positions)
+                    ForEach(groups) { group in
+                        let isCollapsed = isDirectoryCollapsed(group.directory)
+                        Section {
+                            if !isCollapsed {
+                                ForEach(group.files) { file in
+                                    fileRow(path: file.path, matchPositions: file.matchPositions)
+                                        .listRowBackground(Color.themeBgDark)
+                                        .listRowSeparatorTint(Color.themeComment.opacity(0.15))
+                                }
+                            }
+                        } header: {
+                            SessionFileDirectoryHeader(
+                                title: group.title,
+                                fileCount: group.files.count,
+                                isCollapsed: isCollapsed,
+                                isSearchActive: isSearchActive,
+                                onToggle: isSearchActive ? nil : {
+                                    withAnimation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion)) {
+                                        toggleDirectoryCollapse(group.directory)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .tint(.themeComment)
                 .background(Color.themeBgDark)
             }
         }
         .task(id: sessionChangesLoadKey) {
             await loadSessionChanges()
+        }
+    }
+
+    // MARK: - Directory Groups
+
+    private static func directoryKey(for path: String) -> String {
+        path.parentPathForDisplay?.shortenedPath ?? ""
+    }
+
+    private static func directoryTitle(for directory: String) -> String {
+        directory.isEmpty ? "Workspace root" : directory
+    }
+
+    private func isDirectoryCollapsed(_ directory: String) -> Bool {
+        !isSearchActive && collapsedDirectories.contains(directory)
+    }
+
+    private func toggleDirectoryCollapse(_ directory: String) {
+        if collapsedDirectories.contains(directory) {
+            collapsedDirectories.remove(directory)
+        } else {
+            collapsedDirectories.insert(directory)
         }
     }
 
@@ -318,5 +414,84 @@ struct SessionFilesListView: View {
 
     private func isAbsolutePath(_ path: String) -> Bool {
         path.hasPrefix("/") || path.hasPrefix("~")
+    }
+}
+
+private struct SessionFileDisplayItem: Identifiable, Equatable {
+    let path: String
+    let matchPositions: [Int]
+
+    var id: String { path }
+}
+
+private struct SessionFileDirectoryGroup: Identifiable, Equatable {
+    let directory: String
+    let title: String
+    let files: [SessionFileDisplayItem]
+
+    var id: String { directory }
+}
+
+private struct SessionFileDirectoryHeader: View {
+    let title: String
+    let fileCount: Int
+    let isCollapsed: Bool
+    let isSearchActive: Bool
+    let onToggle: (() -> Void)?
+
+    var body: some View {
+        if let onToggle {
+            Button(action: onToggle) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isCollapsed ? "Expand \(title) files" : "Collapse \(title) files")
+            .accessibilityValue(accessibilityValue)
+        } else {
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(title), \(fileCountText)")
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "folder.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.themeBlue)
+                .accessibilityHidden(true)
+
+            Text(title)
+                .font(.caption.bold())
+                .foregroundStyle(.themeFgDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 8)
+
+            Text("\(fileCount)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.themeComment)
+                .accessibilityHidden(true)
+
+            if !isSearchActive {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .textCase(nil)
+    }
+
+    private var fileCountText: String {
+        fileCount == 1 ? "1 file" : "\(fileCount) files"
+    }
+
+    private var accessibilityValue: String {
+        "\(isCollapsed ? "Collapsed" : "Expanded"), \(fileCountText)"
     }
 }
