@@ -429,6 +429,7 @@ targets:
           - "PiSessionAttributes.swift"
           - "LiveActivityPresentation.swift"
           - "SharedConstants.swift"
+          - "ShareQuickSessionPayload.swift"
     dependencies:
       - package: Sparkle
     settings:
