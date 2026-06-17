@@ -1,6 +1,6 @@
 {
   "name": "browser-automation-video",
-  "version": "0.41.0",
+  "version": "0.42.0",
   "description": "Oppi-compatible Pi extension package that records browser runs and returns video attachments when Oppi storage is available.",
   "type": "module",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "typebox": "1.1.28"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.79.1",
+    "@earendil-works/pi-coding-agent": "0.79.6",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^4.0.18"

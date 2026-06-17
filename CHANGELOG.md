@@ -38,30 +38,73 @@ Example:
 
 ## [Unreleased]
 
+No unreleased public changes yet.
+
+## [0.42.0] - 2026-06-16
+
 ### Notes
 
-- This release focuses on Pi extension compatibility, mirrored terminal sessions, media playback, long tool output, and review tools on iPhone and iPad.
-
-### Added
-
-- **Protocol/Client/Server:** Added native rendering for Pi extension prompts, replayable widgets, and custom trace messages, including text, markdown, sections, activity rows, progress, terminal output, code, and fallback text.
-- **Client/Server:** Added video playback from the file browser, session attachments, and expanded tool rows with authenticated byte-range streaming and system controls.
-- **Client:** Added reader controls for text size, line spacing, wrapping, Mermaid state diagrams, and markdown code-block wrapping.
-- **Client:** Added review-comment drafts for selected code and tool output, with a composer stash before sending.
+- Minor update for npm `oppi-server` and `oppi-mirror` after the `0.41.0` compatibility release.
+- This release updates the embedded Pi runtime to the latest published `0.79.6` packages and refreshes direct WebSocket dependencies.
 
 ### Changed
 
-- **Client/Server:** Pi extension prompts cover more Pi UI requests in SDK and mirrored sessions, including select, confirm, input, editor, queued approval, status, notification, and tool snapshot rendering.
+- **Server:** Updated the embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.79.6`, `@earendil-works/pi-ai@0.79.6`, and `@earendil-works/pi-tui@0.79.6`.
+- **Packaging:** Bumped coordinated server and first-party Pi extension package metadata to `0.42.0` so the update can publish after npm `0.41.0`.
+
+### Fixed
+
+- **Dependencies:** Updated direct `ws` usage to `8.21.0` for the Oppi server and `oppi-mirror` package.
+
+### Migration notes
+
+- **Server:** Update npm installs with `npm install -g oppi-server@0.42.0` after publish. App-managed runtimes update through the Oppi app bundle, not `oppi update`.
+- **Mirror extension:** Install or refresh the Pi extension with `pi install npm:oppi-mirror` after publish, then use `/reload` in an already-running interactive Pi session.
+- **Compatibility:** `oppi-mirror@0.42.0` requires Oppi server `0.41.0` or newer and an interactive terminal `pi` process.
+
+## [0.41.0] - 2026-06-16
+
+### Notes
+
+- Public server and Pi extension compatibility release for npm `oppi-server@0.41.0` and `oppi-mirror@0.41.0`.
+- This release focuses on Pi extension compatibility, mirrored terminal sessions, media playback, long tool output, review tools, and safer server packaging.
+- iOS TestFlight build 38 covers the main compatibility release. The build 39 candidate adds share-sheet Quick Sessions, neutral themes, grouped Session Files, and targeted stability fixes on top of build 38.
+
+### Added
+
+- **Server/Packaging:** Added npm package metadata and validation coverage for `oppi-server@0.41.0`, including packed-install smoke paths for local macOS, Mac Mini, and Linux Docker validation.
+- **Packaging:** Added the public `oppi-mirror@0.41.0` Pi extension package, installable with `pi install npm:oppi-mirror` after publish.
+- **Protocol/Client/Server:** Added native rendering for Pi extension prompts, replayable widgets, custom trace messages, queued approvals, status/notification requests, tool snapshots, and fallback text.
+- **Client/Server:** Added video playback from workspace files, session attachments, and expanded tool rows with authenticated byte-range streaming and system controls.
+- **Client:** Added reader controls for text size, line spacing, wrapping, Mermaid state diagrams, markdown code-block wrapping, and full-output viewers for large tool results.
+- **Client:** Added review-comment drafts for selected code and tool output, with composer draft restoration before sending.
+- **Client:** Added share-sheet Quick Sessions, Neutral Dark/Neutral Light themes, and directory-grouped Session Files in the build 39 candidate.
+
+### Changed
+
+- **Client/Server:** Pi extension prompts cover more Pi UI requests in SDK and mirrored sessions, including select, confirm, input, editor, queued approval, status, notification, and widget rendering.
 - **Server:** Removed Oppi's custom subagent server implementation from this release path; subagent-style work now goes through Pi extensions or custom agents.
 - **Client/Server:** Mirrored terminal sessions can reconnect, replay supported extension UI, queue follow-up messages, and hand control between terminal Pi and Oppi without losing pending prompts.
 - **Client:** Expanded tool rows use native or virtualized viewers for long markdown, code, images, video, and media output instead of oversized timeline cells.
+- **Client:** Session rows keep completion/unread timing stable when heartbeats, background status, or busy timeline appends arrive.
+- **Client:** Workspace file browsing shows real directory entries, including dot directories and generated folders, while protected raw reads remain guarded.
 
 ### Fixed
 
 - **Server:** Fixed SDK `/reload` so live Pi extension code reloads in the active session instead of only refreshing resource metadata.
+- **Server:** Fixed release diagnostics so WebSocket telemetry avoids raw URL metadata and the mechanical review gate checks the current protocol type file.
+- **Server:** Reduced noisy mirror task-record rejection logs for non-openable Pi task records.
+- **Client/Server:** Fixed mirrored terminal widget replay, takeover prompts, stale contexts after compaction, concurrent forwarded dialogs, dead `pi-tui` session cleanup, and heartbeat-driven session-row timestamp churn.
 - **Client:** Fixed long tool output truncation and timeline instability by loading full output on demand and evicting older cached output under memory pressure.
-- **Client/Server:** Fixed mirrored terminal widget replay, takeover prompts, stale contexts after compaction, concurrent forwarded dialogs, and dead `pi-tui` session cleanup.
 - **Client:** Fixed review-comment controls hiding behind the keyboard on iPad and duplicate selection actions.
+- **Client:** Fixed split file navigation after compact-width rotation, escaped inline LaTeX delimiter rendering, full-screen code font metrics, and Quick Session share presentation timing.
+- **Dependencies:** Updated Vite/esbuild/tsx lockfile entries and duplication-scan CLI compatibility.
+
+### Migration notes
+
+- **Server:** Update npm installs with `npm install -g oppi-server@0.41.0` after publish. App-managed runtimes update through the Oppi app bundle, not `oppi update`.
+- **Mirror extension:** Install or refresh the Pi extension with `pi install npm:oppi-mirror` after publish, then use `/reload` in an already-running interactive Pi session.
+- **Compatibility:** `oppi-mirror@0.41.0` requires Oppi server `0.41.0` or newer and an interactive terminal `pi` process.
 
 ## [0.4.0] - 2026-06-01
 
@@ -82,7 +125,7 @@ Example:
 ### Changed
 
 - **Server:** Replaced the custom Oppi approval flow with standard Pi extension permission handling for broader extension compatibility.
-- **Client:** App-owned deep links now use only the `oppi://` scheme; legacy `pi://` handling was removed.
+- **Client:** App-owned deep links now use only the `oppi://` scheme; retired `pi://` handling was removed.
 - **Client:** Model switches now apply immediately without the prompt-cache warning dialog.
 - **Client:** Renamed the public diagnostics toggle to “Send Diagnostics to Server” and clarified that it covers performance metrics, client breadcrumbs, and crash diagnostics.
 
@@ -94,7 +137,7 @@ Example:
 ### Removed
 
 - **Server:** Removed the retired server approval stack and related routes.
-- **Client:** Removed legacy Apple permission surfaces.
+- **Client:** Removed retired Apple permission screens.
 
 ### Migration notes
 
@@ -106,6 +149,8 @@ Example:
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/duh17/oppi/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/duh17/oppi/compare/v0.4.0...v0.41.0
 [0.4.0]: https://github.com/duh17/oppi/compare/5c3ba2f4cf23...v0.4.0
 [0.1.2]: https://github.com/duh17/oppi/releases/tag/v0.1.2
