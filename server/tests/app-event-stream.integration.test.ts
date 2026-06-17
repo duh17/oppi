@@ -242,10 +242,14 @@ describe("WS /app/events/stream", () => {
 
     await firstClient.close();
 
-    const missedSummary = summaryFor(session, {
-      lastActivity: Date.now() + 40_000,
+    const missedActivity = Date.now() + 40_000;
+    const missedSession: Session = {
+      ...session,
+      lastActivity: missedActivity,
       lastMessage: "missed while disconnected",
-    });
+    };
+    storage.saveSession(missedSession);
+    const missedSummary = summaryFor(missedSession);
     emitSessionEvent(session.id, {
       type: "session_summary",
       summary: missedSummary,
@@ -256,7 +260,19 @@ describe("WS /app/events/stream", () => {
     expect(reconnectFrame).toMatchObject({ type: "app_events_connected", snapshotRequired: true });
     expectAppFrameHasNoFocusedReplayFields(reconnectFrame);
 
-    const afterReconnectSummary = summaryFor(session, {
+    const snapshotSummary = await getWorkspaceSessionSummary(
+      missedSession.workspaceId!,
+      missedSession.id,
+      missedActivity,
+    );
+    expect(snapshotSummary).toMatchObject({
+      id: missedSession.id,
+      workspaceId: missedSession.workspaceId,
+      lastActivity: missedActivity,
+      lastMessage: "missed while disconnected",
+    });
+
+    const afterReconnectSummary = summaryFor(missedSession, {
       lastActivity: Date.now() + 50_000,
       lastMessage: "after reconnect",
     });
@@ -298,6 +314,25 @@ async function waitForConnected(client: AppStreamClient): Promise<AppEventFrame>
   expect(frame["snapshotRequired"]).toBe(true);
   expectAppFrameHasNoFocusedReplayFields(frame);
   return frame;
+}
+
+async function getWorkspaceSessionSummary(
+  workspaceId: string,
+  sessionId: string,
+  untilMs: number,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(
+    `${baseUrl}/workspaces/${workspaceId}/sessions?status=active,stopped&sinceMs=0&untilMs=${untilMs + 1}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as Record<string, unknown>;
+  const summaries = [body["active"], body["stopped"]]
+    .filter(Array.isArray)
+    .flat() as Array<Record<string, unknown>>;
+  const summary = summaries.find((candidate) => candidate["id"] === sessionId);
+  expect(summary).toBeTruthy();
+  return summary!;
 }
 
 function createStoredSession(overrides: Partial<Session> = {}): {
