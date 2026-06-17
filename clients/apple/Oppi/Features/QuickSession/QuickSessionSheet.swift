@@ -183,27 +183,29 @@ struct QuickSessionSheet: View {
         Button {
             showWorkspacePicker.toggle()
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 if let selectedWorkspace {
-                    WorkspaceRuntimeIcon(workspace: selectedWorkspace, size: 14, frameSize: 20)
+                    WorkspaceRuntimeIcon(workspace: selectedWorkspace, size: 12, frameSize: 16)
                 } else {
                     Image(systemName: "folder")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.themeBlue)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 16, height: 16)
                 }
                 Text(selectedWorkspace?.name ?? "Workspace")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.themeComment)
             }
-            .frame(minHeight: 30)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
+            .frame(minHeight: 17)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
             .glassEffect(.regular, in: Capsule())
+            .frame(minHeight: ComposerInputMetrics.controlDiameter)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showWorkspacePicker, arrowEdge: .bottom) {
