@@ -110,7 +110,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.backgroundColor = UIColor(Color.themeBg)
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
-        collectionView.topEdgeEffect.style = .soft
+        // Keep scrolled transcript text from washing through the navigation
+        // title on iOS's Liquid Glass navigation bar. The bottom edge stays
+        // soft because the composer glass intentionally lets content breathe.
+        collectionView.topEdgeEffect.style = .hard
         collectionView.bottomEdgeEffect.style = .soft
         collectionView.delegate = context.coordinator
 
