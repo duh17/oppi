@@ -1,0 +1,378 @@
+import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+import { WebSocket } from "ws";
+
+import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
+import { SessionRuntimes } from "../src/runtime-router.js";
+import { BoundSessionStreamMux, type StreamContext } from "../src/stream.js";
+import type { SessionManager } from "../src/sessions.js";
+import type { Storage } from "../src/storage.js";
+import type { ServerMessage, Session, Workspace } from "../src/types.js";
+
+class FakeBridgeWebSocket extends EventEmitter {
+  readyState = WebSocket.OPEN;
+  sent: Array<Record<string, unknown>> = [];
+  closeCode?: number;
+  closeReason?: string;
+  private sendWaiters: Array<() => void> = [];
+
+  send(data: string): void {
+    this.sent.push(JSON.parse(data) as Record<string, unknown>);
+    const waiters = this.sendWaiters.splice(0);
+    for (const resolve of waiters) resolve();
+  }
+
+  waitForSend(timeoutMs = 1_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const resolveAndCleanup = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const index = this.sendWaiters.indexOf(resolveAndCleanup);
+        if (index >= 0) this.sendWaiters.splice(index, 1);
+        reject(new Error("Timed out waiting for bridge WebSocket send"));
+      }, timeoutMs);
+      this.sendWaiters.push(resolveAndCleanup);
+    });
+  }
+
+  close(code?: number, reason?: string): void {
+    this.readyState = WebSocket.CLOSED;
+    this.closeCode = code;
+    this.closeReason = reason;
+  }
+
+  receive(message: Record<string, unknown>): void {
+    this.emit("message", Buffer.from(JSON.stringify(message)), false);
+  }
+}
+
+class FakeSessionWebSocket extends EventEmitter {
+  readyState = WebSocket.OPEN;
+  sent: ServerMessage[] = [];
+  closeCode?: number;
+
+  send(data: string): void {
+    this.sent.push(JSON.parse(data) as ServerMessage);
+  }
+
+  ping(): void {}
+
+  terminate(): void {
+    this.readyState = WebSocket.CLOSED;
+  }
+
+  close(code = 1000, reason = ""): void {
+    if (this.readyState === WebSocket.CLOSED) return;
+    this.readyState = WebSocket.CLOSED;
+    this.closeCode = code;
+    this.emit("close", code, Buffer.from(reason));
+  }
+
+  sentOfType(type: string, sessionId?: string): ServerMessage[] {
+    return this.sent.filter(
+      (message) =>
+        message.type === type && (sessionId === undefined || message.sessionId === sessionId),
+    );
+  }
+}
+
+function makeSession(id: string, workspaceId = "w1"): Session {
+  const now = Date.now();
+  return {
+    id,
+    workspaceId,
+    status: "ready",
+    createdAt: now,
+    lastActivity: now,
+    messageCount: 0,
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: 0,
+  };
+}
+
+function makeHarness(root: string) {
+  const workspaces = new Map<string, Workspace>([
+    [
+      "w1",
+      {
+        id: "w1",
+        name: "Workspace",
+        skills: [],
+        hostMount: root,
+      },
+    ],
+  ]);
+  const sessions = new Map<string, Session>();
+  let nextSessionId = 1;
+
+  const storage = {
+    getOwnerName: () => "test-user",
+    getWorkspace: (id: string) => workspaces.get(id) ?? null,
+    listWorkspaces: () => Array.from(workspaces.values()),
+    createWorkspace: (request: {
+      name: string;
+      description?: string;
+      icon?: string;
+      skills: string[];
+      systemPrompt?: string;
+      systemPromptMode?: "append";
+      hostMount?: string;
+      defaultModel?: string;
+      tools?: string[];
+      extensions?: string[];
+      gitStatusEnabled?: boolean;
+      runtime?: "host" | "sandbox";
+    }) => {
+      const now = Date.now();
+      const workspace: Workspace = {
+        id: `w${workspaces.size + 1}`,
+        name: request.name,
+        description: request.description,
+        icon: request.icon,
+        skills: request.skills,
+        systemPrompt: request.systemPrompt,
+        systemPromptMode: request.systemPromptMode ?? "append",
+        hostMount: request.hostMount,
+        defaultModel: request.defaultModel,
+        tools: request.tools,
+        extensions: request.extensions,
+        gitStatusEnabled: request.gitStatusEnabled,
+        runtime: request.runtime,
+        createdAt: now,
+        updatedAt: now,
+      };
+      workspaces.set(workspace.id, workspace);
+      return workspace;
+    },
+    listSessions: () => Array.from(sessions.values()),
+    getSession: (id: string) => sessions.get(id) ?? null,
+    createSession: (name?: string, model?: string) => {
+      const session = makeSession(`sess-${nextSessionId++}`);
+      if (name) session.name = name;
+      if (model) session.model = model;
+      sessions.set(session.id, session);
+      return session;
+    },
+    saveSession: (session: Session) => {
+      sessions.set(session.id, structuredClone(session));
+    },
+    getConfig: () => ({ dataDir: join(root, ".oppi-test-data") }),
+    getDataDir: () => join(root, ".oppi-test-data"),
+  } as unknown as Storage;
+
+  const mirror = new PiTuiMirrorRuntime(storage);
+  const managed = {
+    sendPrompt: vi.fn(async () => {}),
+    sendSteer: vi.fn(async () => {}),
+    sendFollowUp: vi.fn(async () => {}),
+    getMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
+    setMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
+    sendAbort: vi.fn(async () => {}),
+    stopSession: vi.fn(async () => {}),
+    getActiveSession: vi.fn(() => undefined),
+    respondToUIRequest: vi.fn(() => false),
+    forwardClientCommand: vi.fn(async () => {}),
+    getActiveSessionIds: vi.fn(() => new Set<string>()),
+    getCurrentSeq: vi.fn(() => 0),
+    getCatchUp: vi.fn(() => null),
+    subscribe: vi.fn(() => () => {}),
+    getPendingUIRequestMessages: vi.fn(() => []),
+    isActive: vi.fn(() => false),
+    startSession: vi.fn(
+      async (sessionId: string) => sessions.get(sessionId) ?? makeSession(sessionId),
+    ),
+    refreshSessionState: vi.fn(async () => null),
+  } as unknown as SessionManager & { startSession: ReturnType<typeof vi.fn> };
+  const runtimes = new SessionRuntimes(storage, managed, mirror);
+  const streamMux = new BoundSessionStreamMux({
+    storage,
+    sessions: managed,
+    sessionRuntimes: runtimes,
+    ensureSessionContextWindow: (session) => session,
+    resolveWorkspaceForSession: () => undefined,
+    handleClientMessage: vi.fn(async () => {}),
+    trackConnection: vi.fn(),
+    untrackConnection: vi.fn(),
+  } as unknown as StreamContext);
+
+  return { storage, sessions, mirror, managed, runtimes, streamMux };
+}
+
+function connectBridge(
+  runtime: PiTuiMirrorRuntime,
+  options: {
+    bridgeId: string;
+    cwd: string;
+    piSessionId: string;
+    sessionFile: string;
+    sessionName: string;
+  },
+): { ws: FakeBridgeWebSocket; sessionId: string } {
+  const ws = new FakeBridgeWebSocket();
+  runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+  ws.receive({
+    type: "hello",
+    protocolVersion: 1,
+    bridgeId: options.bridgeId,
+    workspaceId: "w1",
+    cwd: options.cwd,
+    state: {
+      piSessionId: options.piSessionId,
+      sessionFile: options.sessionFile,
+      sessionName: options.sessionName,
+    },
+  });
+
+  const ack = ws.sent.find((message) => message.type === "hello_ack");
+  expect(ack).toBeTruthy();
+  return { ws, sessionId: String(ack?.sessionId) };
+}
+
+function latestCommand(ws: FakeBridgeWebSocket): Record<string, unknown> {
+  const command = ws.sent.findLast((message) => message.type === "command");
+  expect(command).toBeTruthy();
+  return command!;
+}
+
+async function waitForLatestCommand(ws: FakeBridgeWebSocket): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const command = ws.sent.findLast((message) => message.type === "command");
+    if (command) return command;
+    await ws.waitForSend();
+  }
+  return latestCommand(ws);
+}
+
+function commandMessage(command: Record<string, unknown>): string | undefined {
+  const payload = command.command;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  const message = (payload as { message?: unknown }).message;
+  return typeof message === "string" ? message : undefined;
+}
+
+async function drain(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("PiTuiMirrorRuntime resilience", () => {
+  it("prevents SDK split-brain and command misrouting across stale attach and bridge reuse", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-resilience-"));
+    try {
+      const { mirror, managed, runtimes, streamMux, sessions } = makeHarness(root);
+      const first = connectBridge(mirror, {
+        bridgeId: "bridge-reused",
+        cwd: root,
+        piSessionId: "pi-first",
+        sessionFile: join(root, "first.jsonl"),
+        sessionName: "First terminal session",
+      });
+
+      const pendingPrompt = runtimes.sendPrompt(first.sessionId, "queued before reload", {
+        clientTurnId: "turn-before-reload",
+        requestId: "req-before-reload",
+        timestamp: Date.now(),
+      });
+      const delayedCommand = await waitForLatestCommand(first.ws);
+      expect(commandMessage(delayedCommand)).toBe("queued before reload");
+
+      first.ws.receive({
+        type: "goodbye",
+        reason: "reload",
+        state: { isIdle: true },
+      });
+      await expect(pendingPrompt).rejects.toThrow("pi-tui disconnected");
+      expect(mirror.isSessionConnected(first.sessionId)).toBe(false);
+      expect(sessions.get(first.sessionId)?.runtime).toBe("pi-tui");
+      expect(sessions.get(first.sessionId)?.mirror?.status).toBe("connected");
+
+      const focusedStream = new FakeSessionWebSocket();
+      await streamMux.handleWebSocket("w1", first.sessionId, focusedStream as unknown as WebSocket);
+      await drain();
+
+      expect(managed.startSession).not.toHaveBeenCalled();
+      expect(focusedStream.sentOfType("connected", first.sessionId)[0]).toMatchObject({
+        session: expect.objectContaining({ id: first.sessionId, runtime: "pi-tui" }),
+      });
+      focusedStream.close(1000);
+
+      const second = connectBridge(mirror, {
+        bridgeId: "bridge-reused",
+        cwd: root,
+        piSessionId: "pi-second",
+        sessionFile: join(root, "second.jsonl"),
+        sessionName: "Second terminal session",
+      });
+      expect(second.sessionId).not.toBe(first.sessionId);
+      expect(mirror.isSessionConnected(second.sessionId)).toBe(true);
+
+      await expect(
+        runtimes.sendPrompt(first.sessionId, "must not reach second terminal", {
+          clientTurnId: "turn-stale",
+          requestId: "req-stale",
+          timestamp: Date.now(),
+        }),
+      ).rejects.toThrow("pi-tui is not connected");
+      expect(
+        second.ws.sent.some(
+          (message) =>
+            message.type === "command" &&
+            commandMessage(message) === "must not reach second terminal",
+        ),
+      ).toBe(false);
+      expect(managed.startSession).not.toHaveBeenCalled();
+
+      const secondMessages: ServerMessage[] = [];
+      mirror.subscribe(second.sessionId, (message) => secondMessages.push(message));
+      second.ws.receive({
+        type: "queue_state",
+        queue: {
+          version: 1,
+          steering: [{ id: "s-second", message: "second queue item", createdAt: 1 }],
+          followUp: [],
+        },
+      });
+
+      first.ws.receive({
+        type: "command_result",
+        id: delayedCommand.id,
+        success: true,
+        data: {
+          queue: {
+            version: 99,
+            steering: [{ id: "stale", message: "stale queue item", createdAt: 1 }],
+            followUp: [],
+          },
+        },
+        state: {
+          sessionName: "Delayed result must not rename the second session",
+        },
+      });
+
+      expect(secondMessages).toContainEqual({
+        type: "queue_state",
+        queue: {
+          version: 1,
+          steering: [{ id: "s-second", message: "second queue item", createdAt: 1 }],
+          followUp: [],
+        },
+      });
+      expect(
+        secondMessages.some(
+          (message) =>
+            message.type === "queue_state" &&
+            (message.queue as { version?: number }).version === 99,
+        ),
+      ).toBe(false);
+      expect(mirror.getActiveSession(second.sessionId)?.name).toBe("Second terminal session");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
