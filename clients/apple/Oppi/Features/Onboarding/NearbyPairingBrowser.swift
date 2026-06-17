@@ -9,6 +9,13 @@ private let nearbyPairingBrowserLogger = Logger(
     category: "NearbyPairingBrowser"
 )
 
+// Multipeer delegate callbacks arrive on private queues. This wrapper lets
+// Objective-C peer values cross into a MainActor task; browser state stays
+// isolated to NearbyPairingBrowser.
+private struct NearbyPairingPeerReference: @unchecked Sendable {
+    let peerID: MCPeerID
+}
+
 @MainActor
 @Observable
 final class NearbyPairingBrowser: NSObject {
@@ -59,7 +66,9 @@ final class NearbyPairingBrowser: NSObject {
 
     private let localPeerID: MCPeerID
     private var browser: MCNearbyServiceBrowser?
+    private var browserID: ObjectIdentifier?
     private var session: MCSession?
+    private var sessionID: ObjectIdentifier?
     private var selectedPeerID: MCPeerID?
 
     override init() {
@@ -81,6 +90,8 @@ final class NearbyPairingBrowser: NSObject {
         let browser = MCNearbyServiceBrowser(peer: localPeerID, serviceType: NearbyPairingConstants.serviceType)
         browser.delegate = self
         self.browser = browser
+        browserID = ObjectIdentifier(browser)
+        sessionID = ObjectIdentifier(session)
         state = .discovering
         browser.startBrowsingForPeers()
         nearbyPairingBrowserLogger.info("Started nearby pairing browse")
@@ -90,10 +101,12 @@ final class NearbyPairingBrowser: NSObject {
         browser?.stopBrowsingForPeers()
         browser?.delegate = nil
         browser = nil
+        browserID = nil
 
         session?.disconnect()
         session?.delegate = nil
         session = nil
+        sessionID = nil
 
         candidates = []
         selectedPeerID = nil
@@ -112,7 +125,9 @@ final class NearbyPairingBrowser: NSObject {
         start()
     }
 
-    private func upsertCandidate(peerID: MCPeerID, discoveryInfo: [String: String]?) {
+    private func upsertCandidate(peerID: MCPeerID, discoveryInfo: [String: String]?, browserID: ObjectIdentifier) {
+        guard self.browserID == browserID else { return }
+
         let metadata = NearbyPairingDiscoveryMetadata(discoveryInfo: discoveryInfo)
         let candidate = Candidate(peerID: peerID, metadata: metadata)
 
@@ -121,7 +136,9 @@ final class NearbyPairingBrowser: NSObject {
         candidates.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
-    private func removeCandidate(peerID: MCPeerID) {
+    private func removeCandidate(peerID: MCPeerID, browserID: ObjectIdentifier) {
+        guard self.browserID == browserID else { return }
+
         candidates.removeAll { $0.peerID == peerID }
         if selectedPeerID == peerID {
             selectedPeerID = nil
@@ -134,76 +151,119 @@ final class NearbyPairingBrowser: NSObject {
     private func displayName(for peerID: MCPeerID) -> String {
         candidates.first(where: { $0.peerID == peerID })?.displayName ?? peerID.displayName
     }
-}
 
-extension NearbyPairingBrowser: @preconcurrency MCNearbyServiceBrowserDelegate {
-    func browser(
-        _ browser: MCNearbyServiceBrowser,
-        foundPeer peerID: MCPeerID,
-        withDiscoveryInfo info: [String: String]?
-    ) {
-        upsertCandidate(peerID: peerID, discoveryInfo: info)
-    }
+    private func handleSessionStateChange(peerID: MCPeerID, stateValue: MCSessionState.RawValue, sessionID: ObjectIdentifier) {
+        guard self.sessionID == sessionID,
+              selectedPeerID == peerID,
+              let sessionState = MCSessionState(rawValue: stateValue) else { return }
 
-    func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
-        removeCandidate(peerID: peerID)
-    }
-
-    func browser(
-        _ browser: MCNearbyServiceBrowser,
-        didNotStartBrowsingForPeers error: any Error
-    ) {
-        nearbyPairingBrowserLogger.error("Nearby browse failed: \(error.localizedDescription, privacy: .public)")
-        state = .failed("Nearby pairing is unavailable right now. Use the QR code or paste an invite link.")
-    }
-}
-
-extension NearbyPairingBrowser: @preconcurrency MCSessionDelegate {
-    func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
-        guard selectedPeerID == peerID else { return }
-
-        switch state {
+        switch sessionState {
         case .connecting:
-            self.state = .waitingForApproval(displayName(for: peerID))
+            state = .waitingForApproval(displayName(for: peerID))
         case .connected:
-            self.state = .receivingInvite(displayName(for: peerID))
+            state = .receivingInvite(displayName(for: peerID))
         case .notConnected:
-            if case .receivingInvite = self.state {
-                self.state = .failed("Nearby pairing ended before an invite arrived. Try again or use the QR code.")
+            if case .receivingInvite = state {
+                state = .failed("Nearby pairing ended before an invite arrived. Try again or use the QR code.")
             }
         @unknown default:
             break
         }
     }
 
-    func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+    private func handleBrowsingFailure(browserID: ObjectIdentifier) {
+        guard self.browserID == browserID else { return }
+        state = .failed("Nearby pairing is unavailable right now. Use the QR code or paste an invite link.")
+    }
+
+    private func handleInviteData(_ data: Data, from peerID: MCPeerID, sessionID: ObjectIdentifier) {
+        guard self.sessionID == sessionID else { return }
+
         guard let url = NearbyPairingInviteCodec.decodeInviteURL(from: data) else {
             state = .failed("Received an invalid nearby invite. Try again or use the QR code.")
-            session.disconnect()
+            session?.disconnect()
+            session?.delegate = nil
+            session = nil
+            self.sessionID = nil
             return
         }
 
         nearbyPairingBrowserLogger.info("Received nearby invite from \(peerID.displayName, privacy: .public)")
         selectedPeerID = nil
-        session.disconnect()
+        session?.disconnect()
+        session?.delegate = nil
+        session = nil
+        self.sessionID = nil
         onInviteURL?(url)
     }
+}
 
-    func session(
+extension NearbyPairingBrowser: MCNearbyServiceBrowserDelegate {
+    nonisolated func browser(
+        _ browser: MCNearbyServiceBrowser,
+        foundPeer peerID: MCPeerID,
+        withDiscoveryInfo info: [String: String]?
+    ) {
+        let peer = NearbyPairingPeerReference(peerID: peerID)
+        let browserID = ObjectIdentifier(browser)
+        Task { @MainActor [weak self, peer, info, browserID] in
+            self?.upsertCandidate(peerID: peer.peerID, discoveryInfo: info, browserID: browserID)
+        }
+    }
+
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
+        let peer = NearbyPairingPeerReference(peerID: peerID)
+        let browserID = ObjectIdentifier(browser)
+        Task { @MainActor [weak self, peer, browserID] in
+            self?.removeCandidate(peerID: peer.peerID, browserID: browserID)
+        }
+    }
+
+    nonisolated func browser(
+        _ browser: MCNearbyServiceBrowser,
+        didNotStartBrowsingForPeers error: any Error
+    ) {
+        nearbyPairingBrowserLogger.error("Nearby browse failed: \(error.localizedDescription, privacy: .public)")
+        let browserID = ObjectIdentifier(browser)
+        Task { @MainActor [weak self, browserID] in
+            self?.handleBrowsingFailure(browserID: browserID)
+        }
+    }
+}
+
+extension NearbyPairingBrowser: MCSessionDelegate {
+    nonisolated func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+        let peer = NearbyPairingPeerReference(peerID: peerID)
+        let stateValue = state.rawValue
+        let sessionID = ObjectIdentifier(session)
+        Task { @MainActor [weak self, peer, stateValue, sessionID] in
+            self?.handleSessionStateChange(peerID: peer.peerID, stateValue: stateValue, sessionID: sessionID)
+        }
+    }
+
+    nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+        let peer = NearbyPairingPeerReference(peerID: peerID)
+        let sessionID = ObjectIdentifier(session)
+        Task { @MainActor [weak self, peer, data, sessionID] in
+            self?.handleInviteData(data, from: peer.peerID, sessionID: sessionID)
+        }
+    }
+
+    nonisolated func session(
         _ session: MCSession,
         didReceive stream: InputStream,
         withName streamName: String,
         fromPeer peerID: MCPeerID
     ) {}
 
-    func session(
+    nonisolated func session(
         _ session: MCSession,
         didStartReceivingResourceWithName resourceName: String,
         fromPeer peerID: MCPeerID,
         with progress: Progress
     ) {}
 
-    func session(
+    nonisolated func session(
         _ session: MCSession,
         didFinishReceivingResourceWithName resourceName: String,
         fromPeer peerID: MCPeerID,
@@ -211,7 +271,7 @@ extension NearbyPairingBrowser: @preconcurrency MCSessionDelegate {
         withError error: (any Error)?
     ) {}
 
-    func session(
+    nonisolated func session(
         _ session: MCSession,
         didReceiveCertificate certificate: [Any]?,
         fromPeer peerID: MCPeerID,
