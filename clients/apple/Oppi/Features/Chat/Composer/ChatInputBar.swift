@@ -443,17 +443,21 @@ struct ChatInputBar<ActionRow: View>: View {
             .padding(.vertical, 10)
 
             if showsComposerActionRow {
-                HStack(spacing: 6) {
-                    attachButton
+                GlassEffectContainer(spacing: 0) {
+                    HStack(spacing: 6) {
+                        attachButton
 
-                    if showsBusyModeSelector {
-                        busyModeSelector
+                        if showsBusyModeSelector {
+                            busyModeSelector
+                        }
+
+                        actionRow()
                     }
-
-                    actionRow()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, composerHorizontalPadding)
-                .padding(.top, 2)
+                .padding(.top, 8)
                 .padding(.bottom, 7)
                 .transition(ThemeMotion.move(edge: .bottom, reduceMotion: reduceMotion))
             }
