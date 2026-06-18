@@ -394,6 +394,527 @@ function contextUsageWire(ctx: ExtensionContext) {
   };
 }
 
+type MirrorSessionTreeFilterMode =
+  | "default"
+  | "no-tools"
+  | "user-only"
+  | "labeled-only"
+  | "all";
+
+interface MirrorSessionTreeEntry {
+  id: string;
+  parentId?: string | null;
+  type: string;
+  timestamp?: string;
+  message?: unknown;
+  tokensBefore?: unknown;
+  summary?: unknown;
+  content?: unknown;
+  name?: unknown;
+  modelId?: unknown;
+  thinkingLevel?: unknown;
+  label?: unknown;
+}
+
+interface MirrorSessionTreeNode {
+  entry: MirrorSessionTreeEntry;
+  children: MirrorSessionTreeNode[];
+  label?: string;
+}
+
+interface MirrorSessionTreeNodeSnapshot {
+  id: string;
+  parentId: string | null;
+  type: string;
+  timestamp: string;
+  depth: number;
+  isLeafPath: boolean;
+  defaultVisible: boolean;
+  matchesFilter: boolean;
+  role?: string;
+  textPreview?: string;
+  label?: string;
+}
+
+interface MirrorSessionTreeContext {
+  sessionManager: {
+    getTree: () => MirrorSessionTreeNode[];
+    getLeafId: () => string | null;
+  };
+}
+
+interface MirrorTreeToolCallSnapshot {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+const MIRROR_TREE_MAX_TEXT_PREVIEW_CHARS = 160;
+const MIRROR_TREE_MAX_PREVIEW_SOURCE_CHARS = 4_000;
+const MIRROR_TREE_DEFAULT_HIDDEN_ENTRY_TYPES = new Set([
+  "label",
+  "custom",
+  "model_change",
+  "thinking_level_change",
+  "session_info",
+]);
+
+function treeRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readOptionalTreeString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readMirrorSessionTreeFilterMode(
+  value: unknown,
+): MirrorSessionTreeFilterMode {
+  switch (readOptionalTreeString(value)) {
+    case undefined:
+    case "default":
+      return "default";
+    case "no-tools":
+      return "no-tools";
+    case "user-only":
+      return "user-only";
+    case "labeled-only":
+      return "labeled-only";
+    case "all":
+      return "all";
+    default:
+      throw new Error(
+        "Invalid payload: expected filterMode to be one of default, no-tools, user-only, labeled-only, all",
+      );
+  }
+}
+
+function compareMirrorTreeNodes(
+  left: MirrorSessionTreeNode,
+  right: MirrorSessionTreeNode,
+): number {
+  const leftTimestamp = left.entry.timestamp ?? "";
+  const rightTimestamp = right.entry.timestamp ?? "";
+  const leftTime = Date.parse(leftTimestamp);
+  const rightTime = Date.parse(rightTimestamp);
+
+  if (
+    !Number.isNaN(leftTime) &&
+    !Number.isNaN(rightTime) &&
+    leftTime !== rightTime
+  ) {
+    return leftTime - rightTime;
+  }
+
+  if (leftTimestamp !== rightTimestamp) {
+    return leftTimestamp.localeCompare(rightTimestamp);
+  }
+
+  return left.entry.id.localeCompare(right.entry.id);
+}
+
+function sortMirrorTreeNodes(
+  nodes: MirrorSessionTreeNode[],
+  leafPathIds: Set<string>,
+): MirrorSessionTreeNode[] {
+  return [...nodes].sort((left, right) => {
+    const leftOnActivePath = leafPathIds.has(left.entry.id) ? 1 : 0;
+    const rightOnActivePath = leafPathIds.has(right.entry.id) ? 1 : 0;
+
+    if (leftOnActivePath !== rightOnActivePath) {
+      return rightOnActivePath - leftOnActivePath;
+    }
+
+    return compareMirrorTreeNodes(left, right);
+  });
+}
+
+function collectMirrorTreeEntries(
+  tree: MirrorSessionTreeNode[],
+): Map<string, MirrorSessionTreeEntry> {
+  const entries = new Map<string, MirrorSessionTreeEntry>();
+  const stack = [...tree];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    entries.set(node.entry.id, node.entry);
+    for (const child of node.children) stack.push(child);
+  }
+  return entries;
+}
+
+function collectMirrorLeafPathIds(
+  entries: Map<string, MirrorSessionTreeEntry>,
+  leafId: string | null,
+): Set<string> {
+  const pathIds = new Set<string>();
+  let currentId = leafId;
+
+  while (currentId) {
+    if (pathIds.has(currentId)) break;
+    pathIds.add(currentId);
+    currentId = entries.get(currentId)?.parentId ?? null;
+  }
+
+  return pathIds;
+}
+
+function previewTreeText(rawText: string): string | undefined {
+  const source = rawText.slice(0, MIRROR_TREE_MAX_PREVIEW_SOURCE_CHARS);
+  const normalized = source.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) return undefined;
+  if (normalized.length <= MIRROR_TREE_MAX_TEXT_PREVIEW_CHARS)
+    return normalized;
+  return `${normalized.slice(0, MIRROR_TREE_MAX_TEXT_PREVIEW_CHARS - 1)}…`;
+}
+
+function extractMirrorDisplayTextFromContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content.slice(0, MIRROR_TREE_MAX_PREVIEW_SOURCE_CHARS);
+  }
+
+  if (!Array.isArray(content)) return "";
+
+  let text = "";
+  for (const block of content) {
+    const record = treeRecord(block);
+    if (
+      (record.type === "text" || record.type === "output_text") &&
+      typeof record.text === "string"
+    ) {
+      text += `${record.text} `;
+      if (text.length >= MIRROR_TREE_MAX_PREVIEW_SOURCE_CHARS) {
+        return text.slice(0, MIRROR_TREE_MAX_PREVIEW_SOURCE_CHARS);
+      }
+    }
+  }
+  return text;
+}
+
+function hasMirrorDisplayTextContent(content: unknown): boolean {
+  return (
+    previewTreeText(extractMirrorDisplayTextFromContent(content)) !== undefined
+  );
+}
+
+function shortenMirrorTreePath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (home && path.startsWith(home)) return `~${path.slice(home.length)}`;
+  return path;
+}
+
+function compactTreePreviewValue(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return value.slice(0, 120);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (depth >= 2) return "[truncated]";
+  if (Array.isArray(value))
+    return value
+      .slice(0, 3)
+      .map((item) => compactTreePreviewValue(item, depth + 1));
+  if (typeof value !== "object") return String(value);
+
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value).slice(0, 5)) {
+    out[key] = compactTreePreviewValue(item, depth + 1);
+  }
+  return out;
+}
+
+function formatMirrorTreeToolCall(
+  name: string,
+  args: Record<string, unknown>,
+): string {
+  switch (name) {
+    case "read": {
+      const path = shortenMirrorTreePath(String(args.path || ""));
+      const offset = args.offset;
+      const limit = args.limit;
+      let display = path;
+      if (offset !== undefined || limit !== undefined) {
+        const start = typeof offset === "number" ? offset : 1;
+        const limitNumber = typeof limit === "number" ? limit : undefined;
+        const end = limitNumber !== undefined ? start + limitNumber - 1 : "";
+        display += `:${start}${end ? `-${end}` : ""}`;
+      }
+      return `[read: ${display}]`;
+    }
+
+    case "write":
+      return `[write: ${shortenMirrorTreePath(String(args.path || ""))}]`;
+
+    case "edit":
+      return `[edit: ${shortenMirrorTreePath(String(args.path || ""))}]`;
+
+    case "bash": {
+      const rawCommand = String(args.command || "");
+      const command = rawCommand
+        .replace(/[\n\t]/g, " ")
+        .trim()
+        .slice(0, 50);
+      return `[bash: ${command}${rawCommand.length > 50 ? "..." : ""}]`;
+    }
+
+    case "grep":
+      return `[grep: /${String(args.pattern || "")}/ in ${shortenMirrorTreePath(String(args.path || "."))}]`;
+
+    case "find":
+      return `[find: ${String(args.pattern || "")} in ${shortenMirrorTreePath(String(args.path || "."))}]`;
+
+    case "ls":
+      return `[ls: ${shortenMirrorTreePath(String(args.path || "."))}]`;
+
+    default: {
+      const argsJson = JSON.stringify(compactTreePreviewValue(args));
+      const preview = argsJson.slice(0, 40);
+      return `[${name}: ${preview}${argsJson.length > 40 ? "..." : ""}]`;
+    }
+  }
+}
+
+function collectMirrorTreeToolCalls(
+  tree: MirrorSessionTreeNode[],
+): Map<string, MirrorTreeToolCallSnapshot> {
+  const toolCalls = new Map<string, MirrorTreeToolCallSnapshot>();
+  const stack = [...tree];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const entry = current.entry;
+    if (entry.type === "message") {
+      const message = treeRecord(entry.message);
+      if (message.role === "assistant" && Array.isArray(message.content)) {
+        for (const block of message.content) {
+          const record = treeRecord(block);
+          if (
+            record.type === "toolCall" &&
+            typeof record.id === "string" &&
+            typeof record.name === "string"
+          ) {
+            toolCalls.set(record.id, {
+              name: record.name,
+              arguments: treeRecord(record.arguments),
+            });
+          }
+        }
+      }
+    }
+
+    for (const child of current.children) stack.push(child);
+  }
+
+  return toolCalls;
+}
+
+function isMirrorTreeEntryEligible(
+  entry: MirrorSessionTreeEntry,
+  leafId: string | null,
+): boolean {
+  if (entry.type !== "message" || entry.id === leafId) return true;
+
+  const message = treeRecord(entry.message);
+  if (message.role !== "assistant") return true;
+
+  const hasText = hasMirrorDisplayTextContent(message.content);
+  const stopReason =
+    typeof message.stopReason === "string" ? message.stopReason : undefined;
+  const isErrorOrAborted =
+    stopReason !== undefined &&
+    stopReason !== "stop" &&
+    stopReason !== "toolUse";
+
+  return hasText || isErrorOrAborted;
+}
+
+function isMirrorTreeEntryDefaultVisible(
+  entry: MirrorSessionTreeEntry,
+  leafId: string | null,
+): boolean {
+  return (
+    isMirrorTreeEntryEligible(entry, leafId) &&
+    !MIRROR_TREE_DEFAULT_HIDDEN_ENTRY_TYPES.has(entry.type)
+  );
+}
+
+function mirrorTreeNodeMatchesFilter(
+  node: MirrorSessionTreeNode,
+  filterMode: MirrorSessionTreeFilterMode,
+  leafId: string | null,
+): boolean {
+  if (!isMirrorTreeEntryEligible(node.entry, leafId)) return false;
+
+  const entry = node.entry;
+  const isSettingsEntry = MIRROR_TREE_DEFAULT_HIDDEN_ENTRY_TYPES.has(
+    entry.type,
+  );
+  switch (filterMode) {
+    case "user-only":
+      return (
+        entry.type === "message" && treeRecord(entry.message).role === "user"
+      );
+    case "no-tools":
+      return (
+        !isSettingsEntry &&
+        !(
+          entry.type === "message" &&
+          treeRecord(entry.message).role === "toolResult"
+        )
+      );
+    case "labeled-only":
+      return node.label !== undefined;
+    case "all":
+      return true;
+    case "default":
+    default:
+      return !isSettingsEntry;
+  }
+}
+
+function extractMirrorTreeNodeSnapshot(
+  entry: MirrorSessionTreeEntry,
+  toolCalls: Map<string, MirrorTreeToolCallSnapshot>,
+  leafId: string | null,
+): { defaultVisible: boolean; role?: string; textPreview?: string } {
+  const defaultVisible = isMirrorTreeEntryDefaultVisible(entry, leafId);
+
+  switch (entry.type) {
+    case "message": {
+      const message = treeRecord(entry.message);
+      const role = typeof message.role === "string" ? message.role : undefined;
+      let textPreview: string | undefined;
+
+      switch (role) {
+        case "toolResult": {
+          const toolCallId =
+            typeof message.toolCallId === "string"
+              ? message.toolCallId
+              : undefined;
+          const toolCall = toolCallId ? toolCalls.get(toolCallId) : undefined;
+          textPreview = toolCall
+            ? formatMirrorTreeToolCall(toolCall.name, toolCall.arguments)
+            : typeof message.toolName === "string"
+              ? `[${message.toolName}]`
+              : undefined;
+          break;
+        }
+        case "bashExecution":
+          textPreview = previewTreeText(String(message.command || ""));
+          break;
+        default:
+          textPreview = previewTreeText(
+            extractMirrorDisplayTextFromContent(message.content),
+          );
+          break;
+      }
+
+      return {
+        defaultVisible,
+        ...(role ? { role } : {}),
+        ...(textPreview ? { textPreview } : {}),
+      };
+    }
+
+    case "compaction":
+      return {
+        defaultVisible,
+        textPreview:
+          typeof entry.tokensBefore === "number"
+            ? `${Math.round(entry.tokensBefore / 1000)}k tokens`
+            : undefined,
+      };
+
+    case "branch_summary": {
+      const textPreview = previewTreeText(String(entry.summary || ""));
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+
+    case "custom_message": {
+      const rawContent =
+        typeof entry.content === "string"
+          ? entry.content
+          : extractMirrorDisplayTextFromContent(entry.content);
+      const textPreview = previewTreeText(rawContent);
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+
+    case "session_info": {
+      const textPreview = previewTreeText(String(entry.name || ""));
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+
+    case "model_change": {
+      const textPreview = previewTreeText(String(entry.modelId || ""));
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+
+    case "thinking_level_change": {
+      const textPreview = previewTreeText(String(entry.thinkingLevel || ""));
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+
+    case "label": {
+      const textPreview = previewTreeText(String(entry.label || ""));
+      return { defaultVisible, ...(textPreview ? { textPreview } : {}) };
+    }
+
+    default:
+      return { defaultVisible };
+  }
+}
+
+export function sessionTreeWire(
+  ctx: MirrorSessionTreeContext,
+  filterModeValue: unknown = "default",
+): { leafId: string | null; nodes: MirrorSessionTreeNodeSnapshot[] } {
+  const filterMode = readMirrorSessionTreeFilterMode(filterModeValue);
+  const tree = ctx.sessionManager.getTree();
+  const leafId = ctx.sessionManager.getLeafId();
+  const entries = collectMirrorTreeEntries(tree);
+  const leafPathIds = collectMirrorLeafPathIds(entries, leafId);
+  const toolCalls = collectMirrorTreeToolCalls(tree);
+  const nodes: MirrorSessionTreeNodeSnapshot[] = [];
+  const stack = sortMirrorTreeNodes(tree, leafPathIds)
+    .reverse()
+    .map((node) => ({ node, depth: 0 }));
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const extracted = extractMirrorTreeNodeSnapshot(
+      current.node.entry,
+      toolCalls,
+      leafId,
+    );
+    nodes.push({
+      id: current.node.entry.id,
+      parentId: current.node.entry.parentId ?? null,
+      type: current.node.entry.type,
+      timestamp: current.node.entry.timestamp ?? "",
+      depth: current.depth,
+      isLeafPath: leafPathIds.has(current.node.entry.id),
+      matchesFilter: mirrorTreeNodeMatchesFilter(
+        current.node,
+        filterMode,
+        leafId,
+      ),
+      ...extracted,
+      ...(current.node.label ? { label: current.node.label } : {}),
+    });
+
+    const children = sortMirrorTreeNodes(current.node.children, leafPathIds);
+    for (let i = children.length - 1; i >= 0; i -= 1) {
+      const child = children[i];
+      if (child) stack.push({ node: child, depth: current.depth + 1 });
+    }
+  }
+
+  return { leafId, nodes };
+}
+
 function queueId(): string {
   return `mirror_q_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -1563,6 +2084,7 @@ export async function terminalAskFallback(
 
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 const OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
+const MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES = 14 * 1024 * 1024;
 
 export default async function oppiPiMirror(pi: ExtensionAPI) {
   let latestCtx: ExtensionContext | null = null;
@@ -1748,10 +2270,71 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     }
   }
 
+  function serializeBridgePayload(
+    payload: unknown,
+  ): { json: string; bytes: number } | null {
+    try {
+      const json = JSON.stringify(payload);
+      return { json, bytes: Buffer.byteLength(json, "utf8") };
+    } catch (error) {
+      writeMirrorLog("warn", "websocket_payload_serialize_failed", { error });
+      return null;
+    }
+  }
+
+  function oversizedCommandResultPayload(
+    payload: Record<string, unknown>,
+    bytes: number,
+  ): Record<string, unknown> | null {
+    if (payload.type !== "command_result" || typeof payload.id !== "string") {
+      return null;
+    }
+
+    return {
+      type: "command_result",
+      id: payload.id,
+      success: false,
+      error: `Oppi Mirror response too large (${bytes} bytes > ${MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES} bytes); try a narrower request.`,
+      ...(isRecord(payload.state) ? { state: payload.state } : {}),
+    };
+  }
+
   function send(payload: unknown) {
     if (ws?.readyState !== WebSocket.OPEN) return;
     try {
-      ws.send(JSON.stringify(payload));
+      let serialized = serializeBridgePayload(payload);
+      if (!serialized) return;
+
+      if (serialized.bytes > MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES) {
+        const payloadRecord = isRecord(payload) ? payload : {};
+        const replacement = oversizedCommandResultPayload(
+          payloadRecord,
+          serialized.bytes,
+        );
+        writeMirrorLog("warn", "websocket_payload_too_large", {
+          payloadType:
+            typeof payloadRecord.type === "string"
+              ? payloadRecord.type
+              : undefined,
+          bytes: serialized.bytes,
+          maxBytes: MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES,
+          replacedWithError: replacement !== null,
+        });
+        if (!replacement) {
+          try {
+            ws.close(1009, "Oppi Mirror payload too large");
+          } catch (error) {
+            writeMirrorLog("warn", "websocket_oversized_close_failed", {
+              error,
+            });
+          }
+          return;
+        }
+        serialized = serializeBridgePayload(replacement);
+        if (!serialized) return;
+      }
+
+      ws.send(serialized.json);
     } catch (error) {
       writeMirrorLog("warn", "websocket_send_failed", { error });
     }
@@ -2829,6 +3412,24 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     }
   }
 
+  function commandDataLogDetails(
+    type: OppiMirrorBridgeCommand,
+    data: unknown,
+  ): Record<string, unknown> {
+    if (
+      type !== "get_session_tree" ||
+      !isRecord(data) ||
+      !Array.isArray(data.nodes)
+    ) {
+      return {};
+    }
+
+    return {
+      responseKind: "session_tree_snapshot",
+      responseNodeCount: data.nodes.length,
+    };
+  }
+
   async function handleCommand(
     ctx: ExtensionContext,
     id: string,
@@ -2850,6 +3451,14 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         throw new Error(`Unsupported Oppi Mirror command: ${String(type)}`);
       }
       const data = await runCommand(ctx, type, command);
+      const responsePayload = {
+        type: "command_result",
+        id,
+        success: true,
+        data,
+        state: stateSnapshot(pi, ctx),
+      };
+      const responseBytes = serializeBridgePayload(responsePayload)?.bytes;
       writeMirrorLog("info", "command_completed", {
         runtime: "pi-tui",
         bridgeId,
@@ -2857,17 +3466,16 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         workspaceId: connectedWorkspaceId,
         commandId: id,
         ...details,
+        ...commandDataLogDetails(type, data),
         outcome: "success",
         durationMs: Date.now() - startedAt,
+        responseBytes,
+        maxPayloadBytes: MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES,
       });
-      send({
-        type: "command_result",
-        id,
-        success: true,
-        data,
-        state: stateSnapshot(pi, ctx),
-      });
+      send(responsePayload);
     } catch (error) {
+      const responsePayload = commandError("command_result", id, error);
+      const responseBytes = serializeBridgePayload(responsePayload)?.bytes;
       writeMirrorLog("warn", "command_completed", {
         runtime: "pi-tui",
         bridgeId,
@@ -2877,9 +3485,11 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         ...details,
         outcome: "error",
         durationMs: Date.now() - startedAt,
+        responseBytes,
+        maxPayloadBytes: MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES,
         error,
       });
-      send(commandError("command_result", id, error));
+      send(responsePayload);
     }
   }
 
@@ -3017,10 +3627,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       }
 
       case "get_session_tree":
-        return {
-          leafId: ctx.sessionManager.getLeafId(),
-          tree: ctx.sessionManager.getTree(),
-        };
+        return sessionTreeWire(ctx, command.filterMode);
 
       case "navigate_tree": {
         const targetId = String(command.targetId ?? "").trim();
