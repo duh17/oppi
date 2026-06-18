@@ -88,6 +88,7 @@ const OPPI_RUNTIME_TAKEOVER_STOP_TIMEOUT_MS = 15_000;
 const OPPI_RUNTIME_TAKEOVER_STOP_POLL_MS = 50;
 const PI_TUI_STOP_TIMEOUT_MS = 15_000;
 const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
+const TASK_RECORD_REJECTION_LOG_INTERVAL_MS = 60_000;
 
 class BridgeRegistrationError extends Error {
   constructor(
@@ -436,6 +437,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
   private readonly bridgeCommandDriver: MirrorBridgeCommandDriver;
   private readonly pendingStopWaiters = new Map<string, Set<PendingBridgeStopWaiter>>();
+  private taskRecordRejectionLogState:
+    | { key: string; lastLoggedAt: number; suppressedCount: number }
+    | undefined;
   searchIndex: SessionSearchIndex | null = null;
 
   constructor(
@@ -518,6 +522,27 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return session?.runtime === "pi-tui";
   }
 
+  private logTaskRecordRejection(logContext: Record<string, unknown>): void {
+    const key = typeof logContext.error === "string" ? logContext.error : "pi_tui_task_record";
+    const now = Date.now();
+    const previous = this.taskRecordRejectionLogState;
+
+    if (
+      previous?.key === key &&
+      now - previous.lastLoggedAt < TASK_RECORD_REJECTION_LOG_INTERVAL_MS
+    ) {
+      previous.suppressedCount += 1;
+      return;
+    }
+
+    const suppressedCount = previous?.key === key ? previous.suppressedCount : 0;
+    this.taskRecordRejectionLogState = { key, lastLoggedAt: now, suppressedCount: 0 };
+    log.debug("mirror_bridge.message_rejected", {
+      ...logContext,
+      ...(suppressedCount > 0 ? { suppressedCount } : {}),
+    });
+  }
+
   handleBridgeWebSocket(ws: WebSocket): void {
     let connection: BridgeConnection | undefined;
     let registration: Promise<void> | null = null;
@@ -536,7 +561,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         error instanceof BridgeRegistrationError &&
         error.code === "pi_tui_task_record_not_openable"
       ) {
-        log.debug("mirror_bridge.message_rejected", logContext);
+        this.logTaskRecordRejection(logContext);
       } else {
         log.warn("mirror_bridge.message_rejected", logContext);
       }
