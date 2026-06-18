@@ -64,7 +64,27 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         )
     }
 
-    private func launchReviewCommentHarness() {
+    func testFullScreenDiffWrappingAlignsLineHeader() throws {
+        launchReviewCommentHarness(diffWrapping: true)
+
+        XCTAssertEqual(
+            waitForDiagnostic("diag.diffWrap.ready", timeout: 10, matching: { $0 == 1 }),
+            1,
+            "Diff wrapping diagnostics did not report aligned continuation rows"
+        )
+        let fragmentCount = waitForDiagnostic("diag.diffWrap.fragmentCount", timeout: 2, matching: { $0 >= 2 })
+        let headIndent = waitForDiagnostic("diag.diffWrap.headIndentHundredths", timeout: 2, matching: { $0 > 0 })
+        let secondX = waitForDiagnostic("diag.diffWrap.secondXHundredths", timeout: 2, matching: { $0 > 0 })
+        let expectedX = waitForDiagnostic("diag.diffWrap.expectedXHundredths", timeout: 2, matching: { $0 > 0 })
+
+        saveScreenshot(name: "fullscreen-diff-wrapping-line-header-alignment")
+
+        XCTAssertGreaterThanOrEqual(fragmentCount, 2)
+        XCTAssertLessThanOrEqual(abs(headIndent - expectedX), 50)
+        XCTAssertLessThanOrEqual(abs(secondX - expectedX), 100)
+    }
+
+    private func launchReviewCommentHarness(diffWrapping: Bool = false) {
         app = XCUIApplication()
         app.launchArguments.append(contentsOf: [
             "--fullscreen-review-comment-harness",
@@ -72,6 +92,10 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             "YES",
         ])
         app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS"] = "1"
+        if diffWrapping {
+            app.launchArguments.append("--fullscreen-diff-wrapping-harness")
+            app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_DIFF_WRAPPING"] = "1"
+        }
         app.launch()
 
         XCTAssertTrue(
@@ -84,6 +108,43 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         let selectButton = app.buttons["harness.reviewComment.select"]
         XCTAssertTrue(selectButton.waitForExistence(timeout: 5), "Select-code harness control did not appear")
         selectButton.tap()
+    }
+
+    private func waitForDiagnostic(
+        _ id: String,
+        timeout: TimeInterval,
+        matching predicate: (Int) -> Bool
+    ) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        let element = app.descendants(matching: .any)[id]
+        var lastValue: Int?
+
+        while Date() < deadline {
+            if element.waitForExistence(timeout: 0.2), let value = parseDiagnosticValue(element) {
+                lastValue = value
+                if predicate(value) {
+                    return value
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+
+        XCTFail("Diagnostic \(id) did not reach an accepted value; last=\(lastValue.map(String.init) ?? "nil")")
+        return lastValue ?? -1
+    }
+
+    private func parseDiagnosticValue(_ element: XCUIElement) -> Int? {
+        let candidates = [element.value as? String, element.label]
+        for candidate in candidates {
+            guard let raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+                continue
+            }
+            if let value = Int(raw) { return value }
+            if let range = raw.range(of: "-?\\d+", options: .regularExpression) {
+                return Int(String(raw[range]))
+            }
+        }
+        return nil
     }
 
     private func waitForActionBarElement(named title: String, timeout: TimeInterval) -> XCUIElement? {

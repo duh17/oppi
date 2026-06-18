@@ -619,32 +619,56 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(outputView.textContainer.lineBreakMode == .byCharWrapping)
     }
 
-    @Test func diffFullScreenDoesNotSupportWrapText() async throws {
+    @Test func diffFullScreenSupportsWrapTextAndAlignsLineHeader() async throws {
         FullScreenReaderPreferencesStore.shared.setPreferences(
             FullScreenReaderPreferences(wrapsText: true),
             for: .diff
         )
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
-        let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 24) + "\""
-        let controller = makeController(
-            content: .diff(
-                oldText: "",
-                newText: longLine,
-                filePath: "LongLine.swift",
-                precomputedLines: [DiffLine(kind: .added, text: longLine)]
-            )
+        let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
+        let body = NativeFullScreenDiffBody(
+            oldText: "",
+            newText: longLine,
+            filePath: "LongLine.swift",
+            precomputedLines: [DiffLine(kind: .added, text: longLine, oldLineNumber: nil, newLineNumber: 220)],
+            palette: ThemeID.dark.palette,
+            readerPreferences: FullScreenReaderPreferences(wrapsText: true),
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
         )
-        let diffView = try #require(timelineAllTextViews(in: controller.view).first {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 220, height: 420))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let diffView = try #require(timelineAllTextViews(in: body).first {
             timelineRenderedText(of: $0).contains("wrap-me-")
         })
 
-        #expect(!FullScreenReaderContentFamily.diff.supportsWrapping)
-        #expect(FullScreenReaderPreferencesStore.shared.preferences(for: .diff).wrapsText == false)
-        let stayedUnwrapped = await waitForMainActorCondition {
-            diffView.textContainer.lineBreakMode == .byClipping
-                && firstParagraphLineBreakMode(in: diffView) == .byClipping
+        #expect(FullScreenReaderContentFamily.diff.supportsWrapping)
+        #expect(FullScreenReaderPreferencesStore.shared.preferences(for: .diff).wrapsText)
+        let wrappedAndAligned = await waitForMainActorCondition {
+            host.layoutIfNeeded()
+            guard let diagnostics = body.diffWrappingDiagnosticsForTesting(),
+                  let secondFragmentX = diagnostics.secondFragmentX else { return false }
+            return diffView.textContainer.lineBreakMode == .byCharWrapping
+                && diagnostics.textContainerLineBreakMode == .byCharWrapping
+                && diagnostics.paragraphLineBreakMode == .byCharWrapping
+                && diagnostics.fragmentCount >= 2
+                && abs(diagnostics.paragraphHeadIndent - diagnostics.expectedCodeColumnX) <= 0.5
+                && abs(secondFragmentX - diagnostics.expectedCodeColumnX) <= 1.0
         }
-        #expect(stayedUnwrapped)
+        #expect(wrappedAndAligned)
+
+        let diagnostics = try #require(body.diffWrappingDiagnosticsForTesting())
+        #expect(diagnostics.firstFragmentX <= 0.5)
+        #expect((diagnostics.secondFragmentX ?? 0) > diagnostics.firstFragmentX + 20)
     }
 
     @Test func viewingOptionsUsesBottomRightReaderButtonAndContinuousTextScale() throws {
@@ -870,22 +894,6 @@ struct FullScreenReviewCommentSelectionTests {
         let button = UIButton(type: .system)
         button.addAction(commentAction, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
-    }
-
-    private func firstParagraphLineBreakMode(in textView: UITextView) -> NSLineBreakMode? {
-        let attributedText = textView.attributedText ?? NSAttributedString()
-        guard attributedText.length > 0 else { return nil }
-        var result: NSLineBreakMode?
-        attributedText.enumerateAttribute(
-            .paragraphStyle,
-            in: NSRange(location: 0, length: attributedText.length)
-        ) { value, _, stop in
-            if let style = value as? NSParagraphStyle {
-                result = style.lineBreakMode
-                stop.pointee = true
-            }
-        }
-        return result
     }
 
     private func hasVisibleView(identifier: String, in root: UIView) -> Bool {

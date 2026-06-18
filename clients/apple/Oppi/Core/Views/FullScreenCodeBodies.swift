@@ -2,7 +2,6 @@ import SwiftUI
 import UIKit
 import WebKit
 
-
 // MARK: - Code Body
 
 private final class CodeLineNumberGutterView: UIView {
@@ -693,8 +692,6 @@ final class NativeFullScreenDiffBody: UIView {
         setNeedsLayout()
     }
 
-
-
     private func applyTextSize() {
         diffTextView.font = codeFont
         if let attributedText = builtDiffText ?? diffTextView.attributedText,
@@ -733,13 +730,69 @@ final class NativeFullScreenDiffBody: UIView {
                 range: range
             )
         }
-        attributedText.enumerateAttribute(.paragraphStyle, in: fullRange) { value, range, _ in
-            let style = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
-                ?? NSMutableParagraphStyle()
-            style.lineBreakMode = lineBreakMode
-            mutable.addAttribute(.paragraphStyle, value: style, range: range)
-        }
+        applyDiffParagraphStyles(to: mutable, lineBreakMode: lineBreakMode)
         return mutable
+    }
+
+    private func applyDiffParagraphStyles(
+        to attributedText: NSMutableAttributedString,
+        lineBreakMode: NSLineBreakMode
+    ) {
+        let source = attributedText.string as NSString
+        var location = 0
+        while location < source.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            source.getLineStart(
+                nil,
+                end: &lineEnd,
+                contentsEnd: &contentsEnd,
+                for: NSRange(location: location, length: 0)
+            )
+
+            let paragraphRange = NSRange(location: location, length: max(0, lineEnd - location))
+            guard paragraphRange.length > 0 else { break }
+
+            let style = (attributedText.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)?
+                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.lineBreakMode = lineBreakMode
+            if readerPreferences.wrapsText,
+               let indent = Self.diffCodeColumnIndent(in: attributedText, lineStart: location, contentsEnd: contentsEnd) {
+                style.firstLineHeadIndent = 0
+                style.headIndent = indent
+            } else {
+                style.firstLineHeadIndent = 0
+                style.headIndent = 0
+            }
+            attributedText.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
+
+            guard lineEnd > location else { break }
+            location = lineEnd
+        }
+    }
+
+    private static func diffCodeColumnIndent(
+        in attributedText: NSAttributedString,
+        lineStart: Int,
+        contentsEnd: Int
+    ) -> CGFloat? {
+        guard contentsEnd > lineStart else { return nil }
+        let contentsRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+        var codeStart: Int?
+        attributedText.enumerateAttribute(diffCodeColumnAttributeKey, in: contentsRange) { value, range, stop in
+            guard value != nil else { return }
+            codeStart = range.location
+            stop.pointee = true
+        }
+        guard let codeStart, codeStart > lineStart else { return nil }
+
+        let prefixRange = NSRange(location: lineStart, length: codeStart - lineStart)
+        let measured = attributedText.attributedSubstring(from: prefixRange).boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        )
+        return ceil(measured.width)
     }
 
     private func measuredWidth(of attributedText: NSAttributedString) -> CGFloat {
@@ -783,6 +836,102 @@ extension NativeFullScreenDiffBody: UITextViewDelegate {
         )
     }
 }
+
+#if DEBUG
+extension NativeFullScreenDiffBody {
+    struct DiffWrappingDiagnostics: Equatable {
+        let wrapsText: Bool
+        let textContainerLineBreakMode: NSLineBreakMode
+        let paragraphLineBreakMode: NSLineBreakMode?
+        let paragraphHeadIndent: CGFloat
+        let expectedCodeColumnX: CGFloat
+        let fragmentCount: Int
+        let firstFragmentX: CGFloat
+        let secondFragmentX: CGFloat?
+    }
+
+    func diffWrappingDiagnosticsForTesting() -> DiffWrappingDiagnostics? {
+        layoutIfNeeded()
+        diffTextView.layoutIfNeeded()
+        diffTextView.layoutManager.ensureLayout(for: diffTextView.textContainer)
+
+        let attributedText = diffTextView.attributedText ?? NSAttributedString()
+        let source = attributedText.string as NSString
+        var fallback: DiffWrappingDiagnostics?
+        var location = 0
+        while location < source.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            source.getLineStart(
+                nil,
+                end: &lineEnd,
+                contentsEnd: &contentsEnd,
+                for: NSRange(location: location, length: 0)
+            )
+            if let diagnostics = diffWrappingDiagnosticsForLine(
+                attributedText: attributedText,
+                lineStart: location,
+                contentsEnd: contentsEnd
+            ) {
+                if diagnostics.fragmentCount >= 2 {
+                    return diagnostics
+                }
+                if fallback == nil {
+                    fallback = diagnostics
+                }
+            }
+            guard lineEnd > location else { break }
+            location = lineEnd
+        }
+        return fallback
+    }
+
+    private func diffWrappingDiagnosticsForLine(
+        attributedText: NSAttributedString,
+        lineStart: Int,
+        contentsEnd: Int
+    ) -> DiffWrappingDiagnostics? {
+        guard contentsEnd > lineStart,
+              let expectedIndent = Self.diffCodeColumnIndent(
+                in: attributedText,
+                lineStart: lineStart,
+                contentsEnd: contentsEnd
+              ) else { return nil }
+
+        let contentsRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+        let glyphRange = diffTextView.layoutManager.glyphRange(
+            forCharacterRange: contentsRange,
+            actualCharacterRange: nil
+        )
+        guard glyphRange.length > 0 else { return nil }
+
+        var fragmentXs: [CGFloat] = []
+        diffTextView.layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, lineGlyphRange, _ in
+            let intersection = NSIntersectionRange(glyphRange, lineGlyphRange)
+            guard intersection.length > 0 else { return }
+            fragmentXs.append(usedRect.minX)
+        }
+        guard let firstFragmentX = fragmentXs.first else { return nil }
+
+        let paragraphStyle = attributedText.attribute(
+            .paragraphStyle,
+            at: lineStart,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+
+        return DiffWrappingDiagnostics(
+            wrapsText: readerPreferences.wrapsText,
+            textContainerLineBreakMode: diffTextView.textContainer.lineBreakMode,
+            paragraphLineBreakMode: paragraphStyle?.lineBreakMode,
+            paragraphHeadIndent: paragraphStyle?.headIndent ?? 0,
+            expectedCodeColumnX: expectedIndent,
+            fragmentCount: fragmentXs.count,
+            firstFragmentX: firstFragmentX,
+            secondFragmentX: fragmentXs.dropFirst().first
+        )
+    }
+}
+#endif
 
 // MARK: - Terminal Body
 
@@ -1085,8 +1234,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         }
         return max(widest, current)
     }
-
-
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleWillBeginDragging()
@@ -1863,8 +2010,6 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleDidEndDecelerating(isStreaming: isStreaming)
     }
-
-
 
     private func applyTextSize() {
         textView.font = codeFont
