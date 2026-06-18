@@ -37,7 +37,12 @@ interface PendingExtensionUIResponse {
   cancel: () => void;
 }
 
-interface ActiveWidgetComponent {
+interface ExtensionUISourceScope {
+  extensionScopeId?: string;
+  extensionDisplayName?: string;
+}
+
+interface ActiveWidgetComponent extends ExtensionUISourceScope {
   component: ExtensionUINativeRenderableComponent;
   placement?: ExtensionUIWidgetPlacement;
 }
@@ -65,6 +70,72 @@ const EXTENSION_AUDIO_MIME_TYPES = new Set<ExtensionAudioStreamEvent["mimeType"]
 const CUSTOM_UI_SNAPSHOT_WIDTH = 88;
 const CUSTOM_UI_SNAPSHOT_ROWS = 40;
 const CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES = 8;
+
+function titleCaseIdentifier(value: string): string {
+  return value
+    .replace(/^@[^/]+\//, "")
+    .replace(/^pi[-_]/, "")
+    .split(/[\s._/-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope | undefined {
+  const decodedPath = decodeURIComponent(rawPath.replace(/^file:\/\//, ""));
+  const nodeModulesMarker = "/node_modules/";
+  const nodeModulesIndex = decodedPath.lastIndexOf(nodeModulesMarker);
+  if (nodeModulesIndex >= 0) {
+    const rest = decodedPath.slice(nodeModulesIndex + nodeModulesMarker.length);
+    const parts = rest.split("/").filter(Boolean);
+    const packageName = parts[0]?.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+    if (packageName) {
+      return {
+        extensionScopeId: `npm:${packageName}`,
+        extensionDisplayName: titleCaseIdentifier(packageName),
+      };
+    }
+  }
+
+  const repoExtensionMarker = "/pi-extensions/";
+  const repoExtensionIndex = decodedPath.indexOf(repoExtensionMarker);
+  if (repoExtensionIndex >= 0) {
+    const rest = decodedPath.slice(repoExtensionIndex + repoExtensionMarker.length);
+    const directoryName = rest.split("/").filter(Boolean)[0];
+    if (directoryName) {
+      return {
+        extensionScopeId: `repo:${directoryName}`,
+        extensionDisplayName: titleCaseIdentifier(directoryName),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function detectExtensionUISourceScope(): ExtensionUISourceScope {
+  const stack = new Error().stack ?? "";
+  for (const line of stack.split("\n").slice(1)) {
+    if (
+      line.includes("sdk-ui-bridge") ||
+      line.includes("node:internal") ||
+      line.includes("internal/process")
+    ) {
+      continue;
+    }
+
+    const match = line.match(/(?:\(|\s)((?:file:\/\/)?\/[^():]+?)(?::\d+:\d+)?\)?$/);
+    if (!match) {
+      continue;
+    }
+
+    const scope = extensionScopeFromPath(match[1]);
+    if (scope) {
+      return scope;
+    }
+  }
+  return {};
+}
 
 function validateExtensionAudioStreamEvent(
   event: ExtensionAudioStreamInput,
@@ -187,6 +258,8 @@ function createCustomUISnapshotTheme(): ExtensionUIContext["theme"] {
 
 export class SdkUiBridge {
   private readonly pendingResponses = new Map<string, PendingExtensionUIResponse>();
+  // Match Pi TUI: widget keys are a global namespace. Scope metadata only helps
+  // Oppi group status/widget surfaces for display; it does not create ownership.
   private readonly activeWidgets = new Map<string, ActiveWidgetComponent>();
   private readonly pendingWidgetRenders = new Set<string>();
   private toolsExpanded = false;
@@ -285,6 +358,7 @@ export class SdkUiBridge {
 
       setWidget: (key, content, options) => {
         this.disposeWidget(key);
+        const sourceScope = detectExtensionUISourceScope();
 
         if (content === undefined || Array.isArray(content)) {
           this.emitExtensionUIRequest({
@@ -293,6 +367,7 @@ export class SdkUiBridge {
             widgetKey: key,
             widgetLines: content,
             widgetPlacement: options?.placement,
+            ...sourceScope,
           });
           return;
         }
@@ -302,7 +377,7 @@ export class SdkUiBridge {
             createCustomUISnapshotTui(() => this.scheduleWidgetSnapshot(key)) as never,
             createCustomUISnapshotTheme() as never,
           ) as ExtensionUINativeRenderableComponent;
-          this.activeWidgets.set(key, { component, placement: options?.placement });
+          this.activeWidgets.set(key, { component, placement: options?.placement, ...sourceScope });
           this.emitWidgetSnapshot(key);
         } catch (error) {
           this.disposeWidget(key);
@@ -312,6 +387,7 @@ export class SdkUiBridge {
             widgetKey: key,
             widgetLines: undefined,
             widgetPlacement: options?.placement,
+            ...sourceScope,
           });
           this.emitExtensionUIRequest({
             id: randomUUID(),
@@ -495,12 +571,16 @@ export class SdkUiBridge {
       widgetLines: renderWidgetSnapshotLines(active.component),
       widgetPlacement: active.placement,
       nativeSurface,
+      extensionScopeId: active.extensionScopeId,
+      extensionDisplayName: active.extensionDisplayName,
     });
   }
 
   private emitExtensionUIRequest(request: Omit<ExtensionUIRequestEvent, "type">): void {
+    const sourceScope = request.extensionScopeId ? {} : detectExtensionUISourceScope();
     this.emitEvent({
       type: "extension_ui_request",
+      ...sourceScope,
       ...request,
     });
   }

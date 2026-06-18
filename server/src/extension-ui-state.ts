@@ -208,6 +208,8 @@ function buildPersistentExtensionUIClearRequest(
             id: req.id,
             method: "setStatus",
             statusKey: req.statusKey,
+            extensionScopeId: req.extensionScopeId,
+            extensionDisplayName: req.extensionDisplayName,
           }
         : undefined;
     case "setWidget":
@@ -217,6 +219,8 @@ function buildPersistentExtensionUIClearRequest(
             id: req.id,
             method: "setWidget",
             widgetKey: req.widgetKey,
+            extensionScopeId: req.extensionScopeId,
+            extensionDisplayName: req.extensionDisplayName,
           }
         : undefined;
     case "setTitle":

@@ -803,8 +803,8 @@ enum ExtensionSurfacePanelEntry: Equatable, Identifiable {
 
     var id: String {
         switch self {
-        case .native(let nativeSurface): return "native:\(nativeSurface.key)"
-        case .widget(let widget): return "widget:\(widget.key)"
+        case .native(let nativeSurface): return "native:\(nativeSurface.identityKey)"
+        case .widget(let widget): return "widget:\(widget.identityKey)"
         }
     }
 
@@ -838,28 +838,99 @@ extension ExtensionSurfaceState {
         }
     }
 
-    private var statusAttachmentKeys: Set<String> {
-        let widgetKeys = widgets.values
-            .filter { !$0.lines.isEmpty }
-            .map(\.key)
-        let nativeSurfaceKeys = nativeSurfaces.values
-            .filter { $0.hasVisibleContent }
-            .map(\.key)
-        return Set(widgetKeys + nativeSurfaceKeys)
+    private func visibleSurfaceCount(in extensionScopeId: String?) -> Int {
+        let widgetCount = widgets.values.filter { widget in
+            widget.extensionScopeId == extensionScopeId && !widget.lines.isEmpty
+        }.count
+        let nativeCount = nativeSurfaces.values.filter { nativeSurface in
+            nativeSurface.extensionScopeId == extensionScopeId && nativeSurface.hasVisibleContent
+        }.count
+        return widgetCount + nativeCount
     }
 
-    func attachedStatusText(for key: String) -> String? {
-        statuses[key].trimmedNonEmpty
+    private func statusCount(in extensionScopeId: String?) -> Int {
+        statuses.values.filter { status in
+            status.extensionScopeId == extensionScopeId
+                && !status.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.count
     }
 
-    func standaloneStatusEntries() -> [(key: String, text: String)] {
+    private func isSameScope(_ lhs: String?, _ rhs: String?) -> Bool {
+        lhs == rhs
+    }
+
+    private func hasVisibleSurface(key: String, extensionScopeId: String?) -> Bool {
+        widgets.values.contains { widget in
+            widget.key == key
+                && isSameScope(widget.extensionScopeId, extensionScopeId)
+                && !widget.lines.isEmpty
+        } || nativeSurfaces.values.contains { nativeSurface in
+            nativeSurface.key == key
+                && isSameScope(nativeSurface.extensionScopeId, extensionScopeId)
+                && nativeSurface.hasVisibleContent
+        }
+    }
+
+    private func directlyAttachedStatus(key: String, extensionScopeId: String?) -> ExtensionStatusState? {
+        guard hasVisibleSurface(key: key, extensionScopeId: extensionScopeId) else { return nil }
+        return statuses.values.first { status in
+            status.key == key
+                && isSameScope(status.extensionScopeId, extensionScopeId)
+                && !status.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private func scopedSingletonStatus(extensionScopeId: String?) -> ExtensionStatusState? {
+        guard extensionScopeId != nil,
+              visibleSurfaceCount(in: extensionScopeId) == 1,
+              statusCount(in: extensionScopeId) == 1 else {
+            return nil
+        }
+        return statuses.values.first { status in
+            status.extensionScopeId == extensionScopeId
+                && !status.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    func attachedStatus(for key: String, extensionScopeId: String?) -> ExtensionStatusState? {
+        directlyAttachedStatus(key: key, extensionScopeId: extensionScopeId)
+            ?? scopedSingletonStatus(extensionScopeId: extensionScopeId)
+    }
+
+    func attachedStatusText(for key: String, extensionScopeId: String?) -> String? {
+        attachedStatus(for: key, extensionScopeId: extensionScopeId)?.text.trimmedNonEmpty
+    }
+
+    func displayTitle(for widget: ExtensionWidgetState) -> String? {
+        guard let attachedStatus = attachedStatus(for: widget.key, extensionScopeId: widget.extensionScopeId),
+              attachedStatus.key != widget.key else {
+            return nil
+        }
+        return widget.extensionDisplayName?.trimmedNonEmpty
+            ?? attachedStatus.extensionDisplayName?.trimmedNonEmpty
+    }
+
+    private func isAttachedStatus(_ status: ExtensionStatusState) -> Bool {
+        if directlyAttachedStatus(key: status.key, extensionScopeId: status.extensionScopeId) != nil {
+            return true
+        }
+        guard status.extensionScopeId != nil else { return false }
+        return visibleSurfaceCount(in: status.extensionScopeId) == 1
+            && statusCount(in: status.extensionScopeId) == 1
+    }
+
+    func standaloneStatusEntries() -> [(id: String, key: String, text: String)] {
         statuses
-            .filter { key, value in
-                !statusAttachmentKeys.contains(key)
-                    && !(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .filter { _, status in
+                !isAttachedStatus(status)
+                    && !status.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
-            .map { (key: $0.key, text: $0.value) }
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+            .map { storageKey, status in (id: storageKey, key: status.key, text: status.text) }
+            .sorted { lhs, rhs in
+                let keyOrder = lhs.key.localizedCaseInsensitiveCompare(rhs.key)
+                if keyOrder != .orderedSame { return keyOrder == .orderedAscending }
+                return lhs.id < rhs.id
+            }
     }
 
     func hasVisibleMetadata(in placement: ExtensionSurfacePlacementGroup) -> Bool {
@@ -875,7 +946,7 @@ extension ExtensionSurfaceState {
 
 private struct ExtensionSurfaceMetadataCard: View {
     let title: String?
-    let statuses: [(key: String, text: String)]
+    let statuses: [(id: String, key: String, text: String)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -886,7 +957,7 @@ private struct ExtensionSurfaceMetadataCard: View {
                     .foregroundStyle(.themeComment)
             }
 
-            ForEach(statuses, id: \.key) { status in
+            ForEach(statuses, id: \.id) { status in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(status.key)
                         .font(.caption2.weight(.semibold))
@@ -907,6 +978,7 @@ private struct ExtensionSurfaceMetadataCard: View {
 private struct ExtensionWidgetCard: View {
     let widget: ExtensionWidgetState
     let statusText: String?
+    let titleOverride: String?
 
     @State private var isExpanded = true
 
@@ -915,6 +987,9 @@ private struct ExtensionWidgetCard: View {
     }
 
     private var titleText: String {
+        if let titleOverride = titleOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !titleOverride.isEmpty {
+            return titleOverride
+        }
         let trimmedKey = widget.key.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedKey.isEmpty ? "Extension widget" : trimmedKey
     }
@@ -1006,7 +1081,7 @@ struct ExtensionSurfacePanel: View {
     let placement: ExtensionSurfacePlacementGroup
     var onOpenURL: ((URL) -> Bool)? = nil
 
-    private var sortedStatuses: [(key: String, text: String)] {
+    private var sortedStatuses: [(id: String, key: String, text: String)] {
         surface.standaloneStatusEntries()
     }
 
@@ -1028,7 +1103,10 @@ struct ExtensionSurfacePanel: View {
                 case .native(let nativeSurface):
                     ExtensionNativeSurfaceView(
                         surface: nativeSurface.surface,
-                        statusText: surface.attachedStatusText(for: nativeSurface.key),
+                        statusText: surface.attachedStatusText(
+                            for: nativeSurface.key,
+                            extensionScopeId: nativeSurface.extensionScopeId
+                        ),
                         onOpenURL: onOpenURL
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1038,7 +1116,11 @@ struct ExtensionSurfacePanel: View {
                 case .widget(let widget):
                     ExtensionWidgetCard(
                         widget: widget,
-                        statusText: surface.attachedStatusText(for: widget.key)
+                        statusText: surface.attachedStatusText(
+                            for: widget.key,
+                            extensionScopeId: widget.extensionScopeId
+                        ),
+                        titleOverride: surface.displayTitle(for: widget)
                     )
                 }
             }
