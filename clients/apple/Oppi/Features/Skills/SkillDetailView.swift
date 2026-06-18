@@ -10,6 +10,12 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Skil
 /// refreshes from server in the background.
 struct SkillDetailView: View {
     let skillName: String
+    let cwd: String?
+
+    init(skillName: String, cwd: String? = nil) {
+        self.skillName = skillName
+        self.cwd = cwd
+    }
 
     @Environment(\.apiClient) private var apiClient
     @State private var detail: SkillDetail?
@@ -92,7 +98,7 @@ struct SkillDetailView: View {
                 .padding(.bottom, 4)
 
             ForEach(files, id: \.self) { file in
-                NavigationLink(value: SkillFileDestination(skillName: skillName, filePath: file)) {
+                NavigationLink(value: SkillFileDestination(skillName: skillName, filePath: file, cwd: cwd)) {
                     HStack(spacing: 6) {
                         Image(systemName: fileIcon(for: file))
                             .font(.caption)
@@ -114,11 +120,14 @@ struct SkillDetailView: View {
     // MARK: - Loading
 
     private func load() async {
-        // Stale-while-revalidate: show cache first
-        let cached = await TimelineCache.shared.loadSkillDetail(skillName)
-        if let cached {
-            detail = cached
-            isLoading = false
+        // Stale-while-revalidate for global skill details. Project-local
+        // details are scoped by cwd and fetched directly to avoid stale matches.
+        if cwd == nil {
+            let cached = await TimelineCache.shared.loadSkillDetail(skillName)
+            if let cached {
+                detail = cached
+                isLoading = false
+            }
         }
 
         // Refresh from server
@@ -131,9 +140,11 @@ struct SkillDetailView: View {
         }
 
         do {
-            let fresh = try await api.getSkillDetail(name: skillName)
+            let fresh = try await api.getSkillDetail(name: skillName, cwd: cwd)
             detail = fresh
-            await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh)
+            if cwd == nil {
+                await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh)
+            }
             logger.debug("Loaded skill detail: \(skillName) (\(fresh.files.count) files)")
         } catch {
             logger.error("Failed to load skill \(skillName): \(error.localizedDescription)")
@@ -159,12 +170,25 @@ struct SkillDetailView: View {
 /// Navigation destination for viewing a skill's detail page.
 struct SkillDetailDestination: Hashable, Identifiable {
     let skillName: String
+    let cwd: String?
 
-    var id: String { skillName }
+    init(skillName: String, cwd: String? = nil) {
+        self.skillName = skillName
+        self.cwd = cwd
+    }
+
+    var id: String { [skillName, cwd ?? ""].joined(separator: "|") }
 }
 
 /// Navigation destination for viewing a file inside a skill.
 struct SkillFileDestination: Hashable {
     let skillName: String
     let filePath: String
+    let cwd: String?
+
+    init(skillName: String, filePath: String, cwd: String? = nil) {
+        self.skillName = skillName
+        self.filePath = filePath
+        self.cwd = cwd
+    }
 }

@@ -56,11 +56,9 @@ func makeTestWorkspace(
     name: String = "Workspace",
     description: String? = nil,
     icon: String? = nil,
-    skills: [String] = [],
     systemPrompt: String? = nil,
     systemPromptMode: WorkspaceSystemPromptMode = .append,
     hostMount: String? = nil,
-    extensions: [String]? = nil,
     gitStatusEnabled: Bool? = nil,
     createdAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
     updatedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
@@ -70,11 +68,9 @@ func makeTestWorkspace(
         name: name,
         description: description,
         icon: icon,
-        skills: skills,
         systemPrompt: systemPrompt,
         systemPromptMode: systemPromptMode,
         hostMount: hostMount,
-        extensions: extensions,
         gitStatusEnabled: gitStatusEnabled,
         createdAt: createdAt,
         updatedAt: updatedAt

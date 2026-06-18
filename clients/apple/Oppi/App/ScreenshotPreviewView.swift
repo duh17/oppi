@@ -92,10 +92,8 @@ private struct SplitFileNavigationRegressionPreview: View {
         name: "oppi-dev",
         description: "Preview workspace",
         icon: "folder",
-        skills: [],
         systemPrompt: nil,
         hostMount: "~/workspace/oppi",
-        extensions: [],
         gitStatusEnabled: true,
         createdAt: Date(),
         updatedAt: Date()
@@ -716,10 +714,8 @@ private struct WorkspaceEditPreview: View {
         name: "oppi-dev",
         description: "iOS app development workspace",
         icon: "hammer",
-        skills: ["agents-md", "audio-transcribe", "autoresearch"],
         systemPrompt: nil,
         hostMount: "~/workspace/oppi",
-        extensions: ["index", "pi-sessions", "simplify", "todos"],
         gitStatusEnabled: true,
         createdAt: Date(),
         updatedAt: Date()

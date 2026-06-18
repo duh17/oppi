@@ -10,6 +10,13 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Skil
 struct SkillFileView: View {
     let skillName: String
     let filePath: String
+    let cwd: String?
+
+    init(skillName: String, filePath: String, cwd: String? = nil) {
+        self.skillName = skillName
+        self.filePath = filePath
+        self.cwd = cwd
+    }
 
     @Environment(\.apiClient) private var apiClient
     @State private var content: String?
@@ -58,7 +65,7 @@ struct SkillFileView: View {
         }
 
         do {
-            content = try await api.getSkillFile(name: skillName, path: filePath)
+            content = try await api.getSkillFile(name: skillName, path: filePath, cwd: cwd)
             logger.debug("Loaded skill file: \(skillName)/\(filePath)")
         } catch {
             logger.error("Failed to load \(skillName)/\(filePath): \(error.localizedDescription)")

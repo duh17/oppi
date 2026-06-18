@@ -107,9 +107,10 @@ private struct WorkspaceRowView: View {
                         .lineLimit(1)
                 }
 
-                Text("\(workspace.skills.count) skills")
+                Text(workspace.hostMount ?? "Server home folder")
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
+                    .lineLimit(1)
             }
         }
         .padding(.vertical, 2)
