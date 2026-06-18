@@ -1229,35 +1229,6 @@ final class NativeExpandedInlineImageView: UIView {
     }
 }
 
-private struct FullScreenMediaPreview: View {
-    let data: Data
-    let mimeType: String
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView([.vertical, .horizontal]) {
-                DataImagePreviewView(
-                    data: data,
-                    mimeType: mimeType,
-                    maxPixelSize: 2_400,
-                    heightMode: .unrestricted,
-                    allowsFullscreenStaticImage: true
-                )
-                .padding()
-            }
-            .background(Color.themeBg)
-            .navigationTitle("Preview")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
 private struct NativeExpandedReadMediaParsed {
     let strippedText: String
     let images: [ImageExtractor.ExtractedImage]

@@ -36,16 +36,13 @@ final class FullScreenImageViewController: UIViewController {
     // MARK: - Setup
 
     private func setupNavigationChrome() {
-        let doneButton = UIBarButtonItem(
-            image: UIImage(systemName: "chevron.down"),
-            style: .plain,
+        navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
+            mode: .modal,
             target: self,
-            action: #selector(dismissTapped)
+            action: #selector(dismissTapped),
+            palette: palette,
+            accessibilityIdentifier: "fullscreen-image.dismiss"
         )
-        doneButton.tintColor = UIColor(palette.cyan)
-        doneButton.accessibilityLabel = String(localized: "Done")
-        doneButton.accessibilityIdentifier = "fullscreen-image.dismiss"
-        navigationItem.leftBarButtonItem = doneButton
 
         // No custom UINavigationBarAppearance — iOS 26 Liquid Glass renders
         // bar items as floating glass pills. See FullScreenViewerChrome.

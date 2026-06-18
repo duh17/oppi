@@ -42,6 +42,15 @@ struct RemoteFileView: View {
         FileType.detect(from: path)
     }
 
+    private var viewerDismissButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+        }
+        .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
+    }
+
     private var isImagePath: Bool {
         if case .image = detectedFileType {
             return true
@@ -119,7 +128,7 @@ struct RemoteFileView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") { dismiss() }
+                            viewerDismissButton
                         }
                     }
                 }
@@ -138,7 +147,7 @@ struct RemoteFileView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") { dismiss() }
+                            viewerDismissButton
                         }
                     }
                 }
@@ -167,7 +176,7 @@ struct RemoteFileView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") { dismiss() }
+                            viewerDismissButton
                         }
                     }
                 }

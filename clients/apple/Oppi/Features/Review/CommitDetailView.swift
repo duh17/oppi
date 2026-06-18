@@ -39,7 +39,12 @@ struct CommitDetailView: View {
                     .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { selectedFile = nil }
+                            Button {
+                                selectedFile = nil
+                            } label: {
+                                Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                            }
+                            .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                         }
                     }
             }

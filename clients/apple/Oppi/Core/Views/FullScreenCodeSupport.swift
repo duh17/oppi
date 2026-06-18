@@ -28,6 +28,61 @@ enum FullScreenViewerChrome {
     // Grep for `FullScreenViewerChrome` to find all adopters.
 }
 
+@MainActor
+enum FullScreenViewerNavigationChrome {
+    enum DismissMode {
+        case modal
+        case embedded
+
+        var systemImageName: String {
+            switch self {
+            case .modal:
+                return "chevron.down"
+            case .embedded:
+                return "chevron.backward"
+            }
+        }
+
+        var accessibilityLabel: String {
+            switch self {
+            case .modal:
+                return String(localized: "Done")
+            case .embedded:
+                return String(localized: "Back")
+            }
+        }
+    }
+
+    static func makeDismissButton(
+        mode: DismissMode,
+        target: AnyObject,
+        action: Selector,
+        palette: ThemePalette,
+        accessibilityIdentifier: String? = nil
+    ) -> UIBarButtonItem {
+        let button = UIBarButtonItem(
+            image: UIImage(systemName: mode.systemImageName),
+            style: .plain,
+            target: target,
+            action: action
+        )
+        button.tintColor = UIColor(palette.cyan)
+        button.accessibilityLabel = mode.accessibilityLabel
+        button.accessibilityIdentifier = accessibilityIdentifier
+        return button
+    }
+
+    static func makeShareButton(
+        for content: FileShareService.ShareableContent,
+        palette: ThemePalette
+    ) -> UIBarButtonItem {
+        FileSharePresenter.makeShareBarButtonItem(
+            for: content,
+            tintColor: UIColor(palette.fgDim)
+        )
+    }
+}
+
 enum CodeWrapControl {
     static let symbolName = "text.alignleft"
 }
