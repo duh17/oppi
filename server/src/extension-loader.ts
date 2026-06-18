@@ -45,6 +45,10 @@ export interface HostExtensionInfo {
   path: string;
   /** Entry kind for loading behavior. */
   kind: "file" | "directory";
+  /** Whether Pi will load this resource for the cwd/settings scope. */
+  enabled?: boolean;
+  /** Pi resource metadata used by settings editors. */
+  metadata?: ExtensionResourceMetadata;
 }
 
 export interface ListHostExtensionsOptions {
@@ -248,7 +252,7 @@ export async function listConfiguredHostExtensions(
     // server contexts, while native pi still loads them. Workspace editing needs
     // to show those immediately so they can be enabled for the next session.
     return mergeHostExtensions(
-      listFromResolvedResources(resolved.extensions),
+      listFromResolvedResources(resolved.extensions, { includeDisabled: false }),
       listHostExtensions({ cwd: options.cwd, globalDir: join(agentDir, "extensions") }),
     );
   } catch (err) {
@@ -267,6 +271,37 @@ export async function listConfiguredHostExtensions(
  *
  * Resolves named extensions from the workspace's `extensions` list.
  */
+export async function listConfiguredHostExtensionResources(
+  options: ListConfiguredHostExtensionsOptions = {},
+): Promise<HostExtensionInfo[]> {
+  const cwd = resolveWorkspaceCwd(options.cwd, homedir()) ?? homedir();
+  const agentDir = options.agentDir ?? DEFAULT_AGENT_DIR;
+
+  try {
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const packageManager = new DefaultPackageManager({
+      cwd,
+      agentDir,
+      settingsManager,
+    });
+
+    const resolved = await packageManager.resolve(async () => "skip");
+    return mergeHostExtensions(
+      listFromResolvedResources(resolved.extensions, { includeDisabled: true }),
+      listHostExtensions({ cwd: options.cwd, globalDir: join(agentDir, "extensions") }).map(
+        (extension) => ({ ...extension, enabled: true }),
+      ),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn("extensions.configured_resources.failed", { error: message });
+    return listHostExtensions({
+      cwd: options.cwd,
+      globalDir: join(agentDir, "extensions"),
+    }).map((extension) => ({ ...extension, enabled: true }));
+  }
+}
+
 export function resolveWorkspaceExtensions(
   extensionNames: string[] | undefined,
 ): ResolveWorkspaceExtensionsResult {
@@ -332,13 +367,16 @@ function mergeHostExtensions(
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function listFromResolvedResources(resources: ResolvedResource[]): HostExtensionInfo[] {
+function listFromResolvedResources(
+  resources: ResolvedResource[],
+  options: { includeDisabled: boolean },
+): HostExtensionInfo[] {
   // DefaultPackageManager.resolve() already returns resources in pi precedence order.
   // Keep first name collision to mirror native pi behavior.
   const byName = new Map<string, HostExtensionInfo>();
 
   for (const resource of resources) {
-    if (!resource.enabled) {
+    if (!options.includeDisabled && !resource.enabled) {
       continue;
     }
 
@@ -351,7 +389,11 @@ function listFromResolvedResources(resources: ResolvedResource[]): HostExtension
       continue;
     }
 
-    byName.set(extension.name, extension);
+    byName.set(extension.name, {
+      ...extension,
+      enabled: resource.enabled,
+      metadata: resource.metadata,
+    });
   }
 
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));

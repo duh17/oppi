@@ -61,7 +61,6 @@ function makeRuntime(
   const defaultWorkspace: Workspace = {
     id: "w1",
     name: "Workspace",
-    skills: [],
     hostMount: options.hostMount ?? "/tmp/oppi-mirror-test",
   };
   const workspaces = new Map<string, Workspace>();
@@ -259,9 +258,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(created).toMatchObject({
       name: basename(root),
       description: "Created from an interactive Pi terminal session.",
-      skills: [],
       hostMount: root,
-      extensions: ["oppi-mirror"],
       gitStatusEnabled: true,
       runtime: "host",
     });

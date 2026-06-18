@@ -34,7 +34,6 @@ describe("storage flat layout", () => {
     const workspace: Workspace = {
       id: "ws-1",
       name: "Test Workspace",
-      skills: ["fetch"],
       systemPromptMode: "append",
       createdAt: Date.now() - 8_000,
       updatedAt: Date.now() - 8_000,

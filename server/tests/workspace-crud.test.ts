@@ -7,7 +7,7 @@
  * Coverage:
  * - Storage: create, get, list, update, delete
  * - HTTP: GET/POST /workspaces, GET/PUT/DELETE /workspaces/:id
- * - Validation: name, skills
+ * - Validation: name
  * - Edge cases: corrupt files, nonexistent workspaces, empty updates
  */
 
@@ -35,7 +35,6 @@ afterEach(() => {
 function createReq(overrides?: Partial<CreateWorkspaceRequest>): CreateWorkspaceRequest {
   return {
     name: "test-workspace",
-    skills: ["searxng", "fetch"],
     ...overrides,
   };
 }
@@ -49,14 +48,22 @@ describe("Storage.createWorkspace", () => {
     expect(ws.id).toBeTruthy();
     expect(ws.id.length).toBe(8);
     expect(ws.name).toBe("test-workspace");
-    expect(ws.skills).toEqual(["searxng", "fetch"]);
+    expect("skills" in ws).toBe(false);
+    expect("extensions" in ws).toBe(false);
     expect(ws.createdAt).toBeGreaterThan(0);
     expect(ws.updatedAt).toBe(ws.createdAt);
   });
 
-  it("creates workspace with no extensions by default", () => {
-    const ws = storage.createWorkspace(createReq());
-    expect(ws.extensions).toBeUndefined();
+  it("drops legacy workspace resource fields from new records", () => {
+    const ws = storage.createWorkspace(createReq({ skills: ["fetch"], extensions: ["memory"] }));
+    const raw = JSON.parse(
+      readFileSync(join(dataDir, "workspaces", `${ws.id}.json`), "utf-8"),
+    ) as Record<string, unknown>;
+
+    expect("skills" in ws).toBe(false);
+    expect("extensions" in ws).toBe(false);
+    expect(raw.skills).toBeUndefined();
+    expect(raw.extensions).toBeUndefined();
   });
 
   it("defaults systemPromptMode to append", () => {
@@ -82,7 +89,6 @@ describe("Storage.createWorkspace", () => {
         systemPrompt: "Be helpful",
         systemPromptMode: "append",
         hostMount: "~/workspace/oppi",
-        extensions: ["memory", "todos"],
         defaultModel: "anthropic/claude-sonnet-4-0",
       }),
     );
@@ -93,7 +99,6 @@ describe("Storage.createWorkspace", () => {
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.systemPromptMode).toBe("append");
     expect(ws.hostMount).toBe("~/workspace/oppi");
-    expect(ws.extensions).toEqual(["memory", "todos"]);
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
   });
 
@@ -103,26 +108,6 @@ describe("Storage.createWorkspace", () => {
 
     const blank = storage.createWorkspace(createReq({ hostMount: "   " }));
     expect(blank.hostMount).toBeUndefined();
-  });
-
-  it("keeps explicit extension names as provided", () => {
-    const ws = storage.createWorkspace(
-      createReq({
-        extensions: ["custom-tool", "ask"],
-      }),
-    );
-
-    expect(ws.extensions).toEqual(["custom-tool", "ask"]);
-  });
-
-  it("filters deprecated review extension from workspace config", () => {
-    const ws = storage.createWorkspace(
-      createReq({
-        extensions: ["review", "todos", "review"],
-      }),
-    );
-
-    expect(ws.extensions).toEqual(["todos"]);
   });
 
   it("persists to disk as JSON", () => {
@@ -146,7 +131,6 @@ describe("Storage.createWorkspace", () => {
   it("defaults runtime to undefined when not specified", () => {
     const ws = storage.createWorkspace({
       name: "no-runtime",
-      skills: [],
     });
 
     expect(ws.runtime).toBeUndefined();
@@ -305,11 +289,21 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.icon).toBe("magnifyingglass");
   });
 
-  it("updates skills", () => {
-    const ws = storage.createWorkspace(createReq({ skills: ["fetch"] }));
-    const updated = storage.updateWorkspace(ws.id, { skills: ["fetch", "web-browser"] });
+  it("ignores legacy resource updates", () => {
+    const ws = storage.createWorkspace(createReq());
+    const updated = storage.updateWorkspace(ws.id, {
+      skills: ["fetch", "web-browser"],
+      extensions: ["memory"],
+    });
+    const raw = JSON.parse(
+      readFileSync(join(dataDir, "workspaces", `${ws.id}.json`), "utf-8"),
+    ) as Record<string, unknown>;
 
-    expect(updated!.skills).toEqual(["fetch", "web-browser"]);
+    expect(updated).toBeDefined();
+    expect("skills" in updated!).toBe(false);
+    expect("extensions" in updated!).toBe(false);
+    expect(raw.skills).toBeUndefined();
+    expect(raw.extensions).toBeUndefined();
   });
 
   it("updates systemPrompt", () => {
@@ -341,15 +335,6 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.hostMount).toBe("~/workspace/kypu");
   });
 
-  it("normalizes, deduplicates, and updates extensions", () => {
-    const ws = storage.createWorkspace(createReq());
-    const updated = storage.updateWorkspace(ws.id, {
-      extensions: [" custom-tool ", "review-helper", "ask", "custom-tool"],
-    });
-
-    expect(updated!.extensions).toEqual(["custom-tool", "review-helper", "ask"]);
-  });
-
   it("updates defaultModel", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
@@ -364,12 +349,10 @@ describe("Storage.updateWorkspace", () => {
     const updated = storage.updateWorkspace(ws.id, {
       name: "new",
       description: "updated",
-      skills: ["web-browser"],
     });
 
     expect(updated!.name).toBe("new");
     expect(updated!.description).toBe("updated");
-    expect(updated!.skills).toEqual(["web-browser"]);
   });
 
   it("bumps updatedAt timestamp", () => {
@@ -387,7 +370,6 @@ describe("Storage.updateWorkspace", () => {
         name: "keep-me",
         description: "original desc",
         icon: "terminal",
-        skills: ["fetch"],
       }),
     );
 
@@ -395,7 +377,6 @@ describe("Storage.updateWorkspace", () => {
 
     expect(updated!.name).toBe("keep-me");
     expect(updated!.icon).toBe("terminal");
-    expect(updated!.skills).toEqual(["fetch"]);
     expect(updated!.description).toBe("new desc");
   });
 
@@ -592,17 +573,6 @@ describe("Workspace full lifecycle", () => {
 // ─── Edge cases ───
 
 describe("Workspace edge cases", () => {
-  it("create workspace with empty skills array", () => {
-    const ws = storage.createWorkspace({ name: "bare", skills: [] });
-    expect(ws.skills).toEqual([]);
-  });
-
-  it("update skills to empty array", () => {
-    const ws = storage.createWorkspace(createReq({ skills: ["fetch"] }));
-    const updated = storage.updateWorkspace(ws.id, { skills: [] });
-    expect(updated!.skills).toEqual([]);
-  });
-
   it("create many workspaces for same user", () => {
     const count = 20;
     for (let i = 0; i < count; i++) {

@@ -240,7 +240,7 @@ describe("workspaces API", () => {
   });
 
   it("POST /workspaces creates a workspace", async () => {
-    const res = await post("/workspaces", { name: "test-ws", skills: [] });
+    const res = await post("/workspaces", { name: "test-ws" });
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.workspace.id).toBeTypeOf("string");
@@ -248,7 +248,7 @@ describe("workspaces API", () => {
   });
 
   it("GET /workspaces/:id returns workspace detail", async () => {
-    const createRes = await post("/workspaces", { name: "detail-test", skills: [] });
+    const createRes = await post("/workspaces", { name: "detail-test" });
     const { workspace } = await createRes.json();
 
     const res = await get(`/workspaces/${workspace.id}`);
@@ -258,7 +258,7 @@ describe("workspaces API", () => {
   });
 
   it("PUT /workspaces/:id updates workspace", async () => {
-    const createRes = await post("/workspaces", { name: "before", skills: [] });
+    const createRes = await post("/workspaces", { name: "before" });
     const { workspace } = await createRes.json();
 
     const res = await put(`/workspaces/${workspace.id}`, { name: "after" });
@@ -270,7 +270,6 @@ describe("workspaces API", () => {
   it("PUT /workspaces/:id clears system prompt with null", async () => {
     const createRes = await post("/workspaces", {
       name: "prompt-test",
-      skills: [],
       systemPrompt: "Keep it",
       systemPromptMode: "append",
     });
@@ -284,7 +283,7 @@ describe("workspaces API", () => {
   });
 
   it("GET /workspaces/:id/system-prompt/base returns a string payload", async () => {
-    const createRes = await post("/workspaces", { name: "base-prompt", skills: [] });
+    const createRes = await post("/workspaces", { name: "base-prompt" });
     const { workspace } = await createRes.json();
 
     const res = await get(`/workspaces/${workspace.id}/system-prompt/base`);
@@ -294,7 +293,7 @@ describe("workspaces API", () => {
   });
 
   it("DELETE /workspaces/:id removes workspace", async () => {
-    const createRes = await post("/workspaces", { name: "delete-me", skills: [] });
+    const createRes = await post("/workspaces", { name: "delete-me" });
     const { workspace } = await createRes.json();
 
     const delRes = await del(`/workspaces/${workspace.id}`);
@@ -305,7 +304,7 @@ describe("workspaces API", () => {
   });
 
   it("GET /workspaces/:id/sessions returns sectioned workspace sessions", async () => {
-    const createRes = await post("/workspaces", { name: "sessions-test", skills: [] });
+    const createRes = await post("/workspaces", { name: "sessions-test" });
     const { workspace } = await createRes.json();
 
     const res = await get(
@@ -321,7 +320,7 @@ describe("workspaces API", () => {
   });
 
   it("GET /workspaces/:id/sessions status=stopped excludes active sessions", async () => {
-    const createRes = await post("/workspaces", { name: "stopped-scope-test", skills: [] });
+    const createRes = await post("/workspaces", { name: "stopped-scope-test" });
     const { workspace } = await createRes.json();
     const now = Date.now();
     const sinceMs = now - 40 * 86_400_000;
@@ -361,7 +360,7 @@ describe("workspaces API", () => {
   });
 
   it("GET /workspaces/:id/attention returns an authoritative empty snapshot", async () => {
-    const createRes = await post("/workspaces", { name: "attention-test", skills: [] });
+    const createRes = await post("/workspaces", { name: "attention-test" });
     const { workspace } = await createRes.json();
 
     const res = await get(`/workspaces/${workspace.id}/attention`);
@@ -424,7 +423,6 @@ describe("workspace file serving", () => {
 
     const res = await post("/workspaces", {
       name: "file-test",
-      skills: [],
       hostMount: wsRoot,
     });
     const body = await res.json();
@@ -532,7 +530,6 @@ describe("workspace file browser", () => {
 
     const res = await post("/workspaces", {
       name: "browser-test",
-      skills: [],
       hostMount: wsRoot,
     });
     const body = await res.json();
@@ -703,7 +700,7 @@ describe("workspace file browser", () => {
 
 describe("sessions API", () => {
   it("POST /workspaces/:id/sessions creates a session", async () => {
-    const wsRes = await post("/workspaces", { name: "session-ws", skills: [] });
+    const wsRes = await post("/workspaces", { name: "session-ws" });
     const { workspace } = await wsRes.json();
 
     const res = await post(`/workspaces/${workspace.id}/sessions`, {
@@ -728,7 +725,6 @@ describe("sessions API", () => {
     try {
       const wsRes = await post("/workspaces", {
         name: "delete-session-ws",
-        skills: [],
         hostMount: workspaceRoot,
       });
       expect(wsRes.status).toBe(201);
@@ -1024,7 +1020,7 @@ describe("device token API", () => {
 
 describe("retired workspace routes", () => {
   it("GET /workspaces/:id/policy returns 404", async () => {
-    const createRes = await post("/workspaces", { name: "policy-check", skills: [] });
+    const createRes = await post("/workspaces", { name: "policy-check" });
     expect(createRes.status).toBe(201);
     const { workspace } = await createRes.json();
 
@@ -1038,7 +1034,7 @@ describe("retired workspace routes", () => {
 describe("workspace lifecycle", () => {
   it("full CRUD: create → update → list → get → delete → 404", async () => {
     // Create
-    const createRes = await post("/workspaces", { name: "lifecycle", skills: [] });
+    const createRes = await post("/workspaces", { name: "lifecycle" });
     expect(createRes.status).toBe(201);
     const { workspace } = await createRes.json();
     const id = workspace.id;
@@ -1066,31 +1062,19 @@ describe("workspace lifecycle", () => {
     expect(afterRes.status).toBe(404);
   });
 
-  it("still allows skill enable/disable through workspace updates", async () => {
-    const skillsRes = await get("/skills");
-    expect(skillsRes.status).toBe(200);
-    const skillsBody = await skillsRes.json();
-    const skillName = skillsBody.skills?.[0]?.name as string | undefined;
-    expect(skillName).toBeTruthy();
-
+  it("ignores legacy workspace skill updates", async () => {
     const createRes = await post("/workspaces", {
       name: "skill-toggle-workspace",
-      skills: skillName ? [skillName] : [],
+      skills: ["fetch"],
     });
     expect(createRes.status).toBe(201);
     const { workspace } = await createRes.json();
+    expect(workspace.skills).toBeUndefined();
 
-    const disableRes = await put(`/workspaces/${workspace.id}`, { skills: [] });
-    expect(disableRes.status).toBe(200);
-    const disableBody = await disableRes.json();
-    expect(disableBody.workspace.skills).toEqual([]);
-
-    const enableRes = await put(`/workspaces/${workspace.id}`, {
-      skills: skillName ? [skillName] : [],
-    });
-    expect(enableRes.status).toBe(200);
-    const enableBody = await enableRes.json();
-    expect(enableBody.workspace.skills).toEqual(skillName ? [skillName] : []);
+    const updateRes = await put(`/workspaces/${workspace.id}`, { skills: ["fetch"] });
+    expect(updateRes.status).toBe(200);
+    const updateBody = await updateRes.json();
+    expect(updateBody.workspace.skills).toBeUndefined();
   });
 });
 
@@ -1098,7 +1082,7 @@ describe("workspace lifecycle", () => {
 
 describe("split session WebSocket", () => {
   it("opens the URL-bound session stream", async () => {
-    const wsRes = await post("/workspaces", { name: "session-stream", skills: [] });
+    const wsRes = await post("/workspaces", { name: "session-stream" });
     const { workspace } = await wsRes.json();
     const sessRes = await post(`/workspaces/${workspace.id}/sessions`, {
       model: "anthropic/claude-sonnet-4-20250514",
@@ -1158,7 +1142,7 @@ describe("error handling", () => {
   });
 
   it("returns 404 for nonexistent session in workspace", async () => {
-    const wsRes = await post("/workspaces", { name: "err-test", skills: [] });
+    const wsRes = await post("/workspaces", { name: "err-test" });
     const { workspace } = await wsRes.json();
     const res = await get(`/workspaces/${workspace.id}/sessions/NONEXISTENT`);
     expect(res.status).toBe(404);

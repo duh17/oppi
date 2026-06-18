@@ -9,7 +9,6 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 
-import { isValidExtensionName } from "../extension-loader.js";
 import {
   CommitDiffError,
   getCommitDetail,
@@ -52,39 +51,6 @@ import {
 } from "../session-attention.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  function removeUnknownSkills(workspace: Workspace): Workspace {
-    const knownSkills = workspace.skills.filter((name) => ctx.skillRegistry.get(name));
-    if (knownSkills.length === workspace.skills.length) {
-      return workspace;
-    }
-
-    return { ...workspace, skills: knownSkills };
-  }
-
-  function unknownSkills(skills: string[]): string[] {
-    return skills.filter((name) => !ctx.skillRegistry.get(name));
-  }
-
-  function extensionValidationError(extensions: unknown): string | undefined {
-    if (extensions === undefined) {
-      return undefined;
-    }
-
-    if (!Array.isArray(extensions)) {
-      return "extensions must be an array";
-    }
-
-    const invalid = extensions.filter(
-      (name) => typeof name !== "string" || !isValidExtensionName(name),
-    );
-
-    if (invalid.length > 0) {
-      return `Invalid extension names: ${invalid.join(", ")}`;
-    }
-
-    return undefined;
-  }
-
   function systemPromptModeValidationError(mode: unknown): string | undefined {
     if (mode === undefined) {
       return undefined;
@@ -163,9 +129,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   function handleListWorkspaces(res: ServerResponse): void {
-    const storedWorkspaces = ctx.storage.listWorkspaces();
-    const workspaces = storedWorkspaces.map(removeUnknownSkills);
-    const { serverNow, summaries } = buildWorkspaceListSummarySnapshot(storedWorkspaces);
+    const workspaces = ctx.storage.listWorkspaces();
+    const { serverNow, summaries } = buildWorkspaceListSummarySnapshot(workspaces);
     helpers.json(res, { serverNow, workspaces, summaries });
   }
 
@@ -221,23 +186,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (!body.skills || !Array.isArray(body.skills)) {
-      helpers.error(res, 400, "skills array required");
-      return;
-    }
-
-    const unknown = unknownSkills(body.skills);
-    if (unknown.length > 0) {
-      helpers.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
-      return;
-    }
-
-    const extensionsError = extensionValidationError(body.extensions);
-    if (extensionsError) {
-      helpers.error(res, 400, extensionsError);
-      return;
-    }
-
     const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
     if (systemPromptModeError) {
       helpers.error(res, 400, systemPromptModeError);
@@ -261,7 +209,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    helpers.json(res, { workspace: removeUnknownSkills(workspace) });
+    helpers.json(res, { workspace });
   }
 
   async function handleGetWorkspaceBaseSystemPrompt(
@@ -291,20 +239,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const body = await helpers.parseBody<UpdateWorkspaceRequest>(req);
 
-    if (body.skills) {
-      const unknown = unknownSkills(body.skills);
-      if (unknown.length > 0) {
-        helpers.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
-        return;
-      }
-    }
-
-    const extensionsError = extensionValidationError(body.extensions);
-    if (extensionsError) {
-      helpers.error(res, 400, extensionsError);
-      return;
-    }
-
     const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
     if (systemPromptModeError) {
       helpers.error(res, 400, systemPromptModeError);
@@ -323,7 +257,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    helpers.json(res, { workspace: removeUnknownSkills(updated) });
+    helpers.json(res, { workspace: updated });
   }
 
   function handleDeleteWorkspace(wsId: string, res: ServerResponse): void {

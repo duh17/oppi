@@ -52,9 +52,6 @@ export class SessionStartCoordinator {
       this.deps.persistSessionNow(key, session);
 
       try {
-        const skillPathResolver = this.deps.getSkillPathResolver();
-        const skillPaths =
-          workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
         const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
 
         const createStart = Date.now();
@@ -63,7 +60,6 @@ export class SessionStartCoordinator {
           workspace,
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
-          skillPaths,
           extraExtensionFactories:
             extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
           dataDir: this.deps.storage.getDataDir(),

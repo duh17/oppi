@@ -61,9 +61,7 @@ describe("createOppiAdminFactory", () => {
 
     await createTool!.execute("tc1", {
       name: "oppi-admin",
-      skills: ["oppi-admin"],
       hostMount: "~/workspace/oppi-admin",
-      extensions: ["oppi-admin"],
     });
 
     const result = await listTool!.execute("tc2", {});

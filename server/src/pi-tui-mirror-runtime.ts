@@ -88,7 +88,6 @@ const OPPI_RUNTIME_TAKEOVER_STOP_TIMEOUT_MS = 15_000;
 const OPPI_RUNTIME_TAKEOVER_STOP_POLL_MS = 50;
 const PI_TUI_STOP_TIMEOUT_MS = 15_000;
 const MIRROR_RUNTIME_LOG_TAG = "pi-tui";
-const MIRROR_EXTENSION_NAME = "oppi-mirror";
 
 class BridgeRegistrationError extends Error {
   constructor(
@@ -1476,9 +1475,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const workspace = this.storage.createWorkspace({
       name: suggestion.name,
       description: "Created from an interactive Pi terminal session.",
-      skills: [],
       hostMount: suggestion.hostMount,
-      extensions: [MIRROR_EXTENSION_NAME],
       gitStatusEnabled: true,
       runtime: "host",
     });

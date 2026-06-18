@@ -14,7 +14,7 @@ describe("workspaces module", () => {
   it("handles GET /workspaces in isolation", async () => {
     const ctx = {
       storage: {
-        listWorkspaces: vi.fn(() => [{ id: "ws-1", name: "Default", skills: [] }]),
+        listWorkspaces: vi.fn(() => [{ id: "ws-1", name: "Default" }]),
         listWorkspaceSessionSummarySnapshots: vi.fn(() => [
           {
             workspaceId: "ws-1",
@@ -59,7 +59,7 @@ describe("workspaces module", () => {
   });
 
   it("marks workspace summaries with pending mirror extension UI requests", async () => {
-    const workspace = { id: "ws-1", name: "Default", skills: [] };
+    const workspace = { id: "ws-1", name: "Default" };
     const session = {
       id: "mirror-1",
       workspaceId: "ws-1",
@@ -214,7 +214,7 @@ describe("workspaces module", () => {
       method: "POST",
       path: "/workspaces",
       url: new URL("http://localhost/workspaces"),
-      req: makeRequest({ skills: ["fetch"] }) as never,
+      req: makeRequest({}) as never,
       res: res as never,
     });
 
@@ -223,8 +223,10 @@ describe("workspaces module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "name required" });
   });
 
-  it("validates skills array on POST /workspaces", async () => {
-    const ctx = {} as unknown as RouteContext;
+  it("passes legacy resource fields through to storage for compatibility", async () => {
+    const ctx = {
+      storage: { createWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })) },
+    } as unknown as RouteContext;
 
     const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
     const res = makeResponse();
@@ -233,13 +235,15 @@ describe("workspaces module", () => {
       method: "POST",
       path: "/workspaces",
       url: new URL("http://localhost/workspaces"),
-      req: makeRequest({ name: "Test" }) as never,
+      req: makeRequest({ name: "Test", skills: ["fetch"], extensions: ["ask"] }) as never,
       res: res as never,
     });
 
     expect(handled).toBe(true);
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: "skills array required" });
+    expect(res.statusCode).toBe(201);
+    expect(ctx.storage.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ skills: ["fetch"], extensions: ["ask"] }),
+    );
   });
 
   it("rejects replace systemPromptMode on POST /workspaces", async () => {
@@ -255,7 +259,7 @@ describe("workspaces module", () => {
       method: "POST",
       path: "/workspaces",
       url: new URL("http://localhost/workspaces"),
-      req: makeRequest({ name: "Test", skills: [], systemPromptMode: "replace" }) as never,
+      req: makeRequest({ name: "Test", systemPromptMode: "replace" }) as never,
       res: res as never,
     });
 
@@ -268,7 +272,7 @@ describe("workspaces module", () => {
   it("rejects replace systemPromptMode on PUT /workspaces/:id", async () => {
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", skills: [] })),
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         updateWorkspace: vi.fn(),
       },
     } as unknown as RouteContext;
@@ -305,7 +309,7 @@ describe("workspaces module", () => {
       method: "POST",
       path: "/workspaces",
       url: new URL("http://localhost/workspaces"),
-      req: makeRequest({ name: "Test", skills: [], hostMount: missing }) as never,
+      req: makeRequest({ name: "Test", hostMount: missing }) as never,
       res: res as never,
     });
 
@@ -319,7 +323,7 @@ describe("workspaces module", () => {
     const comment = { id: "rc-1", workspaceId: "ws-1", status: "sent" };
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", skills: [] })),
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
         markReviewCommentsSent: vi.fn(() => [comment]),
       },
     } as unknown as RouteContext;

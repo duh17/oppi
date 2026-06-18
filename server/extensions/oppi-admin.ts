@@ -3,7 +3,6 @@ import { Type } from "typebox";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isValidExtensionName } from "../src/extension-loader.js";
 import type { Storage } from "../src/storage.js";
 import type { CreateWorkspaceRequest, UpdateWorkspaceRequest, Workspace } from "../src/types.js";
 
@@ -68,12 +67,10 @@ const CreateWorkspaceParams = Type.Object({
   name: Type.String({ description: "Workspace name" }),
   description: Type.Optional(Type.String({ description: "Short workspace description" })),
   icon: Type.Optional(Type.String({ description: "Emoji or icon string" })),
-  skills: Type.Array(Type.String(), { description: "Skill names to enable" }),
   systemPrompt: Type.Optional(Type.String()),
   systemPromptMode: Type.Optional(PromptModeSchema),
   hostMount: Type.Optional(Type.String()),
   defaultModel: Type.Optional(Type.String()),
-  extensions: Type.Optional(Type.Array(Type.String())),
   gitStatusEnabled: Type.Optional(Type.Boolean()),
 });
 
@@ -82,12 +79,10 @@ const UpdateWorkspaceParams = Type.Object({
   name: Type.Optional(Type.String()),
   description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   icon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  skills: Type.Optional(Type.Array(Type.String())),
   systemPrompt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   systemPromptMode: Type.Optional(PromptModeSchema),
   hostMount: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   defaultModel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  extensions: Type.Optional(Type.Array(Type.String())),
   gitStatusEnabled: Type.Optional(Type.Boolean()),
 });
 
@@ -105,18 +100,9 @@ const BuildThemeParams = Type.Object({
 
 const NoParams = Type.Object({});
 
-function validateExtensions(extensions: string[] | undefined): void {
-  if (!extensions) return;
-  const invalid = extensions.filter((name) => !isValidExtensionName(name));
-  if (invalid.length > 0) {
-    throw new Error(`Invalid extension names: ${invalid.join(", ")}`);
-  }
-}
-
 function normalizeCreateRequest(params: Record<string, unknown>): CreateWorkspaceRequest {
   const req: CreateWorkspaceRequest = {
     name: String(params.name),
-    skills: Array.isArray(params.skills) ? (params.skills as string[]) : [],
   };
 
   if (typeof params.description === "string") req.description = params.description;
@@ -127,10 +113,8 @@ function normalizeCreateRequest(params: Record<string, unknown>): CreateWorkspac
   }
   if (typeof params.hostMount === "string") req.hostMount = params.hostMount;
   if (typeof params.defaultModel === "string") req.defaultModel = params.defaultModel;
-  if (Array.isArray(params.extensions)) req.extensions = params.extensions as string[];
   if (typeof params.gitStatusEnabled === "boolean") req.gitStatusEnabled = params.gitStatusEnabled;
 
-  validateExtensions(req.extensions);
   return req;
 }
 
@@ -144,7 +128,6 @@ function normalizeUpdateRequest(params: Record<string, unknown>): UpdateWorkspac
   if (typeof params.icon === "string" || params.icon === null) {
     req.icon = params.icon as string | null;
   }
-  if (Array.isArray(params.skills)) req.skills = params.skills as string[];
   if (typeof params.systemPrompt === "string" || params.systemPrompt === null) {
     req.systemPrompt = params.systemPrompt as string | null;
   }
@@ -157,10 +140,8 @@ function normalizeUpdateRequest(params: Record<string, unknown>): UpdateWorkspac
   if (typeof params.defaultModel === "string" || params.defaultModel === null) {
     req.defaultModel = params.defaultModel as string | null;
   }
-  if (Array.isArray(params.extensions)) req.extensions = params.extensions as string[];
   if (typeof params.gitStatusEnabled === "boolean") req.gitStatusEnabled = params.gitStatusEnabled;
 
-  validateExtensions(req.extensions);
   return req;
 }
 
@@ -214,8 +195,6 @@ function workspaceText(workspace: Workspace): string {
       id: workspace.id,
       name: workspace.name,
       hostMount: workspace.hostMount,
-      extensions: workspace.extensions,
-      skills: workspace.skills,
     },
     null,
     2,

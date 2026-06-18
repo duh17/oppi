@@ -10,7 +10,6 @@ import {
   resolveSandboxGuestCwd,
   resolveSdkSessionCwd,
   resolveSdkSessionDisplayCwd,
-  filterSdkLoadedExtensions,
   SdkBackend,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
@@ -99,77 +98,6 @@ describe("hostMountValidationError", () => {
   });
 });
 
-describe("filterSdkLoadedExtensions", () => {
-  function ext(path: string, resolvedPath = path): { path: string; resolvedPath: string } {
-    return { path, resolvedPath };
-  }
-
-  it("applies workspace allowlists to host extensions", () => {
-    const reviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
-    const filtered = filterSdkLoadedExtensions(
-      [ext(reviewer), ext("/home/user/.pi/agent/extensions/memory.ts")],
-      {
-        workspaceExtensions: ["memory"],
-      },
-    );
-
-    expect(filtered.map((item) => item.path)).toEqual([
-      "/home/user/.pi/agent/extensions/memory.ts",
-    ]);
-  });
-
-  it("keeps allowlisted host extensions by name", () => {
-    const reviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
-    const filtered = filterSdkLoadedExtensions(
-      [ext(reviewer), ext("/home/user/.pi/agent/extensions/memory.ts")],
-      {
-        workspaceExtensions: ["reviewer", "memory"],
-      },
-    );
-
-    expect(filtered.map((item) => item.path)).toEqual([
-      reviewer,
-      "/home/user/.pi/agent/extensions/memory.ts",
-    ]);
-  });
-
-  it("does not privilege global host paths over project-local discovery", () => {
-    const globalReviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
-    const projectReviewer = "/workspace/.pi/extensions/reviewer.ts";
-    const filtered = filterSdkLoadedExtensions([ext(projectReviewer), ext(globalReviewer)], {});
-
-    expect(filtered.map((item) => item.path)).toEqual([projectReviewer, globalReviewer]);
-  });
-
-  it("filters host extensions when the workspace allowlist omits them", () => {
-    const reviewer = "/home/user/.pi/agent/extensions/reviewer.ts";
-    const filtered = filterSdkLoadedExtensions([ext(reviewer)], {
-      workspaceExtensions: ["memory"],
-    });
-
-    expect(filtered).toEqual([]);
-  });
-
-  it("allows package-provided index extensions by their allow-list name", () => {
-    const tintinwebSubagents =
-      "/home/user/.pi/agent/npm/node_modules/@tintinweb/pi-subagents/src/index.ts";
-    const filtered = filterSdkLoadedExtensions([ext(tintinwebSubagents)], {
-      workspaceExtensions: ["tintinweb-subagents"],
-    });
-
-    expect(filtered.map((item) => item.path)).toEqual([tintinwebSubagents]);
-  });
-
-  it("allows host ask extensions to use Pi's normal extension ordering", () => {
-    const ask = "/home/user/.pi/agent/extensions/ask.ts";
-    const filtered = filterSdkLoadedExtensions([ext(ask)], {
-      workspaceExtensions: ["ask"],
-    });
-
-    expect(filtered.map((item) => item.path)).toEqual([ask]);
-  });
-});
-
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: "sess-test",
@@ -244,12 +172,14 @@ describe("SdkBackend sandbox", () => {
 
       expect(manager.ensureWorkspaceVm).toHaveBeenCalled();
       expect(manager.ensureWorkspaceVm.mock.calls[0][2]).toEqual({});
-      expect(manager.ensureWorkspaceVm.mock.calls[0][3]).toEqual([
-        {
-          hostPath: skillDir,
-          guestPath: "/workspace/sandbox-secrets-test/.pi/skills/sandbox-review",
-        },
-      ]);
+      expect(manager.ensureWorkspaceVm.mock.calls[0][3]).toEqual(
+        expect.arrayContaining([
+          {
+            hostPath: skillDir,
+            guestPath: "/workspace/sandbox-secrets-test/.pi/skills/sandbox-review",
+          },
+        ]),
+      );
 
       const runtime = (
         backend as unknown as {
@@ -298,6 +228,95 @@ describe("SdkBackend sandbox", () => {
 });
 
 describe("SdkBackend host extensions", () => {
+  function extensionCommandNames(backend: SdkBackend): string[] {
+    const resourceLoader = (
+      backend as unknown as {
+        runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+      }
+    ).runtime.services.resourceLoader;
+
+    return resourceLoader.getExtensions().extensions.flatMap((ext) => [...ext.commands.keys()]);
+  }
+
+  it("loads project extensions through Pi settings discovery instead of workspace allowlists", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-project-extension-"));
+    mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".pi", "extensions", "project-command.ts"),
+      [
+        "import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';",
+        "export default function (pi: ExtensionAPI) {",
+        "  pi.registerCommand('project-command', {",
+        "    description: 'Project command for runtime alignment tests',",
+        "    handler: async () => {},",
+        "  });",
+        "}",
+      ].join("\n"),
+    );
+
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "Project Extension Test",
+        runtime: "host",
+        hostMount: cwd,
+        extensions: ["something-else"],
+      } as Workspace,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      expect(extensionCommandNames(backend)).toContain("project-command");
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reloads project extensions added after session start", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-project-extension-reload-"));
+    const extensionsDir = join(cwd, ".pi", "extensions");
+    mkdirSync(extensionsDir, { recursive: true });
+
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "Project Extension Reload Test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      expect(extensionCommandNames(backend)).not.toContain("hot-reloaded-command");
+
+      writeFileSync(
+        join(extensionsDir, "hot-reloaded-command.ts"),
+        [
+          "import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';",
+          "export default function (pi: ExtensionAPI) {",
+          "  pi.registerCommand('hot-reloaded-command', {",
+          "    description: 'Hot reload command for runtime alignment tests',",
+          "    handler: async () => {},",
+          "  });",
+          "}",
+        ].join("\n"),
+      );
+
+      await backend.reloadResources();
+
+      expect(extensionCommandNames(backend)).toContain("hot-reloaded-command");
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("does not inject ask when no host extension provides it", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtins-"));
     const backend = await SdkBackend.create({
@@ -349,6 +368,52 @@ describe("SdkBackend session state seeding", () => {
 
     try {
       expect(backend.session.thinkingLevel).toBe("high");
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SdkBackend skills", () => {
+  it("loads project skills through Pi settings discovery instead of workspace skill lists", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-project-skills-"));
+    const skillDir = join(cwd, ".pi", "skills", "project-review");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: project-review",
+        "description: Review the project through cwd-local Pi settings discovery.",
+        "---",
+        "Review the project.",
+      ].join("\n"),
+    );
+
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "Project Skill Test",
+        runtime: "host",
+        hostMount: cwd,
+        skills: ["something-else"],
+      } as Workspace,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+
+      expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toContain(
+        "project-review",
+      );
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
@@ -591,8 +656,12 @@ describe("SdkBackend.createPiSessionManager", () => {
 });
 
 describe("Oppi queue delivery defaults", () => {
-  it("configures steering all and follow-up one-at-a-time for new sdk sessions", () => {
+  it("configures queue delivery defaults without calling persistent Pi setters", () => {
     const piSession = {
+      agent: {
+        steeringMode: "one-at-a-time" as const,
+        followUpMode: "all" as const,
+      },
       setSteeringMode: vi.fn(),
       setFollowUpMode: vi.fn(),
     };
@@ -603,8 +672,10 @@ describe("Oppi queue delivery defaults", () => {
       }
     ).applyDefaultQueueModes(piSession);
 
-    expect(piSession.setSteeringMode).toHaveBeenCalledWith("all");
-    expect(piSession.setFollowUpMode).toHaveBeenCalledWith("one-at-a-time");
+    expect(piSession.agent.steeringMode).toBe("all");
+    expect(piSession.agent.followUpMode).toBe("one-at-a-time");
+    expect(piSession.setSteeringMode).not.toHaveBeenCalled();
+    expect(piSession.setFollowUpMode).not.toHaveBeenCalled();
   });
 });
 
@@ -613,9 +684,11 @@ describe("SdkBackend extension binding", () => {
     const backend = Object.create(SdkBackend.prototype) as SdkBackend;
     const uiContext = {} as PiSdk.ExtensionUIContext;
     const piSession = {
+      agent: {
+        steeringMode: "one-at-a-time" as const,
+        followUpMode: "all" as const,
+      },
       bindExtensions: vi.fn(async () => {}),
-      setSteeringMode: vi.fn(),
-      setFollowUpMode: vi.fn(),
     };
 
     const mutableBackend = backend as unknown as {
