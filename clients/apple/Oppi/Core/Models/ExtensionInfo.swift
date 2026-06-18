@@ -10,6 +10,25 @@ struct ExtensionInfo: Codable, Identifiable, Sendable, Equatable {
     let path: String
     let kind: String    // "file" | "directory" | "built-in"
     let source: String // "oppi" | "pi"
+    /// Whether Pi settings currently load this extension for the requested cwd.
+    let enabled: Bool
+
+    init(name: String, path: String, kind: String, source: String, enabled: Bool = true) {
+        self.name = name
+        self.path = path
+        self.kind = kind
+        self.source = source
+        self.enabled = enabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        path = try c.decode(String.self, forKey: .path)
+        kind = try c.decode(String.self, forKey: .kind)
+        source = try c.decode(String.self, forKey: .source)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
 
     var id: String { name }
 

@@ -713,8 +713,7 @@ struct WorkspaceDetailView: View {
 
     private var workspaceConfigurationAccessibilityLabel: String {
         let workspaceKind = currentWorkspace.runtime == .sandbox ? "sandbox workspace" : "workspace"
-        let extensionCount = (currentWorkspace.extensions ?? []).count
-        return "Edit \(workspaceKind), \(currentWorkspace.skills.count) skills, \(extensionCount) extensions"
+        return "Edit \(workspaceKind)"
     }
 
     // MARK: - Actions

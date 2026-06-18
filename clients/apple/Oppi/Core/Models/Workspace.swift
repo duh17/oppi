@@ -15,17 +15,14 @@ struct SandboxConfig: Codable, Sendable, Equatable, Hashable {
 
 /// Workspace model matching server's `Workspace` type.
 ///
-/// A workspace defines the agent environment: skills, permissions,
-/// mounted directories, and optional system prompt. Sessions are
-/// created from a workspace.
+/// A workspace defines the agent environment: mounted directory,
+/// optional instructions, and runtime policy. Pi settings own skills,
+/// extensions, prompts, and themes for SDK-backed host sessions.
 struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     let id: String
     var name: String
     var description: String?
     var icon: String?           // SF Symbol name or emoji
-
-    // Skills
-    var skills: [String]        // ["searxng", "fetch", "ast-grep"]
 
     // Context
     var systemPrompt: String?
@@ -33,9 +30,8 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var hostMount: String?      // Host directory mounted as /work
     var defaultModel: String?   // Optional default model for new sessions
 
-    // Tools and extensions
+    // Tool allowlist is only a sandbox VM security policy. Host runtime uses Pi defaults.
     var tools: [String]?
-    var extensions: [String]?
 
     // Git status
     var gitStatusEnabled: Bool?  // Show git context bar (default: true)
@@ -109,9 +105,8 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
 extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, name, description, icon
-        case skills
         case systemPrompt, systemPromptMode, hostMount, defaultModel
-        case tools, extensions
+        case tools
         case gitStatusEnabled
         case runtime, sandboxConfig
         case createdAt, updatedAt
@@ -123,13 +118,11 @@ extension Workspace: Codable {
         name = try c.decode(String.self, forKey: .name)
         description = try c.decodeIfPresent(String.self, forKey: .description)
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
-        skills = try c.decode([String].self, forKey: .skills)
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
         tools = try c.decodeIfPresent([String].self, forKey: .tools)
-        extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
         gitStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .gitStatusEnabled)
         runtime = try c.decodeIfPresent(WorkspaceRuntime.self, forKey: .runtime)
         sandboxConfig = try c.decodeIfPresent(SandboxConfig.self, forKey: .sandboxConfig)
@@ -147,13 +140,11 @@ extension Workspace: Codable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(icon, forKey: .icon)
-        try c.encode(skills, forKey: .skills)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encodeIfPresent(tools, forKey: .tools)
-        try c.encodeIfPresent(extensions, forKey: .extensions)
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(sandboxConfig, forKey: .sandboxConfig)

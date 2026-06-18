@@ -17,14 +17,12 @@ struct CreateWorkspaceRequest: Encodable {
     let name: String
     var description: String?
     var icon: String?
-    let skills: [String]
     var systemPrompt: String?
     var systemPromptMode: WorkspaceSystemPromptMode?
     var hostMount: String?
     var defaultModel: String?
     var gitStatusEnabled: Bool?
     var tools: [String]? = nil
-    var extensions: [String]?
     var runtime: WorkspaceRuntime?
     var sandboxConfig: SandboxConfig?
 }
@@ -36,14 +34,12 @@ struct UpdateWorkspaceRequest {
         name: String? = nil,
         description: JSONValue? = nil,
         icon: JSONValue? = nil,
-        skills: [String]? = nil,
         systemPrompt: JSONValue? = nil,
         systemPromptMode: WorkspaceSystemPromptMode? = nil,
         hostMount: JSONValue? = nil,
         defaultModel: JSONValue? = nil,
         gitStatusEnabled: Bool? = nil,
         tools: [String]? = nil,
-        extensions: [String]? = nil,
         sandboxConfig: JSONValue? = nil
     ) {
         var body: [String: JSONValue] = [:]
@@ -56,9 +52,6 @@ struct UpdateWorkspaceRequest {
         }
         if let icon {
             body["icon"] = icon
-        }
-        if let skills {
-            body["skills"] = .array(skills.map(JSONValue.string))
         }
         if let systemPrompt {
             body["systemPrompt"] = systemPrompt
@@ -77,9 +70,6 @@ struct UpdateWorkspaceRequest {
         }
         if let tools {
             body["tools"] = .array(tools.map(JSONValue.string))
-        }
-        if let extensions {
-            body["extensions"] = .array(extensions.map(JSONValue.string))
         }
         if let sandboxConfig {
             body["sandboxConfig"] = sandboxConfig

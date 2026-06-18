@@ -672,9 +672,15 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Skills
 
-    /// List available skills from the host's skill pool.
-    func listSkills() async throws -> [SkillInfo] {
-        let data = try await get("/skills")
+    /// List available skills from Pi resource discovery.
+    func listSkills(cwd: String? = nil) async throws -> [SkillInfo] {
+        var queryItems: [URLQueryItem] = []
+        if let cwd, !cwd.isEmpty {
+            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
+        }
+        let data = try await get(
+            url: try makeURL(pathSegments: ["skills"], queryItems: queryItems)
+        )
         struct Response: Decodable { let skills: [SkillInfo] }
         return try JSONDecoder().decode(Response.self, from: data).skills
     }
@@ -685,6 +691,21 @@ actor APIClient: ClientLogUploading {
         let data = try await post("/skills/rescan", body: EmptyBody())
         struct Response: Decodable { let skills: [SkillInfo] }
         return try JSONDecoder().decode(Response.self, from: data).skills
+    }
+
+    /// Enable or disable a Pi resource by writing Pi user/project settings for the cwd.
+    func setPiResourceEnabled(type: String, path: String, cwd: String? = nil, enabled: Bool) async throws {
+        struct Body: Encodable {
+            let type: String
+            let path: String
+            let cwd: String?
+            let enabled: Bool
+        }
+
+        _ = try await post(
+            "/pi/resources/enabled",
+            body: Body(type: type, path: path, cwd: cwd, enabled: enabled)
+        )
     }
 
     /// List available host extensions for the current workspace context.
@@ -757,14 +778,20 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Get full skill detail: metadata, SKILL.md content, and file tree.
-    func getSkillDetail(name: String) async throws -> SkillDetail {
-        let data = try await get("/skills/\(name)")
+    func getSkillDetail(name: String, cwd: String? = nil) async throws -> SkillDetail {
+        var queryItems: [URLQueryItem] = []
+        if let cwd, !cwd.isEmpty {
+            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
+        }
+        let data = try await get(
+            url: try makeURL(pathSegments: ["skills", name], queryItems: queryItems)
+        )
         return try JSONDecoder().decode(SkillDetail.self, from: data)
     }
 
     /// Get a single file's content from a skill directory.
-    func getSkillFile(name: String, path: String) async throws -> String {
-        let data = try await get(url: makeSkillFileURL(name: name, path: path))
+    func getSkillFile(name: String, path: String, cwd: String? = nil) async throws -> String {
+        let data = try await get(url: makeSkillFileURL(name: name, path: path, cwd: cwd))
         struct Response: Decodable { let content: String }
         return try JSONDecoder().decode(Response.self, from: data).content
     }
@@ -1485,10 +1512,14 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    private func makeSkillFileURL(name: String, path: String) throws -> URL {
-        try makeURL(
+    private func makeSkillFileURL(name: String, path: String, cwd: String? = nil) throws -> URL {
+        var queryItems = [URLQueryItem(name: "path", value: path)]
+        if let cwd, !cwd.isEmpty {
+            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
+        }
+        return try makeURL(
             pathSegments: ["skills", name, "file"],
-            queryItems: [URLQueryItem(name: "path", value: path)]
+            queryItems: queryItems
         )
     }
 

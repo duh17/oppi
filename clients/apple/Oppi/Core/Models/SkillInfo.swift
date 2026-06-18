@@ -10,12 +10,15 @@ struct SkillInfo: Codable, Identifiable, Sendable, Equatable {
     /// true for skills shipped with the server; false for user-created skills.
     /// Defaults to true when absent from JSON.
     let builtIn: Bool
+    /// Whether Pi settings currently load this skill for the requested cwd.
+    let enabled: Bool
 
-    init(name: String, description: String, path: String, builtIn: Bool = true) {
+    init(name: String, description: String, path: String, builtIn: Bool = true, enabled: Bool = true) {
         self.name = name
         self.description = description
         self.path = path
         self.builtIn = builtIn
+        self.enabled = enabled
     }
 
     init(from decoder: Decoder) throws {
@@ -24,6 +27,7 @@ struct SkillInfo: Codable, Identifiable, Sendable, Equatable {
         description = try c.decode(String.self, forKey: .description)
         path = try c.decode(String.self, forKey: .path)
         builtIn = try c.decodeIfPresent(Bool.self, forKey: .builtIn) ?? true
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
     }
 
     var id: String { name }

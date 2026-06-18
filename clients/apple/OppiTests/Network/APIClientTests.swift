@@ -209,7 +209,7 @@ struct APIClientTests {
         }
 
         let response = try await client.getWorkspaceSessionList(
-            workspace: Workspace(id: "w1", name: "Dev", skills: [], createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0)),
+            workspace: Workspace(id: "w1", name: "Dev", createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0)),
             since: Date(timeIntervalSince1970: 1),
             until: Date(timeIntervalSince1970: 2)
         )
@@ -572,7 +572,7 @@ struct APIClientTests {
         }
 
         let ws = try await client.getWorkspace(id: "w1")
-        #expect(ws.skills == ["fetch"])
+        #expect(ws.id == "w1")
     }
 
     @Test func createWorkspace() async throws {
@@ -586,7 +586,7 @@ struct APIClientTests {
             """)
         }
 
-        let ws = try await client.createWorkspace(CreateWorkspaceRequest(name: "New", skills: ["searxng"]))
+        let ws = try await client.createWorkspace(CreateWorkspaceRequest(name: "New"))
         #expect(ws.id == "w2")
     }
 

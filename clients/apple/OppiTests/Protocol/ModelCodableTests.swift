@@ -539,11 +539,9 @@ struct WorkspaceCodableTests {
         #expect(ws.name == "Development")
         #expect(ws.description == "Dev workspace")
         #expect(ws.icon == "hammer")
-        #expect(ws.skills == ["searxng", "fetch"])
         #expect(ws.systemPrompt == "You are helpful")
         #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == "/Users/me/workspace")
-        #expect(ws.extensions == ["memory", "todos"])
         #expect(ws.createdAt.timeIntervalSince1970 == 1700000000)
         #expect(ws.updatedAt.timeIntervalSince1970 == 1700001000)
     }
@@ -563,11 +561,9 @@ struct WorkspaceCodableTests {
         #expect(ws.id == "w2")
         #expect(ws.description == nil)
         #expect(ws.icon == nil)
-        #expect(ws.skills.isEmpty)
         #expect(ws.systemPrompt == nil)
         #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == nil)
-        #expect(ws.extensions == nil)
     }
 
     @Test func encodeDecodeRoundTrip() throws {
@@ -583,6 +579,9 @@ struct WorkspaceCodableTests {
         """
         let original = try JSONDecoder().decode(Workspace.self, from: json.data(using: .utf8)!)
         let encoded = try JSONEncoder().encode(original)
+        let encodedObject = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(encodedObject["skills"] == nil)
+        #expect(encodedObject["extensions"] == nil)
         let decoded = try JSONDecoder().decode(Workspace.self, from: encoded)
         #expect(original == decoded)
     }
@@ -597,7 +596,6 @@ struct WorkspaceCodableTests {
         let ws = try JSONDecoder().decode(Workspace.self, from: json.data(using: .utf8)!)
         #expect(ws.id == "w4")
         #expect(ws.name == "NoRuntimeField")
-        #expect(ws.skills.isEmpty)
     }
 }
 

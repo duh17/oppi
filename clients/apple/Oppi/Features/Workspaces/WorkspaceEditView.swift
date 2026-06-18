@@ -26,7 +26,6 @@ struct WorkspaceEditView: View {
     @State private var name: String = ""
     @State private var description: String = ""
     @State private var icon: String = ""
-    @State private var selectedSkills: Set<String> = []
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var gitStatusEnabled: Bool = true
@@ -35,10 +34,13 @@ struct WorkspaceEditView: View {
     @State private var isCheckingHostMount = false
     @State private var isCreatingHostDirectory = false
     @State private var hostPathPendingCreation: String?
-    @State private var extensionNames: String = ""
     @State private var availableExtensions: [ExtensionInfo] = []
+    @State private var availableSkills: [SkillInfo] = []
     @State private var isLoadingExtensions = false
+    @State private var isLoadingSkills = false
     @State private var extensionsError: String?
+    @State private var skillsError: String?
+    @State private var togglingResourceKeys: Set<String> = []
     @State private var isSaving = false
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
@@ -53,19 +55,12 @@ struct WorkspaceEditView: View {
     }
 
     private var skills: [SkillInfo] {
+        if !availableSkills.isEmpty { return availableSkills }
         guard let activeServerId,
               let scoped = workspaceStore.skillsByServer[activeServerId] else {
             return []
         }
         return scoped
-    }
-
-    private var enabledSkills: [SkillInfo] {
-        skills.filter { selectedSkills.contains($0.name) }
-    }
-
-    private var disabledSkills: [SkillInfo] {
-        skills.filter { !selectedSkills.contains($0.name) }
     }
 
     private var workspaceForEditing: Workspace {
@@ -78,20 +73,28 @@ struct WorkspaceEditView: View {
         return scoped
     }
 
-    private var selectedExtensionSet: Set<String> {
-        Set(parseUniqueNames(extensionNames))
-    }
-
-    private var availableExtensionNameSet: Set<String> {
-        Set(availableExtensions.map(\.name))
-    }
-
     private var oppiExtensions: [ExtensionInfo] {
         availableExtensions.filter(\.isOppi)
     }
 
     private var piExtensions: [ExtensionInfo] {
         availableExtensions.filter { !$0.isOppi }
+    }
+
+    private var enabledSkills: [SkillInfo] {
+        skills.filter(\.enabled)
+    }
+
+    private var disabledSkills: [SkillInfo] {
+        skills.filter { !$0.enabled }
+    }
+
+    private var enabledPiExtensions: [ExtensionInfo] {
+        piExtensions.filter(\.enabled)
+    }
+
+    private var disabledPiExtensions: [ExtensionInfo] {
+        piExtensions.filter { !$0.enabled }
     }
 
     private var trimmedHostMount: String {
@@ -209,36 +212,34 @@ struct WorkspaceEditView: View {
             }
             .selectionDisabled()
 
-            if skills.isEmpty {
-                Section("Skills") {
+            Section {
+                if isLoadingSkills && skills.isEmpty {
                     Text("Loading skills…")
                         .foregroundStyle(.themeComment)
-                }
-                .selectionDisabled()
-            } else {
-                Section("Enabled Skills") {
-                    if enabledSkills.isEmpty {
-                        Text("No skills enabled")
-                            .foregroundStyle(.themeComment)
-                            .selectionDisabled()
-                    } else {
-                        ForEach(enabledSkills) { skill in
-                            skillRow(skill)
-                        }
+                        .selectionDisabled()
+                } else if skills.isEmpty {
+                    Text("No Pi skills discovered for this folder yet.")
+                        .foregroundStyle(.themeComment)
+                        .selectionDisabled()
+                } else {
+                    ForEach(enabledSkills) { skill in
+                        skillRow(skill)
+                    }
+                    ForEach(disabledSkills) { skill in
+                        skillRow(skill)
                     }
                 }
 
-                Section("Disabled Skills") {
-                    if disabledSkills.isEmpty {
-                        Text("All skills enabled")
-                            .foregroundStyle(.themeComment)
-                            .selectionDisabled()
-                    } else {
-                        ForEach(disabledSkills) { skill in
-                            skillRow(skill)
-                        }
-                    }
+                if let skillsError {
+                    Text(skillsError)
+                        .font(.caption2)
+                        .foregroundStyle(.themeOrange)
+                        .selectionDisabled()
                 }
+            } header: {
+                Text("Pi Skills")
+            } footer: {
+                Text("Toggles write Pi user/project settings for this folder. Use reload in an active session to apply changes immediately.")
             }
 
             extensionsSection
@@ -294,22 +295,25 @@ struct WorkspaceEditView: View {
             }
         }
         .navigationDestination(item: $selectedSkillDetail) { dest in
-            SkillDetailView(skillName: dest.skillName)
+            SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
         }
         .navigationDestination(isPresented: $isShowingSystemPromptEditor) {
             WorkspaceSystemPromptEditorView(systemPrompt: $systemPrompt)
         }
         .navigationDestination(for: SkillFileDestination.self) { dest in
-            SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
+            SkillFileView(skillName: dest.skillName, filePath: dest.filePath, cwd: dest.cwd)
         }
         .onAppear {
             guard loadedWorkspaceID != workspace.id else { return }
             loadFromWorkspace()
             loadedWorkspaceID = workspace.id
         }
+        .task(id: trimmedHostMount) {
+            await loadSkills()
+            await loadExtensions()
+        }
         .task {
             await loadModels()
-            await loadExtensions()
         }
         .task(id: hostMountLookupKey) {
             await validateHostMount()
@@ -408,7 +412,10 @@ struct WorkspaceEditView: View {
                         .foregroundStyle(.themeComment)
                         .selectionDisabled()
                 } else {
-                    ForEach(piExtensions) { ext in
+                    ForEach(enabledPiExtensions) { ext in
+                        extensionRow(ext)
+                    }
+                    ForEach(disabledPiExtensions) { ext in
                         extensionRow(ext)
                     }
                 }
@@ -422,85 +429,70 @@ struct WorkspaceEditView: View {
             } header: {
                 Text("Pi Extensions")
             } footer: {
-                Text("From Pi extension directories and installed packages\(hostMount.isEmpty ? "" : " (including project .pi/extensions)")")
+                Text("Toggles write Pi user/project settings for this folder. Use reload in an active session to apply changes immediately.")
             }
         }
     }
 
     @ViewBuilder
     private func extensionRow(_ ext: ExtensionInfo) -> some View {
-        ExtensionSelectionRow(
+        ExtensionSettingsRow(
             extensionInfo: ext,
-            isSelected: selectedExtensionSet.contains(ext.name),
-            onToggle: {
-                toggleExtension(ext.name)
-            }
+            isToggling: togglingResourceKeys.contains(resourceKey(type: "extensions", path: ext.path)),
+            onToggle: { togglePiResource(type: "extensions", path: ext.path, enabled: !ext.enabled) }
         )
     }
 
     @ViewBuilder
     private func skillRow(_ skill: SkillInfo) -> some View {
-        SkillSelectionRow(
+        SkillSettingsRow(
             skill: skill,
-            isSelected: selectedSkills.contains(skill.name),
-            onToggle: {
-                toggleSkill(skill.name)
-            },
+            isToggling: togglingResourceKeys.contains(resourceKey(type: "skills", path: skill.path)),
+            onToggle: { togglePiResource(type: "skills", path: skill.path, enabled: !skill.enabled) },
             onShowDetail: {
-                selectedSkillDetail = SkillDetailDestination(skillName: skill.name)
+                selectedSkillDetail = SkillDetailDestination(skillName: skill.name, cwd: trimmedHostMount.isEmpty ? nil : trimmedHostMount)
             }
         )
     }
 
-    private func toggleSkill(_ skillName: String) {
-        if selectedSkills.contains(skillName) {
-            selectedSkills.remove(skillName)
-        } else {
-            selectedSkills.insert(skillName)
-        }
+    private func resourceKey(type: String, path: String) -> String {
+        "\(type)|\(path)"
     }
 
-    private func toggleExtension(_ name: String) {
-        let currentExtensionNames = parseUniqueNames(extensionNames)
-        let hiddenExtensionNames = currentExtensionNames.filter { !availableExtensionNameSet.contains($0) }
-        var visibleExtensionNames = Set(currentExtensionNames.filter { availableExtensionNameSet.contains($0) })
+    private func togglePiResource(type: String, path: String, enabled: Bool) {
+        let key = resourceKey(type: type, path: path)
+        guard !togglingResourceKeys.contains(key) else { return }
+        togglingResourceKeys.insert(key)
+        skillsError = nil
+        extensionsError = nil
 
-        if visibleExtensionNames.contains(name) {
-            visibleExtensionNames.remove(name)
-        } else {
-            visibleExtensionNames.insert(name)
-        }
-
-        let orderedVisibleExtensionNames = availableExtensions
-            .map(\.name)
-            .filter(visibleExtensionNames.contains)
-        setSelectedExtensionNames(orderedVisibleExtensionNames + hiddenExtensionNames)
-    }
-
-    private func parseUniqueNames(_ raw: String) -> [String] {
-        var seen = Set<String>()
-
-        return raw
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .filter { value in
-                if seen.contains(value) {
-                    return false
+        Task { @MainActor in
+            defer { togglingResourceKeys.remove(key) }
+            guard let api = apiClient else {
+                if type == "skills" {
+                    skillsError = "Server is offline"
+                } else {
+                    extensionsError = "Server is offline"
                 }
-
-                seen.insert(value)
-                return true
+                return
             }
-    }
 
-    private func setSelectedExtensionNames(_ names: [String]) {
-        extensionNames = names.joined(separator: ", ")
-    }
-
-    private func validSelectedSkillNames() -> [String] {
-        let knownSkillNames = Set(skills.map(\.name))
-        return Array(selectedSkills.intersection(knownSkillNames))
+            do {
+                let cwd = trimmedHostMount.isEmpty ? nil : trimmedHostMount
+                try await api.setPiResourceEnabled(type: type, path: path, cwd: cwd, enabled: enabled)
+                if type == "skills" {
+                    await loadSkills()
+                } else {
+                    await loadExtensions()
+                }
+            } catch {
+                if type == "skills" {
+                    skillsError = error.localizedDescription
+                } else {
+                    extensionsError = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func nullableJSONString(_ value: String) -> JSONValue {
@@ -513,7 +505,6 @@ struct WorkspaceEditView: View {
         name = source.name
         description = source.description ?? ""
         icon = source.icon ?? ""
-        selectedSkills = Set(source.skills)
         hostMount = source.hostMount ?? ""
         hostMountStatus = nil
         hostMountValidationMessage = nil
@@ -522,7 +513,6 @@ struct WorkspaceEditView: View {
         isCreatingHostDirectory = false
         systemPrompt = source.systemPrompt ?? ""
         gitStatusEnabled = source.gitStatusEnabled ?? true
-        setSelectedExtensionNames(source.extensions ?? [])
         runtime = source.runtime
         allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? "*"
     }
@@ -619,6 +609,21 @@ struct WorkspaceEditView: View {
         }
     }
 
+    private func loadSkills() async {
+        guard let api = apiClient else { return }
+
+        isLoadingSkills = true
+        skillsError = nil
+        defer { isLoadingSkills = false }
+
+        do {
+            let cwd = hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+            availableSkills = try await api.listSkills(cwd: cwd.isEmpty ? nil : cwd)
+        } catch {
+            skillsError = error.localizedDescription
+        }
+    }
+
     private func loadExtensions() async {
         guard let api = apiClient else {
             if let previewAvailableExtensions {
@@ -666,12 +671,10 @@ struct WorkspaceEditView: View {
             name: name,
             description: nullableJSONString(description),
             icon: nullableJSONString(icon),
-            skills: validSelectedSkillNames(),
             systemPrompt: nullableJSONString(systemPrompt),
             systemPromptMode: .append,
             hostMount: nullableJSONString(trimmedHostMount),
             gitStatusEnabled: gitStatusEnabled,
-            extensions: parseUniqueNames(extensionNames),
             sandboxConfig: sandboxConfigValue
         )
 
@@ -760,9 +763,9 @@ private struct WorkspaceSystemPromptEditorView: View {
 
 // MARK: - Selection Rows
 
-private struct ExtensionSelectionRow: View {
+private struct ExtensionSettingsRow: View {
     let extensionInfo: ExtensionInfo
-    let isSelected: Bool
+    let isToggling: Bool
     let onToggle: () -> Void
 
     var body: some View {
@@ -770,7 +773,7 @@ private struct ExtensionSelectionRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(extensionInfo.name)
                     .font(.body)
-                    .foregroundStyle(.themeFg)
+                    .foregroundStyle(extensionInfo.enabled ? .themeFg : .themeComment)
 
                 Text(extensionInfo.subtitle)
                     .font(.caption2.monospaced())
@@ -779,20 +782,25 @@ private struct ExtensionSelectionRow: View {
 
             Spacer(minLength: 12)
 
-            WorkspaceSelectionButton(
-                isSelected: isSelected,
-                accessibilityLabel: isSelected
-                    ? "Disable \(extensionInfo.name) extension"
-                    : "Enable \(extensionInfo.name) extension",
-                action: onToggle
-            )
+            if isToggling {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                WorkspaceSelectionButton(
+                    isSelected: extensionInfo.enabled,
+                    accessibilityLabel: extensionInfo.enabled
+                        ? "Disable \(extensionInfo.name) extension in Pi settings"
+                        : "Enable \(extensionInfo.name) extension in Pi settings",
+                    action: onToggle
+                )
+            }
         }
     }
 }
 
-private struct SkillSelectionRow: View {
+private struct SkillSettingsRow: View {
     let skill: SkillInfo
-    let isSelected: Bool
+    let isToggling: Bool
     let onToggle: () -> Void
     let onShowDetail: () -> Void
 
@@ -801,7 +809,7 @@ private struct SkillSelectionRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(skill.name)
                     .font(.body)
-                    .foregroundStyle(.themeFg)
+                    .foregroundStyle(skill.enabled ? .themeFg : .themeComment)
 
                 Text(skill.description)
                     .font(.caption)
@@ -811,13 +819,18 @@ private struct SkillSelectionRow: View {
 
             Spacer(minLength: 12)
 
-            WorkspaceSelectionButton(
-                isSelected: isSelected,
-                accessibilityLabel: isSelected
-                    ? "Disable \(skill.name) skill"
-                    : "Enable \(skill.name) skill",
-                action: onToggle
-            )
+            if isToggling {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                WorkspaceSelectionButton(
+                    isSelected: skill.enabled,
+                    accessibilityLabel: skill.enabled
+                        ? "Disable \(skill.name) skill in Pi settings"
+                        : "Enable \(skill.name) skill in Pi settings",
+                    action: onToggle
+                )
+            }
 
             Button(action: onShowDetail) {
                 Image(systemName: "info.circle")

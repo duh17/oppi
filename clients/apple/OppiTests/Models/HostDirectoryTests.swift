@@ -114,7 +114,6 @@ struct HostDirectoryTests {
     @Test func createRequestIncludesGitStatusEnabled() throws {
         let request = CreateWorkspaceRequest(
             name: "oppi",
-            skills: ["search", "fetch"],
             hostMount: "~/workspace/oppi",
             gitStatusEnabled: true
         )
@@ -125,14 +124,11 @@ struct HostDirectoryTests {
         #expect(json["name"] as? String == "oppi")
         #expect(json["hostMount"] as? String == "~/workspace/oppi")
         #expect(json["gitStatusEnabled"] as? Bool == true)
-        #expect((json["skills"] as? [String])?.count == 2)
+        #expect(json["skills"] == nil)
     }
 
     @Test func createRequestOmitsNilFields() throws {
-        let request = CreateWorkspaceRequest(
-            name: "blank",
-            skills: []
-        )
+        let request = CreateWorkspaceRequest(name: "blank")
 
         let data = try JSONEncoder().encode(request)
         let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])

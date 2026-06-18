@@ -9,7 +9,7 @@ enum WorkspaceCreatePresentation: Equatable, Sendable {
 ///
 /// Two-step flow:
 /// 1. Pick a project from discovered host directories (or enter manually)
-/// 2. Confirm name, skills, and optional advanced settings
+/// 2. Confirm name, Pi resources, and optional advanced settings
 struct WorkspaceCreateView: View {
     /// The server to create the workspace on.
     let server: PairedServer
@@ -28,8 +28,7 @@ struct WorkspaceCreateView: View {
         self.onCreate = onCreate
 
         if let prefillPath {
-            // Deep-linked workspaces intentionally start minimal: skills remain
-            // empty unless the user opts in before creating the workspace.
+            // Deep-linked workspaces use Pi's normal cwd resource discovery.
             _name = State(initialValue: prefillName ?? "")
             _hostMount = State(initialValue: prefillPath)
             _isHostMountFromProjectPicker = State(initialValue: false)
@@ -55,7 +54,6 @@ struct WorkspaceCreateView: View {
     @State private var isHostMountFromProjectPicker = false
     @State private var description = ""
     @State private var icon = ""
-    @State private var selectedSkills: Set<String> = []
     @State private var gitStatusEnabled = true
     @State private var hostMountStatus: HostPathStatus?
     @State private var hostMountValidationMessage: String?
@@ -67,7 +65,7 @@ struct WorkspaceCreateView: View {
     @State private var sandboxMode = false
     @State private var isCreating = false
     @State private var error: String?
-    @State private var selectAllSkillsWhenLoaded = false
+    @State private var skillsByLookupKey: [String: [SkillInfo]] = [:]
 
     private enum CreateStep {
         case pickProject
@@ -101,9 +99,15 @@ struct WorkspaceCreateView: View {
         coordinator.connection(for: server.id)?.workspaceStore ?? workspaceStore
     }
 
-    /// Skills from the target server.
+    /// Skills discovered for the current server and folder.
     private var skills: [SkillInfo] {
-        targetWorkspaceStore.skillsByServer[server.id] ?? []
+        if let cached = skillsByLookupKey[skillCatalogLookupKey] {
+            return cached
+        }
+        if trimmedHostMount.isEmpty {
+            return targetWorkspaceStore.skillsByServer[server.id] ?? []
+        }
+        return []
     }
 
     private var trimmedHostMount: String {
@@ -125,19 +129,8 @@ struct WorkspaceCreateView: View {
         "\(server.id)|\(isHostMountFromProjectPicker)|\(trimmedHostMount)"
     }
 
-    private var skillNames: Set<String> {
-        Set(skills.map(\.name))
-    }
-
-    private var areAllSkillsSelected: Bool {
-        !skills.isEmpty && selectedSkills == skillNames
-    }
-
-    private var skillsSelectionSummary: String {
-        if skills.isEmpty { return "Loading skills…" }
-        if selectedSkills.isEmpty { return "No skills enabled" }
-        if areAllSkillsSelected { return "All skills enabled" }
-        return "\(selectedSkills.count) of \(skills.count) skills enabled"
+    private var skillCatalogLookupKey: String {
+        "\(server.id)|\(trimmedHostMount)"
     }
 
     var body: some View {
@@ -175,7 +168,7 @@ struct WorkspaceCreateView: View {
                 }
             }
             .task { await loadDirectories() }
-            .task { await loadSkills() }
+            .task(id: trimmedHostMount) { await loadSkills() }
             .task(id: hostMountLookupKey) {
                 await validateAndCompleteHostMount()
             }
@@ -362,41 +355,19 @@ struct WorkspaceCreateView: View {
                 }
             }
 
-            // Skills
             Section {
-                HStack {
-                    Text(skillsSelectionSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(.themeComment)
-                    Spacer()
-                    HStack(spacing: 8) {
-                        Button("All") { selectAllSkills() }
-                            .disabled(skills.isEmpty || areAllSkillsSelected)
-                        Button("Off") { clearAllSkills() }
-                            .disabled(skills.isEmpty || selectedSkills.isEmpty)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
                 if skills.isEmpty {
-                    Text("Loading skills…")
+                    Text("No Pi skills discovered for this folder yet.")
                         .foregroundStyle(.themeComment)
                 } else {
                     ForEach(skills) { skill in
-                        WorkspaceCreateSkillSelectionRow(
-                            skill: skill,
-                            isSelected: selectedSkills.contains(skill.name),
-                            onToggle: {
-                                toggleSkill(skill.name)
-                            }
-                        )
+                        WorkspaceCreateSkillInfoRow(skill: skill)
                     }
                 }
             } header: {
-                Text("Skills")
+                Text("Pi Skills")
             } footer: {
-                Text("Use All for the full skill catalog, or Off to start minimal and enable only what this workspace needs.")
+                Text("New sessions load skills, extensions, prompts, and themes from Pi user and project settings for this folder.")
             }
 
             // Options
@@ -543,13 +514,11 @@ struct WorkspaceCreateView: View {
         hostPathPendingCreation = nil
         hostMountCompletions = []
         gitStatusEnabled = dir.isGitRepo
-        requestDefaultSkillSelectionIfNeeded()
         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
     private func selectManual() {
         resetHostMountInput()
-        requestDefaultSkillSelectionIfNeeded()
         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
@@ -557,7 +526,6 @@ struct WorkspaceCreateView: View {
         name = ""
         resetHostMountInput()
         gitStatusEnabled = false
-        requestDefaultSkillSelectionIfNeeded()
         withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
@@ -587,37 +555,6 @@ struct WorkspaceCreateView: View {
         hostMountValidationMessage = nil
         hostPathPendingCreation = nil
         hostMountCompletions = []
-    }
-
-    private func requestDefaultSkillSelectionIfNeeded() {
-        guard selectedSkills.isEmpty else { return }
-
-        if skills.isEmpty {
-            selectAllSkillsWhenLoaded = true
-            return
-        }
-
-        selectedSkills = skillNames
-        selectAllSkillsWhenLoaded = false
-    }
-
-    private func toggleSkill(_ skillName: String) {
-        if selectedSkills.contains(skillName) {
-            selectedSkills.remove(skillName)
-        } else {
-            selectedSkills.insert(skillName)
-        }
-        selectAllSkillsWhenLoaded = false
-    }
-
-    private func selectAllSkills() {
-        selectedSkills = skillNames
-        selectAllSkillsWhenLoaded = skills.isEmpty
-    }
-
-    private func clearAllSkills() {
-        selectedSkills.removeAll()
-        selectAllSkillsWhenLoaded = false
     }
 
     // MARK: - Data Loading
@@ -723,21 +660,25 @@ struct WorkspaceCreateView: View {
         }
     }
 
+    @MainActor
     private func loadSkills() async {
-        let store = targetWorkspaceStore
-        if (store.skillsByServer[server.id] ?? []).isEmpty {
-            guard let api = coordinator.apiClient(for: server.id) else { return }
-            do {
-                let loadedSkills = try await api.listSkills()
-                store.skillsByServer[server.id] = loadedSkills
-
-                if selectAllSkillsWhenLoaded && selectedSkills.isEmpty {
-                    selectedSkills = skillNames
-                    selectAllSkillsWhenLoaded = false
-                }
-            } catch {
-                // Keep empty state; refresh will retry.
+        let lookupKey = skillCatalogLookupKey
+        let cwd = trimmedHostMount.isEmpty ? nil : trimmedHostMount
+        if skillsByLookupKey[lookupKey] != nil { return }
+        if cwd == nil, (targetWorkspaceStore.skillsByServer[server.id] ?? []).isEmpty == false {
+            skillsByLookupKey[lookupKey] = targetWorkspaceStore.skillsByServer[server.id]
+            return
+        }
+        guard let api = coordinator.apiClient(for: server.id) else { return }
+        do {
+            let loaded = try await api.listSkills(cwd: cwd)
+            guard lookupKey == skillCatalogLookupKey else { return }
+            skillsByLookupKey[lookupKey] = loaded
+            if cwd == nil {
+                targetWorkspaceStore.skillsByServer[server.id] = loaded
             }
+        } catch {
+            // Keep empty state; refresh will retry.
         }
     }
 
@@ -767,7 +708,6 @@ struct WorkspaceCreateView: View {
             name: name,
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
-            skills: Array(selectedSkills).sorted(),
             hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,
             gitStatusEnabled: gitStatusEnabled,
             runtime: sandboxMode ? .sandbox : nil,
@@ -787,36 +727,23 @@ struct WorkspaceCreateView: View {
     }
 }
 
-// MARK: - Skill Selection Row
+// MARK: - Skill Info Row
 
-private struct WorkspaceCreateSkillSelectionRow: View {
+private struct WorkspaceCreateSkillInfoRow: View {
     let skill: SkillInfo
-    let isSelected: Bool
-    let onToggle: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(skill.name)
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(skill.name)
+                .font(.body)
+                .foregroundStyle(.themeFg)
 
-                Text(skill.description)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 12)
-
-            WorkspaceSelectionButton(
-                isSelected: isSelected,
-                accessibilityLabel: isSelected
-                    ? "Disable \(skill.name) skill"
-                    : "Enable \(skill.name) skill",
-                action: onToggle
-            )
+            Text(skill.description)
+                .font(.caption)
+                .foregroundStyle(.themeComment)
+                .lineLimit(2)
         }
+        .padding(.vertical, 2)
     }
 }
 
