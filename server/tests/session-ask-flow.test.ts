@@ -77,16 +77,16 @@ function emitExtensionUIRequest(
 }
 
 describe("direct ask flow", () => {
-  it("clears terminal-only mirror status instead of surfacing it to clients", () => {
+  it("forwards status text without name-specific filtering", () => {
     const harness = createHarness();
     const { key, broadcast } = harness;
 
     emitExtensionUIRequest(harness, {
       type: "extension_ui_request",
-      id: "mirror-status-1",
+      id: "status-1",
       method: "setStatus",
-      statusKey: "oppi-mirror",
-      statusText: "Mirror | live",
+      statusKey: "extension-status",
+      statusText: "live",
     });
 
     expect(broadcast).toHaveBeenCalledWith(key, {
@@ -94,8 +94,8 @@ describe("direct ask flow", () => {
       method: "setStatus",
       message: undefined,
       notifyType: undefined,
-      statusKey: "oppi-mirror",
-      statusText: undefined,
+      statusKey: "extension-status",
+      statusText: "live",
       title: undefined,
       text: undefined,
       widgetKey: undefined,

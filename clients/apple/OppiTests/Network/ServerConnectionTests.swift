@@ -751,7 +751,7 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaceBySession["s1"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
-    @Test func routeOppiMirrorStatusStaysOutOfChatSurface() {
+    @Test func routeExtensionStatusWithAnyKeyStoresChatSurfaceEntry() {
         let (conn, pipe) = makeTestConnection()
 
         pipe.handle(
@@ -760,8 +760,8 @@ struct ServerConnectionTests {
                     method: "setStatus",
                     message: nil,
                     notifyType: nil,
-                    statusKey: "oppi-mirror",
-                    statusText: "Mirror \\ live",
+                    statusKey: "extension-status",
+                    statusText: "live",
                     title: nil,
                     text: nil,
                     widgetKey: nil,
@@ -772,14 +772,14 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["extension-status"]?.text == "live")
     }
 
-    @Test func routeOppiMirrorStatusClearsExistingChatSurfaceEntry() {
+    @Test func routeExtensionStatusWithAnyKeyUpdatesExistingChatSurfaceEntry() {
         let (conn, pipe) = makeTestConnection()
         conn.extensionSurfaceBySession["s1"] = ExtensionSurfaceState(
             statuses: [
-                "oppi-mirror": ExtensionStatusState(key: "oppi-mirror", text: "Mirror | live"),
+                "extension-status": ExtensionStatusState(key: "extension-status", text: "live"),
             ]
         )
 
@@ -789,8 +789,8 @@ struct ServerConnectionTests {
                     method: "setStatus",
                     message: nil,
                     notifyType: nil,
-                    statusKey: "oppi-mirror",
-                    statusText: "Mirror / live",
+                    statusKey: "extension-status",
+                    statusText: "updated",
                     title: nil,
                     text: nil,
                     widgetKey: nil,
@@ -801,7 +801,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["extension-status"]?.text == "updated")
     }
 
     @Test func routeExtensionSetEditorTextUpdatesComposerState() {
