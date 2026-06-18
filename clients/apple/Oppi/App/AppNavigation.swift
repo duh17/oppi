@@ -130,14 +130,15 @@ final class AppNavigation {
 
     func openWorkspaceSession(_ target: WorkspaceSessionNavTarget, workspace: WorkspaceNavTarget? = nil) {
         selectedTab = .workspaces
+        let resolvedTarget = target.withWorkspaceIdIfMissing(workspace?.workspace.id)
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(target)
+            workspacePath.append(resolvedTarget)
         case .split:
             if let workspace {
                 splitSelectedWorkspace = workspace
             }
-            splitDetailTarget = .session(target)
+            splitDetailTarget = .session(resolvedTarget)
             resetSplitDetailPath()
             splitColumnVisibility = .detailOnly
         }
@@ -230,11 +231,11 @@ final class AppNavigation {
     /// Avoid clearing the path and appending in separate writes: SwiftUI may
     /// briefly re-appear the previous chat view during the intermediate empty
     /// stack, and that old view can steal the focused session stream back.
-    func setWorkspaceSessionPath(serverId: String, sessionId: String) {
-        let target = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId)
+    func setWorkspaceSessionPath(serverId: String, sessionId: String, workspaceId: String? = nil) {
+        let target = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId)
+            workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
         case .split:
             splitDetailTarget = .session(target)
             resetSplitDetailPath()
@@ -242,9 +243,9 @@ final class AppNavigation {
         }
     }
 
-    static func workspaceSessionPath(serverId: String, sessionId: String) -> NavigationPath {
+    static func workspaceSessionPath(serverId: String, sessionId: String, workspaceId: String? = nil) -> NavigationPath {
         var path = NavigationPath()
-        path.append(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId))
+        path.append(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId))
         return path
     }
 

@@ -1023,6 +1023,28 @@ final class ServerConnection {
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
     }
 
+    /// Resolve the workspace needed to bind a session stream during deep-link or notification re-entry.
+    /// Permission-gate app events can arrive before the session summary is cached, so pending UI state is a valid source.
+    func sessionReentryWorkspaceId(for sessionId: String, workspaceIdHint: String? = nil) -> String? {
+        if let workspaceId = normalizedWorkspaceId(sessionStore.session(id: sessionId)?.workspaceId) {
+            return workspaceId
+        }
+        if let workspaceId = normalizedWorkspaceId(workspaceIdHint) {
+            return workspaceId
+        }
+        if let workspaceId = normalizedWorkspaceId(askRequestStore.pending(for: sessionId)?.workspaceId) {
+            return workspaceId
+        }
+        return pendingExtensionDialogQueues[sessionId]?
+            .compactMap { normalizedWorkspaceId($0.workspaceId) }
+            .first
+    }
+
+    private func normalizedWorkspaceId(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
     /// Focus the connection on a session for command routing (prompt/stop/etc).
     ///
     /// Unlike `disconnectSession`, this does NOT close the previous session stream
@@ -1037,10 +1059,7 @@ final class ServerConnection {
             silenceWatchdog.stop()
         }
 
-        let normalizedWorkspaceIdHint = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackWorkspaceId = normalizedWorkspaceIdHint?.isEmpty == false ? normalizedWorkspaceIdHint : nil
-        let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
-            ?? fallbackWorkspaceId
+        let workspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint)
         focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
         // Reset per-connection chat state for the new focused session.
         // Sheet-backed extension dialogs are derived from pendingExtensionDialogQueues.
@@ -1058,14 +1077,10 @@ final class ServerConnection {
         _onPrepareForSessionReentryForTesting?(sessionId)
         focusSession(sessionId, workspaceIdHint: workspaceIdHint)
 
-        let normalizedWorkspaceIdHint = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackWorkspaceId = normalizedWorkspaceIdHint?.isEmpty == false ? normalizedWorkspaceIdHint : nil
-
+        let session = sessionStore.session(id: sessionId)
         guard hasRequiredSplitStreamCapabilities,
-              let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
-              session.status != .stopped,
-              let workspaceId = session.workspaceId ?? fallbackWorkspaceId,
-              !workspaceId.isEmpty else {
+              session?.status != .stopped,
+              let workspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint) else {
             return
         }
 
@@ -1156,11 +1171,10 @@ final class ServerConnection {
         sessionId: String,
         payload: ExtensionUIResponsePayload
     ) async throws {
-        let workspaceId = askRequestStore.pending(for: sessionId)?.workspaceId
-            ?? pendingExtensionDialogQueues[sessionId]?.first(where: { $0.id == id })?.workspaceId
-            ?? sessionStore.workspaceId(for: sessionId)
+        let workspaceId = sessionReentryWorkspaceId(for: sessionId)
 
-        if !isFocusedSession(sessionId), let workspaceId, apiClient != nil {
+        let focusedStreamReady = isFocusedSession(sessionId) && wsClient?.status == .connected
+        if !focusedStreamReady, let workspaceId, apiClient != nil {
             try await respondToExtensionUI(
                 workspaceId: workspaceId,
                 sessionId: sessionId,

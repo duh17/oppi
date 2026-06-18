@@ -107,6 +107,34 @@ struct ServerConnectionStreamTests {
                 "Re-entry should eagerly reopen the bound session transport so session actions work before ChatSessionManager.connect finishes")
     }
 
+    @Test func prepareForSessionReentryUsesPendingAskWorkspaceForUncachedSession() {
+        let (conn, _) = makeTestConnection(sessionId: "old")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.askRequestStore.set(
+            AskRequest(
+                id: "ask-1",
+                sessionId: "new-child",
+                questions: [AskQuestion(id: "q1", question: "Continue?", options: [], multiSelect: false)],
+                allowCustom: true,
+                timeout: nil,
+                workspaceId: "w1"
+            ),
+            for: "new-child"
+        )
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        conn.prepareForSessionReentry("new-child")
+
+        #expect(conn.focusedSessionId == "new-child")
+        #expect(conn.focusedSessionStore.focused?.workspaceId == "w1")
+        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.streamConsumptionTask != nil,
+                "Notification re-entry should bind the focused stream from the pending permission gate workspace before the session summary arrives")
+
+        conn.disconnectSession()
+    }
+
     // MARK: - streamConsumptionTask self-cleanup
 
     @Test func consumptionTaskNilsItselfWhenStreamEnds() async {

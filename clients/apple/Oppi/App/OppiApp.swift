@@ -483,10 +483,11 @@ struct OppiApp: App {
         connection: ServerConnection
     ) {
         coordinator.switchToServer(serverId)
+        let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
         connection.sessionStore.activeSessionId = sessionId
-        connection.prepareForSessionReentry(sessionId)
+        connection.prepareForSessionReentry(sessionId, workspaceIdHint: workspaceId)
         navigation.selectedTab = .workspaces
-        navigation.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId)
+        navigation.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
     }
 
     @MainActor
