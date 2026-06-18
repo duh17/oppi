@@ -118,6 +118,17 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
+    @Test func openSessionPreservesWorkspaceHintFromWorkspaceTarget() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
+
+        #expect(navigation.splitSelectedSession?.workspaceId == "workspace-1")
+    }
+
     @Test func workspaceSelectionRestoresSessionLayerVisibility() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))

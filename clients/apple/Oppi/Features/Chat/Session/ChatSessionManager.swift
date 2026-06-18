@@ -279,6 +279,12 @@ final class ChatSessionManager {
         let generation = connectionGeneration
 
         transitionTo(.idle)
+        if let resolvedWorkspaceId = connection.sessionReentryWorkspaceId(
+            for: sessionId,
+            workspaceIdHint: workspaceIdHint
+        ) {
+            workspaceIdHint = resolvedWorkspaceId
+        }
         connection.focusSession(sessionId, workspaceIdHint: workspaceIdHint)
         connection.fatalSetupError = false
         cancelAutoReconnect()

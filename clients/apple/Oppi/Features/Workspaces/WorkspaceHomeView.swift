@@ -10,6 +10,27 @@ struct WorkspaceNavTarget: Hashable {
 struct WorkspaceSessionNavTarget: Hashable {
     let serverId: String
     let sessionId: String
+    let workspaceId: String?
+
+    init(serverId: String, sessionId: String, workspaceId: String? = nil) {
+        self.serverId = serverId
+        self.sessionId = sessionId
+        self.workspaceId = Self.normalizedWorkspaceId(workspaceId)
+    }
+
+    func withWorkspaceIdIfMissing(_ workspaceId: String?) -> WorkspaceSessionNavTarget {
+        guard self.workspaceId == nil else { return self }
+        return WorkspaceSessionNavTarget(
+            serverId: serverId,
+            sessionId: sessionId,
+            workspaceId: workspaceId
+        )
+    }
+
+    private static func normalizedWorkspaceId(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
 }
 
 enum WorkspaceLinkedFileKind: Hashable {
@@ -121,7 +142,7 @@ struct WorkspaceSessionScopedDestinationView: View {
     var body: some View {
         Group {
             if let connection = resolvedConnection {
-                ChatView(sessionId: target.sessionId)
+                ChatView(sessionId: target.sessionId, workspaceIdHint: target.workspaceId)
                     .withServerScopedEnvironment(connection)
             } else {
                 ProgressView("Connecting…")

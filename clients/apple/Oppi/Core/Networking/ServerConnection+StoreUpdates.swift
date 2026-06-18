@@ -227,11 +227,12 @@ extension ServerConnection {
     }
 
     func attentionWorkspaceId(explicitWorkspaceId: String?, sessionId: String?) -> String? {
-        if let explicitWorkspaceId, !explicitWorkspaceId.isEmpty {
+        if let explicitWorkspaceId = explicitWorkspaceId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicitWorkspaceId.isEmpty {
             return explicitWorkspaceId
         }
         guard let sessionId else { return nil }
-        return sessionStore.workspaceId(for: sessionId)
+        return sessionReentryWorkspaceId(for: sessionId)
     }
 
     func syncWorkspaceSummary(workspaceId: String) {
