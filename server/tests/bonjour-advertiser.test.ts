@@ -91,7 +91,9 @@ describe("buildBonjourTxtRecord", () => {
 
 describe("buildBonjourServiceName", () => {
   it("builds name from sid prefix", () => {
-    expect(buildBonjourServiceName("sha256:ABCDEFGHIJKLMNOPQRSTUVWXYZ")).toBe("oppi-ABCDEFGHIJKLMNOP");
+    expect(buildBonjourServiceName("sha256:ABCDEFGHIJKLMNOPQRSTUVWXYZ")).toBe(
+      "oppi-ABCDEFGHIJKLMNOP",
+    );
   });
 
   it("supports custom prefix", () => {

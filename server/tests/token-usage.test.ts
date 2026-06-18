@@ -94,7 +94,7 @@ describe("normalizePiUsage", () => {
         cacheWrite: 0,
         cost: { total: 0 },
       },
-      "openai-codex/gpt-5.3-codex-spark"
+      "openai-codex/gpt-5.3-codex-spark",
     );
 
     expect(usage).toEqual({

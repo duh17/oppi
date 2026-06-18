@@ -103,7 +103,6 @@ function makeHarness(root: string) {
       {
         id: "w1",
         name: "Workspace",
-        skills: [],
         hostMount: root,
       },
     ],

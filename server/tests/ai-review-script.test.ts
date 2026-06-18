@@ -156,7 +156,7 @@ describe("ai-review script", () => {
         filePath,
         [
           '// import fake from "./commented";',
-          'const text = "import nope from \'./string-literal\'";',
+          "const text = \"import nope from './string-literal'\";",
           'import real from "./real";',
           'export * from "./exported";',
           '/* export { ghost } from "./commented-export"; */',

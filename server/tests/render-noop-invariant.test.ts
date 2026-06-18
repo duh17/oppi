@@ -5,10 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { MobileRendererRegistry, type StyledSegment } from "../src/mobile-renderer.js";
 
-function expectIdempotent(
-  render: () => StyledSegment[] | undefined,
-  message: string,
-): void {
+function expectIdempotent(render: () => StyledSegment[] | undefined, message: string): void {
   const first = render();
   const second = render();
   expect(second, message).toEqual(first);
@@ -47,7 +44,10 @@ describe("RQ-TL-002: renderer idempotency and purity", () => {
 
   for (const [tool, args] of callCases) {
     it(`renderCall(${tool}) is deterministic`, () => {
-      expectIdempotent(() => registry.renderCall(tool, args), `${tool} renderCall should be stable`);
+      expectIdempotent(
+        () => registry.renderCall(tool, args),
+        `${tool} renderCall should be stable`,
+      );
     });
   }
 

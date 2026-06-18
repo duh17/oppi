@@ -77,20 +77,16 @@ function pointResolverAt(runtimeDir: string): void {
  * Optionally runs a side-effect function before calling back (e.g. to modify files).
  */
 function mockInstallSuccess(sideEffect?: () => void): void {
-  mockExecFile.mockImplementation(
-    (_bin: string, _args: string[], _opts: unknown, cb: Function) => {
-      sideEffect?.();
-      cb(null, "", "");
-    },
-  );
+  mockExecFile.mockImplementation((_bin: string, _args: string[], _opts: unknown, cb: Function) => {
+    sideEffect?.();
+    cb(null, "", "");
+  });
 }
 
 function mockInstallFailure(stderr: string, stdout = ""): void {
-  mockExecFile.mockImplementation(
-    (_bin: string, _args: string[], _opts: unknown, cb: Function) => {
-      cb(new Error("install error"), stdout, stderr);
-    },
-  );
+  mockExecFile.mockImplementation((_bin: string, _args: string[], _opts: unknown, cb: Function) => {
+    cb(new Error("install error"), stdout, stderr);
+  });
 }
 
 function npmVersionResponse(version: string): Response {

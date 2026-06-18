@@ -99,7 +99,6 @@ describe("Sandbox workspace CRUD", () => {
   it("creates workspace with runtime=sandbox", () => {
     const ws = storage.createWorkspace({
       name: "sandbox-test",
-      skills: [],
       runtime: "sandbox",
       sandboxConfig: { allowedHosts: ["api.anthropic.com", "api.openai.com"] },
     } as CreateWorkspaceRequest);
@@ -111,7 +110,6 @@ describe("Sandbox workspace CRUD", () => {
   it("creates workspace with runtime=host (default behavior)", () => {
     const ws = storage.createWorkspace({
       name: "host-test",
-      skills: [],
       runtime: "host",
     } as CreateWorkspaceRequest);
 
@@ -122,7 +120,6 @@ describe("Sandbox workspace CRUD", () => {
   it("creates workspace without runtime (backwards compat)", () => {
     const ws = storage.createWorkspace({
       name: "legacy-test",
-      skills: [],
     } as CreateWorkspaceRequest);
 
     expect(ws.runtime).toBeUndefined();
@@ -132,7 +129,6 @@ describe("Sandbox workspace CRUD", () => {
   it("persists and reloads sandbox tools and config", () => {
     const ws = storage.createWorkspace({
       name: "persist-test",
-      skills: [],
       tools: ["read", "bash", "edit", "write", "web_search"],
       runtime: "sandbox",
       sandboxConfig: {
@@ -154,7 +150,6 @@ describe("Sandbox workspace CRUD", () => {
   it("updates runtime from host to sandbox", () => {
     const ws = storage.createWorkspace({
       name: "upgrade-test",
-      skills: [],
       runtime: "host",
     } as CreateWorkspaceRequest);
 
@@ -171,13 +166,11 @@ describe("Sandbox workspace CRUD", () => {
   it("lists workspaces preserving runtime field", () => {
     storage.createWorkspace({
       name: "sandbox-ws",
-      skills: [],
       runtime: "sandbox",
     } as CreateWorkspaceRequest);
 
     storage.createWorkspace({
       name: "host-ws",
-      skills: [],
       runtime: "host",
     } as CreateWorkspaceRequest);
 
@@ -204,7 +197,6 @@ describe("GondolinManager secret forwarding", () => {
     const workspace: Workspace = {
       id: "ws-sec",
       name: "Secret Test",
-      skills: [],
       runtime: "sandbox",
       sandboxConfig: { allowedHosts: ["api.anthropic.com"] },
       createdAt: Date.now(),
@@ -235,7 +227,6 @@ describe("GondolinManager secret forwarding", () => {
     const workspace: Workspace = {
       id: "ws-guest-path",
       name: "Guest Path",
-      skills: [],
       runtime: "sandbox",
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -266,7 +257,6 @@ describe("GondolinManager secret forwarding", () => {
     const workspace: Workspace = {
       id: "ws-nosec",
       name: "No Secrets",
-      skills: [],
       runtime: "sandbox",
       createdAt: Date.now(),
       updatedAt: Date.now(),

@@ -59,7 +59,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     const workspace = {
       id: "attack-test",
       name: "Attack Surface Test",
-      skills: [] as string[],
       runtime: "sandbox" as const,
       sandboxConfig: { allowedHosts: [] as string[] }, // no network
       createdAt: Date.now(),

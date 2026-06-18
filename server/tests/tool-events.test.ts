@@ -233,7 +233,7 @@ describe("media content block handling", () => {
   it("skips media blocks with no data", () => {
     const partialResults = new Map<string, string>();
     const messages = translateContentBlocks(
-      [{ type: "audio" }],  // no data field
+      [{ type: "audio" }], // no data field
       partialResults,
       "tc-empty",
     );

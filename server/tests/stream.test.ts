@@ -545,8 +545,9 @@ describe("DictationStreamMux", () => {
 
     const errors = ws.sentOfType("dictation_error");
     expect(errors).toHaveLength(1);
-    expect((errors[0] as { error?: string }).error).toContain("Unsupported dictation stream message");
+    expect((errors[0] as { error?: string }).error).toContain(
+      "Unsupported dictation stream message",
+    );
     expect(manager.handleControlMessage).not.toHaveBeenCalled();
   });
-
 });

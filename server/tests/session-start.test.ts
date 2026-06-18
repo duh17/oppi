@@ -36,7 +36,6 @@ function makeWorkspace(): Workspace {
   return {
     id: "w1",
     name: "Workspace",
-    skills: [],
     systemPromptMode: "append",
     createdAt: now,
     updatedAt: now,

@@ -17,7 +17,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isQemuAvailable, GondolinManager, type VmFactoryOptions } from "../src/gondolin-manager.js";
+import {
+  isQemuAvailable,
+  GondolinManager,
+  type VmFactoryOptions,
+} from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import {
   createGondolinBashOps,
@@ -58,7 +62,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     const workspace = {
       id: "live-test",
       name: "Live Test",
-      skills: [] as string[],
       runtime: "sandbox" as const,
       sandboxConfig: { allowedHosts: [] as string[] },
       createdAt: Date.now(),
@@ -320,7 +323,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     const workspace = {
       id: "live-test",
       name: "Live Test",
-      skills: [] as string[],
       runtime: "sandbox" as const,
       createdAt: Date.now(),
       updatedAt: Date.now(),

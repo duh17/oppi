@@ -23,30 +23,56 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 function makePush(): PushClient & {
-  updates: Array<{ token: string; contentState: Record<string, unknown>; staleDate?: number; priority: number }>;
+  updates: Array<{
+    token: string;
+    contentState: Record<string, unknown>;
+    staleDate?: number;
+    priority: number;
+  }>;
   ends: Array<{ token: string; contentState: Record<string, unknown>; priority: number }>;
 } {
-  const updates: Array<{ token: string; contentState: Record<string, unknown>; staleDate?: number; priority: number }> = [];
-  const ends: Array<{ token: string; contentState: Record<string, unknown>; priority: number }> = [];
+  const updates: Array<{
+    token: string;
+    contentState: Record<string, unknown>;
+    staleDate?: number;
+    priority: number;
+  }> = [];
+  const ends: Array<{ token: string; contentState: Record<string, unknown>; priority: number }> =
+    [];
   return {
     updates,
     ends,
     sendSessionEventPush: vi.fn(async () => true),
     sendLiveActivityUpdate: vi.fn(
-      async (token: string, contentState: Record<string, unknown>, staleDate?: number, priority: 5 | 10 = 5) => {
+      async (
+        token: string,
+        contentState: Record<string, unknown>,
+        staleDate?: number,
+        priority: 5 | 10 = 5,
+      ) => {
         updates.push({ token, contentState, staleDate, priority });
         return true;
       },
     ),
     endLiveActivity: vi.fn(
-      async (token: string, contentState: Record<string, unknown>, _dismissalDate?: number, priority: 5 | 10 = 10) => {
+      async (
+        token: string,
+        contentState: Record<string, unknown>,
+        _dismissalDate?: number,
+        priority: 5 | 10 = 10,
+      ) => {
         ends.push({ token, contentState, priority });
         return true;
       },
     ),
     shutdown: vi.fn(),
   } as unknown as PushClient & {
-    updates: Array<{ token: string; contentState: Record<string, unknown>; staleDate?: number; priority: number }>;
+    updates: Array<{
+      token: string;
+      contentState: Record<string, unknown>;
+      staleDate?: number;
+      priority: number;
+    }>;
     ends: Array<{ token: string; contentState: Record<string, unknown>; priority: number }>;
   };
 }
@@ -69,10 +95,12 @@ function makeStorageStub(
   return stub as unknown as Storage & { clearedToken: boolean };
 }
 
-function makeBridge(opts: {
-  push?: ReturnType<typeof makePush>;
-  storage?: ReturnType<typeof makeStorageStub>;
-} = {}) {
+function makeBridge(
+  opts: {
+    push?: ReturnType<typeof makePush>;
+    storage?: ReturnType<typeof makeStorageStub>;
+  } = {},
+) {
   const push = opts.push ?? makePush();
   const storage = opts.storage ?? makeStorageStub();
   const bridge = new LiveActivityBridge(push, storage);
@@ -179,11 +207,13 @@ describe("LiveActivityBridge", () => {
     it("maps extension UI requests with priority 10", () => {
       const { bridge, push } = makeBridge();
 
-      bridge.handleSessionEvent(event("extension_ui_request", "s1", {
-        id: "ui-1",
-        method: "select",
-        title: "Permission required",
-      }));
+      bridge.handleSessionEvent(
+        event("extension_ui_request", "s1", {
+          id: "ui-1",
+          method: "select",
+          title: "Permission required",
+        }),
+      );
       vi.advanceTimersByTime(800);
 
       expect(push.updates[0].contentState.lastEvent).toBe("Permission required");
@@ -222,9 +252,11 @@ describe("LiveActivityBridge", () => {
     it("maps state event to session status label", () => {
       const { bridge, push } = makeBridge();
 
-      bridge.handleSessionEvent(event("state", "s1", {
-        session: makeSession({ status: "busy" }),
-      }));
+      bridge.handleSessionEvent(
+        event("state", "s1", {
+          session: makeSession({ status: "busy" }),
+        }),
+      );
       vi.advanceTimersByTime(800);
 
       expect(push.updates[0].contentState.status).toBe("busy");
@@ -382,5 +414,4 @@ describe("LiveActivityBridge", () => {
       bridge.shutdown();
     });
   });
-
 });

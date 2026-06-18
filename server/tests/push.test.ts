@@ -362,9 +362,9 @@ describe("push", () => {
         reason: "done",
       }),
     ).resolves.toBe(true);
-    await expect(client.sendLiveActivityUpdate("live-token-3", { status: "running" })).resolves.toBe(
-      true,
-    );
+    await expect(
+      client.sendLiveActivityUpdate("live-token-3", { status: "running" }),
+    ).resolves.toBe(true);
 
     expect(http2ConnectMock).toHaveBeenCalledTimes(1);
     expect(connections[0].requests).toHaveLength(2);

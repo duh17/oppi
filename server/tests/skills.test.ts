@@ -2,11 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  SkillRegistry,
-  extractFrontmatterField,
-  type SkillsChangedEvent,
-} from "../src/skills.js";
+import { SkillRegistry, extractFrontmatterField, type SkillsChangedEvent } from "../src/skills.js";
 
 // ─── Helpers ───
 
@@ -263,7 +259,6 @@ describe("SkillRegistry", () => {
       expect(events).toHaveLength(0);
     });
   });
-
 });
 
 // ─── Frontmatter Extraction ───

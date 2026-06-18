@@ -132,7 +132,6 @@ describe("SessionManager startSession", () => {
     const workspace: Workspace = {
       id: "w1",
       name: "Workspace",
-      skills: [],
       systemPromptMode: "append",
       hostMount: "/tmp/oppi-workspace-context-test",
       createdAt: now,
@@ -845,7 +844,6 @@ describe("SessionManager prompt", () => {
     const workspace: Workspace = {
       id: "w1",
       name: "test",
-      skills: [],
       systemPromptMode: "append",
       hostMount: workspaceRoot,
       createdAt: Date.now(),
@@ -1116,7 +1114,6 @@ describe("SessionManager message queue", () => {
     const workspace: Workspace = {
       id: "w1",
       name: "test",
-      skills: [],
       systemPromptMode: "append",
       hostMount: workspaceRoot,
       createdAt: Date.now(),
@@ -1168,7 +1165,6 @@ describe("SessionManager message queue", () => {
     const workspace: Workspace = {
       id: "w1",
       name: "test",
-      skills: [],
       systemPromptMode: "append",
       hostMount: workspaceRoot,
       createdAt: Date.now(),
@@ -1221,7 +1217,6 @@ describe("SessionManager message queue", () => {
     const workspace: Workspace = {
       id: "w1",
       name: "test",
-      skills: [],
       systemPromptMode: "append",
       hostMount: workspaceRoot,
       createdAt: Date.now(),
@@ -1259,7 +1254,6 @@ describe("SessionManager message queue", () => {
     const workspace: Workspace = {
       id: "w1",
       name: "test",
-      skills: [],
       systemPromptMode: "append",
       hostMount: workspaceRoot,
       createdAt: Date.now(),

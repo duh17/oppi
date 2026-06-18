@@ -96,7 +96,11 @@ describe("generateInvite", () => {
     const storage = makeStorage({ port: 7777, host: "0.0.0.0" });
 
     expect(() =>
-      generateInvite(storage as Storage, () => null, () => "unused"),
+      generateInvite(
+        storage as Storage,
+        () => null,
+        () => "unused",
+      ),
     ).toThrowError(
       "Could not determine pairing host. Pass --host <hostname-or-ip>, e.g. --host my-mac.local",
     );
@@ -110,7 +114,11 @@ describe("generateInvite", () => {
     });
 
     expect(() =>
-      generateInvite(storage as Storage, () => null, () => "unused"),
+      generateInvite(
+        storage as Storage,
+        () => null,
+        () => "unused",
+      ),
     ).toThrowError(
       "Could not determine pairing host. Pass --host <machine>.<tailnet>.ts.net and ensure Tailscale is connected",
     );
@@ -125,7 +133,11 @@ describe("generateInvite", () => {
     mockIsTailscaleHostname.mockReturnValue(false);
 
     expect(() =>
-      generateInvite(storage as Storage, () => "example.local", () => "unused"),
+      generateInvite(
+        storage as Storage,
+        () => "example.local",
+        () => "unused",
+      ),
     ).toThrowError(
       "Tailscale TLS mode requires a *.ts.net pairing host. Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale",
     );

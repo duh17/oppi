@@ -32,48 +32,49 @@ describe("fetchCodexUsageStatus", () => {
       getApiKey: vi.fn(async () => "token_123"),
     } as never;
 
-    const fetchImpl = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          plan_type: "prolite",
-          rate_limit: {
-            primary_window: {
-              used_percent: 19,
-              limit_window_seconds: 18_000,
-              reset_at: 1_746_853_708,
-            },
-            secondary_window: {
-              used_percent: 67,
-              limit_window_seconds: 604_800,
-              reset_at: 1_746_989_363,
-            },
-          },
-          credits: {
-            has_credits: false,
-            unlimited: false,
-            balance: "0",
-          },
-          additional_rate_limits: [
-            {
-              metered_feature: "codex_bengalfox",
-              limit_name: "GPT-5.3-Codex-Spark",
-              rate_limit: {
-                primary_window: {
-                  used_percent: 0,
-                  limit_window_seconds: 18_000,
-                  reset_at: 1_746_857_171,
-                },
-                secondary_window: {
-                  used_percent: 0,
-                  limit_window_seconds: 604_800,
-                  reset_at: 1_747_461_171,
-                },
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            plan_type: "prolite",
+            rate_limit: {
+              primary_window: {
+                used_percent: 19,
+                limit_window_seconds: 18_000,
+                reset_at: 1_746_853_708,
+              },
+              secondary_window: {
+                used_percent: 67,
+                limit_window_seconds: 604_800,
+                reset_at: 1_746_989_363,
               },
             },
-          ],
-        }),
-        { status: 200 },
-      ),
+            credits: {
+              has_credits: false,
+              unlimited: false,
+              balance: "0",
+            },
+            additional_rate_limits: [
+              {
+                metered_feature: "codex_bengalfox",
+                limit_name: "GPT-5.3-Codex-Spark",
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 18_000,
+                    reset_at: 1_746_857_171,
+                  },
+                  secondary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 604_800,
+                    reset_at: 1_747_461_171,
+                  },
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
     ) as never;
 
     const result = await fetchCodexUsageStatus({
@@ -126,11 +127,9 @@ describe("fetchCodexUsageStatus", () => {
         get: vi.fn(() => ({ type: "oauth", accountId: "acct_123" })),
         getApiKey: vi.fn(async () => "token_123"),
       } as never,
-      fetchImpl: vi.fn(async () =>
-        new Response(
-          JSON.stringify({ error: { message: "rate limited" } }),
-          { status: 429 },
-        ),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 }),
       ) as never,
       now: () => 456,
     });

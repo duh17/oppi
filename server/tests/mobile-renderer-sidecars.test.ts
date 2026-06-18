@@ -66,7 +66,9 @@ describe("discoverRenderers", () => {
 describe("loadRenderer", () => {
   it("loads a valid .ts renderer with typed renderers", async () => {
     const filePath = join(tempDir, "test.ts");
-    writeFileSync(filePath, `
+    writeFileSync(
+      filePath,
+      `
       interface Seg { text: string; style?: string; }
       const renderers: Record<string, { renderCall(args: Record<string, unknown>): Seg[]; renderResult(d: unknown, e: boolean): Seg[] }> = {
         my_tool: {
@@ -79,7 +81,8 @@ describe("loadRenderer", () => {
         },
       };
       export default renderers;
-    `);
+    `,
+    );
 
     const reg = new MobileRendererRegistry();
     const { loaded, errors } = await reg.loadRenderer(filePath);
@@ -95,14 +98,17 @@ describe("loadRenderer", () => {
 
   it("loads a valid .js renderer (CommonJS)", async () => {
     const filePath = join(tempDir, "test.js");
-    writeFileSync(filePath, `
+    writeFileSync(
+      filePath,
+      `
       module.exports = {
         js_tool: {
           renderCall(args) { return [{ text: "js " + (args.x || "") }]; },
           renderResult(d, e) { return [{ text: e ? "err" : "ok" }]; },
         },
       };
-    `);
+    `,
+    );
 
     const reg = new MobileRendererRegistry();
     const { loaded, errors } = await reg.loadRenderer(filePath);
@@ -113,7 +119,9 @@ describe("loadRenderer", () => {
 
   it("skips entries missing renderCall/renderResult", async () => {
     const filePath = join(tempDir, "bad.ts");
-    writeFileSync(filePath, `
+    writeFileSync(
+      filePath,
+      `
       export default {
         good: {
           renderCall() { return [{ text: "ok" }]; },
@@ -124,7 +132,8 @@ describe("loadRenderer", () => {
           // missing renderResult
         },
       };
-    `);
+    `,
+    );
 
     const reg = new MobileRendererRegistry();
     const { loaded, errors } = await reg.loadRenderer(filePath);
@@ -149,22 +158,28 @@ describe("loadRenderer", () => {
 
 describe("loadAllRenderers", () => {
   it("discovers and loads all renderers from a directory", async () => {
-    writeFileSync(join(tempDir, "memory.ts"), `
+    writeFileSync(
+      join(tempDir, "memory.ts"),
+      `
       export default {
         tool_a: {
           renderCall() { return [{ text: "a" }]; },
           renderResult() { return [{ text: "a" }]; },
         },
       };
-    `);
-    writeFileSync(join(tempDir, "todos.ts"), `
+    `,
+    );
+    writeFileSync(
+      join(tempDir, "todos.ts"),
+      `
       export default {
         tool_b: {
           renderCall() { return [{ text: "b" }]; },
           renderResult() { return [{ text: "b" }]; },
         },
       };
-    `);
+    `,
+    );
 
     const reg = new MobileRendererRegistry();
     const { loaded, errors } = await reg.loadAllRenderers(tempDir);
@@ -176,14 +191,17 @@ describe("loadAllRenderers", () => {
   });
 
   it("user renderers can override built-in renderers", async () => {
-    writeFileSync(join(tempDir, "custom-bash.ts"), `
+    writeFileSync(
+      join(tempDir, "custom-bash.ts"),
+      `
       export default {
         bash: {
           renderCall() { return [{ text: "custom bash" }]; },
           renderResult() { return [{ text: "custom result" }]; },
         },
       };
-    `);
+    `,
+    );
 
     const reg = new MobileRendererRegistry();
     expect(reg.has("bash")).toBe(true); // built-in
