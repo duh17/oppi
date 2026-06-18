@@ -74,6 +74,42 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(runningTask.waitForExistence(timeout: 3), "Expanded native surface content should return")
     }
 
+    func testExtensionDockStressPreview() throws {
+        launchPreview(screen: "extension-dock-stress")
+
+        let keyboardFirstRunContinue = app.buttons["Continue"]
+        if keyboardFirstRunContinue.waitForExistence(timeout: 2) {
+            keyboardFirstRunContinue.tap()
+        }
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard did not appear for stress preview")
+
+        saveScreenshot(name: "extension-dock-stress-keyboard")
+
+        app.terminate()
+        launchPreview(screen: "extension-dock-goal-detail")
+        let detailTitle = app.staticTexts["extensionDockStress.goalDetail.title"]
+        XCTAssertTrue(detailTitle.waitForExistence(timeout: 5), "Goal detail preview did not open")
+        saveScreenshot(name: "extension-dock-stress-goal-detail")
+    }
+
+    func testExtensionDockReviewCombinedPreview() throws {
+        launchPreview(screen: "extension-dock-review-combined")
+
+        let combinedWidget = app.buttons["Collapse Pi review open widget"]
+        XCTAssertTrue(combinedWidget.waitForExistence(timeout: 5), "Combined pi-review widget not visible")
+        XCTAssertTrue(app.staticTexts["Pi review open"].waitForExistence(timeout: 5), "Promoted status title not visible")
+        XCTAssertFalse(app.staticTexts["pi-review"].exists, "Generated key label should be suppressed when status already names the surface")
+        saveScreenshot(name: "extension-dock-review-combined-expanded")
+
+        combinedWidget.tap()
+        let collapsedWidget = app.buttons["Expand Pi review open widget"]
+        XCTAssertTrue(collapsedWidget.waitForExistence(timeout: 3), "Combined pi-review widget did not collapse")
+        XCTAssertFalse(app.staticTexts["pi-review"].exists, "Collapsed card should still suppress the generated key label")
+        saveScreenshot(name: "extension-dock-review-combined-collapsed")
+    }
+
     func testAskCardPreview() throws {
         launchPreview(screen: "ask-card")
 
