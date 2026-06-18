@@ -462,15 +462,19 @@ struct WorkspaceHomeView: View {
     // MARK: - Toolbar
 
     private func serverStatusPresentation(for server: PairedServer) -> WorkspaceServerStatusPresentation {
-        let serverConn = coordinator.connection(for: server.id)
-        let workspaceCatalog = workspacesForServer(server.id)
-        let rawFreshness = serverConn?.workspaceStore.freshnessState(forServer: server.id) ?? .offline
-        let rawFreshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: server.id) ?? "Offline"
+        if let serverConn = coordinator.connection(for: server.id) {
+            return WorkspaceServerStatusPresentation.derive(
+                health: serverConn.serverHealth(forServer: server.id)
+            )
+        }
+
         return WorkspaceServerStatusPresentation.derive(
-            freshnessState: rawFreshness,
-            freshnessLabel: rawFreshnessLabel,
-            isTransportConnected: serverConn?.isConnected == true,
-            hasCachedCatalog: !workspaceCatalog.isEmpty
+            health: ServerHealth.derive(
+                freshnessState: .offline,
+                freshnessLabel: "Offline",
+                transportStates: [.disconnected],
+                hasCachedCatalog: !workspacesForServer(server.id).isEmpty
+            )
         )
     }
 

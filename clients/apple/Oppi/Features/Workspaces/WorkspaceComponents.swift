@@ -182,19 +182,40 @@ struct WorkspaceServerStatusPresentation: Equatable, Sendable {
         isTransportConnected: Bool,
         hasCachedCatalog: Bool
     ) -> Self {
-        guard freshnessState == .offline, isTransportConnected else {
-            return Self(
-                state: freshnessState,
-                label: freshnessLabel,
-                isUnreachable: freshnessState == .offline
-            )
+        derive(health: ServerHealth.derive(
+            freshnessState: freshnessState,
+            freshnessLabel: freshnessLabel,
+            transportStates: [isTransportConnected ? .connected : .disconnected],
+            hasCachedCatalog: hasCachedCatalog
+        ))
+    }
+
+    static func derive(health: ServerHealth) -> Self {
+        if health.freshnessState == .offline {
+            switch health.transportState {
+            case .connected:
+                if health.hasCachedCatalog {
+                    return Self(state: .stale, label: "Connected", isUnreachable: false)
+                }
+                return Self(state: .syncing, label: "Connecting", isUnreachable: false)
+
+            case .connecting:
+                return Self(state: .syncing, label: "Connecting", isUnreachable: false)
+
+            case .disconnected:
+                return Self(
+                    state: .offline,
+                    label: health.freshnessLabel,
+                    isUnreachable: true
+                )
+            }
         }
 
-        if hasCachedCatalog {
-            return Self(state: .stale, label: "Connected", isUnreachable: false)
-        }
-
-        return Self(state: .syncing, label: "Connecting", isUnreachable: false)
+        return Self(
+            state: health.freshnessState,
+            label: health.freshnessLabel,
+            isUnreachable: false
+        )
     }
 }
 

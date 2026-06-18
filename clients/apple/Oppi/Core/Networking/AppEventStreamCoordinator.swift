@@ -9,6 +9,7 @@ final class AppEventStreamCoordinator {
     private var consumptionTask: Task<Void, Never>?
     private var client: AppEventStreamClient?
     private var streamURL: URL?
+    private var generation: UInt64 = 0
 
     var isRunning: Bool {
         guard let consumptionTask else { return false }
@@ -25,23 +26,32 @@ final class AppEventStreamCoordinator {
         }
 
         disconnect()
+        generation &+= 1
+        let activeGeneration = generation
         client = nextClient
         streamURL = nextURL
         let stream = nextClient.connect()
+        connection.setAppEventStreamTransportState(.connecting)
 
         consumptionTask = Task { @MainActor [weak self, weak connection] in
             for await event in stream {
                 guard let connection, !Task.isCancelled else { break }
-                if case .connected(_, let snapshotRequired) = event, snapshotRequired {
-                    await connection.refreshSessionList(force: true)
+                if case .connected(_, let snapshotRequired) = event {
+                    connection.setAppEventStreamTransportState(.connected)
+                    if snapshotRequired {
+                        await connection.refreshSessionList(force: true)
+                    }
                 }
                 connection.handleAppEvent(event)
             }
-            self?.consumptionTask = nil
+            guard let self, self.generation == activeGeneration else { return }
+            self.consumptionTask = nil
+            connection?.setAppEventStreamTransportState(.disconnected)
         }
     }
 
     func disconnect() {
+        generation &+= 1
         consumptionTask?.cancel()
         consumptionTask = nil
         client?.disconnect()

@@ -19,6 +19,7 @@ final class ServerConnection {
     var splitSessionStreamAvailable = false
     var dictationStreamAvailable = false
     var appEventStreamAvailable = false
+    private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
     private var streamCapabilitiesRefreshFailed = false
@@ -86,9 +87,34 @@ final class ServerConnection {
     private var endpointSelection: EndpointSelection?
 
     // periphery:ignore - used by ServerConnectionTests via @testable import
-    /// Derived connection state for UI badges.
+    /// Derived focused-session stream state. Server badges should use `serverHealth(forServer:)`.
     var isConnected: Bool {
         wsClient?.status == .connected
+    }
+
+    func serverHealth(forServer serverId: String? = nil) -> ServerHealth {
+        let resolvedServerId = serverId ?? currentServerId ?? workspaceStore.activeServerId ?? ""
+        let workspaceCatalog = workspaceStore.workspacesByServer[resolvedServerId] ?? []
+        return ServerHealth.derive(
+            freshnessState: workspaceStore.freshnessState(forServer: resolvedServerId),
+            freshnessLabel: workspaceStore.freshnessLabel(forServer: resolvedServerId),
+            transportStates: [
+                focusedSessionTransportState(),
+                appEventStreamTransportState,
+            ],
+            hasCachedCatalog: !workspaceCatalog.isEmpty
+        )
+    }
+
+    private func focusedSessionTransportState() -> ServerHealth.TransportState {
+        switch wsClient?.status {
+        case .connected:
+            return .connected
+        case .connecting, .reconnecting:
+            return .connecting
+        case .disconnected, nil:
+            return .disconnected
+        }
     }
 
     /// Whether the server has server dictation configured (remote dictation server or another STT backend).
@@ -314,6 +340,7 @@ final class ServerConnection {
         self.splitSessionStreamAvailable = false
         self.dictationStreamAvailable = false
         self.appEventStreamAvailable = false
+        self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
         self.streamCapabilitiesLoaded = false
         self.streamCapabilitiesRefreshFailed = false
@@ -1228,8 +1255,11 @@ final class ServerConnection {
               let selection = endpointSelection,
               let credentials,
               let streamURL = makeAppEventStreamURL(selection: selection) else {
+            appEventStreamTransportState = .disconnected
             return
         }
+
+        appEventStreamTransportState = .connecting
 
         #if DEBUG
         if let startAppEventStreamForTesting = _startAppEventStreamForTesting {
@@ -1252,6 +1282,11 @@ final class ServerConnection {
 
     func disconnectAppEventStream() {
         appEventStreamCoordinator.disconnect()
+        appEventStreamTransportState = .disconnected
+    }
+
+    func setAppEventStreamTransportState(_ state: ServerHealth.TransportState) {
+        appEventStreamTransportState = state
     }
 
     private func makeAppEventStreamURL(selection: EndpointSelection) -> URL? {
