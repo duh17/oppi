@@ -358,7 +358,9 @@
       "message": "Select the model for this task",
       "placeholder": "Select...",
       "prefill": "claude-sonnet",
-      "timeout": 30000
+      "timeout": 30000,
+      "extensionScopeId": "npm:review-helper",
+      "extensionDisplayName": "Review Helper"
     },
     "extension_ui_notification": {
       "type": "extension_ui_notification",
@@ -375,6 +377,8 @@
         "Run /end-review when done"
       ],
       "widgetPlacement": "aboveEditor",
+      "extensionScopeId": "npm:review-helper",
+      "extensionDisplayName": "Review Helper",
       "workingIndicator": {
         "frames": [
           "●"

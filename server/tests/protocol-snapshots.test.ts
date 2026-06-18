@@ -293,6 +293,8 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       placeholder: "Select...",
       prefill: "claude-sonnet",
       timeout: 30000,
+      extensionScopeId: "npm:review-helper",
+      extensionDisplayName: "Review Helper",
     },
     extension_ui_notification: {
       type: "extension_ui_notification",
@@ -306,6 +308,8 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       widgetKey: "review",
       widgetLines: ["Review session active", "Run /end-review when done"],
       widgetPlacement: "aboveEditor",
+      extensionScopeId: "npm:review-helper",
+      extensionDisplayName: "Review Helper",
       workingIndicator: {
         frames: ["●"],
         intervalMs: 250,

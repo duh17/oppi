@@ -128,6 +128,8 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     var timeout: Int?
     var timeoutAt: Date?
     var workspaceId: String?
+    var extensionScopeId: String?
+    var extensionDisplayName: String?
     // Ask extension fields (method: "ask")
     var askQuestions: [AskQuestion]?
     var allowCustom: Bool?
@@ -144,6 +146,8 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
         timeout: Int? = nil,
         timeoutAt: Date? = nil,
         workspaceId: String? = nil,
+        extensionScopeId: String? = nil,
+        extensionDisplayName: String? = nil,
         askQuestions: [AskQuestion]? = nil,
         allowCustom: Bool? = nil
     ) {
@@ -158,6 +162,8 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
         self.timeout = timeout
         self.timeoutAt = timeoutAt
         self.workspaceId = workspaceId
+        self.extensionScopeId = extensionScopeId
+        self.extensionDisplayName = extensionDisplayName
         self.askQuestions = askQuestions
         self.allowCustom = allowCustom
     }
@@ -174,11 +180,51 @@ struct ExtensionUINotification: Sendable, Equatable {
     let widgetKey: String?
     let widgetLines: [String]?
     let widgetPlacement: String?
+    let extensionScopeId: String?
+    let extensionDisplayName: String?
     var workingIndicator: ExtensionUIWorkingIndicator? = nil
     var workingVisible: Bool? = nil
     var hiddenThinkingLabel: String? = nil
     var toolsExpanded: Bool? = nil
     var nativeSurface: ExtensionUINativeSurface? = nil
+
+    init(
+        method: String,
+        message: String?,
+        notifyType: String?,
+        statusKey: String?,
+        statusText: String?,
+        title: String?,
+        text: String?,
+        widgetKey: String?,
+        widgetLines: [String]?,
+        widgetPlacement: String?,
+        extensionScopeId: String? = nil,
+        extensionDisplayName: String? = nil,
+        workingIndicator: ExtensionUIWorkingIndicator? = nil,
+        workingVisible: Bool? = nil,
+        hiddenThinkingLabel: String? = nil,
+        toolsExpanded: Bool? = nil,
+        nativeSurface: ExtensionUINativeSurface? = nil
+    ) {
+        self.method = method
+        self.message = message
+        self.notifyType = notifyType
+        self.statusKey = statusKey
+        self.statusText = statusText
+        self.title = title
+        self.text = text
+        self.widgetKey = widgetKey
+        self.widgetLines = widgetLines
+        self.widgetPlacement = widgetPlacement
+        self.extensionScopeId = extensionScopeId
+        self.extensionDisplayName = extensionDisplayName
+        self.workingIndicator = workingIndicator
+        self.workingVisible = workingVisible
+        self.hiddenThinkingLabel = hiddenThinkingLabel
+        self.toolsExpanded = toolsExpanded
+        self.nativeSurface = nativeSurface
+    }
 }
 
 struct ExtensionUIWorkingIndicator: Sendable, Equatable, Decodable {
@@ -227,7 +273,7 @@ extension ServerMessage: Decodable {
         case stage, clientTurnId, duplicate
         // error
         case error, code, fatal
-        case id, sessionId, timeoutAt, nativeSurface
+        case id, sessionId, timeoutAt, nativeSurface, extensionScopeId, extensionDisplayName
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // ask extension (extension_ui_request with method: "ask")
@@ -438,6 +484,8 @@ extension ServerMessage: Decodable {
                 timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
                 timeoutAt: try c.decodeIfPresent(Double.self, forKey: .timeoutAt).map { Date(timeIntervalSince1970: $0 / 1000) },
                 workspaceId: try c.decodeIfPresent(String.self, forKey: .workspaceId),
+                extensionScopeId: try c.decodeIfPresent(String.self, forKey: .extensionScopeId),
+                extensionDisplayName: try c.decodeIfPresent(String.self, forKey: .extensionDisplayName),
                 askQuestions: askQuestions,
                 allowCustom: allowCustom
             )
@@ -459,6 +507,8 @@ extension ServerMessage: Decodable {
             let widgetKey = try c.decodeIfPresent(String.self, forKey: .widgetKey)
             let widgetLines = try c.decodeIfPresent([String].self, forKey: .widgetLines)
             let widgetPlacement = try c.decodeIfPresent(String.self, forKey: .widgetPlacement)
+            let extensionScopeId = try c.decodeIfPresent(String.self, forKey: .extensionScopeId)
+            let extensionDisplayName = try c.decodeIfPresent(String.self, forKey: .extensionDisplayName)
             let workingIndicator = try c.decodeIfPresent(ExtensionUIWorkingIndicator.self, forKey: .workingIndicator)
             let workingVisible = try c.decodeIfPresent(Bool.self, forKey: .workingVisible)
             let hiddenThinkingLabel = try c.decodeIfPresent(String.self, forKey: .hiddenThinkingLabel)
@@ -476,6 +526,8 @@ extension ServerMessage: Decodable {
                     widgetKey: widgetKey,
                     widgetLines: widgetLines,
                     widgetPlacement: widgetPlacement,
+                    extensionScopeId: extensionScopeId,
+                    extensionDisplayName: extensionDisplayName,
                     workingIndicator: workingIndicator,
                     workingVisible: workingVisible,
                     hiddenThinkingLabel: hiddenThinkingLabel,

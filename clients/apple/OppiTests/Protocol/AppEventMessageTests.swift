@@ -60,7 +60,9 @@ struct AppEventMessageTests {
           "questions": [
             { "id": "q1", "question": "Ship it?", "options": [{ "value": "yes", "label": "Yes" }] }
           ],
-          "allowCustom": false
+          "allowCustom": false,
+          "extensionScopeId": "npm:review-helper",
+          "extensionDisplayName": "Review Helper"
         }
         """)
 
@@ -74,6 +76,35 @@ struct AppEventMessageTests {
         #expect(workspaceId == "w1")
         #expect(emittedAt == 1_791_650_000_002)
         #expect(request.askQuestions?.first?.question == "Ship it?")
+        #expect(request.extensionScopeId == "npm:review-helper")
+        #expect(request.extensionDisplayName == "Review Helper")
+    }
+
+    @Test func decodesExtensionUINotificationScopeMetadata() throws {
+        let event = try AppEventMessage.decode(from: """
+        {
+          "type": "extension_ui_notification",
+          "sessionId": "s1",
+          "workspaceId": "w1",
+          "emittedAt": 1791650000003,
+          "method": "setWidget",
+          "widgetKey": "review",
+          "extensionScopeId": "npm:review-helper",
+          "extensionDisplayName": "Review Helper"
+        }
+        """)
+
+        guard case .extensionUINotification(let notification, let sessionId, let workspaceId, let emittedAt) = event else {
+            Issue.record("Expected .extensionUINotification, got \(event)")
+            return
+        }
+        #expect(sessionId == "s1")
+        #expect(workspaceId == "w1")
+        #expect(emittedAt == 1_791_650_000_003)
+        #expect(notification.method == "setWidget")
+        #expect(notification.widgetKey == "review")
+        #expect(notification.extensionScopeId == "npm:review-helper")
+        #expect(notification.extensionDisplayName == "Review Helper")
     }
 
     @Test func focusedStreamFramesDecodeAsIgnored() throws {

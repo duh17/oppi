@@ -422,7 +422,7 @@ struct ServerMessageTests {
 
     @Test func decodesExtensionUIRequest() throws {
         let json = """
-        {"type":"extension_ui_request","id":"ext1","sessionId":"s1","method":"select","title":"Choose option","options":["A","B","C"],"timeout":5000,"timeoutAt":1893456000000}
+        {"type":"extension_ui_request","id":"ext1","sessionId":"s1","method":"select","title":"Choose option","options":["A","B","C"],"timeout":5000,"timeoutAt":1893456000000,"extensionScopeId":"npm:review-helper","extensionDisplayName":"Review Helper"}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .extensionUIRequest(let req) = msg else {
@@ -434,6 +434,8 @@ struct ServerMessageTests {
         #expect(req.options == ["A", "B", "C"])
         #expect(req.timeout == 5000)
         #expect(req.timeoutAt == Date(timeIntervalSince1970: 1_893_456_000))
+        #expect(req.extensionScopeId == "npm:review-helper")
+        #expect(req.extensionDisplayName == "Review Helper")
     }
 
     @Test func extensionUIRequestIgnoresNativeSurface() throws {
@@ -901,7 +903,7 @@ struct ServerMessageTests {
 
     @Test func extensionUINotification() throws {
         let json = """
-        {"type":"extension_ui_notification","method":"status","message":"Building...","notifyType":"info"}
+        {"type":"extension_ui_notification","method":"status","message":"Building...","notifyType":"info","extensionScopeId":"npm:review-helper","extensionDisplayName":"Review Helper"}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .extensionUINotification(let notification) = msg else {
@@ -911,6 +913,8 @@ struct ServerMessageTests {
         #expect(notification.method == "status")
         #expect(notification.message == "Building...")
         #expect(notification.notifyType == "info")
+        #expect(notification.extensionScopeId == "npm:review-helper")
+        #expect(notification.extensionDisplayName == "Review Helper")
     }
 
     // MARK: - Command Result
