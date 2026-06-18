@@ -25,6 +25,12 @@ struct ScreenshotPreviewView: View {
             SessionTimelinePreview()
         case "extension-widget":
             ExtensionSurfacePreview()
+        case "extension-dock-stress":
+            ExtensionDockStressPreview()
+        case "extension-dock-review-combined":
+            ExtensionDockReviewCombinedPreview()
+        case "extension-dock-goal-detail":
+            ExtensionDockGoalDetailStandalonePreview()
         case "streaming-flicker":
             StreamingFlickerPreviewView()
         case "ask-card":
