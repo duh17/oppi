@@ -24,6 +24,18 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
+const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FILES = new Set([
+  "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
+  "clients/apple/Oppi/Core/Networking/ServerConnection+MessageRouter.swift",
+  "clients/apple/Oppi/Core/Networking/ServerConnection+AppEvents.swift",
+  "clients/apple/Oppi/Core/Models/ExtensionUIWireDecoding.swift",
+  "clients/apple/Oppi/Core/Models/ServerMessage.swift",
+  "server/src/app-event-stream.ts",
+  "server/src/extension-ui-contract.ts",
+  "server/src/extension-ui-state.ts",
+  "server/src/sdk-ui-bridge.ts",
+]);
+
 const IOS_COLD_LIST_PROJECTION_CONSUMER_PATH_PREFIXES = [
   "clients/apple/Oppi/Features/Workspaces/",
   "clients/apple/Oppi/Features/QuickSession/",
@@ -351,6 +363,16 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
     }
   }
 
+  violations.push(
+    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, candidateFiles, (violation) =>
+      makeServerViolation({
+        ...violation,
+        importer: violation.file,
+        target: "extension identity literal",
+      }),
+    ),
+  );
+
   return sortArchitectureViolations(violations);
 }
 
@@ -370,6 +392,163 @@ function lineAndColumnForIndex(source, index) {
   }
 
   return { line, column };
+}
+
+function stripCommentsPreservingStrings(source) {
+  let output = "";
+  let index = 0;
+  let state = "code";
+  let quote = "";
+  let blockCommentDepth = 0;
+
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1] ?? "";
+
+    if (state === "line-comment") {
+      if (char === "\n") {
+        output += "\n";
+        state = "code";
+      } else {
+        output += " ";
+      }
+      index += 1;
+      continue;
+    }
+
+    if (state === "block-comment") {
+      if (char === "/" && next === "*") {
+        blockCommentDepth += 1;
+        output += "  ";
+        index += 2;
+        continue;
+      }
+
+      if (char === "*" && next === "/") {
+        blockCommentDepth -= 1;
+        output += "  ";
+        index += 2;
+        if (blockCommentDepth === 0) {
+          state = "code";
+        }
+        continue;
+      }
+
+      output += char === "\n" ? "\n" : " ";
+      index += 1;
+      continue;
+    }
+
+    if (state === "string") {
+      output += char;
+      index += 1;
+
+      if (char === "\\") {
+        if (index < source.length) {
+          output += source[index];
+          index += 1;
+        }
+        continue;
+      }
+
+      if (char === quote) {
+        state = "code";
+        quote = "";
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      output += "  ";
+      index += 2;
+      state = "line-comment";
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      output += "  ";
+      index += 2;
+      blockCommentDepth = 1;
+      state = "block-comment";
+      continue;
+    }
+
+    if (char === "\"" || char === "'" || char === "`") {
+      output += char;
+      index += 1;
+      quote = char;
+      state = "string";
+      continue;
+    }
+
+    output += char;
+    index += 1;
+  }
+
+  return output;
+}
+
+const IDENTITY_BRANCH_EXPRESSION = String.raw`(?:\b(?:\w+\.)*(?:tool|toolName|statusKey|widgetKey|extensionScopeId|extensionDisplayName)\b)`;
+const STRING_LITERAL_EXPRESSION = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
+
+const GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS = [
+  new RegExp(
+    String.raw`${IDENTITY_BRANCH_EXPRESSION}\s*(?:={2,3}|!={1,2})\s*${STRING_LITERAL_EXPRESSION}`,
+    "g",
+  ),
+  new RegExp(
+    String.raw`${STRING_LITERAL_EXPRESSION}\s*(?:={2,3}|!={1,2})\s*${IDENTITY_BRANCH_EXPRESSION}`,
+    "g",
+  ),
+  new RegExp(
+    String.raw`switch\s+(?:\([^)]*${IDENTITY_BRANCH_EXPRESSION}[^)]*\)|${IDENTITY_BRANCH_EXPRESSION})[\s\S]{0,800}?\bcase\s+${STRING_LITERAL_EXPRESSION}`,
+    "g",
+  ),
+  new RegExp(
+    String.raw`\.(?:has|includes|contains)\(\s*${IDENTITY_BRANCH_EXPRESSION}\s*\)`,
+    "g",
+  ),
+];
+
+function findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, files, makeViolation) {
+  const violations = [];
+
+  for (const file of files) {
+    if (!GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FILES.has(file)) {
+      continue;
+    }
+
+    const absolutePath = path.join(repoRoot, file);
+    if (!existsSync(absolutePath)) {
+      continue;
+    }
+
+    const source = stripCommentsPreservingStrings(readFileSync(absolutePath, "utf8"));
+    for (const pattern of GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(source);
+      if (!match) {
+        continue;
+      }
+
+      const location = lineAndColumnForIndex(source, match.index);
+      violations.push(
+        makeViolation({
+          rule: "extension-surface-no-identity-branch",
+          file,
+          line: location.line,
+          column: location.column,
+          reason:
+            "Generic extension-surface code must not branch on concrete tool, extension, status, widget, or display names.",
+          remediation:
+            "Add semantic protocol metadata at the producer boundary and route on that metadata instead of hardcoded identities.",
+        }),
+      );
+      break;
+    }
+  }
+
+  return violations;
 }
 
 export function stripSwiftCommentsAndStrings(source) {
@@ -668,6 +847,10 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
       );
     }
   }
+
+  violations.push(
+    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, candidateFiles, makeIosViolation),
+  );
 
   return sortArchitectureViolations(violations);
 }

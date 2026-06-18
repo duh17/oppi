@@ -157,4 +157,96 @@ describe("architecture layer rule helpers", () => {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("flags concrete identity branches in generic extension-surface server files", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-extension-server-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/extension-ui-state.ts"),
+        [
+          "const hiddenStatusKeys = new Set(['local-only']);",
+          "export function route(req: { method: string; statusKey?: string; widgetKey?: string }) {",
+          "  if (req.method === 'setStatus') return 'protocol routing is okay';",
+          "  if (hiddenStatusKeys.has(req.statusKey)) return 'bad';",
+          "  if (req.widgetKey === 'summary') return 'bad';",
+          "  return 'ok';",
+          "}",
+        ].join("\n"),
+      );
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "extension-surface-no-identity-branch",
+            file: "server/src/extension-ui-state.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("allows protocol method routing in generic extension-surface server files", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-extension-method-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/extension-ui-state.ts"),
+        [
+          "export function route(req: { method: string; statusKey?: string }) {",
+          "  switch (req.method) {",
+          "    case 'setStatus': return req.statusKey ? 'status' : 'none';",
+          "    case 'setWidget': return 'widget';",
+          "    default: return 'other';",
+          "  }",
+          "}",
+        ].join("\n"),
+      );
+
+      const violations = findServerLayerViolations(repoRoot).filter(
+        (violation) => violation.rule === "extension-surface-no-identity-branch",
+      );
+
+      expect(violations).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("flags concrete identity branches in generic extension-surface Swift files", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-extension-swift-"));
+
+    try {
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift"),
+        [
+          "import SwiftUI",
+          "func route(statusKey: String, widgetKey: String) -> String {",
+          "  if statusKey == \"local-only\" { return \"bad\" }",
+          "  switch widgetKey {",
+          "  case \"summary\": return \"bad\"",
+          "  default: return \"ok\"",
+          "  }",
+          "}",
+        ].join("\n"),
+      );
+
+      const violations = findIosLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "extension-surface-no-identity-branch",
+            file: "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });

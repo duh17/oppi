@@ -493,24 +493,31 @@ describe("SessionManager extension UI", () => {
     ]);
   });
 
-  it("does not replay terminal-only mirror statuses", () => {
+  it("replays status notifications by key without name-specific filtering", () => {
     const { manager, events } = makeManagerHarness();
 
     feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "status-1",
       method: "setStatus",
-      statusKey: "oppi-mirror",
+      statusKey: "extension-status",
       statusText: "connected",
     });
 
     expect(events.at(-1)).toMatchObject({
       type: "extension_ui_notification",
       method: "setStatus",
-      statusKey: "oppi-mirror",
-      statusText: undefined,
+      statusKey: "extension-status",
+      statusText: "connected",
     });
-    expect(manager.getPendingUIRequestMessages("s1")).toEqual([]);
+    expect(manager.getPendingUIRequestMessages("s1")).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "extension-status",
+        statusText: "connected",
+      }),
+    ]);
   });
 
   it("tracks dialog methods as pending UI requests", () => {

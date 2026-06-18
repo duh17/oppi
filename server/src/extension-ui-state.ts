@@ -95,21 +95,10 @@ export function cancelPendingAskRequest(
   return false;
 }
 
-const TERMINAL_ONLY_STATUS_KEYS = new Set(["oppi-mirror"]);
-
-function terminalOnlyStatusText(req: ExtensionUIRequest): string | undefined {
-  if (req.method === "setStatus" && req.statusKey && TERMINAL_ONLY_STATUS_KEYS.has(req.statusKey)) {
-    return undefined;
-  }
-  return req.statusText;
-}
-
 function notificationReplayKey(req: ExtensionUIRequest): string | undefined {
   switch (req.method) {
     case "setStatus":
-      return req.statusKey && !TERMINAL_ONLY_STATUS_KEYS.has(req.statusKey)
-        ? `status:${req.statusKey}`
-        : undefined;
+      return req.statusKey ? `status:${req.statusKey}` : undefined;
     case "setWidget":
       return req.widgetKey ? `widget:${req.widgetKey}` : undefined;
     case "setTitle":
@@ -154,13 +143,6 @@ function hasPersistentNotificationContent(req: ExtensionUIRequest): boolean {
     default:
       return false;
   }
-}
-
-function normalizeFireAndForgetNotificationRequest(req: ExtensionUIRequest): ExtensionUIRequest {
-  if (req.method === "setStatus") {
-    return { ...req, statusText: terminalOnlyStatusText(req) };
-  }
-  return req;
 }
 
 export function updatePersistentExtensionUINotifications(
@@ -278,9 +260,8 @@ export function handleExtensionUIRequest(
   },
 ): void {
   if (isExtensionUIFireAndForgetMethod(req.method)) {
-    const notificationReq = normalizeFireAndForgetNotificationRequest(req);
-    updatePersistentExtensionUINotifications(active, notificationReq);
-    deps.broadcast(buildExtensionUINotificationMessage(notificationReq));
+    updatePersistentExtensionUINotifications(active, req);
+    deps.broadcast(buildExtensionUINotificationMessage(req));
     return;
   }
 
