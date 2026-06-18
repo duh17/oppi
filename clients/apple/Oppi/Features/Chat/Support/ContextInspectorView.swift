@@ -3,8 +3,6 @@ import SwiftUI
 struct ContextInspectorView: View {
     let session: Session?
     let workspace: Workspace?
-    let workspaceSkillNames: [String]
-    let availableSkills: [SkillInfo]
     let loadSessionStats: @MainActor () async throws -> SessionStatsSnapshot?
 
     @State private var loadedStats: SessionStatsSnapshot?
@@ -42,23 +40,28 @@ struct ContextInspectorView: View {
         )
     }
 
-    private var workspaceSkillEstimates: [SkillEstimate] {
-        let byName = Dictionary(uniqueKeysWithValues: availableSkills.map { ($0.name, $0) })
-
-        return workspaceSkillNames.sorted().map { skillName in
-            let skill = byName[skillName]
-            let description = skill?.description ?? "No description available"
-            let location = skill?.path
+    private var sessionSkillEstimates: [SkillEstimate] {
+        guard let loadedSkills = loadedStats?.loadedResources?.skills else { return [] }
+        return loadedSkills.sorted { $0.name < $1.name }.map { skill in
+            let description = skill.description ?? "No description available"
             return SkillEstimate(
-                name: skillName,
+                name: skill.name,
                 description: description,
                 estimatedTokens: estimateSkillPromptTokens(
-                    name: skillName,
+                    name: skill.name,
                     description: description,
-                    location: location
+                    location: skill.path
                 )
             )
         }
+    }
+
+    private var sessionExtensions: [SessionResourceSnapshot] {
+        loadedStats?.loadedResources?.extensions.sorted { $0.name < $1.name } ?? []
+    }
+
+    private var skillDetailCwd: String? {
+        workspace?.hostMount
     }
 
     /// Breaks the total context into up to 4 colored segments:
@@ -161,14 +164,14 @@ struct ContextInspectorView: View {
                 }
             }
 
-            Section("Session Skills") {
-                if workspaceSkillEstimates.isEmpty {
+            Section("Loaded Skills") {
+                if sessionSkillEstimates.isEmpty {
                     Text("No skills loaded for this session.")
                         .font(.subheadline)
                         .foregroundStyle(.themeComment)
                 } else {
-                    ForEach(workspaceSkillEstimates) { skill in
-                        NavigationLink(value: SkillDetailDestination(skillName: skill.name)) {
+                    ForEach(sessionSkillEstimates) { skill in
+                        NavigationLink(value: SkillDetailDestination(skillName: skill.name, cwd: skillDetailCwd)) {
                             skillEstimateRow(skill)
                         }
                     }
@@ -176,6 +179,26 @@ struct ContextInspectorView: View {
                     Text("Tap a skill to read SKILL.md and files.")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
+                }
+            }
+
+            Section("Loaded Extensions") {
+                if sessionExtensions.isEmpty {
+                    Text("No extensions loaded for this session.")
+                        .font(.subheadline)
+                        .foregroundStyle(.themeComment)
+                } else {
+                    ForEach(sessionExtensions) { ext in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ext.name)
+                                .font(.body)
+                                .foregroundStyle(.themeFg)
+                            Text(ext.path)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.themeComment)
+                                .lineLimit(2)
+                        }
+                    }
                 }
             }
         }
@@ -187,10 +210,10 @@ struct ContextInspectorView: View {
             await refreshSessionStats()
         }
         .navigationDestination(for: SkillDetailDestination.self) { dest in
-            SkillDetailView(skillName: dest.skillName)
+            SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
         }
         .navigationDestination(for: SkillFileDestination.self) { dest in
-            SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
+            SkillFileView(skillName: dest.skillName, filePath: dest.filePath, cwd: dest.cwd)
         }
     }
 

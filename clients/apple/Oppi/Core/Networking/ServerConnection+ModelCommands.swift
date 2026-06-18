@@ -504,8 +504,29 @@ extension ServerConnection {
                 total: total
             ),
             cost: cost,
-            contextComposition: parseContextComposition(root["contextComposition"])
+            contextComposition: parseContextComposition(root["contextComposition"]),
+            loadedResources: parseLoadedResources(root["loadedResources"])
         )
+    }
+
+    private static func parseLoadedResources(_ value: JSONValue?) -> SessionLoadedResourcesSnapshot? {
+        guard let object = value?.objectValue else { return nil }
+        return SessionLoadedResourcesSnapshot(
+            skills: parseResourceList(object["skills"]),
+            extensions: parseResourceList(object["extensions"])
+        )
+    }
+
+    private static func parseResourceList(_ value: JSONValue?) -> [SessionResourceSnapshot] {
+        value?.arrayValue?.compactMap { item in
+            guard let object = item.objectValue,
+                  let name = object["name"]?.stringValue else { return nil }
+            return SessionResourceSnapshot(
+                name: name,
+                description: object["description"]?.stringValue,
+                path: object["path"]?.stringValue ?? ""
+            )
+        } ?? []
     }
 
     private static func parseContextComposition(_ value: JSONValue?) -> SessionContextCompositionSnapshot? {
