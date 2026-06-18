@@ -78,6 +78,8 @@ extension ServerConnection {
                 widgetKey: notification.widgetKey,
                 widgetLines: notification.widgetLines,
                 widgetPlacement: notification.widgetPlacement,
+                extensionScopeId: notification.extensionScopeId,
+                extensionDisplayName: notification.extensionDisplayName,
                 workingIndicator: notification.workingIndicator,
                 workingVisible: notification.workingVisible,
                 hiddenThinkingLabel: notification.hiddenThinkingLabel,

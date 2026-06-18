@@ -115,12 +115,104 @@ struct ExtensionDockReviewCombinedPreview: View {
     }
 }
 
+struct ExtensionDockScopedAgentsPreview: View {
+    @State private var draft = ""
+    @State private var isComposerFocused = false
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.themeBg
+                .ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 12) {
+                    ExtensionDockStressTranscriptCard(
+                        title: "cd /Users/chenda/workspace/oppi &&…",
+                        subtitle: "running · JavaScript",
+                        symbol: "play.circle.fill",
+                        color: .themeBlue
+                    )
+                    ExtensionDockStressWorkingRow()
+                    Spacer(minLength: 360)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 118)
+                .padding(.bottom, 340)
+            }
+
+            ExtensionDockStressNavigationBar()
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ExtensionDockScopedAgentsBottomRegion(
+                draft: $draft,
+                isComposerFocused: $isComposerFocused
+            )
+        }
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct ExtensionDockScopedAgentsBottomRegion: View {
+    @Binding var draft: String
+    @Binding var isComposerFocused: Bool
+
+    private static let agentsSurface = ExtensionSurfaceState(
+        statuses: [
+            "subagents": ExtensionStatusState(
+                key: "subagents",
+                text: "1 running agent",
+                extensionScopeId: "preview:subagents",
+                extensionDisplayName: "Subagents"
+            ),
+        ],
+        widgets: [
+            "agents": ExtensionWidgetState(
+                key: "agents",
+                lines: [
+                    "● Agents",
+                    "└─ ⠋ Agent (twin)  Deep telemetry correlation · 1m 29s",
+                    "     ⎿  thinking…",
+                ],
+                placement: "aboveEditor",
+                extensionScopeId: "preview:subagents",
+                extensionDisplayName: "Subagents"
+            ),
+        ]
+    )
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ExtensionSurfacePanel(surface: Self.agentsSurface, placement: .aboveEditor)
+            ExtensionDockComposerPrototype(draft: $draft, isFocused: $isComposerFocused)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(alignment: .top) {
+            LinearGradient(
+                colors: [Color.themeBg.opacity(0), Color.themeBg.opacity(0.72), Color.themeBg.opacity(0.96)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
+        }
+    }
+}
+
 private struct ExtensionDockReviewCombinedBottomRegion: View {
     @Binding var draft: String
     @Binding var isComposerFocused: Bool
 
     private static let reviewSurface = ExtensionSurfaceState(
-        statuses: ["pi-review": "Pi review open"],
+        statuses: [
+            "pi-review": ExtensionStatusState(
+                key: "pi-review",
+                text: "Pi review open",
+                extensionScopeId: "preview:pi-review",
+                extensionDisplayName: "Pi review"
+            ),
+        ],
         widgets: [
             "pi-review": ExtensionWidgetState(
                 key: "pi-review",
@@ -129,7 +221,9 @@ private struct ExtensionDockReviewCombinedBottomRegion: View {
                     "Pi review — vs origin/main — use the native window",
                     "Inline comment: Send now → active session, Stash",
                 ],
-                placement: "belowEditor"
+                placement: "belowEditor",
+                extensionScopeId: "preview:pi-review",
+                extensionDisplayName: "Pi review"
             ),
         ]
     )

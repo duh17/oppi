@@ -331,7 +331,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"] == "running")
+        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"]?.text == "running")
     }
 
     @Test func routeExtensionWorkingNotificationsStoreTimelineState() {
@@ -778,7 +778,9 @@ struct ServerConnectionTests {
     @Test func routeOppiMirrorStatusClearsExistingChatSurfaceEntry() {
         let (conn, pipe) = makeTestConnection()
         conn.extensionSurfaceBySession["s1"] = ExtensionSurfaceState(
-            statuses: ["oppi-mirror": "Mirror | live"]
+            statuses: [
+                "oppi-mirror": ExtensionStatusState(key: "oppi-mirror", text: "Mirror | live"),
+            ]
         )
 
         pipe.handle(

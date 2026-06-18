@@ -404,6 +404,12 @@ export class AppEventStreamMux implements AppEventEmitter {
           ...(event.timeoutAt !== undefined ? { timeoutAt: event.timeoutAt } : {}),
           ...(event.questions !== undefined ? { questions: event.questions } : {}),
           ...(event.allowCustom !== undefined ? { allowCustom: event.allowCustom } : {}),
+          ...(event.extensionScopeId !== undefined
+            ? { extensionScopeId: event.extensionScopeId }
+            : {}),
+          ...(event.extensionDisplayName !== undefined
+            ? { extensionDisplayName: event.extensionDisplayName }
+            : {}),
         };
         return [request, ...this.summaryMessagesForSessionId(sessionId, emittedAt)];
       }
@@ -439,6 +445,12 @@ export class AppEventStreamMux implements AppEventEmitter {
             ...(event.widgetLines !== undefined ? { widgetLines: event.widgetLines } : {}),
             ...(event.widgetPlacement !== undefined
               ? { widgetPlacement: event.widgetPlacement }
+              : {}),
+            ...(event.extensionScopeId !== undefined
+              ? { extensionScopeId: event.extensionScopeId }
+              : {}),
+            ...(event.extensionDisplayName !== undefined
+              ? { extensionDisplayName: event.extensionDisplayName }
               : {}),
             ...(event.nativeSurface !== undefined ? { nativeSurface: event.nativeSurface } : {}),
             ...(event.workingIndicator !== undefined

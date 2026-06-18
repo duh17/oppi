@@ -29,6 +29,8 @@ struct ScreenshotPreviewView: View {
             ExtensionDockStressPreview()
         case "extension-dock-review-combined":
             ExtensionDockReviewCombinedPreview()
+        case "extension-dock-scoped-agents":
+            ExtensionDockScopedAgentsPreview()
         case "extension-dock-goal-detail":
             ExtensionDockGoalDetailStandalonePreview()
         case "streaming-flicker":

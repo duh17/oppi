@@ -131,20 +131,35 @@ struct SessionStatsSnapshot: Equatable, Sendable {
 
 // MARK: - Extension UI Surface
 
+struct ExtensionStatusState: Equatable, Sendable {
+    let key: String
+    var text: String
+    var extensionScopeId: String? = nil
+    var extensionDisplayName: String? = nil
+}
+
 struct ExtensionWidgetState: Equatable, Sendable {
     let key: String
     var lines: [String]
     var placement: String?
+    var extensionScopeId: String? = nil
+    var extensionDisplayName: String? = nil
     var order: Int = 0
+
+    var identityKey: String { key }
 }
 
 struct ExtensionNativeSurfaceState: Equatable, Sendable, Identifiable {
     let key: String
     let surface: ExtensionUINativeSurface
     var placement: String?
+    var extensionScopeId: String? = nil
+    var extensionDisplayName: String? = nil
     var order: Int = 0
 
     var id: String { surface.id }
+
+    var identityKey: String { key }
 
     var hasVisibleContent: Bool {
         surface.hasVisibleContent
@@ -165,7 +180,7 @@ struct ExtensionWorkingState: Equatable, Sendable {
 
 struct ExtensionSurfaceState: Equatable, Sendable {
     var title: String?
-    var statuses: [String: String]
+    var statuses: [String: ExtensionStatusState]
     var widgets: [String: ExtensionWidgetState]
     var nativeSurfaces: [String: ExtensionNativeSurfaceState]
     var widgetOrderCursor: Int
@@ -175,7 +190,7 @@ struct ExtensionSurfaceState: Equatable, Sendable {
 
     init(
         title: String? = nil,
-        statuses: [String: String] = [:],
+        statuses: [String: ExtensionStatusState] = [:],
         widgets: [String: ExtensionWidgetState] = [:],
         nativeSurfaces: [String: ExtensionNativeSurfaceState] = [:],
         widgetOrderCursor: Int = 0,

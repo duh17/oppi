@@ -110,6 +110,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "extension-dock-review-combined-collapsed")
     }
 
+    func testExtensionDockScopedAgentsPreview() throws {
+        launchPreview(screen: "extension-dock-scoped-agents")
+
+        let scopedWidget = app.buttons["Collapse Subagents widget"]
+        XCTAssertTrue(scopedWidget.waitForExistence(timeout: 5), "Scoped agents widget not visible")
+        XCTAssertTrue(app.staticTexts["Subagents"].waitForExistence(timeout: 5), "Extension scope title not visible")
+        XCTAssertTrue(app.staticTexts["1 running agent"].waitForExistence(timeout: 5), "Scoped status not attached")
+        XCTAssertFalse(app.staticTexts["subagents"].exists, "Status key should not render as a separate row")
+        XCTAssertFalse(app.staticTexts["agents"].exists, "Widget key should not replace the extension scope title")
+        saveScreenshot(name: "extension-dock-scoped-agents")
+    }
+
     func testAskCardPreview() throws {
         launchPreview(screen: "ask-card")
 

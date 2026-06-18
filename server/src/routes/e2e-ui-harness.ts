@@ -242,6 +242,8 @@ function normalizeExtensionUIRequest(
     timeoutAt: numberField(body.timeoutAt),
     questions: askQuestionsField(body.questions),
     allowCustom: booleanField(body.allowCustom),
+    extensionScopeId: stringField(body.extensionScopeId),
+    extensionDisplayName: stringField(body.extensionDisplayName),
   });
 }
 
@@ -272,6 +274,8 @@ function normalizeExtensionUINotification(body: Record<string, unknown>): Server
     widgetKey,
     widgetLines: stringArrayField(body.widgetLines),
     widgetPlacement: stringField(body.widgetPlacement),
+    extensionScopeId: stringField(body.extensionScopeId),
+    extensionDisplayName: stringField(body.extensionDisplayName),
     workingIndicator: recordField(body.workingIndicator),
     workingVisible: booleanField(body.workingVisible),
     hiddenThinkingLabel: stringField(body.hiddenThinkingLabel),

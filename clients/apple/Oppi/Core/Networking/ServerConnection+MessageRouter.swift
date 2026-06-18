@@ -114,6 +114,8 @@ extension ServerConnection {
                 widgetKey: notification.widgetKey,
                 widgetLines: notification.widgetLines,
                 widgetPlacement: notification.widgetPlacement,
+                extensionScopeId: notification.extensionScopeId,
+                extensionDisplayName: notification.extensionDisplayName,
                 workingIndicator: notification.workingIndicator,
                 workingVisible: notification.workingVisible,
                 hiddenThinkingLabel: notification.hiddenThinkingLabel,
@@ -185,6 +187,8 @@ extension ServerConnection {
         widgetKey: String?,
         widgetLines: [String]?,
         widgetPlacement: String?,
+        extensionScopeId: String?,
+        extensionDisplayName: String?,
         workingIndicator: ExtensionUIWorkingIndicator?,
         workingVisible: Bool?,
         hiddenThinkingLabel: String?,
@@ -242,7 +246,12 @@ extension ServerConnection {
             }
             let normalized = statusText?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let normalized, !normalized.isEmpty {
-                surface.statuses[statusKey] = normalized
+                surface.statuses[statusKey] = ExtensionStatusState(
+                    key: statusKey,
+                    text: normalized,
+                    extensionScopeId: extensionScopeId,
+                    extensionDisplayName: extensionDisplayName
+                )
             } else {
                 surface.statuses.removeValue(forKey: statusKey)
             }
@@ -259,6 +268,8 @@ extension ServerConnection {
                     key: widgetKey,
                     surface: nativeSurface,
                     placement: widgetPlacement,
+                    extensionScopeId: extensionScopeId,
+                    extensionDisplayName: extensionDisplayName,
                     order: order
                 )
             } else if let widgetLines {
@@ -274,6 +285,8 @@ extension ServerConnection {
                         key: widgetKey,
                         lines: normalizedLines,
                         placement: widgetPlacement,
+                        extensionScopeId: extensionScopeId,
+                        extensionDisplayName: extensionDisplayName,
                         order: order
                     )
                 }
@@ -314,10 +327,13 @@ extension ServerConnection {
         clearExtensionDialog(for: sessionId)
     }
 
-    private func removeNativeWidgetSurfaces(widgetKey: String, from surface: inout ExtensionSurfaceState) {
+    private func removeNativeWidgetSurfaces(
+        widgetKey: String,
+        from surface: inout ExtensionSurfaceState
+    ) {
         let canonicalSurfaceId = "widget:\(widgetKey)"
         surface.nativeSurfaces = surface.nativeSurfaces.filter { entry in
-            entry.key != canonicalSurfaceId && entry.value.key != widgetKey
+            entry.value.surface.id != canonicalSurfaceId && entry.value.key != widgetKey
         }
     }
 
