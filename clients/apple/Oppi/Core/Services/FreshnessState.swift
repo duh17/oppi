@@ -51,3 +51,39 @@ enum FreshnessState: String, CaseIterable, Sendable {
         }
     }
 }
+
+/// Server-level health combines live transports with the last catalog sync.
+/// A focused-session WebSocket is only one signal; the app-event stream and
+/// successful REST refreshes also prove the server is reachable.
+struct ServerHealth: Equatable, Sendable {
+    enum TransportState: String, Equatable, Sendable {
+        case disconnected
+        case connecting
+        case connected
+
+        static func combine(_ states: [TransportState]) -> TransportState {
+            if states.contains(.connected) { return .connected }
+            if states.contains(.connecting) { return .connecting }
+            return .disconnected
+        }
+    }
+
+    let freshnessState: FreshnessState
+    let freshnessLabel: String
+    let transportState: TransportState
+    let hasCachedCatalog: Bool
+
+    static func derive(
+        freshnessState: FreshnessState,
+        freshnessLabel: String,
+        transportStates: [TransportState],
+        hasCachedCatalog: Bool
+    ) -> ServerHealth {
+        ServerHealth(
+            freshnessState: freshnessState,
+            freshnessLabel: freshnessLabel,
+            transportState: TransportState.combine(transportStates),
+            hasCachedCatalog: hasCachedCatalog
+        )
+    }
+}

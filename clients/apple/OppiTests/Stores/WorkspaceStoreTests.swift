@@ -160,6 +160,58 @@ struct WorkspaceStoreOfflineTests {
     }
 }
 
+@Suite("Server Health")
+@MainActor
+struct ServerHealthTests {
+    @Test func connectedAppEventStreamKeepsServerReachableWhenFocusedStreamIsDisconnected() {
+        let health = ServerHealth.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            transportStates: [.disconnected, .connected],
+            hasCachedCatalog: true
+        )
+        let presentation = WorkspaceServerStatusPresentation.derive(health: health)
+
+        #expect(health.transportState == .connected)
+        #expect(presentation.state == .stale)
+        #expect(presentation.label == "Connected")
+        #expect(!presentation.isUnreachable)
+        #expect(ServerBadgeConnectionState(presentation) == .connected)
+    }
+
+    @Test func connectingTransportShowsConnectingInsteadOfOffline() {
+        let health = ServerHealth.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            transportStates: [.connecting],
+            hasCachedCatalog: false
+        )
+        let presentation = WorkspaceServerStatusPresentation.derive(health: health)
+
+        #expect(health.transportState == .connecting)
+        #expect(presentation.state == .syncing)
+        #expect(presentation.label == "Connecting")
+        #expect(!presentation.isUnreachable)
+        #expect(ServerBadgeConnectionState(presentation) == .connecting)
+    }
+
+    @Test func successfulFreshnessKeepsServerReachableWithoutAnOpenStream() {
+        let health = ServerHealth.derive(
+            freshnessState: .live,
+            freshnessLabel: "Updated now",
+            transportStates: [.disconnected],
+            hasCachedCatalog: true
+        )
+        let presentation = WorkspaceServerStatusPresentation.derive(health: health)
+
+        #expect(health.transportState == .disconnected)
+        #expect(presentation.state == .live)
+        #expect(presentation.label == "Updated now")
+        #expect(!presentation.isUnreachable)
+        #expect(ServerBadgeConnectionState(presentation) == .connected)
+    }
+}
+
 @Suite("Workspace Server Status Presentation")
 @MainActor
 struct WorkspaceServerStatusPresentationTests {
