@@ -348,19 +348,13 @@ describe("discoverLocalSessions", () => {
 
   it("re-reads file when mtime changes", async () => {
     const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-mtime.jsonl");
-    writeFileSync(
-      filePath,
-      makeSessionJsonl({ id: "uuid-mtime", name: "V1" }),
-    );
+    writeFileSync(filePath, makeSessionJsonl({ id: "uuid-mtime", name: "V1" }));
     setModifiedTime(filePath, "2026-02-20T00:00:00.000Z");
 
     const first = await discoverLocalSessions();
     expect(first.find((s) => s.piSessionId === "uuid-mtime")?.name).toBe("V1");
 
-    writeFileSync(
-      filePath,
-      makeSessionJsonl({ id: "uuid-mtime", name: "V2" }),
-    );
+    writeFileSync(filePath, makeSessionJsonl({ id: "uuid-mtime", name: "V2" }));
     setModifiedTime(filePath, "2026-02-20T00:00:01.000Z");
 
     const second = await discoverLocalSessions();
@@ -369,20 +363,14 @@ describe("discoverLocalSessions", () => {
 
   it("invalidateLocalSessionsCache clears cached entries", async () => {
     const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-inv.jsonl");
-    writeFileSync(
-      filePath,
-      makeSessionJsonl({ id: "uuid-inv", name: "Before" }),
-    );
+    writeFileSync(filePath, makeSessionJsonl({ id: "uuid-inv", name: "Before" }));
     setModifiedTime(filePath, "2026-02-20T00:00:00.000Z");
 
     const first = await discoverLocalSessions();
     const s1 = first.find((s) => s.piSessionId === "uuid-inv");
     expect(s1?.name).toBe("Before");
 
-    writeFileSync(
-      filePath,
-      makeSessionJsonl({ id: "uuid-inv", name: "After" }),
-    );
+    writeFileSync(filePath, makeSessionJsonl({ id: "uuid-inv", name: "After" }));
     setModifiedTime(filePath, "2026-02-20T00:00:01.000Z");
 
     // Even without invalidation, mtime change causes re-read

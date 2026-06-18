@@ -16,7 +16,6 @@ function makeWorkspace(overrides: Partial<Workspace> & { id: string } = { id: "w
   const now = Date.now();
   return {
     name: "test",
-    skills: [],
     systemPromptMode: "append" as const,
     createdAt: now,
     updatedAt: now,

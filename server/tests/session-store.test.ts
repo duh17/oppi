@@ -430,7 +430,6 @@ describe("legacy workspace session migration", () => {
       const storage = new Storage(dataDir);
       const workspace = storage.createWorkspace({
         name: "project",
-        skills: [],
         hostMount: projectDir,
       });
       storage.saveSession({
@@ -508,8 +507,8 @@ describe("legacy workspace session migration", () => {
       );
 
       const storage = new Storage(dataDir);
-      storage.createWorkspace({ name: "project-a", skills: [], hostMount: projectDir });
-      storage.createWorkspace({ name: "project-b", skills: [], hostMount: projectDir });
+      storage.createWorkspace({ name: "project-a", hostMount: projectDir });
+      storage.createWorkspace({ name: "project-b", hostMount: projectDir });
       storage.saveSession({
         id: "legacy-1",
         status: "ready",

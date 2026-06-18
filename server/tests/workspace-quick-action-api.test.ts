@@ -53,7 +53,6 @@ function makeWorkspace(repoDir: string): Workspace {
   return {
     id: "w1",
     name: "workspace",
-    skills: [],
     hostMount: repoDir,
     createdAt: now,
     updatedAt: now,

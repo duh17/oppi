@@ -43,8 +43,14 @@ describe("Mutex", () => {
     expect(mutex.isLocked).toBe(true);
 
     // Queue two waiters
-    const p1 = mutex.acquire().then((rel) => { order.push(1); rel(); });
-    const p2 = mutex.acquire().then((rel) => { order.push(2); rel(); });
+    const p1 = mutex.acquire().then((rel) => {
+      order.push(1);
+      rel();
+    });
+    const p2 = mutex.acquire().then((rel) => {
+      order.push(2);
+      rel();
+    });
 
     expect(mutex.queueLength).toBe(2);
 
@@ -66,7 +72,9 @@ describe("Mutex", () => {
   it("withLock releases on error", async () => {
     const mutex = new Mutex();
     await expect(
-      mutex.withLock(async () => { throw new Error("boom"); }),
+      mutex.withLock(async () => {
+        throw new Error("boom");
+      }),
     ).rejects.toThrow("boom");
     expect(mutex.isLocked).toBe(false);
   });
@@ -77,7 +85,9 @@ describe("Mutex", () => {
 
     await Promise.all(
       Array.from({ length: 20 }, (_, i) =>
-        mutex.withLock(async () => { results.push(i); }),
+        mutex.withLock(async () => {
+          results.push(i);
+        }),
       ),
     );
 
@@ -224,8 +234,11 @@ describe("WorkspaceRuntime", () => {
       rt.reserveSessionStart(id(W, "s1"));
 
       const err = (() => {
-        try { rt.reserveSessionStart(id(W, "s2")); }
-        catch (e) { return e; }
+        try {
+          rt.reserveSessionStart(id(W, "s2"));
+        } catch (e) {
+          return e;
+        }
       })();
       expect(err).toBeInstanceOf(WorkspaceRuntimeError);
       expect((err as WorkspaceRuntimeError).code).toBe("SESSION_LIMIT_WORKSPACE");
@@ -337,7 +350,9 @@ describe("WorkspaceRuntime", () => {
 
     it("lock is released on error", async () => {
       await expect(
-        rt.withSessionLock("s1", async () => { throw new Error("oops"); }),
+        rt.withSessionLock("s1", async () => {
+          throw new Error("oops");
+        }),
       ).rejects.toThrow("oops");
 
       // Lock released — second call should succeed immediately

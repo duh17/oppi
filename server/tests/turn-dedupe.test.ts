@@ -27,13 +27,17 @@ describe("TurnDedupeCache", () => {
     const cache = new TurnDedupeCache(16, 60_000);
     const now = Date.now();
 
-    cache.set("turn-1", {
-      command: "follow_up",
-      payloadHash: "hash-1",
-      stage: "accepted",
-      acceptedAt: now,
-      updatedAt: now,
-    }, now);
+    cache.set(
+      "turn-1",
+      {
+        command: "follow_up",
+        payloadHash: "hash-1",
+        stage: "accepted",
+        acceptedAt: now,
+        updatedAt: now,
+      },
+      now,
+    );
 
     cache.updateStage("turn-1", "started", now + 1);
     const afterStarted = cache.updateStage("turn-1", "dispatched", now + 2);
@@ -45,23 +49,31 @@ describe("TurnDedupeCache", () => {
     const cache = new TurnDedupeCache(16, 100);
     const now = Date.now();
 
-    cache.set("turn-1", {
-      command: "steer",
-      payloadHash: "hash-1",
-      stage: "accepted",
-      acceptedAt: now,
-      updatedAt: now,
-    }, now);
+    cache.set(
+      "turn-1",
+      {
+        command: "steer",
+        payloadHash: "hash-1",
+        stage: "accepted",
+        acceptedAt: now,
+        updatedAt: now,
+      },
+      now,
+    );
 
     expect(cache.get("turn-1", now + 101)).toBeNull();
 
-    cache.set("turn-2", {
-      command: "steer",
-      payloadHash: "hash-2",
-      stage: "accepted",
-      acceptedAt: now,
-      updatedAt: now,
-    }, now);
+    cache.set(
+      "turn-2",
+      {
+        command: "steer",
+        payloadHash: "hash-2",
+        stage: "accepted",
+        acceptedAt: now,
+        updatedAt: now,
+      },
+      now,
+    );
 
     expect(cache.get("turn-2", now + 50)?.stage).toBe("accepted");
     expect(cache.get("turn-2", now + 149)).not.toBeNull();
@@ -72,32 +84,44 @@ describe("TurnDedupeCache", () => {
     const cache = new TurnDedupeCache(2, 60_000);
     const now = Date.now();
 
-    cache.set("turn-1", {
-      command: "prompt",
-      payloadHash: "hash-1",
-      stage: "accepted",
-      acceptedAt: now,
-      updatedAt: now,
-    }, now);
+    cache.set(
+      "turn-1",
+      {
+        command: "prompt",
+        payloadHash: "hash-1",
+        stage: "accepted",
+        acceptedAt: now,
+        updatedAt: now,
+      },
+      now,
+    );
 
-    cache.set("turn-2", {
-      command: "prompt",
-      payloadHash: "hash-2",
-      stage: "accepted",
-      acceptedAt: now,
-      updatedAt: now,
-    }, now + 1);
+    cache.set(
+      "turn-2",
+      {
+        command: "prompt",
+        payloadHash: "hash-2",
+        stage: "accepted",
+        acceptedAt: now,
+        updatedAt: now,
+      },
+      now + 1,
+    );
 
     // Touch turn-1 so turn-2 becomes the LRU candidate.
     cache.get("turn-1", now + 2);
 
-    cache.set("turn-3", {
-      command: "prompt",
-      payloadHash: "hash-3",
-      stage: "accepted",
-      acceptedAt: now,
-      updatedAt: now,
-    }, now + 3);
+    cache.set(
+      "turn-3",
+      {
+        command: "prompt",
+        payloadHash: "hash-3",
+        stage: "accepted",
+        acceptedAt: now,
+        updatedAt: now,
+      },
+      now + 3,
+    );
 
     expect(cache.get("turn-1", now + 4)).not.toBeNull();
     expect(cache.get("turn-2", now + 4)).toBeNull();

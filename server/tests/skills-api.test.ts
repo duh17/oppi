@@ -6,12 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import {
-  mkdtempSync,
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
@@ -82,10 +77,7 @@ let registry: SkillRegistry;
 let routes: RouteHandler;
 let workspaces: Workspace[];
 
-function makeWorkspace(
-  id: string,
-  skills: string[],
-): Workspace {
+function makeWorkspace(id: string, skills: string[]): Workspace {
   const now = Date.now();
   return {
     id,
@@ -111,18 +103,14 @@ beforeEach(() => {
   (registry as any).scanDirs = [skillDir];
   registry.scan();
 
-  workspaces = [
-    makeWorkspace("ws-1", ["search", "fetch"]),
-    makeWorkspace("ws-2", ["search"]),
-  ];
+  workspaces = [makeWorkspace("ws-1", ["search", "fetch"]), makeWorkspace("ws-2", ["search"])];
 
   const ctx = {
     skillRegistry: registry,
     storage: {
       listWorkspaces: () => workspaces,
       getSession: () => undefined,
-      getWorkspace: (_uid: string, wid: string) =>
-        workspaces.find((w) => w.id === wid),
+      getWorkspace: (_uid: string, wid: string) => workspaces.find((w) => w.id === wid),
     },
     sessions: {
       isActive: () => false,

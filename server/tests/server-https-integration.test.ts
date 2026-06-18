@@ -61,7 +61,7 @@ describe.skipIf(!hasOpenSSL)("HTTPS/WSS integration", () => {
       const body = JSON.parse(health.body) as { ok?: boolean };
       expect(body.ok).toBe(true);
 
-      const workspace = storage.createWorkspace({ name: "https-ws", skills: [] });
+      const workspace = storage.createWorkspace({ name: "https-ws" });
       const session = storage.createSession("https session");
       session.workspaceId = workspace.id;
       session.workspaceName = workspace.name;

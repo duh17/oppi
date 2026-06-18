@@ -29,8 +29,12 @@ describe("MobileRendererRegistry", () => {
   it("catches renderer errors and returns undefined", () => {
     const reg = new MobileRendererRegistry();
     reg.register("broken", {
-      renderCall() { throw new Error("boom"); },
-      renderResult() { throw new Error("boom"); },
+      renderCall() {
+        throw new Error("boom");
+      },
+      renderResult() {
+        throw new Error("boom");
+      },
     });
     expect(reg.renderCall("broken", {})).toBeUndefined();
     expect(reg.renderResult("broken", {}, false)).toBeUndefined();
@@ -40,8 +44,12 @@ describe("MobileRendererRegistry", () => {
     const reg = new MobileRendererRegistry();
     reg.registerAll({
       custom_tool: {
-        renderCall(args) { return [{ text: `custom ${args.x}` }]; },
-        renderResult(_d, isError) { return [{ text: isError ? "fail" : "ok" }]; },
+        renderCall(args) {
+          return [{ text: `custom ${args.x}` }];
+        },
+        renderResult(_d, isError) {
+          return [{ text: isError ? "fail" : "ok" }];
+        },
       },
     });
     expect(reg.has("custom_tool")).toBe(true);
@@ -122,7 +130,8 @@ describe("bash renderer", () => {
   });
 
   it("renderCall keeps enough command text for wide tablet rows", () => {
-    const command = "cd /Users/testuser/workspace/oppi && bun scripts/duplication-scan.ts && git diff -- clients/apple/Oppi/Features/Chat";
+    const command =
+      "cd /Users/testuser/workspace/oppi && bun scripts/duplication-scan.ts && git diff -- clients/apple/Oppi/Features/Chat";
     const segs = reg.renderCall("bash", { command });
     expect(textOf(segs)).toBe(`$ ${command}`);
   });
@@ -176,7 +185,11 @@ describe("read renderer", () => {
   });
 
   it("renderResult shows truncation", () => {
-    const segs = reg.renderResult("read", { truncation: { truncated: true, outputLines: 50, totalLines: 200 } }, false);
+    const segs = reg.renderResult(
+      "read",
+      { truncation: { truncated: true, outputLines: 50, totalLines: 200 } },
+      false,
+    );
     expect(textOf(segs)).toBe("50/200 lines");
     expect(styleOf(segs, 0)).toBe("warning");
   });
@@ -291,5 +304,3 @@ describe("todo renderer", () => {
     expect(segs).toBeUndefined();
   });
 });
-
-

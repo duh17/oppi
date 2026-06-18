@@ -397,7 +397,9 @@ describe("buildSessionContext", () => {
 
     const events = buildSessionContext(entries);
     expect(events.find((event) => event.id === "2")).toBeUndefined();
-    expect(events.map((event) => event.text ?? "").join("\n")).not.toContain("Build pipeline finished");
+    expect(events.map((event) => event.text ?? "").join("\n")).not.toContain(
+      "Build pipeline finished",
+    );
   });
 
   it("does not leak subagent records from an inactive branch", () => {

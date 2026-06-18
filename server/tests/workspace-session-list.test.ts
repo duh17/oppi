@@ -28,7 +28,6 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
     id: "ws-1",
     name: "Oppi",
-    skills: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,

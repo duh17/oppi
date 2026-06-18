@@ -152,9 +152,7 @@ function assertSchedule(schedule: ReconnectSchedule): void {
   }
 
   const canonicalSeqs = emitted.map((event) => seqOf(event.event));
-  const lastSeenSeq = reconnectingClient.at(-1)
-    ? seqOf(reconnectingClient.at(-1)!)
-    : 0;
+  const lastSeenSeq = reconnectingClient.at(-1) ? seqOf(reconnectingClient.at(-1)!) : 0;
   const catchUp = broadcaster.getCatchUp(key, lastSeenSeq);
 
   expect(closeLanded, label).toBe(true);

@@ -31,7 +31,7 @@ describe("storage file permissions", () => {
     const sessionDbPath = join(dir, "session-state.db");
     const sessionPath = join(dir, "sessions", `${session.id}.json`);
 
-    const workspace = storage.createWorkspace({ name: "default", skills: [] });
+    const workspace = storage.createWorkspace({ name: "default" });
     const workspacePath = join(dir, "workspaces", `${workspace.id}.json`);
 
     expect(statSync(join(dir, "sessions")).mode & 0o777).toBe(0o700);

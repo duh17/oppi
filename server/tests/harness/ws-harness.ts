@@ -47,10 +47,7 @@ function parseServerMessage(data: RawData): ServerMessage {
   return JSON.parse(Buffer.from(data).toString("utf8")) as ServerMessage;
 }
 
-export function waitForMessage(
-  ws: WebSocket,
-  timeoutMs = 3_000,
-): Promise<ServerMessage> {
+export function waitForMessage(ws: WebSocket, timeoutMs = 3_000): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       ws.off("message", onMessage);

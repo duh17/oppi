@@ -57,7 +57,6 @@ function makeWorkspace(baseDir: string, session: Session): Workspace {
   return {
     id: session.workspaceId ?? "w1",
     name: "workspace",
-    skills: [],
     hostMount: workspaceRootDir(baseDir, session),
     createdAt: now,
     updatedAt: now,

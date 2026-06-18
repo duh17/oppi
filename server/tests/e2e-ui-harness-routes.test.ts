@@ -42,7 +42,11 @@ describe("E2E UI harness routes", () => {
 
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as { hostMount: string; filePath: string; filename: string };
+      const body = JSON.parse(res.body) as {
+        hostMount: string;
+        filePath: string;
+        filename: string;
+      };
       expect(body.hostMount).toBe(join(dataDir, "e2e-fixtures", "video-fixture"));
       expect(body.filePath).toBe(join(body.hostMount, "clip.mp4"));
       expect(body.filename).toBe("clip.mp4");
@@ -134,7 +138,11 @@ describe("E2E UI harness routes", () => {
   });
 });
 
-function makeContext(dataDir: string, sessionId = "session-1", broadcasted: unknown[] = []): RouteContext {
+function makeContext(
+  dataDir: string,
+  sessionId = "session-1",
+  broadcasted: unknown[] = [],
+): RouteContext {
   return {
     storage: {
       getDataDir: () => dataDir,

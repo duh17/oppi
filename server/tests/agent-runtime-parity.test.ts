@@ -105,7 +105,6 @@ function makeMirrorHarness(): {
     id: "w1",
     name: "Workspace",
     hostMount: "/tmp/oppi-runtime-parity",
-    skills: [],
   };
   const sessions = new Map<string, Session>();
   const storage = {

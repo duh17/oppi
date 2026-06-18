@@ -32,7 +32,6 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
     id: "ws-1",
     name: "coding",
-    skills: [],
     systemPromptMode: "append",
     createdAt: Date.now(),
     updatedAt: Date.now(),

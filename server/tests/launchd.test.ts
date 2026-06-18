@@ -285,7 +285,8 @@ describe("CLI resolution", () => {
       if (p === "/opt/homebrew/bin/node") return true;
       if (p === "/tmp/npm-prefix/bin/oppi") return true;
       if (p === "/tmp/npm-prefix/lib/node_modules/oppi-server/dist/src/cli.js") return true;
-      if (p === "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js") return true;
+      if (p === "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js")
+        return true;
       if (p.endsWith(".plist")) return false;
       return false;
     });

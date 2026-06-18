@@ -327,9 +327,9 @@ async function getWorkspaceSessionSummary(
   );
   expect(response.status).toBe(200);
   const body = (await response.json()) as Record<string, unknown>;
-  const summaries = [body["active"], body["stopped"]]
-    .filter(Array.isArray)
-    .flat() as Array<Record<string, unknown>>;
+  const summaries = [body["active"], body["stopped"]].filter(Array.isArray).flat() as Array<
+    Record<string, unknown>
+  >;
   const summary = summaries.find((candidate) => candidate["id"] === sessionId);
   expect(summary).toBeTruthy();
   return summary!;
@@ -341,7 +341,6 @@ function createStoredSession(overrides: Partial<Session> = {}): {
 } {
   const workspace = storage.createWorkspace({
     name: `app-stream-${Date.now()}`,
-    skills: [],
     hostMount: dataDir,
   });
   const created = storage.createSession(

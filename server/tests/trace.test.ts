@@ -8,11 +8,7 @@ import {
   materializeToolAudioDetails,
   materializeToolMediaContentBlocks,
 } from "../src/session-attachments.js";
-import {
-  parseJsonl,
-  readSessionTrace,
-  buildSessionContext,
-} from "../src/trace.js";
+import { parseJsonl, readSessionTrace, buildSessionContext } from "../src/trace.js";
 
 // ─── parseJsonl unit tests ───
 
