@@ -24,7 +24,7 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
-const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FILES = new Set([
+const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+MessageRouter.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+AppEvents.swift",
@@ -33,8 +33,20 @@ const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FILES = new Set([
   "server/src/app-event-stream.ts",
   "server/src/extension-ui-contract.ts",
   "server/src/extension-ui-state.ts",
+  "server/src/live-activity.ts",
+  "server/src/pi-tui-mirror-runtime.ts",
   "server/src/sdk-ui-bridge.ts",
+  "server/src/session-attention.ts",
+  "server/src/stream.ts",
 ]);
+
+const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_RANGES = [
+  {
+    file: "pi-extensions/oppi-mirror/extensions/oppi-mirror.ts",
+    startMarker: "function installExtensionUIProxy",
+    endMarker: "  function renderIndicator",
+  },
+];
 
 const IOS_COLD_LIST_PROJECTION_CONSUMER_PATH_PREFIXES = [
   "clients/apple/Oppi/Features/Workspaces/",
@@ -363,8 +375,11 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
     }
   }
 
+  const genericExtensionFiles = files
+    ? files.map(normalizeRepoPath)
+    : genericExtensionSurfaceIdentityBranchFiles({ swift: false });
   violations.push(
-    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, candidateFiles, (violation) =>
+    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, genericExtensionFiles, (violation) =>
       makeServerViolation({
         ...violation,
         importer: violation.file,
@@ -489,6 +504,7 @@ function stripCommentsPreservingStrings(source) {
 }
 
 const IDENTITY_BRANCH_EXPRESSION = String.raw`(?:\b(?:\w+\.)*(?:tool|toolName|statusKey|widgetKey|extensionScopeId|extensionDisplayName)\b)`;
+const KEY_ALIAS_BRANCH_EXPRESSION = String.raw`(?:\bkey\b)`;
 const STRING_LITERAL_EXPRESSION = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
 
 const GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS = [
@@ -501,7 +517,19 @@ const GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS = [
     "g",
   ),
   new RegExp(
+    String.raw`${KEY_ALIAS_BRANCH_EXPRESSION}\s*(?:={2,3}|!={1,2})\s*${STRING_LITERAL_EXPRESSION}`,
+    "g",
+  ),
+  new RegExp(
+    String.raw`${STRING_LITERAL_EXPRESSION}\s*(?:={2,3}|!={1,2})\s*${KEY_ALIAS_BRANCH_EXPRESSION}`,
+    "g",
+  ),
+  new RegExp(
     String.raw`switch\s+(?:\([^)]*${IDENTITY_BRANCH_EXPRESSION}[^)]*\)|${IDENTITY_BRANCH_EXPRESSION})[\s\S]{0,800}?\bcase\s+${STRING_LITERAL_EXPRESSION}`,
+    "g",
+  ),
+  new RegExp(
+    String.raw`switch\s+(?:\([^)]*${KEY_ALIAS_BRANCH_EXPRESSION}[^)]*\)|${KEY_ALIAS_BRANCH_EXPRESSION})[\s\S]{0,800}?\bcase\s+${STRING_LITERAL_EXPRESSION}`,
     "g",
   ),
   new RegExp(
@@ -510,11 +538,50 @@ const GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS = [
   ),
 ];
 
+function genericExtensionSurfaceIdentityBranchFiles({ swift }) {
+  const files = new Set([
+    ...GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES,
+    ...GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_RANGES.map((range) => range.file),
+  ]);
+
+  return [...files].filter((file) => file.endsWith(".swift") === swift).sort();
+}
+
+function sourceRangesForGenericExtensionSurfaceIdentityBranches(source, file) {
+  const ranges = [];
+  if (GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES.has(file)) {
+    ranges.push({ source, offset: 0 });
+  }
+
+  for (const range of GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_RANGES) {
+    if (range.file !== file) {
+      continue;
+    }
+
+    const start = source.indexOf(range.startMarker);
+    if (start < 0) {
+      continue;
+    }
+
+    const end = source.indexOf(range.endMarker, start + range.startMarker.length);
+    ranges.push({
+      source: source.slice(start, end < 0 ? undefined : end),
+      offset: start,
+    });
+  }
+
+  return ranges;
+}
+
 function findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, files, makeViolation) {
   const violations = [];
 
-  for (const file of files) {
-    if (!GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FILES.has(file)) {
+  for (const rawFile of files) {
+    const file = normalizeRepoPath(rawFile);
+    if (
+      !GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES.has(file) &&
+      !GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_RANGES.some((range) => range.file === file)
+    ) {
       continue;
     }
 
@@ -523,28 +590,39 @@ function findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, files, ma
       continue;
     }
 
-    const source = stripCommentsPreservingStrings(readFileSync(absolutePath, "utf8"));
-    for (const pattern of GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(source);
-      if (!match) {
-        continue;
+    const rawSource = readFileSync(absolutePath, "utf8");
+    const strippedSource = stripCommentsPreservingStrings(rawSource);
+    const sourceRanges = sourceRangesForGenericExtensionSurfaceIdentityBranches(strippedSource, file);
+
+    for (const range of sourceRanges) {
+      let found = false;
+      for (const pattern of GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS) {
+        pattern.lastIndex = 0;
+        const match = pattern.exec(range.source);
+        if (!match) {
+          continue;
+        }
+
+        const location = lineAndColumnForIndex(strippedSource, range.offset + match.index);
+        violations.push(
+          makeViolation({
+            rule: "extension-surface-no-identity-branch",
+            file,
+            line: location.line,
+            column: location.column,
+            reason:
+              "Generic extension-surface code must not branch on concrete tool, extension, status, widget, or display names.",
+            remediation:
+              "Add semantic protocol metadata at the producer boundary and route on that metadata instead of hardcoded identities.",
+          }),
+        );
+        found = true;
+        break;
       }
 
-      const location = lineAndColumnForIndex(source, match.index);
-      violations.push(
-        makeViolation({
-          rule: "extension-surface-no-identity-branch",
-          file,
-          line: location.line,
-          column: location.column,
-          reason:
-            "Generic extension-surface code must not branch on concrete tool, extension, status, widget, or display names.",
-          remediation:
-            "Add semantic protocol metadata at the producer boundary and route on that metadata instead of hardcoded identities.",
-        }),
-      );
-      break;
+      if (found) {
+        break;
+      }
     }
   }
 
@@ -848,8 +926,11 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
     }
   }
 
+  const genericExtensionFiles = files
+    ? files.map(normalizeRepoPath)
+    : genericExtensionSurfaceIdentityBranchFiles({ swift: true });
   violations.push(
-    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, candidateFiles, makeIosViolation),
+    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, genericExtensionFiles, makeIosViolation),
   );
 
   return sortArchitectureViolations(violations);
