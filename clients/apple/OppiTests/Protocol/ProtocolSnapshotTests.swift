@@ -137,6 +137,22 @@ struct ProtocolSnapshotTests {
         #expect(req.method == "select")
         #expect(req.title == "Choose a model")
         #expect(req.options == ["claude-sonnet", "claude-opus"])
+        #expect(req.extensionScopeId == "npm:review-helper")
+        #expect(req.extensionDisplayName == "Review Helper")
+    }
+
+    @Test func extensionUINotification() throws {
+        let msg = try decodeMessage("extension_ui_notification")
+
+        guard case .extensionUINotification(let notification) = msg else {
+            Issue.record("Expected .extensionUINotification, got \(msg.typeLabel)")
+            return
+        }
+
+        #expect(notification.method == "setWidget")
+        #expect(notification.widgetKey == "review")
+        #expect(notification.extensionScopeId == "npm:review-helper")
+        #expect(notification.extensionDisplayName == "Review Helper")
     }
 
     @Test func extensionUISettled() throws {

@@ -145,6 +145,8 @@ export interface ExtensionUIProtocolRequest {
   widgetKey?: string;
   widgetLines?: string[];
   widgetPlacement?: unknown;
+  extensionScopeId?: string;
+  extensionDisplayName?: string;
   workingIndicator?: unknown;
   workingVisible?: unknown;
   hiddenThinkingLabel?: string;
@@ -655,6 +657,8 @@ export function buildExtensionUINotificationMessage(
     widgetKey: req.widgetKey,
     widgetLines,
     widgetPlacement: normalizeExtensionUIWidgetPlacement(req.widgetPlacement),
+    extensionScopeId: sanitizeExtensionUIDisplayText(req.extensionScopeId),
+    extensionDisplayName: sanitizeExtensionUIDisplayText(req.extensionDisplayName),
     workingIndicator: normalizeExtensionUIWorkingIndicator(req.workingIndicator),
     workingVisible: typeof req.workingVisible === "boolean" ? req.workingVisible : undefined,
     toolsExpanded: typeof req.toolsExpanded === "boolean" ? req.toolsExpanded : undefined,
@@ -679,6 +683,8 @@ export function buildExtensionUIRequestMessage(
       allowCustom: req.allowCustom,
       timeout: req.timeout,
       timeoutAt: req.timeoutAt,
+      extensionScopeId: sanitizeExtensionUIDisplayText(req.extensionScopeId),
+      extensionDisplayName: sanitizeExtensionUIDisplayText(req.extensionDisplayName),
     };
   }
 
@@ -694,6 +700,8 @@ export function buildExtensionUIRequestMessage(
     prefill: req.prefill,
     timeout: req.timeout,
     timeoutAt: req.timeoutAt,
+    extensionScopeId: sanitizeExtensionUIDisplayText(req.extensionScopeId),
+    extensionDisplayName: sanitizeExtensionUIDisplayText(req.extensionDisplayName),
   };
 }
 

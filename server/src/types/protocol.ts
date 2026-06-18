@@ -343,6 +343,8 @@ export type AppEventMessage =
       timeoutAt?: number;
       questions?: AskQuestion[];
       allowCustom?: boolean;
+      extensionScopeId?: string;
+      extensionDisplayName?: string;
     })
   | (AppEventSessionBase & {
       type: "extension_ui_notification";
@@ -356,6 +358,8 @@ export type AppEventMessage =
       widgetKey?: string;
       widgetLines?: string[];
       widgetPlacement?: ExtensionUIWidgetPlacement;
+      extensionScopeId?: string;
+      extensionDisplayName?: string;
       nativeSurface?: ExtensionUINativeSurface;
       workingIndicator?: ExtensionUIWorkingIndicator;
       workingVisible?: boolean;
@@ -507,6 +511,8 @@ export type ServerMessage = // ── Connection ──
         // ── Ask extension fields (method: "ask") ──
         questions?: AskQuestion[];
         allowCustom?: boolean;
+        extensionScopeId?: string;
+        extensionDisplayName?: string;
       }
     | {
         type: "extension_ui_notification";
@@ -520,6 +526,8 @@ export type ServerMessage = // ── Connection ──
         widgetKey?: string;
         widgetLines?: string[];
         widgetPlacement?: ExtensionUIWidgetPlacement;
+        extensionScopeId?: string;
+        extensionDisplayName?: string;
         nativeSurface?: ExtensionUINativeSurface;
         workingIndicator?: ExtensionUIWorkingIndicator;
         workingVisible?: boolean;

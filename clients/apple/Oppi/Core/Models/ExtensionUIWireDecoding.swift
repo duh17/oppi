@@ -3,7 +3,7 @@ import Foundation
 extension ExtensionUIRequest: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id, sessionId, method, title, options, message, placeholder, prefill
-        case timeout, timeoutAt, workspaceId, questions, allowCustom
+        case timeout, timeoutAt, workspaceId, questions, allowCustom, extensionScopeId, extensionDisplayName
     }
 
     init(from decoder: Decoder) throws {
@@ -20,6 +20,8 @@ extension ExtensionUIRequest: Decodable {
             timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
             timeoutAt: try c.decodeIfPresent(Double.self, forKey: .timeoutAt).map { Date(timeIntervalSince1970: $0 / 1000) },
             workspaceId: try c.decodeIfPresent(String.self, forKey: .workspaceId),
+            extensionScopeId: try c.decodeIfPresent(String.self, forKey: .extensionScopeId),
+            extensionDisplayName: try c.decodeIfPresent(String.self, forKey: .extensionDisplayName),
             askQuestions: try c.decodeIfPresent([AskQuestion].self, forKey: .questions),
             allowCustom: try c.decodeIfPresent(Bool.self, forKey: .allowCustom)
         )
@@ -29,7 +31,7 @@ extension ExtensionUIRequest: Decodable {
 extension ExtensionUINotification: Decodable {
     private enum CodingKeys: String, CodingKey {
         case method, message, notifyType, statusKey, statusText, title, text
-        case widgetKey, widgetLines, widgetPlacement, workingIndicator, workingVisible
+        case widgetKey, widgetLines, widgetPlacement, extensionScopeId, extensionDisplayName, workingIndicator, workingVisible
         case hiddenThinkingLabel, toolsExpanded, nativeSurface
     }
 
@@ -46,6 +48,8 @@ extension ExtensionUINotification: Decodable {
             widgetKey: try c.decodeIfPresent(String.self, forKey: .widgetKey),
             widgetLines: try c.decodeIfPresent([String].self, forKey: .widgetLines),
             widgetPlacement: try c.decodeIfPresent(String.self, forKey: .widgetPlacement),
+            extensionScopeId: try c.decodeIfPresent(String.self, forKey: .extensionScopeId),
+            extensionDisplayName: try c.decodeIfPresent(String.self, forKey: .extensionDisplayName),
             workingIndicator: try c.decodeIfPresent(ExtensionUIWorkingIndicator.self, forKey: .workingIndicator),
             workingVisible: try c.decodeIfPresent(Bool.self, forKey: .workingVisible),
             hiddenThinkingLabel: try c.decodeIfPresent(String.self, forKey: .hiddenThinkingLabel),
