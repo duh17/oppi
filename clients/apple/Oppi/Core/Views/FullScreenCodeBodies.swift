@@ -1175,13 +1175,15 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         super.init(frame: frame)
         contentView.backgroundColor = .clear
         backgroundColor = .clear
+        stackView.setContentHuggingPriority(.required, for: .vertical)
+        stackView.setContentCompressionResistancePriority(.required, for: .vertical)
         contentView.addGestureRecognizer(doubleTapRecognizer)
         contentView.addSubview(stackView)
         NSLayoutConstraint.activate([
             stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
         ])
     }
 
@@ -1213,6 +1215,9 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             config: config,
             sourceLineRanges: [sourceLineRange]
         )
+        stackView.invalidateIntrinsicContentSize()
+        contentView.invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 
     override func preferredLayoutAttributesFitting(
@@ -1228,12 +1233,12 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             width: layoutAttributes.size.width,
             height: UIView.layoutFittingCompressedSize.height
         )
-        let size = contentView.systemLayoutSizeFitting(
+        let size = stackView.systemLayoutSizeFitting(
             targetSize,
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        attributes.size = CGSize(width: layoutAttributes.size.width, height: ceil(size.height))
+        attributes.size = CGSize(width: layoutAttributes.size.width, height: ceil(max(1, size.height)))
         return attributes
     }
 

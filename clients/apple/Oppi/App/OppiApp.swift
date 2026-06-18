@@ -179,6 +179,9 @@ struct OppiApp: App {
             } else if CodeGutterAlignmentHarnessConfig.isEnabled {
                 CodeGutterAlignmentHarnessView()
                     .ignoresSafeArea()
+            } else if CodeBlockWrappingHarnessConfig.isEnabled {
+                CodeBlockWrappingHarnessView()
+                    .ignoresSafeArea()
             } else if NavigationChromeProfileConfig.isEnabled {
                 NavigationChromeProfileHarnessView()
             } else if UIHangHarnessConfig.isEnabled {

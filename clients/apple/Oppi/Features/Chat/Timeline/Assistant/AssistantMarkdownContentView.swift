@@ -181,13 +181,15 @@ final class AssistantMarkdownContentView: UIView {
     required init?(coder: NSCoder) { nil }
 
     private func setupViews() {
+        stackView.setContentHuggingPriority(.required, for: .vertical)
+        stackView.setContentCompressionResistancePriority(.required, for: .vertical)
         addSubview(stackView)
 
         NSLayoutConstraint.activate([
             stackView.topAnchor.constraint(equalTo: topAnchor),
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
     }
 
@@ -196,6 +198,9 @@ final class AssistantMarkdownContentView: UIView {
         segmentSource.reset()
         segmentApplier.clear()
         currentConfig = nil
+        stackView.invalidateIntrinsicContentSize()
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 
     func apply(configuration config: Configuration) {
@@ -220,6 +225,9 @@ final class AssistantMarkdownContentView: UIView {
             sourceLineRanges: build.sourceLineRanges
         )
 
+        stackView.invalidateIntrinsicContentSize()
+        invalidateIntrinsicContentSize()
+
         if let surface = config.perfSurface {
             let elapsed = MarkdownStreamingPerf.timestampNs() - cycleStart
             MarkdownStreamingPerf.recordFullCycle(
@@ -229,6 +237,32 @@ final class AssistantMarkdownContentView: UIView {
                 surface: surface
             )
         }
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let width = bounds.width > 0 ? bounds.width : 320
+        let size = stackView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return CGSize(width: UIView.noIntrinsicMetric, height: max(1, size.height))
+    }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        let width = targetSize.width.isFinite && targetSize.width > 0
+            ? targetSize.width
+            : max(1, bounds.width)
+        let size = stackView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: verticalFittingPriority
+        )
+        return CGSize(width: width, height: max(1, size.height))
     }
 }
 
