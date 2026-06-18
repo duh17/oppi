@@ -246,7 +246,6 @@ final class NativeCodeBlockView: UIView {
         updateMeasuredCodeWidth(mutable)
     }
 
-
     @objc private func wrapTapped() {
         isLineWrappingEnabled.toggle()
         updateWrapButton()
@@ -333,6 +332,31 @@ final class NativeCodeBlockView: UIView {
         showCopiedOverlay(on: self)
     }
 }
+
+#if DEBUG
+struct NativeCodeBlockLayoutDiagnostics {
+    let wrapsLines: Bool
+    let headerTopInset: CGFloat
+    let headerHeight: CGFloat
+    let codeTopInset: CGFloat
+    let headerToCodeGap: CGFloat
+}
+
+extension NativeCodeBlockView {
+    func layoutDiagnosticsForTesting() -> NativeCodeBlockLayoutDiagnostics {
+        layoutIfNeeded()
+        let headerFrame = headerStack.convert(headerStack.bounds, to: self)
+        let codeFrame = codeScrollView.convert(codeScrollView.bounds, to: self)
+        return NativeCodeBlockLayoutDiagnostics(
+            wrapsLines: isLineWrappingEnabled,
+            headerTopInset: headerFrame.minY,
+            headerHeight: headerFrame.height,
+            codeTopInset: codeFrame.minY,
+            headerToCodeGap: codeFrame.minY - headerFrame.maxY
+        )
+    }
+}
+#endif
 
 extension NativeCodeBlockView: UITextViewDelegate {
     func textView(
@@ -426,7 +450,6 @@ final class NativeTableBlockView: UIView {
         addSubview(cardView)
         cardView.addSubview(scrollView)
         scrollView.addSubview(tableLabel)
-        
 
         tableLabel.delegate = self
         scrollView.addGestureRecognizer(longPressCopyGesture)
@@ -528,7 +551,6 @@ final class NativeTableBlockView: UIView {
         setNeedsLayout()
         layoutIfNeeded()
     }
-
 
     private static func containsLink(_ cells: [[MarkdownInline]]) -> Bool {
         cells.contains { cell in
