@@ -83,6 +83,7 @@ private struct ExtensionWidgetLinesView: View {
 
 struct ExtensionNativeSurfaceView: View {
     let surface: ExtensionUINativeSurface
+    let statusText: String?
     var onOpenURL: ((URL) -> Bool)?
 
     @State private var isExpanded = true
@@ -114,6 +115,10 @@ struct ExtensionNativeSurfaceView: View {
         return nil
     }
 
+    private var headerText: ExtensionSurfaceHeaderText {
+        ExtensionSurfaceHeaderText(title: titleText, statusText: statusText)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -122,13 +127,22 @@ struct ExtensionNativeSurfaceView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Text(titleText)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(headerText.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                    Spacer(minLength: 8)
+                        if let subtitle = headerText.subtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if let summaryText {
                         StatusPill(
@@ -146,7 +160,7 @@ struct ExtensionNativeSurfaceView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(titleText) surface")
+            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(headerText.title) surface")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
@@ -346,6 +360,54 @@ private extension Optional where Wrapped == String {
             return nil
         }
         return trimmed
+    }
+}
+
+private struct ExtensionSurfaceHeaderText {
+    let title: String
+    let subtitle: String?
+    let didPromoteStatus: Bool
+
+    init(title rawTitle: String, statusText rawStatusText: String?) {
+        let title = rawTitle.trimmedNonEmpty ?? "Extension"
+        guard let statusText = rawStatusText.trimmedNonEmpty else {
+            self.title = title
+            self.subtitle = nil
+            self.didPromoteStatus = false
+            return
+        }
+
+        if statusText.hasExtensionSurfaceWordPrefix(title) {
+            self.title = statusText
+            self.subtitle = nil
+            self.didPromoteStatus = true
+        } else {
+            self.title = title
+            self.subtitle = statusText
+            self.didPromoteStatus = false
+        }
+    }
+}
+
+private extension String {
+    var trimmedNonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var extensionSurfaceWords: [String] {
+        lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    func hasExtensionSurfaceWordPrefix(_ prefix: String) -> Bool {
+        let words = extensionSurfaceWords
+        let prefixWords = prefix.extensionSurfaceWords
+        guard !words.isEmpty, !prefixWords.isEmpty, words.count >= prefixWords.count else {
+            return false
+        }
+        return Array(words.prefix(prefixWords.count)) == prefixWords
     }
 }
 
@@ -776,10 +838,34 @@ extension ExtensionSurfaceState {
         }
     }
 
+    private var statusAttachmentKeys: Set<String> {
+        let widgetKeys = widgets.values
+            .filter { !$0.lines.isEmpty }
+            .map(\.key)
+        let nativeSurfaceKeys = nativeSurfaces.values
+            .filter { $0.hasVisibleContent }
+            .map(\.key)
+        return Set(widgetKeys + nativeSurfaceKeys)
+    }
+
+    func attachedStatusText(for key: String) -> String? {
+        statuses[key].trimmedNonEmpty
+    }
+
+    func standaloneStatusEntries() -> [(key: String, text: String)] {
+        statuses
+            .filter { key, value in
+                !statusAttachmentKeys.contains(key)
+                    && !(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .map { (key: $0.key, text: $0.value) }
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+    }
+
     func hasVisibleMetadata(in placement: ExtensionSurfacePlacementGroup) -> Bool {
         guard placement.showsChrome else { return false }
         let hasTitle = !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        return hasTitle || !statuses.isEmpty
+        return hasTitle || !standaloneStatusEntries().isEmpty
     }
 
     func hasVisibleContent(in placement: ExtensionSurfacePlacementGroup) -> Bool {
@@ -820,6 +906,7 @@ private struct ExtensionSurfaceMetadataCard: View {
 
 private struct ExtensionWidgetCard: View {
     let widget: ExtensionWidgetState
+    let statusText: String?
 
     @State private var isExpanded = true
 
@@ -832,14 +919,14 @@ private struct ExtensionWidgetCard: View {
         return trimmedKey.isEmpty ? "Extension widget" : trimmedKey
     }
 
-    private var lineCountText: String {
-        widget.lines.count == 1 ? "1 line" : "\(widget.lines.count) lines"
-    }
-
     private var collapsedPreview: String? {
         widget.lines
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
+    }
+
+    private var headerText: ExtensionSurfaceHeaderText {
+        ExtensionSurfaceHeaderText(title: titleText, statusText: statusText)
     }
 
     var body: some View {
@@ -851,13 +938,19 @@ private struct ExtensionWidgetCard: View {
             } label: {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(titleText)
+                        Text(headerText.title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.themeFg)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        if !isExpanded, let collapsedPreview {
+                        if let subtitle = headerText.subtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        } else if !headerText.didPromoteStatus, !isExpanded, let collapsedPreview {
                             Text(collapsedPreview)
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.themeComment)
@@ -867,14 +960,6 @@ private struct ExtensionWidgetCard: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    StatusPill(
-                        text: lineCountText,
-                        tone: .neutral,
-                        emphasis: .quiet,
-                        size: .small,
-                        monospacedDigit: true
-                    )
-
                     ExtensionDisclosureChevron(isExpanded: isExpanded)
                 }
                 .frame(minHeight: 44)
@@ -882,7 +967,7 @@ private struct ExtensionWidgetCard: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("extension-widget-\(identifierSuffix)-toggle")
-            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(titleText) widget")
+            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(headerText.title) widget")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
@@ -922,9 +1007,7 @@ struct ExtensionSurfacePanel: View {
     var onOpenURL: ((URL) -> Bool)? = nil
 
     private var sortedStatuses: [(key: String, text: String)] {
-        surface.statuses
-            .map { (key: $0.key, text: $0.value) }
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        surface.standaloneStatusEntries()
     }
 
     private var entries: [ExtensionSurfacePanelEntry] {
@@ -943,13 +1026,20 @@ struct ExtensionSurfacePanel: View {
             ForEach(entries) { entry in
                 switch entry {
                 case .native(let nativeSurface):
-                    ExtensionNativeSurfaceView(surface: nativeSurface.surface, onOpenURL: onOpenURL)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .extensionGlassPanel(cornerRadius: 18)
+                    ExtensionNativeSurfaceView(
+                        surface: nativeSurface.surface,
+                        statusText: surface.attachedStatusText(for: nativeSurface.key),
+                        onOpenURL: onOpenURL
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .extensionGlassPanel(cornerRadius: 18)
                 case .widget(let widget):
-                    ExtensionWidgetCard(widget: widget)
+                    ExtensionWidgetCard(
+                        widget: widget,
+                        statusText: surface.attachedStatusText(for: widget.key)
+                    )
                 }
             }
         }
