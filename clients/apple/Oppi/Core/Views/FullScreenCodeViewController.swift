@@ -171,24 +171,27 @@ final class FullScreenCodeViewController: UIViewController {
         let vc = UIViewController()
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
-        let doneIcon: String?
+        let dismissMode: FullScreenViewerNavigationChrome.DismissMode?
+        let dismissAccessibilityIdentifier: String?
         switch presentationMode {
         case .sheet:
-            doneIcon = "chevron.down"
+            dismissMode = .modal
+            dismissAccessibilityIdentifier = "fullscreen-code.dismiss"
         case .embedded:
-            doneIcon = "chevron.backward"
+            dismissMode = .embedded
+            dismissAccessibilityIdentifier = "fullscreen-code.back"
         case .contentOnly:
-            doneIcon = nil
+            dismissMode = nil
+            dismissAccessibilityIdentifier = nil
         }
-        if let doneIcon {
-            let doneButton = UIBarButtonItem(
-                image: UIImage(systemName: doneIcon),
-                style: .plain,
+        if let dismissMode {
+            vc.navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
+                mode: dismissMode,
                 target: self,
-                action: #selector(doneTapped)
+                action: #selector(doneTapped),
+                palette: palette,
+                accessibilityIdentifier: dismissAccessibilityIdentifier
             )
-            doneButton.tintColor = UIColor(palette.cyan)
-            vc.navigationItem.leftBarButtonItem = doneButton
         }
 
         contentHostController = vc
@@ -273,10 +276,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         if let shareable = shareableContent() {
             rightItems.append(
-                FileSharePresenter.makeShareBarButtonItem(
-                    for: shareable,
-                    tintColor: UIColor(palette.fgDim)
-                )
+                FullScreenViewerNavigationChrome.makeShareButton(for: shareable, palette: palette)
             )
         }
 

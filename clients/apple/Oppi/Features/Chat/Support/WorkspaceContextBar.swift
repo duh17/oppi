@@ -361,7 +361,12 @@ struct WorkspaceContextBar: View {
                             ))
                             .toolbar {
                                 ToolbarItem(placement: .cancellationAction) {
-                                    Button("Done") { selectedCommit = nil }
+                                    Button {
+                                        selectedCommit = nil
+                                    } label: {
+                                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                                    }
+                                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                                 }
                             }
                     }
@@ -849,7 +854,12 @@ struct WorkspaceContextBar: View {
                 )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { selectedFile = nil }
+                        Button {
+                            selectedFile = nil
+                        } label: {
+                            Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                        }
+                        .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                     }
                 }
             }

@@ -248,7 +248,7 @@ struct FileShareButton: View {
     enum ButtonStyle {
         /// Floating capsule with material background (for overlays).
         case capsule
-        /// Plain icon button (for toolbars, headers).
+        /// System-sized icon button for navigation toolbars and headers.
         case icon
     }
 
@@ -304,7 +304,7 @@ struct FileShareButton: View {
                 .clipShape(Capsule())
             case .icon:
                 ProgressView()
-                    .controlSize(.mini)
+                    .controlSize(.regular)
             }
         } else {
             switch style {
@@ -316,8 +316,8 @@ struct FileShareButton: View {
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
             case .icon:
-                Image(systemName: "square.and.arrow.up")
-                    .font(.caption2)
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .labelStyle(.iconOnly)
             }
         }
     }

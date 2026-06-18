@@ -50,6 +50,28 @@ struct ImagePreviewSecurityTests {
     }
 
     @MainActor
+    @Test("fullscreen data image preview uses shared viewer navigation chrome")
+    func fullscreenDataImagePreviewUsesSharedViewerNavigationChrome() throws {
+        let palette = ThemeRuntimeState.currentThemeID().palette
+        let controller = FullScreenImageDataPreviewViewController(
+            data: Self.svgData,
+            mimeType: "image/svg+xml",
+            title: "Preview"
+        )
+        let navigation = UINavigationController(rootViewController: controller)
+
+        navigation.loadViewIfNeeded()
+        controller.loadViewIfNeeded()
+
+        let doneButton = try #require(controller.navigationItem.leftBarButtonItem)
+        #expect(doneButton.accessibilityLabel == "Done")
+        #expect(doneButton.accessibilityIdentifier == "fullscreen-image-data.dismiss")
+        #expect(doneButton.image != nil)
+        #expect(Self.color(doneButton.tintColor, approximatelyEquals: UIColor(palette.cyan)))
+        #expect(navigation.navigationBar.standardAppearance.backgroundColor == nil)
+    }
+
+    @MainActor
     @Test("fullscreen SVG preview supports pinch zoom")
     func fullscreenSVGPreviewSupportsPinchZoom() throws {
         let controller = FullScreenImageDataPreviewViewController(
@@ -83,6 +105,30 @@ struct ImagePreviewSecurityTests {
         #expect(!policy.contains("http:"))
         #expect(!policy.contains("https:"))
         #expect(!policy.contains("script-src"))
+    }
+
+    private static func color(
+        _ color: UIColor?,
+        approximatelyEquals expected: UIColor,
+        tolerance: CGFloat = 0.01
+    ) -> Bool {
+        guard let color else { return false }
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        var expectedRed: CGFloat = 0
+        var expectedGreen: CGFloat = 0
+        var expectedBlue: CGFloat = 0
+        var expectedAlpha: CGFloat = 0
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha),
+              expected.getRed(&expectedRed, green: &expectedGreen, blue: &expectedBlue, alpha: &expectedAlpha) else {
+            return false
+        }
+        return abs(red - expectedRed) <= tolerance
+            && abs(green - expectedGreen) <= tolerance
+            && abs(blue - expectedBlue) <= tolerance
+            && abs(alpha - expectedAlpha) <= tolerance
     }
 
     private static let svgData = Data("""

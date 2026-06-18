@@ -660,7 +660,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(palette.bgDark)
-        title = previewTitle
+        view.accessibilityLabel = previewTitle
         setupNavigationChrome()
         setupScrollView()
         setupPreviewView()
@@ -673,16 +673,13 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     }
 
     private func setupNavigationChrome() {
-        let doneButton = UIBarButtonItem(
-            image: UIImage(systemName: "chevron.down"),
-            style: .plain,
+        navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
+            mode: .modal,
             target: self,
-            action: #selector(dismissTapped)
+            action: #selector(dismissTapped),
+            palette: palette,
+            accessibilityIdentifier: "fullscreen-image-data.dismiss"
         )
-        doneButton.tintColor = UIColor(palette.cyan)
-        doneButton.accessibilityLabel = String(localized: "Done")
-        doneButton.accessibilityIdentifier = "fullscreen-image-data.dismiss"
-        navigationItem.leftBarButtonItem = doneButton
     }
 
     private func setupScrollView() {
