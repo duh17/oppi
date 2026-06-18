@@ -14,12 +14,8 @@ import type {
 import type { ConfigStore } from "./config-store.js";
 
 const log = createLogger({ base: { component: "workspace_store" } });
-const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
 
-function normalizeNameList(
-  values: string[] | undefined,
-  options: { deprecated?: Set<string> } = {},
-): string[] | undefined {
+function normalizeNameList(values: string[] | undefined): string[] | undefined {
   if (!values) {
     return undefined;
   }
@@ -29,7 +25,7 @@ function normalizeNameList(
 
   for (const value of values) {
     const name = value.trim();
-    if (name.length === 0 || unique.has(name) || options.deprecated?.has(name)) {
+    if (name.length === 0 || unique.has(name)) {
       continue;
     }
 
@@ -38,10 +34,6 @@ function normalizeNameList(
   }
 
   return normalized;
-}
-
-function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
-  return normalizeNameList(extensions, { deprecated: DEPRECATED_EXTENSION_NAMES });
 }
 
 function normalizeTools(tools: string[] | undefined): string[] | undefined {
@@ -110,13 +102,11 @@ export class WorkspaceStore {
       name: req.name,
       description: normalizeOptionalString(req.description),
       icon: normalizeOptionalString(req.icon),
-      skills: req.skills,
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeHostMount(req.hostMount),
       defaultModel: normalizeOptionalString(req.defaultModel),
       tools: normalizeTools(req.tools),
-      extensions: normalizeExtensions(req.extensions),
       gitStatusEnabled: req.gitStatusEnabled,
       runtime: req.runtime,
       sandboxConfig: normalizeSandboxConfig(req.sandboxConfig),
@@ -146,15 +136,11 @@ export class WorkspaceStore {
       name: typeof raw.name === "string" ? raw.name : "",
       description: normalizeOptionalString(raw.description),
       icon: normalizeOptionalString(raw.icon),
-      skills: Array.isArray(raw.skills)
-        ? raw.skills.filter((skill): skill is string => typeof skill === "string")
-        : [],
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeHostMount(raw.hostMount),
       defaultModel: normalizeOptionalString(raw.defaultModel),
       tools: normalizeTools(raw.tools as string[] | undefined),
-      extensions: normalizeExtensions(raw.extensions as string[] | undefined),
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
       runtime: raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined,
@@ -218,7 +204,6 @@ export class WorkspaceStore {
     if (updates.description !== undefined)
       workspace.description = normalizeOptionalString(updates.description);
     if (updates.icon !== undefined) workspace.icon = normalizeOptionalString(updates.icon);
-    if (updates.skills !== undefined) workspace.skills = updates.skills;
     if (updates.systemPrompt !== undefined)
       workspace.systemPrompt = normalizeOptionalString(updates.systemPrompt);
     if (updates.systemPromptMode !== undefined)
@@ -228,8 +213,6 @@ export class WorkspaceStore {
     if (updates.defaultModel !== undefined)
       workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.tools !== undefined) workspace.tools = normalizeTools(updates.tools);
-    if (updates.extensions !== undefined)
-      workspace.extensions = normalizeExtensions(updates.extensions);
     if (updates.gitStatusEnabled !== undefined)
       workspace.gitStatusEnabled = updates.gitStatusEnabled;
     if (updates.runtime !== undefined) workspace.runtime = updates.runtime;

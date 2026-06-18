@@ -75,7 +75,6 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-session-workspace",
-      skills: [],
       defaultModel: inject("e2eModel"),
     });
 
@@ -342,7 +341,6 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     // Create a different workspace
     const ws2 = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-wrong-workspace",
-      skills: [],
     });
     const wrongWorkspaceId = (ws2.json?.workspace as Record<string, unknown>).id as string;
 

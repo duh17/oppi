@@ -67,7 +67,6 @@ describe("Oppi documentation prompt hint", () => {
         runtime: "host",
         hostMount: cwd,
         systemPrompt: "Workspace-specific note.",
-        extensions: [],
       } as Workspace,
       onEvent: () => {},
       onEnd: () => {},
@@ -81,9 +80,7 @@ describe("Oppi documentation prompt hint", () => {
       ).runtime.services.resourceLoader;
       const appendPrompts = resourceLoader.getAppendSystemPrompt();
 
-      expect(appendPrompts[0]).toContain(
-        "Oppi documentation for mobile-compatible Pi extensions:",
-      );
+      expect(appendPrompts[0]).toContain("Oppi documentation for mobile-compatible Pi extensions:");
       expect(appendPrompts[1]).toBe("Workspace-specific note.");
     } finally {
       await backend.dispose();

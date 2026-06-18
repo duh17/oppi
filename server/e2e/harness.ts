@@ -645,7 +645,6 @@ export async function bootstrapAppleE2E(opts?: {
   const deviceToken = await pairDevice(scriptInvite.pairingToken, "e2e-script-bootstrap");
   const workspace = await createWorkspace(deviceToken, {
     name: opts?.workspaceName ?? "e2e-workspace",
-    skills: [],
     ...(opts?.model ? { defaultModel: opts.model } : {}),
   });
   const workspaceId = String(workspace.id ?? "");

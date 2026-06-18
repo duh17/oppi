@@ -48,7 +48,6 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
 
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-sandbox-workspace",
-      skills: [],
       tools: ["read", "bash", "edit", "write", "ask"],
       runtime: "sandbox",
       sandboxConfig: {
@@ -125,7 +124,6 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
 
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-host-workspace",
-      skills: [],
     });
 
     expect(res.status).toBe(201);
@@ -141,7 +139,6 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
     // Create a host workspace first
     const createRes = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-switch-test",
-      skills: [],
       runtime: "host",
     });
     expect(createRes.status).toBe(201);

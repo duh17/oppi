@@ -15,20 +15,14 @@ export interface WorkspaceMutableConfig {
   description?: string; // shown in workspace picker
   icon?: string; // SF Symbol name or emoji
 
-  // Skills — which skills to sync into the session
-  skills: string[]; // ["searxng", "fetch", "ast-grep"]
-
   // Context
   systemPrompt?: string; // Workspace prompt text appended to the Pi prompt
   systemPromptMode: WorkspaceSystemPromptMode;
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
   defaultModel?: string; // Optional default model for new sessions in this workspace
 
-  // Tools and extensions
-  // Undefined = pi default tools. Defined = authoritative allowlist.
-  tools?: string[]; // Tool allowlist (e.g. read/bash/edit/write + extension tools)
-  // Undefined = discovered pi extensions only. Defined = authoritative allowlist.
-  extensions?: string[]; // Extension allowlist for host/Pi extensions plus Oppi ask
+  // Tool allowlist is only a sandbox VM security policy. Host runtime uses Pi defaults.
+  tools?: string[];
 
   // Git status
   gitStatusEnabled?: boolean; // Show git status context bar (default: true)

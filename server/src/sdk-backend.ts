@@ -38,11 +38,9 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
-import { isManagedExtensionName } from "../extensions/built-ins.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
-import { extensionNameForAllowlist } from "./extension-loader.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
@@ -102,46 +100,6 @@ function resolveRegistryModel(
   }
 
   return modelRegistry.find(parsed.provider, parsed.model);
-}
-
-type LoadedExtensionForFilter = {
-  path: string;
-  resolvedPath: string;
-};
-
-export interface SdkExtensionFilterOptions {
-  workspaceExtensions?: string[];
-}
-
-function getLoadedExtensionName(ext: { path: string; resolvedPath?: string }): string {
-  return extensionNameForAllowlist(ext.resolvedPath || ext.path);
-}
-
-export function filterSdkLoadedExtensions<T extends LoadedExtensionForFilter>(
-  extensions: T[],
-  options: SdkExtensionFilterOptions,
-): T[] {
-  const filtered = extensions.filter((ext) => {
-    if (ext.path.startsWith("<inline:")) return true;
-
-    const name = getLoadedExtensionName(ext);
-    if (isManagedExtensionName(name)) {
-      return false;
-    }
-    return true;
-  });
-
-  if (options.workspaceExtensions !== undefined) {
-    const allowed = new Set(options.workspaceExtensions);
-    return filtered.filter((ext) => {
-      if (ext.path.startsWith("<inline:")) return true;
-
-      const name = getLoadedExtensionName(ext);
-      return allowed.has(name);
-    });
-  }
-
-  return filtered;
 }
 
 /**
@@ -450,17 +408,14 @@ export class SdkBackend {
         extensionFactories.push(...config.extraExtensionFactories);
       }
 
-      // Resource loader — suppress skill/theme auto-discovery, but keep
-      // prompt templates enabled because Oppi exposes them as slash commands.
-      // Host extensions keep Pi's normal discovery/settings/package behavior,
-      // including approval UI requests.
+      // Resource loader: follow Pi's normal cwd/settings/package discovery.
+      // Oppi no longer applies a workspace-level skills/extensions policy for
+      // host sessions. Project/user Pi settings remain the source of truth.
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
         additionalSkillPaths: config.skillPaths ?? [],
-        noSkills: true,
-        noThemes: true,
         extensionFactories,
         appendSystemPrompt: buildSdkAppendSystemPrompt(workspace, {
           includeOppiDocsHint: !sandboxMode,
@@ -502,34 +457,6 @@ export class SdkBackend {
               }),
             }
           : {}),
-        extensionsOverride: (base) => {
-          // Apply the workspace allowlist to Pi-discovered host extensions.
-          const allowedNames = workspace?.extensions;
-          const filtered = filterSdkLoadedExtensions(base.extensions, {
-            workspaceExtensions: allowedNames,
-          });
-
-          // Debug: log extension filtering
-          const extNames = base.extensions.map(
-            (ext) =>
-              `${getLoadedExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
-          );
-          const filteredNames = filtered.map(
-            (ext) =>
-              `${getLoadedExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
-          );
-          if (process.env.DEBUG) {
-            log.info("sdk.extensions_override_debug", {
-              workspace: workspace?.name,
-              input: extNames,
-              errors: base.errors.map((e) => `${e.path}: ${e.error}`),
-              allowlist: allowedNames,
-              output: filteredNames,
-            });
-          }
-
-          return { ...base, extensions: filtered };
-        },
       });
       await loader.reload();
 
@@ -596,7 +523,7 @@ export class SdkBackend {
         log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
       }
 
-      const workspaceTools = workspace?.tools?.length ? workspace.tools : undefined;
+      const workspaceTools = sandboxTools && workspace?.tools?.length ? workspace.tools : undefined;
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
@@ -769,11 +696,24 @@ export class SdkBackend {
     await this.bindCurrentSessionExtensions();
   }
 
-  private static applyDefaultQueueModes(
-    session: Pick<AgentSession, "setSteeringMode" | "setFollowUpMode">,
-  ): void {
-    session.setSteeringMode(SdkBackend.DEFAULT_STEERING_MODE);
-    session.setFollowUpMode(SdkBackend.DEFAULT_FOLLOW_UP_MODE);
+  private static applyDefaultQueueModes(session: AgentSession): void {
+    // AgentSession's public queue setters persist to Pi user settings. Oppi
+    // wants these delivery defaults session-locally without rewriting
+    // ~/.pi/agent/settings.json.
+    const agent = (
+      session as unknown as {
+        agent?: {
+          steeringMode?: "all" | "one-at-a-time";
+          followUpMode?: "all" | "one-at-a-time";
+        };
+      }
+    ).agent;
+    if (!agent) {
+      return;
+    }
+
+    agent.steeringMode = SdkBackend.DEFAULT_STEERING_MODE;
+    agent.followUpMode = SdkBackend.DEFAULT_FOLLOW_UP_MODE;
   }
 
   private createExtensionUIContext(): ReturnType<SdkUiBridge["createContext"]> {
@@ -790,6 +730,7 @@ export class SdkBackend {
     }
 
     await this.piSession.reload();
+    SdkBackend.applyDefaultQueueModes(this.piSession);
     this.installSessionAttachmentToolHelpers();
     return { success: true };
   }
