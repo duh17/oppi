@@ -217,6 +217,69 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags concrete key branches inside the mirror UI bridge proxy", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mirror-bridge-"));
+
+    try {
+      write(
+        join(repoRoot, "pi-extensions/oppi-mirror/extensions/oppi-mirror.ts"),
+        [
+          "function installExtensionUIProxy(ctx: ExtensionContext): void {",
+          "  const ui = ctx.ui;",
+          "  ui.setWidget = (key: string, content: unknown) => {",
+          "    if (key === 'local-only') return;",
+          "    return content;",
+          "  };",
+          "}",
+          "  function renderIndicator(ctx: ExtensionContext) { return ctx; }",
+        ].join("\n"),
+      );
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "extension-surface-no-identity-branch",
+            file: "pi-extensions/oppi-mirror/extensions/oppi-mirror.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores unrelated tool-renderer code in the mixed mirror file", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mirror-tool-renderer-"));
+
+    try {
+      write(
+        join(repoRoot, "pi-extensions/oppi-mirror/extensions/oppi-mirror.ts"),
+        [
+          "const nativeToolNames = new Set(['read']);",
+          "function renderTool(toolName: string) {",
+          "  if (nativeToolNames.has(toolName)) return undefined;",
+          "  return toolName;",
+          "}",
+          "function installExtensionUIProxy(ctx: ExtensionContext): void {",
+          "  const ui = ctx.ui;",
+          "  ui.setStatus = (key: string, text: string) => text;",
+          "}",
+          "  function renderIndicator(ctx: ExtensionContext) { return ctx; }",
+        ].join("\n"),
+      );
+
+      const violations = findServerLayerViolations(repoRoot).filter(
+        (violation) => violation.rule === "extension-surface-no-identity-branch",
+      );
+
+      expect(violations).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags concrete identity branches in generic extension-surface Swift files", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-extension-swift-"));
 
