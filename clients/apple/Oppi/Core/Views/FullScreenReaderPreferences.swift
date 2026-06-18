@@ -12,9 +12,9 @@ enum FullScreenReaderContentFamily: String, Codable, CaseIterable, Equatable {
 
     var supportsWrapping: Bool {
         switch self {
-        case .code, .source, .terminal:
+        case .code, .source, .diff, .terminal:
             return true
-        case .markdown, .diff, .html, .renderedDocument:
+        case .markdown, .html, .renderedDocument:
             return false
         }
     }

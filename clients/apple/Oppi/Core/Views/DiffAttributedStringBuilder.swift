@@ -5,6 +5,8 @@ import UIKit
 let diffLineKindAttributeKey = NSAttributedString.Key("unifiedDiffLineKind")
 /// Attribute key for resolving selected diff text back to source line numbers.
 let reviewLineNumberAttributeKey = NSAttributedString.Key("oppiReviewLineNumber")
+/// Attribute key marking the code/text column inside a rendered diff row.
+let diffCodeColumnAttributeKey = NSAttributedString.Key("oppiDiffCodeColumn")
 
 /// Builds the attributed string for a unified diff from structured hunks.
 ///
@@ -98,9 +100,9 @@ enum DiffAttributedStringBuilder {
                 lineNumAddedAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
                 lineNumRemovedAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
                 codeDefaultAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph],
-                codeDimAttrs: [.font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph],
-                codeAddedAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
-                codeRemovedAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
+                codeDimAttrs: [.font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph, diffCodeColumnAttributeKey: true],
+                codeAddedAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added", diffCodeColumnAttributeKey: true],
+                codeRemovedAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed", diffCodeColumnAttributeKey: true],
                 fgColor: fgColor,
                 wordAddedBg: wordAddedBg,
                 wordRemovedBg: wordRemovedBg,
@@ -476,5 +478,3 @@ enum DiffAttributedStringBuilder {
         return (padding < padStrings.count ? padStrings[padding] : String(repeating: " ", count: padding)) + s
     }
 }
-
-
