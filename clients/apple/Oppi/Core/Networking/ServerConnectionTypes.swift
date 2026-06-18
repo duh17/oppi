@@ -109,10 +109,24 @@ struct SessionContextCompositionSnapshot: Equatable, Sendable {
     let skillsListingTokens: Int
 }
 
+struct SessionResourceSnapshot: Equatable, Sendable, Identifiable {
+    let name: String
+    let description: String?
+    let path: String
+
+    var id: String { path.isEmpty ? name : path }
+}
+
+struct SessionLoadedResourcesSnapshot: Equatable, Sendable {
+    let skills: [SessionResourceSnapshot]
+    let extensions: [SessionResourceSnapshot]
+}
+
 struct SessionStatsSnapshot: Equatable, Sendable {
     let tokens: SessionTokenStats
     let cost: Double
     let contextComposition: SessionContextCompositionSnapshot?
+    let loadedResources: SessionLoadedResourcesSnapshot?
 }
 
 // MARK: - Extension UI Surface

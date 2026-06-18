@@ -1706,17 +1706,11 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == wsId }
     }
 
-    private var currentWorkspaceSkillNames: [String] {
-        currentWorkspace?.skills ?? []
-    }
-
     private var contextInspectorSheet: some View {
         NavigationStack {
             ContextInspectorView(
                 session: session,
                 workspace: currentWorkspace,
-                workspaceSkillNames: currentWorkspaceSkillNames,
-                availableSkills: connection.workspaceStore.skills,
                 loadSessionStats: {
                     try await connection.getSessionStats()
                 }

@@ -62,6 +62,22 @@ interface EditableAgentSession {
     getHeader?: () => { cwd?: string } | null;
   };
   getToolDefinition?: (name: string) => ToolDefinition | undefined;
+  resourceLoader?: {
+    getSkills?: () => {
+      skills: Array<{
+        name: string;
+        description?: string;
+        baseDir?: string;
+        filePath?: string;
+      }>;
+    };
+    getAgentsFiles?: () => {
+      agentsFiles: Array<{ path: string; content: string }>;
+    };
+    getExtensions?: () => {
+      extensions: Array<{ path: string; resolvedPath?: string }>;
+    };
+  };
   _steeringMessages?: string[];
   _followUpMessages?: string[];
   _emitQueueUpdate?: () => void;
@@ -391,6 +407,139 @@ function contextUsageWire(ctx: ExtensionContext) {
   return {
     tokens: usage.tokens,
     contextWindow: usage.contextWindow,
+  };
+}
+
+function mirrorExtensionName(path: string): string {
+  const fileName = basename(path);
+  const suffixIndex = fileName.lastIndexOf(".");
+  const baseName = suffixIndex > 0 ? fileName.slice(0, suffixIndex) : fileName;
+  if (baseName !== "index") return baseName;
+
+  const parent = basename(dirname(path));
+  return parent || baseName;
+}
+
+function estimateTokensFromChars(chars: number): number {
+  if (chars <= 0) return 0;
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function escapePromptXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function formatMirrorSkillsForPrompt(
+  skills: Array<{ name: string; description: string; filePath: string }>,
+): string {
+  if (skills.length === 0) return "";
+
+  const lines = [
+    "\n\nThe following skills provide specialized instructions for specific tasks.",
+    "Use the read tool to load a skill's file when the task matches its description.",
+    "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
+    "",
+    "<available_skills>",
+  ];
+
+  for (const skill of skills) {
+    lines.push("  <skill>");
+    lines.push(`    <name>${escapePromptXml(skill.name)}</name>`);
+    lines.push(
+      `    <description>${escapePromptXml(skill.description)}</description>`,
+    );
+    lines.push(`    <location>${escapePromptXml(skill.filePath)}</location>`);
+    lines.push("  </skill>");
+  }
+
+  lines.push("</available_skills>");
+  return lines.join("\n");
+}
+
+function contextCompositionWire(
+  ctx: ExtensionContext,
+  session: EditableAgentSession | undefined,
+) {
+  const systemPrompt = ctx.getSystemPrompt();
+  const agentsFiles =
+    session?.resourceLoader?.getAgentsFiles?.().agentsFiles.map((file) => {
+      const chars = file.content.length;
+      return {
+        path: file.path,
+        chars,
+        tokens: estimateTokensFromChars(chars),
+      };
+    }) ?? [];
+
+  const agentsChars = agentsFiles.reduce((sum, file) => sum + file.chars, 0);
+  const agentsTokens = agentsFiles.reduce((sum, file) => sum + file.tokens, 0);
+  const skills =
+    session?.resourceLoader?.getSkills?.().skills.map((skill) => ({
+      ...skill,
+      description: skill.description ?? "",
+      filePath: skill.filePath ?? skill.baseDir ?? "",
+      baseDir: skill.baseDir ?? dirname(skill.filePath ?? ""),
+    })) ?? [];
+  const skillsListing = formatMirrorSkillsForPrompt(skills);
+  const skillsListingChars = skillsListing.length;
+
+  return {
+    piSystemPromptChars: systemPrompt.length,
+    piSystemPromptTokens: estimateTokensFromChars(systemPrompt.length),
+    agentsChars,
+    agentsTokens,
+    agentsFiles,
+    skillsListingChars,
+    skillsListingTokens: estimateTokensFromChars(skillsListingChars),
+  };
+}
+
+function loadedResourcesWire(session: EditableAgentSession | undefined) {
+  const skills =
+    session?.resourceLoader?.getSkills?.().skills.map((skill) => ({
+      name: skill.name,
+      ...(skill.description ? { description: skill.description } : {}),
+      path: skill.baseDir ?? skill.filePath ?? "",
+    })) ?? [];
+
+  const extensions =
+    session?.resourceLoader?.getExtensions?.().extensions.map((extension) => {
+      const path = extension.resolvedPath ?? extension.path;
+      return {
+        name: mirrorExtensionName(path),
+        path,
+      };
+    }) ?? [];
+
+  return { skills, extensions };
+}
+
+export function sessionStatsWire(
+  ctx: ExtensionContext,
+  session: EditableAgentSession | undefined,
+) {
+  const entries = ctx.sessionManager.getEntries();
+  const contextUsage = contextUsageWire(ctx);
+  return {
+    sessionFile: ctx.sessionManager.getSessionFile(),
+    piSessionId: ctx.sessionManager.getSessionId(),
+    totalMessages: entries.length,
+    contextUsage,
+    tokens: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: contextUsage?.tokens ?? 0,
+    },
+    cost: 0,
+    contextComposition: contextCompositionWire(ctx, session),
+    loadedResources: loadedResourcesWire(session),
   };
 }
 
@@ -3654,15 +3803,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         });
       }
 
-      case "get_session_stats": {
-        const entries = ctx.sessionManager.getEntries();
-        return {
-          sessionFile: ctx.sessionManager.getSessionFile(),
-          piSessionId: ctx.sessionManager.getSessionId(),
-          totalMessages: entries.length,
-          contextUsage: contextUsageWire(ctx),
-        };
-      }
+      case "get_session_stats":
+        return sessionStatsWire(ctx, findEditableAgentSession(ctx));
 
       case "get_commands":
         return { commands: pi.getCommands() };

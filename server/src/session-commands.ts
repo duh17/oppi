@@ -15,6 +15,7 @@ import {
 } from "./session-share.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
 import { readSessionTreeFilterMode, serializeSessionTree } from "./session-tree.js";
+import { extensionNameForAllowlist } from "./extension-loader.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 
@@ -64,6 +65,12 @@ interface SessionContextCompositionSnapshot {
   skillsListingTokens: number;
 }
 
+interface SessionResourceSnapshot {
+  name: string;
+  description?: string;
+  path: string;
+}
+
 function estimateTokensFromChars(chars: number): number {
   if (chars <= 0) {
     return 0;
@@ -102,6 +109,24 @@ function collectSessionContextComposition(
     skillsListingChars,
     skillsListingTokens,
   };
+}
+
+function collectLoadedSessionResources(session: AgentSession): {
+  skills: SessionResourceSnapshot[];
+  extensions: SessionResourceSnapshot[];
+} {
+  const skills = session.resourceLoader.getSkills().skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    path: skill.baseDir,
+  }));
+
+  const extensions = session.resourceLoader.getExtensions().extensions.map((extension) => ({
+    name: extensionNameForAllowlist(extension.resolvedPath || extension.path, extension.sourceInfo),
+    path: extension.resolvedPath || extension.path,
+  }));
+
+  return { skills, extensions };
 }
 
 const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
@@ -335,6 +360,7 @@ export class SessionCommandCoordinator {
       (session) => ({
         ...session.getSessionStats(),
         contextComposition: collectSessionContextComposition(session),
+        loadedResources: collectLoadedSessionResources(session),
       }),
     ],
     ["get_available_models", () => []],
