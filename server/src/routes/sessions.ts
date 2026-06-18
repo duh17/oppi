@@ -67,6 +67,14 @@ import { WsMessageHandler } from "../ws-message-handler.js";
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
 const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
 const LOCAL_SESSION_CATALOG_MAX_AGE_MS = 60_000;
+const CREATE_SESSION_THINKING_LEVELS = new Set([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
@@ -852,6 +860,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       );
       return;
     }
+    if (body.thinking !== undefined && !CREATE_SESSION_THINKING_LEVELS.has(body.thinking)) {
+      helpers.error(res, 400, "Invalid thinking level");
+      return;
+    }
     const requestedModel = body.model;
 
     // ── Local session import: validate path confinement + CWD alignment ──
@@ -967,18 +979,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const prompt = body.prompt?.trim();
     if (prompt) {
       try {
+        // `session.thinkingLevel` is written before startSession so the SDK
+        // receives it as an initial session option, matching Pi CLI startup
+        // semantics instead of replaying a toolbar-level set_thinking command.
         await ctx.sessions.startSession(session.id, workspace);
-        if (body.thinking) {
-          await ctx.sessions.forwardClientCommand(session.id, {
-            type: "set_thinking_level",
-            level: body.thinking,
-          });
-          // Keep our local reference in sync — forwardClientCommand persists
-          // on the active session object (a different reference read from disk
-          // during startSession), so without this the final saveSession below
-          // would overwrite the thinking level with undefined.
-          session.thinkingLevel = body.thinking;
-        }
         await ctx.sessions.sendPrompt(session.id, prompt, {
           ...(body.attachments ? { attachments: body.attachments } : {}),
         });

@@ -410,25 +410,24 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(startCall[1]).toBe(ws);
   });
 
-  it("sets thinking level before sending prompt when thinking is provided", async () => {
+  it("seeds thinking level before starting a prompted session", async () => {
     const mock = createMockContext();
 
     await dispatchCreate(mock, { prompt: "hello", thinking: "high" });
 
-    // forwardClientCommand should be called before sendPrompt
-    expect(mock.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
-    const fwdCall = mock.sessions.forwardClientCommand.mock.calls[0]!;
-    expect(fwdCall[1]).toEqual({ type: "set_thinking_level", level: "high" });
-
+    expect(mock.sessions.forwardClientCommand).not.toHaveBeenCalled();
+    expect(mock.sessions.startSession).toHaveBeenCalledTimes(1);
     expect(mock.sessions.sendPrompt).toHaveBeenCalledTimes(1);
+
+    const firstSavedSession = mock.storage.saveSession.mock.calls[0]![0] as Session;
+    expect(firstSavedSession.thinkingLevel).toBe("high");
   });
 
-  it("persists thinking level on session object after forwardClientCommand", async () => {
+  it("persists thinking level on the session object after prompted creation", async () => {
     const mock = createMockContext();
 
     await dispatchCreate(mock, { prompt: "hello", thinking: "high" });
 
-    // The final saveSession call should include thinkingLevel on the session
     const lastSaveIndex = mock.storage.saveSession.mock.calls.length - 1;
     const savedSession = mock.storage.saveSession.mock.calls[lastSaveIndex]![0] as Session;
     expect(savedSession.thinkingLevel).toBe("high");
@@ -453,6 +452,16 @@ describe("POST /workspaces/:id/sessions", () => {
     const lastSaveIndex = mock.storage.saveSession.mock.calls.length - 1;
     const savedSession = mock.storage.saveSession.mock.calls[lastSaveIndex]![0] as Session;
     expect(savedSession.thinkingLevel).toBe("high");
+  });
+
+  it("rejects invalid thinking levels on session creation", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, { prompt: "hello", thinking: "turbo" });
+
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+    expect(mock.sessions.startSession).not.toHaveBeenCalled();
+    expect(mock.errors).toEqual([{ status: 400, message: "Invalid thinking level" }]);
   });
 
   it("rejects legacy raw images on session creation", async () => {
