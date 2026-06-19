@@ -90,11 +90,6 @@ export class TurnDedupeCache {
     return entry.record;
   }
 
-  size(now = Date.now()): number {
-    this.purgeExpired(now);
-    return this.entries.size;
-  }
-
   private purgeExpired(now: number): void {
     for (const [key, entry] of this.entries) {
       if (entry.expiresAt <= now) {

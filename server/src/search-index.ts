@@ -285,7 +285,6 @@ export class SearchIndex {
   private stmtDeleteMeta!: SqliteStatement;
   private stmtGetMeta!: SqliteStatement;
   private stmtGetIndexedRow!: SqliteStatement;
-  private stmtCount!: SqliteStatement;
 
   private getSession: (id: string) => Session | undefined;
   private closed = false;
@@ -435,8 +434,6 @@ export class SearchIndex {
       ORDER BY rank ASC, m.jsonl_mtime_ms DESC
       LIMIT ?
     `);
-
-    this.stmtCount = this.db.prepare("SELECT count(*) as cnt FROM fts_meta");
   }
 
   // -------------------------------------------------------------------------
@@ -461,12 +458,6 @@ export class SearchIndex {
       });
       return [];
     }
-  }
-
-  /** Number of indexed sessions. */
-  indexedCount(): number {
-    const row = this.stmtCount.get() as { cnt: number };
-    return row.cnt;
   }
 
   // -------------------------------------------------------------------------

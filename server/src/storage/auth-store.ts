@@ -119,18 +119,6 @@ export class AuthStore {
     return hostname().split(".")[0] || "owner";
   }
 
-  addAuthDeviceToken(token: string): void {
-    const tokens = this.configStore.getConfig().authDeviceTokens || [];
-    if (!tokens.includes(token)) {
-      this.configStore.updateConfig({ authDeviceTokens: [...tokens, token] });
-    }
-  }
-
-  removeAuthDeviceToken(token: string): void {
-    const tokens = this.configStore.getConfig().authDeviceTokens || [];
-    this.configStore.updateConfig({ authDeviceTokens: tokens.filter((t) => t !== token) });
-  }
-
   getAuthDeviceTokens(): string[] {
     return this.configStore.getConfig().authDeviceTokens || [];
   }
@@ -140,10 +128,6 @@ export class AuthStore {
     if (!tokens.includes(token)) {
       this.configStore.updateConfig({ pushDeviceTokens: [...tokens, token] });
     }
-  }
-
-  getPushDeviceTokens(): string[] {
-    return this.configStore.getConfig().pushDeviceTokens || [];
   }
 
   setLiveActivityToken(token: string | null): void {

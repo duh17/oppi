@@ -36,7 +36,6 @@ import type { Storage } from "./storage.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 
 export type { SessionCatchUpResponse };
@@ -71,7 +70,6 @@ export interface SessionCoordinatorBundleDeps {
   stopSessionGraceMs: number;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
-  getAndClearPendingExtensionFactories: (sessionId: string) => ExtensionFactory[];
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
@@ -142,8 +140,6 @@ export function createSessionCoordinatorBundle(
     config: deps.config,
     eventRingCapacity: deps.eventRingCapacity,
     getSkillPathResolver: () => deps.getSkillPathResolver(),
-    getAndClearPendingExtensionFactories: (sessionId) =>
-      deps.getAndClearPendingExtensionFactories(sessionId),
     onPiEvent: (key, event) => deps.onPiEvent(key, event),
     onSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
     registerActiveSession: (key, active) => deps.active.set(key, active),

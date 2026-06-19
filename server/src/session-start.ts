@@ -1,5 +1,3 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import {
@@ -23,7 +21,6 @@ export interface SessionStartCoordinatorDeps {
   config: ServerConfig;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
-  getAndClearPendingExtensionFactories: (sessionId: string) => ExtensionFactory[];
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
@@ -52,16 +49,12 @@ export class SessionStartCoordinator {
       this.deps.persistSessionNow(key, session);
 
       try {
-        const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
-
         const createStart = Date.now();
         const sdkBackend = await SdkBackend.create({
           session,
           workspace,
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
-          extraExtensionFactories:
-            extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
           dataDir: this.deps.storage.getDataDir(),
           metrics: this.deps.metrics,
         });

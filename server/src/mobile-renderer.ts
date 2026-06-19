@@ -495,11 +495,6 @@ export class MobileRendererRegistry {
     }
   }
 
-  /** Get a renderer by tool name. */
-  get(toolName: string): MobileToolRenderer | undefined {
-    return this.renderers.get(toolName);
-  }
-
   /** Render call segments, returning undefined if no renderer or on error. */
   renderCall(toolName: string, args: Record<string, unknown>): StyledSegment[] | undefined {
     const renderer = this.renderers.get(toolName);

@@ -215,24 +215,12 @@ export class Storage {
     return this.authStore.getOwnerName();
   }
 
-  addAuthDeviceToken(token: string): void {
-    this.authStore.addAuthDeviceToken(token);
-  }
-
-  removeAuthDeviceToken(token: string): void {
-    this.authStore.removeAuthDeviceToken(token);
-  }
-
   getAuthDeviceTokens(): string[] {
     return this.authStore.getAuthDeviceTokens();
   }
 
   addPushDeviceToken(token: string): void {
     this.authStore.addPushDeviceToken(token);
-  }
-
-  getPushDeviceTokens(): string[] {
-    return this.authStore.getPushDeviceTokens();
   }
 
   setLiveActivityToken(token: string | null): void {
@@ -259,10 +247,6 @@ export class Storage {
 
   listSessions(): Session[] {
     return this.sessionStore.listSessions();
-  }
-
-  listSessionsByWorkspace(workspaceId: string): Session[] {
-    return this.sessionStore.listSessionsByWorkspace(workspaceId);
   }
 
   listAllWorkspaceSessionSnapshots(workspaceId: string): Session[] {

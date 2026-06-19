@@ -908,12 +908,8 @@ export class Server {
     }
   }
 
-  // ─── Push Fallback ───
+  // ─── Dictation ───
 
-  /**
-   * Send a push notification for attention-worthy events not delivered by a
-   * bound session stream. Only fires for selected session lifecycle events.
-   */
   private createDictationManager(): DictationManager | undefined {
     if (!this.dictationConfig?.sttEndpoint) return undefined;
     const sttProvider = new StreamingSttProvider(
@@ -924,44 +920,6 @@ export class Server {
       globalThis.fetch,
     );
     return new DictationManager(sttProvider, this.opsMetrics);
-  }
-
-  private pushFallback(msg: ServerMessage): void {
-    const tokens = this.storage.getPushDeviceTokens();
-    if (tokens.length === 0) return;
-
-    if (msg.type === "session_ended") {
-      const session = this.findSessionByReason(msg);
-      for (const token of tokens) {
-        this.push.sendSessionEventPush(token, {
-          sessionId: session?.id || "unknown",
-          sessionName: session?.name,
-          event: "ended",
-          reason: msg.reason,
-        });
-      }
-    } else if (msg.type === "error") {
-      // Only push errors that aren't retries
-      if (!msg.error.startsWith("Retrying (")) {
-        for (const token of tokens) {
-          this.push.sendSessionEventPush(token, {
-            sessionId: "unknown",
-            event: "error",
-            reason: msg.error,
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Find session from a session_ended message context.
-   * We track which user's sessions are active to find the match.
-   */
-  private findSessionByReason(_msg: ServerMessage): Session | undefined {
-    const sessions = this.storage.listSessions();
-    // Return the most recently active session (best effort)
-    return sessions.find((s) => s.status === "stopped") || sessions[0];
   }
 
   private trackConnection(ws: WebSocket): void {

@@ -40,10 +40,6 @@ export class ReviewCommentStore {
     return this.store.update(this.workspaceId, id, patch);
   }
 
-  async delete(id: string): Promise<void> {
-    this.store.delete(this.workspaceId, id);
-  }
-
   async markSent(input: MarkReviewCommentsSentRequest): Promise<ReviewComment[]> {
     return this.store.markSent(this.workspaceId, input);
   }
