@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 private extension View {
@@ -15,6 +16,15 @@ private extension View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
             .glassEffect(.regular, in: shape)
+            .overlay {
+                shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
+            }
+    }
+
+    func extensionSubtleInset(cornerRadius: CGFloat = 12) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .background(Color.themeFg.opacity(0.035), in: shape)
             .overlay {
                 shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
             }
@@ -86,7 +96,10 @@ struct ExtensionNativeSurfaceView: View {
     let statusText: String?
     var onOpenURL: ((URL) -> Bool)?
 
-    @State private var isExpanded = true
+    @State private var isExpanded = false
+    @State private var isDetailPresented = false
+
+    private static let maxExpandedViewportHeight: CGFloat = 280
 
     private var displayBlocks: [ExtensionUINativeBlock] {
         surface.nativeDisplayBlocks
@@ -115,55 +128,131 @@ struct ExtensionNativeSurfaceView: View {
         return nil
     }
 
+    private var previewText: String? {
+        if let activity = activityRows.first {
+            return activity.title.trimmedNonEmpty
+        }
+        if case .markdown(_, let markdown)? = displayBlocks.first {
+            return markdown.trimmedNonEmpty
+        }
+        if case .text(_, let spans)? = displayBlocks.first {
+            let text = spans.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        }
+        return surface.fallbackDisplayLines.first?.trimmedNonEmpty
+    }
+
     private var headerText: ExtensionSurfaceHeaderText {
         ExtensionSurfaceHeaderText(title: titleText, statusText: statusText)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(headerText.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.themeFg)
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(headerText.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if let subtitle = headerText.subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
                             .lineLimit(1)
                             .truncationMode(.tail)
-
-                        if let subtitle = headerText.subtitle {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
+                    } else if let previewText {
+                        Text(previewText)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if let summaryText {
-                        StatusPill(
-                            text: summaryText,
-                            systemImage: "play.circle.fill",
-                            tone: .working,
-                            emphasis: .quiet,
-                            size: .small
-                        )
-                    }
-
-                    ExtensionDisclosureChevron(isExpanded: isExpanded)
                 }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let summaryText {
+                    StatusPill(
+                        text: summaryText,
+                        systemImage: "play.circle.fill",
+                        tone: .working,
+                        emphasis: .quiet,
+                        size: .small
+                    )
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(headerText.title) surface")
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+            .gesture(activationGesture)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(headerText.title) preview")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Tap to expand. Double tap to open full screen.")
+            .accessibilityAction {
+                toggleExpanded()
+            }
+            .accessibilityAction(named: Text("Open Full Screen")) {
+                openDetail()
+            }
 
             if isExpanded {
+                ExtensionNativeSurfaceExpandedViewport(
+                    surface: surface,
+                    maxHeight: Self.maxExpandedViewportHeight,
+                    onOpenURL: onOpenURL
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .fullScreenCover(isPresented: $isDetailPresented) {
+            ExtensionNativeSurfaceDetailSheet(
+                surface: surface,
+                title: headerText.title,
+                subtitle: headerText.subtitle ?? previewText,
+                statusText: statusText,
+                onOpenURL: onOpenURL
+            )
+        }
+    }
+
+    private var activationGesture: some Gesture {
+        TapGesture(count: 2)
+            .exclusively(before: TapGesture())
+            .onEnded { value in
+                switch value {
+                case .first:
+                    openDetail()
+                case .second:
+                    toggleExpanded()
+                }
+            }
+    }
+
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isExpanded.toggle()
+        }
+    }
+
+    private func openDetail() {
+        isDetailPresented = true
+    }
+}
+
+private struct ExtensionNativeSurfaceExpandedViewport: View {
+    let surface: ExtensionUINativeSurface
+    let maxHeight: CGFloat
+    var onOpenURL: ((URL) -> Bool)?
+
+    private var displayBlocks: [ExtensionUINativeBlock] {
+        surface.nativeDisplayBlocks
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
                 if displayBlocks.isEmpty {
                     let fallbackLines = surface.fallbackDisplayLines
                     if !fallbackLines.isEmpty {
@@ -171,17 +260,93 @@ struct ExtensionNativeSurfaceView: View {
                     }
                 } else {
                     ForEach(Array(displayBlocks.enumerated()), id: \.offset) { _, block in
-                        ExtensionNativeBlockView(block: block, onOpenURL: onOpenURL)
+                        ExtensionNativeBlockView(
+                            block: block,
+                            isDetail: true,
+                            onOpenURL: onOpenURL
+                        )
                     }
                 }
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .accessibilityElement(children: .contain)
+        .frame(maxHeight: maxHeight)
+        .extensionSubtleInset(cornerRadius: 12)
+    }
+}
+
+private struct ExtensionNativeSurfaceDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let surface: ExtensionUINativeSurface
+    let title: String
+    let subtitle: String?
+    let statusText: String?
+    var onOpenURL: ((URL) -> Bool)?
+
+    private var displayBlocks: [ExtensionUINativeBlock] {
+        surface.nativeDisplayBlocks
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let subtitle = subtitle?.trimmedNonEmpty, subtitle != title {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Done") {
+                    dismiss()
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if displayBlocks.isEmpty {
+                        let fallbackLines = surface.fallbackDisplayLines
+                        if !fallbackLines.isEmpty {
+                            ExtensionWidgetLinesView(lines: fallbackLines)
+                        }
+                    } else {
+                        ForEach(Array(displayBlocks.enumerated()), id: \.offset) { _, block in
+                            ExtensionNativeBlockView(
+                                block: block,
+                                isDetail: true,
+                                onOpenURL: onOpenURL
+                            )
+                        }
+                    }
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Color.themeBg.ignoresSafeArea())
     }
 }
 
 private struct ExtensionNativeBlockView: View {
     let block: ExtensionUINativeBlock
+    var isDetail: Bool = false
     var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
@@ -189,10 +354,7 @@ private struct ExtensionNativeBlockView: View {
         case .text(_, let spans):
             ExtensionNativeTextSpansView(spans: spans, onOpenURL: onOpenURL)
         case .markdown(_, let markdown):
-            Text(markdown)
-                .font(.caption)
-                .foregroundStyle(.themeFg)
-                .fixedSize(horizontal: false, vertical: true)
+            ExtensionNativeMarkdownView(markdown: markdown)
         case .section(_, let title, let subtitle, let blocks):
             VStack(alignment: .leading, spacing: 6) {
                 if let title, !title.isEmpty {
@@ -206,13 +368,13 @@ private struct ExtensionNativeBlockView: View {
                         .foregroundStyle(.themeComment)
                 }
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
-                    ExtensionNativeBlockView(block: child, onOpenURL: onOpenURL)
+                    ExtensionNativeBlockView(block: child, isDetail: isDetail, onOpenURL: onOpenURL)
                 }
             }
             .padding(10)
             .extensionGlassInset(cornerRadius: 12)
         case .activityList(_, let rows):
-            ExtensionNativeActivityListView(rows: rows, onOpenURL: onOpenURL)
+            ExtensionNativeActivityListView(rows: rows, startsExpanded: isDetail, onOpenURL: onOpenURL)
         case .progress(let base, let label, let value, let indeterminate):
             ExtensionNativeProgressBlockView(
                 base: base,
@@ -309,6 +471,27 @@ private struct ExtensionNativeProgressBlockView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue)
+    }
+}
+
+private struct ExtensionNativeMarkdownView: View {
+    let markdown: String
+
+    private var attributedMarkdown: AttributedString? {
+        try? AttributedString(markdown: markdown)
+    }
+
+    var body: some View {
+        Group {
+            if let attributedMarkdown {
+                Text(attributedMarkdown)
+            } else {
+                Text(markdown)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.themeFg)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -502,12 +685,17 @@ private extension ExtensionUITextSpan {
 
 private struct ExtensionNativeActivityListView: View {
     let rows: [ExtensionUIActivityRow]
+    var startsExpanded: Bool = false
     var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(rows) { row in
-                ExtensionNativeActivityRowView(row: row, onOpenURL: onOpenURL)
+                ExtensionNativeActivityRowView(
+                    row: row,
+                    startsExpanded: startsExpanded,
+                    onOpenURL: onOpenURL
+                )
             }
         }
     }
@@ -517,12 +705,22 @@ private struct ExtensionNativeActivityRowView: View {
     @Environment(\.openURL) private var openURL
 
     let row: ExtensionUIActivityRow
+    var startsExpanded: Bool = false
     var onOpenURL: ((URL) -> Bool)?
 
     @State private var isExpanded = false
 
+    private var childRows: [ExtensionUIActivityRow] {
+        row.children ?? []
+    }
+
+    private var isExpandedForDisplay: Bool {
+        startsExpanded || isExpanded
+    }
+
     private var canExpandInline: Bool {
         guard linkedURL == nil else { return false }
+        if !childRows.isEmpty { return true }
         if row.title.count > 34 || row.title.contains("\n") { return true }
         if let subtitle = row.subtitle, subtitle.count > 32 || subtitle.contains("\n") { return true }
         if let detail = row.detail, detail.count > 44 || detail.contains("\n") { return true }
@@ -533,31 +731,42 @@ private struct ExtensionNativeActivityRowView: View {
         let content = ExtensionNativeActivityRowContent(
             row: row,
             showsNavigationCue: linkedURL != nil,
-            showsDisclosureCue: linkedURL == nil && canExpandInline,
-            isExpanded: isExpanded
+            showsDisclosureCue: linkedURL == nil && canExpandInline && !startsExpanded,
+            isExpanded: isExpandedForDisplay
         )
-        if let url = linkedURL {
-            Button {
-                if onOpenURL?(url) != true {
-                    openURL(url)
+        Group {
+            if let url = linkedURL {
+                Button {
+                    if onOpenURL?(url) != true {
+                        openURL(url)
+                    }
+                } label: {
+                    content
                 }
-            } label: {
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the related session")
+            } else if canExpandInline && !startsExpanded {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    content
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(isExpanded ? "Collapse task text" : "Show full task text")
+            } else {
                 content
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens the related session")
-        } else if canExpandInline {
-            Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                content
+
+            if isExpandedForDisplay && !childRows.isEmpty {
+                ExtensionNativeActivityListView(
+                    rows: childRows,
+                    startsExpanded: startsExpanded,
+                    onOpenURL: onOpenURL
+                )
+                .padding(.leading, 22)
             }
-            .buttonStyle(.plain)
-            .accessibilityHint(isExpanded ? "Collapse task text" : "Show full task text")
-        } else {
-            content
         }
     }
 
@@ -859,23 +1068,20 @@ extension ExtensionSurfaceState {
         lhs == rhs
     }
 
-    private func hasVisibleSurface(key: String, extensionScopeId: String?) -> Bool {
+    private func hasVisibleSurface(key: String) -> Bool {
+        // Pi/TUI widget and status keys are global identity. Scope metadata is
+        // only a fallback for grouping related surfaces that use different keys.
         widgets.values.contains { widget in
-            widget.key == key
-                && isSameScope(widget.extensionScopeId, extensionScopeId)
-                && !widget.lines.isEmpty
+            widget.key == key && !widget.lines.isEmpty
         } || nativeSurfaces.values.contains { nativeSurface in
-            nativeSurface.key == key
-                && isSameScope(nativeSurface.extensionScopeId, extensionScopeId)
-                && nativeSurface.hasVisibleContent
+            nativeSurface.key == key && nativeSurface.hasVisibleContent
         }
     }
 
     private func directlyAttachedStatus(key: String, extensionScopeId: String?) -> ExtensionStatusState? {
-        guard hasVisibleSurface(key: key, extensionScopeId: extensionScopeId) else { return nil }
+        guard hasVisibleSurface(key: key) else { return nil }
         return statuses.values.first { status in
             status.key == key
-                && isSameScope(status.extensionScopeId, extensionScopeId)
                 && !status.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -920,17 +1126,30 @@ extension ExtensionSurfaceState {
     }
 
     func standaloneStatusEntries() -> [(id: String, key: String, text: String)] {
-        statuses
+        let candidates = statuses
             .filter { _, status in
                 !isAttachedStatus(status)
                     && !status.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
-            .map { storageKey, status in (id: storageKey, key: status.key, text: status.text) }
+            .map { storageKey, status in
+                (
+                    id: storageKey,
+                    key: status.key.trimmingCharacters(in: .whitespacesAndNewlines),
+                    text: status.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+            .filter { !$0.key.isEmpty && !$0.text.isEmpty }
             .sorted { lhs, rhs in
                 let keyOrder = lhs.key.localizedCaseInsensitiveCompare(rhs.key)
                 if keyOrder != .orderedSame { return keyOrder == .orderedAscending }
                 return lhs.id < rhs.id
             }
+
+        var seen = Set<String>()
+        return candidates.filter { status in
+            let identity = "\(status.key.lowercased())\u{1f}\(status.text)"
+            return seen.insert(identity).inserted
+        }
     }
 
     func hasVisibleMetadata(in placement: ExtensionSurfacePlacementGroup) -> Bool {

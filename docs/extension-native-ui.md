@@ -359,7 +359,53 @@ export interface NativeRenderContext {
 
 Pi TUI calls `render(width)` and `handleInput(data)`. Oppi calls `renderNative()` for widget snapshots when present. If native rendering is absent or throws, Oppi uses `fallback` or a sanitized terminal snapshot.
 
-Native surfaces should be viewport-independent. Apple clients decide iPhone, iPad, Dynamic Type, and color-scheme layout locally. If a future feature needs true per-client rendering, it must add an explicit client render request protocol instead of overloading the broadcast surface snapshot.
+Author-facing usage stays on the existing widget API:
+
+```ts
+ctx.ui.setWidget("review", () => ({
+  render: () => ["Review running", "3 findings"],
+  renderNative: () => ({
+    version: 1,
+    id: "widget:review",
+    source: "widget",
+    presentation: {
+      style: "surfacePanel",
+      title: "Review running",
+      subtitle: "3 findings",
+    },
+    blocks: [
+      {
+        type: "activityList",
+        id: "findings",
+        rows: [
+          {
+            id: "finding-1",
+            title: "Fix retry state",
+            subtitle: "High confidence",
+            state: "warning",
+          },
+        ],
+      },
+      {
+        type: "markdown",
+        id: "summary",
+        markdown: "**Summary:** Review is still running.",
+      },
+    ],
+    fallback: { lines: ["Review running", "3 findings"] },
+  }),
+}));
+```
+
+Extension authors describe the widget state with semantic blocks. Apple clients own the screen budget and interaction policy:
+
+- Collapsed: one compact row in the chat dock.
+- Expanded: bounded inline viewport with the same content semantics.
+- Full screen: complete scrollable detail surface.
+- Tap toggles collapsed/expanded. Double tap opens full screen.
+- Native blocks stay viewport-independent; clients decide iPhone, iPad, Dynamic Type, color scheme, and scroll ownership locally.
+
+If a future feature needs true per-client rendering, it must add an explicit client render request protocol instead of overloading the broadcast surface snapshot.
 
 ## Mapping from Pi extension APIs
 
