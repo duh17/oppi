@@ -5,7 +5,7 @@ import Foundation
 /// Benchmarks for org mode rendering pipeline:
 /// OrgParser → buildOrgSectionTree → OrgToMarkdownConverter → MarkdownBlockSerializer → parseCommonMark.
 ///
-/// Measures the synchronous main-thread work that causes app hangs (Sentry APPLE-IOS-29).
+/// Measures the synchronous main-thread work that causes large-document app hangs.
 /// Each stage is timed independently; the total pipeline measures the combined cost
 /// of producing all MarkdownContentViewWrapper input strings for a document.
 ///

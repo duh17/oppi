@@ -23,7 +23,7 @@ Plain HTTP is allowed for loopback development. Binding HTTP to a non-loopback i
 
 Oppi does not phone home. There are no accounts, no analytics, and no data sent to any external service. All session data stays on your machine.
 
-Sentry crash reporting in the iOS app is opt-in and disabled by default. MetricKit performance telemetry is only collected in internal/TestFlight builds and stored locally on the server.
+MetricKit performance telemetry is only collected in internal/TestFlight builds and stored locally on the server.
 
 See [`docs/telemetry.md`](docs/telemetry.md) for the full telemetry policy.
 

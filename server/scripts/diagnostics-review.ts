@@ -2,7 +2,7 @@
 
 /**
  * Oppi diagnostics snapshot — one command that captures telemetry, client logs,
- * MetricKit diagnostics, server log health, and optional external crash sources.
+ * MetricKit diagnostics, server log health, and optional external release sources.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -113,29 +113,10 @@ function defaultReportPath(): string {
   return join(repoRoot, ".internal", "reports", `diagnostics-${stamp}.md`);
 }
 
-function externalCommands(
-  days: number,
-): Array<{ title: string; command: string; args: string[]; cwd?: string }> {
+function externalCommands(): Array<{ title: string; command: string; args: string[]; cwd?: string }> {
   const home = homedir();
-  const sentryDir = join(home, ".pi", "agent", "skills", "sentry");
-  const sentryList = join(sentryDir, "scripts", "list-issues.js");
   const ascScript = join(home, ".pi", "agent", "skills", "oppi-dev", "scripts", "apple", "asc.ts");
   const commands: Array<{ title: string; command: string; args: string[]; cwd?: string }> = [];
-
-  if (existsSync(sentryList)) {
-    commands.push({
-      title: "Sentry unresolved errors",
-      command: sentryList,
-      args: ["--status", "unresolved", "--level", "error", "--period", `${days}d`, "--limit", "20"],
-      cwd: sentryDir,
-    });
-    commands.push({
-      title: "Sentry unresolved fatal issues",
-      command: sentryList,
-      args: ["--status", "unresolved", "--level", "fatal", "--period", `${days}d`, "--limit", "20"],
-      cwd: sentryDir,
-    });
-  }
 
   if (existsSync(ascScript)) {
     commands.push({
@@ -191,7 +172,7 @@ Options:
   --days <n>              Days to include (default: 1)
   --limit <n>             Top/recent rows for subreports (default: 20)
   --out <path>            Markdown report path (default: .internal/reports/diagnostics-*.md)
-  --external              Include Sentry and App Store Connect if configured
+  --external              Include App Store Connect if configured
   --json                  Print command result metadata as JSON
   --help                  Show this help
 `);
@@ -247,7 +228,7 @@ function main(): void {
   ];
 
   if (args.external) {
-    commands.push(...externalCommands(args.days));
+    commands.push(...externalCommands());
   }
 
   const results = commands.map((item) => run(item.title, item.command, item.args, item.cwd));
