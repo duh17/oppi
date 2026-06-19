@@ -72,7 +72,6 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     config: TEST_CONFIG,
     eventRingCapacity: 20,
     getSkillPathResolver: vi.fn(() => null),
-    getAndClearPendingExtensionFactories: vi.fn(() => []),
     onPiEvent: vi.fn(),
     onSessionEnd: vi.fn(),
     registerActiveSession: vi.fn(),

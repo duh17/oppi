@@ -12,8 +12,6 @@
 
 import { EventEmitter } from "node:events";
 
-import { type ExtensionFactory } from "@earendil-works/pi-coding-agent";
-
 import type { AgentRuntimeTransport } from "./agent-runtime-transport.js";
 import type {
   ChatAttachmentRef,
@@ -25,7 +23,7 @@ import type {
 } from "./types.js";
 import type { Storage } from "./storage.js";
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
-import { type PiStateSnapshot, type SessionBackendEvent } from "./pi-events.js";
+import { type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
@@ -42,10 +40,8 @@ import {
   respondToExtensionUIRequest,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
-import {
-  updateSearchIndexForSessionEvent,
-  type SessionSearchIndex,
-} from "./session-search-indexing.js";
+import type { SearchIndex } from "./search-index.js";
+import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -72,7 +68,6 @@ type ActiveSession = SessionStartActiveSession;
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
-  private pendingExtensionFactories: Map<string, ExtensionFactory[]> = new Map();
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -87,13 +82,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   opsMetrics: ServerMetricCollector | null = null;
 
   /** Injected by the server for full-text search index updates. */
-  searchIndex: SessionSearchIndex | null = null;
+  searchIndex: SearchIndex | null = null;
 
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
 
   private readonly broadcaster: SessionCoordinatorBundle["broadcaster"];
-  private readonly eventProcessor: SessionCoordinatorBundle["eventProcessor"];
   private readonly stateCoordinator: SessionCoordinatorBundle["stateCoordinator"];
   private readonly commandCoordinator: SessionCoordinatorBundle["commandCoordinator"];
   private readonly activationCoordinator: SessionCoordinatorBundle["activationCoordinator"];
@@ -124,8 +118,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopSessionGraceMs: this.stopSessionGraceMs,
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
-      getAndClearPendingExtensionFactories: (sessionId) =>
-        this.getAndClearPendingExtensionFactories(sessionId),
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
@@ -142,7 +134,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     });
 
     this.broadcaster = bundle.broadcaster;
-    this.eventProcessor = bundle.eventProcessor;
     this.stateCoordinator = bundle.stateCoordinator;
     this.commandCoordinator = bundle.commandCoordinator;
     this.activationCoordinator = bundle.activationCoordinator;
@@ -308,32 +299,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     await this.inputCoordinator.sendFollowUp(key, message, opts);
   }
 
-  /**
-   * Send a message to a session with automatic dispatch based on session state.
-   *
-   * - Idle/ready → sendPrompt (starts a new turn)
-   * - Busy + behavior="steer" → sendSteer (injected mid-turn after current tool calls)
-   * - Busy + behavior="followUp" (default) → sendFollowUp (queued after current turn)
-   */
-  async sendMessageToSession(
-    sessionId: string,
-    message: string,
-    behavior?: "steer" | "followUp",
-  ): Promise<void> {
-    const session = this.storage.getSession(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
-
-    if (session.status === "busy") {
-      if (behavior === "steer") {
-        await this.sendSteer(sessionId, message);
-      } else {
-        await this.sendFollowUp(sessionId, message);
-      }
-    } else {
-      await this.sendPrompt(sessionId, message);
-    }
-  }
-
   getMessageQueue(sessionId: string): MessageQueueState {
     const key = this.sessionKey(sessionId);
     return this.queueCoordinator.getQueue(key);
@@ -388,36 +353,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     }
 
     return this.sendCommandAsync(key, { ...command });
-  }
-
-  /**
-   * Register extra extension factories to inject when a session starts.
-   * Consumed and cleared by SessionStartCoordinator during startSession.
-   */
-  setPendingExtensionFactories(sessionId: string, factories: ExtensionFactory[]): void {
-    if (factories.length === 0) {
-      this.pendingExtensionFactories.delete(sessionId);
-      return;
-    }
-    this.pendingExtensionFactories.set(sessionId, factories);
-  }
-
-  /** Consume and clear pending extension factories for a session. */
-  private getAndClearPendingExtensionFactories(sessionId: string): ExtensionFactory[] {
-    const factories = this.pendingExtensionFactories.get(sessionId);
-    this.pendingExtensionFactories.delete(sessionId);
-    return factories ?? [];
-  }
-
-  /**
-   * Apply fields we care about from pi `get_state` response payload.
-   * Returns true if the session object changed.
-   */
-  private applyPiStateSnapshot(
-    session: Session,
-    state: PiStateSnapshot | null | undefined,
-  ): boolean {
-    return this.stateCoordinator.applyPiStateSnapshot(session, state);
   }
 
   // ─── SDK Command Handlers ───

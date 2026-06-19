@@ -76,7 +76,6 @@ const REVIEW_COMMENT_COLUMN_DEFINITIONS = [
 ] as const;
 
 export class ReviewCommentSqliteStore implements ReviewCommentDao {
-  private readonly dbPath: string;
   private readonly db: SqliteDatabase;
   private readonly legacyImportFailures = new Set<string>();
 
@@ -93,18 +92,14 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
     const options: ReviewCommentSqliteStoreOptions =
       typeof dbPathOrOptions === "string" ? { dbPath: dbPathOrOptions } : (dbPathOrOptions ?? {});
 
-    this.dbPath = resolve(options.dbPath ?? join(dataDir, "session-state.db"));
-    this.db = openDatabase(this.dbPath);
-    chmodSync(this.dbPath, 0o600);
+    const dbPath = resolve(options.dbPath ?? join(dataDir, "session-state.db"));
+    this.db = openDatabase(dbPath);
+    chmodSync(dbPath, 0o600);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
     this.prepareStatements();
     this.importLegacyJsonOnce(dataDir);
-  }
-
-  getDatabasePath(): string {
-    return this.dbPath;
   }
 
   close(): void {

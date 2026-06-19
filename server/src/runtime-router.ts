@@ -58,19 +58,6 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return ids;
   }
 
-  getActiveSessions(): Session[] {
-    const sessions: Session[] = [];
-    for (const sessionId of this.getActiveSessionIds()) {
-      const session = this.getActiveSession(sessionId);
-      if (session) sessions.push(session);
-    }
-    return sessions;
-  }
-
-  getLiveSession(sessionId: string): Session | undefined {
-    return this.getActiveSession(sessionId);
-  }
-
   getSessionSnapshot(sessionId: string): Session | undefined {
     const stored = this.storage.getSession(sessionId);
     if (this.isPiTui(stored)) {
@@ -112,17 +99,19 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
-    const runtime = this.runtimeFor(sessionId) as AgentRuntimeTransport & {
-      getToolFullOutputPath?: (sessionId: string, toolCallId: string) => string | null;
-    };
-    return runtime.getToolFullOutputPath?.(sessionId, toolCallId) ?? null;
+    const session = this.storage.getSession(sessionId);
+    if (this.isPiTui(session)) {
+      return this.piTui.getToolFullOutputPath(sessionId, toolCallId);
+    }
+    return this.oppi.getToolFullOutputPath(sessionId, toolCallId);
   }
 
   getEventRing(sessionId: string): { length: number; capacity: number } | null {
-    const runtime = this.runtimeFor(sessionId) as AgentRuntimeTransport & {
-      getEventRing?: (sessionId: string) => { length: number; capacity: number } | null;
-    };
-    return runtime.getEventRing?.(sessionId) ?? null;
+    const session = this.storage.getSession(sessionId);
+    if (this.isPiTui(session)) {
+      return this.piTui.getEventRing(sessionId);
+    }
+    return this.oppi.getEventRing(sessionId);
   }
 
   sendPrompt: AgentRuntimeTransport["sendPrompt"] = (sessionId, message, opts) =>

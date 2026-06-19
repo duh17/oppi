@@ -157,14 +157,12 @@ const SESSION_COLUMN_DEFINITIONS = [
 
 export class SessionSqliteStore {
   private readonly dataDir: string;
-  private readonly dbPath: string;
   private readonly db: SqliteDatabase;
   private cache: Map<string, Session> | null = null;
 
   private stmtUpsert!: SqliteStatement;
   private stmtGet!: SqliteStatement;
   private stmtList!: SqliteStatement;
-  private stmtListByWorkspace!: SqliteStatement;
   private stmtListIds!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
 
@@ -177,9 +175,9 @@ export class SessionSqliteStore {
       typeof dbPathOrOptions === "string" ? { dbPath: dbPathOrOptions } : (dbPathOrOptions ?? {});
 
     this.dataDir = resolve(dataDir);
-    this.dbPath = resolve(options.dbPath ?? join(dataDir, "session-state.db"));
-    this.db = openDatabase(this.dbPath);
-    chmodSync(this.dbPath, 0o600);
+    const dbPath = resolve(options.dbPath ?? join(dataDir, "session-state.db"));
+    this.db = openDatabase(dbPath);
+    chmodSync(dbPath, 0o600);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
@@ -187,17 +185,9 @@ export class SessionSqliteStore {
     this.importLegacyJsonOnce(dataDir);
   }
 
-  getDatabasePath(): string {
-    return this.dbPath;
-  }
-
   close(): void {
     this.cache = null;
     this.db.close();
-  }
-
-  countSessions(): number {
-    return (this.stmtListIds.all() as SessionIdRow[]).length;
   }
 
   createSession(name?: string, model?: string): Session {
@@ -278,11 +268,6 @@ export class SessionSqliteStore {
 
   listSessions(): Session[] {
     return sortSessions(Array.from(this.ensureCache().values()));
-  }
-
-  listSessionsByWorkspace(workspaceId: string): Session[] {
-    const rows = this.stmtListByWorkspace.all(workspaceId) as SessionJsonRow[];
-    return this.parseJsonRows(rows).map(stripInternalFields);
   }
 
   listSessionsWithoutWorkspace(): Session[] {
@@ -701,12 +686,6 @@ export class SessionSqliteStore {
     this.stmtList = this.db.prepare(`
       SELECT session_json
       FROM session_state_sessions
-      ORDER BY last_activity DESC, id ASC
-    `);
-    this.stmtListByWorkspace = this.db.prepare(`
-      SELECT session_json
-      FROM session_state_sessions
-      WHERE workspace_id = ?
       ORDER BY last_activity DESC, id ASC
     `);
     this.stmtListIds = this.db.prepare("SELECT id FROM session_state_sessions");

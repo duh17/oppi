@@ -23,7 +23,6 @@ import {
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionContext,
-  type ExtensionFactory,
   type ResourceDiagnostic,
   type Skill,
   type ToolDefinition,
@@ -238,8 +237,6 @@ export interface SdkBackendConfig {
   onEnd: (reason: string) => void;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
-  /** Additional session-local extension factories. */
-  extraExtensionFactories?: ExtensionFactory[];
   /** Oppi server data directory for session-owned tool attachments. */
   dataDir?: string;
   /** Operational metrics collector for SDK timing. */
@@ -283,8 +280,6 @@ export class SdkBackend {
   private readonly emitEvent: (event: SessionBackendEvent) => void;
   private readonly uiBridge: SdkUiBridge;
   private shutdownCleanupPromise: Promise<void> | null = null;
-  private shutdownCleanupCompleted = false;
-  private readonly shutdownCleanupListeners = new Set<() => void>();
   private readonly sessionCwdExistsOverride?: string;
   private readonly sessionManagerDisplayCwd?: string;
   private readonly oppiSessionId: string;
@@ -400,14 +395,6 @@ export class SdkBackend {
         });
       }
 
-      // Build session-local extension factories supplied by tests or embedding code.
-      // Normal tools, including `ask`, load through Pi's resource loader and the
-      // workspace/user Pi configuration.
-      const extensionFactories: ExtensionFactory[] = [];
-      if (config.extraExtensionFactories) {
-        extensionFactories.push(...config.extraExtensionFactories);
-      }
-
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
       // host sessions. Project/user Pi settings remain the source of truth.
@@ -416,7 +403,6 @@ export class SdkBackend {
         agentDir: runtimeAgentDir,
         settingsManager,
         additionalSkillPaths: config.skillPaths ?? [],
-        extensionFactories,
         appendSystemPrompt: buildSdkAppendSystemPrompt(workspace, {
           includeOppiDocsHint: !sandboxMode,
         }),
@@ -871,51 +857,6 @@ export class SdkBackend {
     return this.piSession.isStreaming;
   }
 
-  get sessionFile(): string | undefined {
-    return this.piSession.sessionFile;
-  }
-
-  get sessionId(): string {
-    return this.piSession.sessionId;
-  }
-
-  onShutdownCleanupComplete(listener: () => void): void {
-    if (this.shutdownCleanupCompleted) {
-      try {
-        listener();
-      } catch (err: unknown) {
-        log.error("sdk.shutdown_cleanup_listener.failed", {
-          sessionId: this.piSession.sessionId,
-          error: safeErrorMessage(err),
-        });
-      }
-      return;
-    }
-
-    this.shutdownCleanupListeners.add(listener);
-  }
-
-  private flushShutdownCleanupListeners(): void {
-    if (this.shutdownCleanupCompleted) {
-      return;
-    }
-
-    this.shutdownCleanupCompleted = true;
-    const listeners = [...this.shutdownCleanupListeners];
-    this.shutdownCleanupListeners.clear();
-
-    for (const listener of listeners) {
-      try {
-        listener();
-      } catch (err: unknown) {
-        log.error("sdk.shutdown_cleanup_listener.failed", {
-          sessionId: this.piSession.sessionId,
-          error: safeErrorMessage(err),
-        });
-      }
-    }
-  }
-
   private startShutdownCleanup(): Promise<void> {
     if (this.shutdownCleanupPromise) {
       return this.shutdownCleanupPromise;
@@ -931,8 +872,6 @@ export class SdkBackend {
           sessionId: this.piSession.sessionId,
           error: safeErrorMessage(err),
         });
-      } finally {
-        this.flushShutdownCleanupListeners();
       }
     })();
 

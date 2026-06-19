@@ -58,10 +58,8 @@ import {
 } from "./session-queue-utils.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
 import { readSessionTreeFilterMode, serializeRawSessionTreePayload } from "./session-tree.js";
-import {
-  updateSearchIndexForSessionEvent,
-  type SessionSearchIndex,
-} from "./session-search-indexing.js";
+import type { SearchIndex } from "./search-index.js";
+import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import {
   createEmptyRuntimeMessageQueue,
   createRuntimeSessionStateScaffold,
@@ -440,7 +438,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private taskRecordRejectionLogState:
     | { key: string; lastLoggedAt: number; suppressedCount: number }
     | undefined;
-  searchIndex: SessionSearchIndex | null = null;
+  searchIndex: SearchIndex | null = null;
 
   constructor(
     private readonly storage: Storage,

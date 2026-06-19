@@ -157,14 +157,6 @@ export class ProviderAuthFlowStore {
     return cloneSnapshot(record.snapshot);
   }
 
-  markAwaitingExternal(flowId: string): ProviderAuthFlowSnapshot | undefined {
-    return this.update(flowId, (record) => {
-      if (isTerminalProviderAuthStatus(record.snapshot.status)) return;
-      if (record.snapshot.status === "awaiting_prompt") return;
-      record.snapshot.status = "awaiting_external";
-    });
-  }
-
   setAuthInfo(flowId: string, auth: ProviderAuthInfo): ProviderAuthFlowSnapshot | undefined {
     return this.update(flowId, (record) => {
       if (isTerminalProviderAuthStatus(record.snapshot.status)) return;
@@ -235,10 +227,6 @@ export class ProviderAuthFlowStore {
 
   markCancelled(flowId: string, reason = "Login cancelled"): ProviderAuthFlowSnapshot | undefined {
     return this.markTerminal(flowId, "cancelled", reason);
-  }
-
-  markExpired(flowId: string, reason = "Flow expired"): ProviderAuthFlowSnapshot | undefined {
-    return this.markTerminal(flowId, "expired", reason);
   }
 
   prune(): void {

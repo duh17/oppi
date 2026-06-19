@@ -1,12 +1,6 @@
 import type { SessionBackendEvent } from "./pi-events.js";
+import type { SearchIndex } from "./search-index.js";
 import type { Storage } from "./storage.js";
-
-export interface SessionSearchIndex {
-  markForReindex(sessionId: string): void;
-  flushForSession(sessionId: string): void;
-  indexSession(sessionId: string): void;
-  deleteSession(sessionId: string): void;
-}
 
 /**
  * Apply search-index side effects for a runtime event.
@@ -16,7 +10,7 @@ export interface SessionSearchIndex {
  * remember route-specific side effects.
  */
 export function updateSearchIndexForSessionEvent(
-  searchIndex: SessionSearchIndex | null | undefined,
+  searchIndex: SearchIndex | null | undefined,
   storage: Pick<Storage, "getSession">,
   sessionId: string,
   event: SessionBackendEvent,
