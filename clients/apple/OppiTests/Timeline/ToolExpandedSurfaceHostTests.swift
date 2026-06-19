@@ -792,17 +792,20 @@ struct ToolExpandedSurfaceHostTests {
 
         let inlinePreview = try #require(firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view))
         let previewFrame = inlinePreview.convert(inlinePreview.bounds, to: hostController.view)
-        try await Task.sleep(for: .milliseconds(250))
-        let screenshot = UIGraphicsImageRenderer(size: previewFrame.size).image { _ in
-            hostController.view.drawHierarchy(
-                in: CGRect(
-                    x: -previewFrame.minX,
-                    y: -previewFrame.minY,
-                    width: hostSize.width,
-                    height: hostSize.height
-                ),
-                afterScreenUpdates: true
-            )
+        let screenshot = await waitForPaintedSnapshot(timeoutMs: 3_000) {
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            return UIGraphicsImageRenderer(size: previewFrame.size).image { _ in
+                hostController.view.drawHierarchy(
+                    in: CGRect(
+                        x: -previewFrame.minX,
+                        y: -previewFrame.minY,
+                        width: hostSize.width,
+                        height: hostSize.height
+                    ),
+                    afterScreenUpdates: true
+                )
+            }
         }
         try #require(screenshot.pngData()).write(to: outputURL, options: .atomic)
         return screenshot
@@ -846,15 +849,47 @@ struct ToolExpandedSurfaceHostTests {
         }
         #expect(ready, "Expected SVG web view image to finish loading before snapshot")
 
-        try await Task.sleep(for: .milliseconds(250))
-        let screenshot = UIGraphicsImageRenderer(size: previewSize).image { _ in
-            hostController.view.drawHierarchy(
-                in: CGRect(origin: .zero, size: previewSize),
-                afterScreenUpdates: true
-            )
+        let screenshot = await waitForPaintedSnapshot(timeoutMs: 3_000) {
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            return UIGraphicsImageRenderer(size: previewSize).image { _ in
+                hostController.view.drawHierarchy(
+                    in: CGRect(origin: .zero, size: previewSize),
+                    afterScreenUpdates: true
+                )
+            }
         }
         try #require(screenshot.pngData()).write(to: outputURL, options: .atomic)
         return screenshot
+    }
+
+    private func waitForPaintedSnapshot(
+        timeoutMs: Int,
+        pollMs: Int = 50,
+        capture: () -> UIImage
+    ) async -> UIImage {
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(timeoutMs))
+        var latest = capture()
+        while ContinuousClock.now < deadline {
+            if hasBrightSVGBackgroundPixels(in: latest) {
+                return latest
+            }
+            try? await Task.sleep(for: .milliseconds(pollMs))
+            latest = capture()
+        }
+        return latest
+    }
+
+    private func hasBrightSVGBackgroundPixels(in image: UIImage) -> Bool {
+        guard let raster = rasterize(image) else { return false }
+        var count = 0
+        for y in 0..<raster.height {
+            for x in 0..<raster.width where raster.pixel(x: x, y: y).isBrightSVGBackground {
+                count += 1
+                if count > 100 { return true }
+            }
+        }
+        return false
     }
 
     private func countNonBackgroundPixels(
