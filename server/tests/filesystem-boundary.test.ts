@@ -143,7 +143,7 @@ describe("Workspace storage boundary hardening", () => {
     ];
 
     for (const name of specialNames) {
-      const ws = storage.createWorkspace({ name, skills: [] });
+      const ws = storage.createWorkspace({ name });
       const loaded = storage.getWorkspace(ws.id);
       expect(loaded).toBeDefined();
       expect(loaded!.name).toBe(name);
@@ -151,17 +151,17 @@ describe("Workspace storage boundary hardening", () => {
   });
 
   it("corrupt workspace JSON returns undefined, not crash", () => {
-    const ws = storage.createWorkspace({ name: "will-corrupt", skills: [] });
+    const ws = storage.createWorkspace({ name: "will-corrupt" });
     const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
     // Various corruption scenarios
     const corruptions = [
-      "",                    // empty
-      "{",                   // truncated JSON
-      "null",                // valid JSON but not an object
-      "[]",                  // array instead of object
-      '{"id": 42}',         // wrong type for id
-      "\x00\x01\x02",       // binary garbage
+      "", // empty
+      "{", // truncated JSON
+      "null", // valid JSON but not an object
+      "[]", // array instead of object
+      '{"id": 42}', // wrong type for id
+      "\x00\x01\x02", // binary garbage
     ];
 
     for (const corrupt of corruptions) {
@@ -176,8 +176,8 @@ describe("Workspace storage boundary hardening", () => {
   });
 
   it("listWorkspaces handles mixed valid and corrupt files", () => {
-    storage.createWorkspace({ name: "good-one", skills: [] });
-    storage.createWorkspace({ name: "good-two", skills: [] });
+    storage.createWorkspace({ name: "good-one" });
+    storage.createWorkspace({ name: "good-two" });
 
     // Inject a corrupt file
     writeFileSync(join(dataDir, "workspaces", "corrupt.json"), "{{invalid}}");
@@ -228,7 +228,7 @@ describe("Workspace concurrent read-while-delete", () => {
   });
 
   it("getWorkspace returns undefined after file removed externally", () => {
-    const ws = storage.createWorkspace({ name: "temp", skills: [] });
+    const ws = storage.createWorkspace({ name: "temp" });
     const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
     // Externally remove
@@ -240,7 +240,7 @@ describe("Workspace concurrent read-while-delete", () => {
   it("listWorkspaces handles mid-iteration file deletion gracefully", () => {
     // Create several workspaces
     for (let i = 0; i < 5; i++) {
-      storage.createWorkspace({ name: `ws-${i}`, skills: [] });
+      storage.createWorkspace({ name: `ws-${i}` });
     }
 
     // Delete one file externally mid-way (simulate race)
@@ -257,7 +257,7 @@ describe("Workspace concurrent read-while-delete", () => {
   });
 
   it("deleteWorkspace is idempotent", () => {
-    const ws = storage.createWorkspace({ name: "double-delete", skills: [] });
+    const ws = storage.createWorkspace({ name: "double-delete" });
     expect(storage.deleteWorkspace(ws.id)).toBe(true);
     expect(storage.deleteWorkspace(ws.id)).toBe(false);
     expect(storage.deleteWorkspace(ws.id)).toBe(false);
@@ -266,7 +266,7 @@ describe("Workspace concurrent read-while-delete", () => {
   it("rapid create-delete cycles don't leak files", () => {
     const ids: string[] = [];
     for (let i = 0; i < 20; i++) {
-      const ws = storage.createWorkspace({ name: `rapid-${i}`, skills: [] });
+      const ws = storage.createWorkspace({ name: `rapid-${i}` });
       ids.push(ws.id);
     }
 
