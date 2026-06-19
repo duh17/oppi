@@ -1182,7 +1182,6 @@ struct DataVideoPlayerView: View {
 enum SystemVideoPlaybackPresenter {
     static func present(
         source: AuthenticatedMediaSource,
-        title: String?,
         from presenter: UIViewController,
         telemetrySource: String = "authenticated_media",
         telemetrySessionId: String? = nil,

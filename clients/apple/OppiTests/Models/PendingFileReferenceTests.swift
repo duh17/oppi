@@ -249,11 +249,14 @@ struct PendingFileReferenceTests {
             pendingRepoPointers: [],
             uploadedAttachments: [
                 ChatAttachmentRef(
+                    type: "attachment",
                     id: "att-1",
                     source: .upload,
                     name: "image-1.jpg",
                     mimeType: "image/jpeg",
                     sizeBytes: 3,
+                    sha256: nil,
+                    kind: nil,
                     workspacePath: ".pi/attachments/s1/t1/image-1.jpg"
                 )
             ]
@@ -274,11 +277,15 @@ struct PendingFileReferenceTests {
             pendingRepoPointers: [],
             uploadedAttachments: [
                 ChatAttachmentRef(
+                    type: "attachment",
                     id: "att-log",
                     source: .upload,
                     name: "error.log",
                     mimeType: "text/plain",
-                    sizeBytes: 4
+                    sizeBytes: 4,
+                    sha256: nil,
+                    kind: nil,
+                    workspacePath: nil
                 )
             ]
         )

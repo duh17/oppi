@@ -33,7 +33,6 @@ extension ServerConnection {
             self.handled = handled
         }
 
-        var previousStatus: SessionStatus? { stateContext?.previousStatus }
         var previousWorkspaceId: String? { stateContext?.previousWorkspaceId }
         var didTransitionOutOfRunning: Bool { stateContext?.didTransitionOutOfRunning ?? false }
 
@@ -91,7 +90,6 @@ extension ServerConnection {
                 }
             }
             if didCompleteTurn {
-                sessionStore.recordTurnEnded(sessionId: sessionId, at: completedAt)
                 recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
             }
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
@@ -143,7 +141,6 @@ extension ServerConnection {
                 current.lastActivity = completedAt
                 sessionStore.upsert(current)
             }
-            sessionStore.recordTurnEnded(sessionId: sessionId, at: completedAt)
             recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
@@ -209,7 +206,6 @@ extension ServerConnection {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
             let completedAt = currentSession.lastAgentReplyAt ?? currentSession.lastActivity
-            sessionStore.recordTurnEnded(sessionId: currentSession.id, at: completedAt)
             recordUnreadCompletionIfNeeded(sessionId: currentSession.id, at: completedAt)
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
         }

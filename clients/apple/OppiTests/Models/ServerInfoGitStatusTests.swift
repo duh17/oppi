@@ -129,6 +129,7 @@ struct ServerInfoTests {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1),
             dictationStream: nil,
+            appEventStream: nil,
             extensionNativeUI: nil
         )
 
@@ -140,6 +141,7 @@ struct ServerInfoTests {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: nil,
             dictationStream: nil,
+            appEventStream: nil,
             extensionNativeUI: nil
         )
 

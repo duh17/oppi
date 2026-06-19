@@ -52,9 +52,6 @@ final class BiometricService {
 
     // MARK: - Authentication
 
-    /// Check if a sensitive action requires biometric confirmation.
-    var requiresBiometric: Bool { isEnabled }
-
     /// Authenticate via Face ID / Touch ID / device passcode.
     ///
     /// Returns `true` if authentication succeeded, `false` if the user

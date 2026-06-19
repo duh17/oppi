@@ -11,7 +11,7 @@ struct ChatSessionStateTests {
 
     @Test func resetSessionState_clearsSlashCommandsAndFileSuggestions() {
         let state = ChatSessionState()
-        state.slashCommands = [SlashCommand(name: "test", description: "Test", source: .skill)]
+        state.slashCommands = [Self.slashCommand(name: "test", description: "Test", source: .skill)]
         state.fileSuggestions = [FileSuggestion(path: "foo.swift", isDirectory: false)]
 
         state.resetSessionState()
@@ -73,6 +73,21 @@ struct ChatSessionStateTests {
         #expect(state.modelPrefetchTask == nil)
         #expect(state.slashCommandsRequestId == nil)
         #expect(state.slashCommandsCacheKey == nil)
+    }
+
+    private static func slashCommand(
+        name: String,
+        description: String?,
+        source: SlashCommand.Source
+    ) -> SlashCommand {
+        guard let command = SlashCommand(.object([
+            "name": .string(name),
+            "description": description.map(JSONValue.string) ?? .null,
+            "source": .string(source.rawValue),
+        ])) else {
+            fatalError("Invalid test slash command")
+        }
+        return command
     }
 
     // MARK: - Thinking level default

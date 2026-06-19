@@ -470,43 +470,6 @@ private struct FontCache {
     }
 }
 
-// MARK: - Inline SGR Code Buffer
-
-/// Fixed-capacity buffer for parsing SGR codes inline (no heap allocation).
-/// Uses two 2-tuples to stay within SwiftLint's large_tuple limit while
-/// supporting up to 6 codes (covers `48;2;r;g;b` = 5 codes + spare).
-private struct InlineSGRCodes {
-    private var lo: (Int, Int) = (0, 0)
-    private var hi: (Int, Int) = (0, 0)
-    private var ex: (Int, Int) = (0, 0)
-    private(set) var count = 0
-
-    mutating func append(_ value: Int) {
-        switch count {
-        case 0: lo.0 = value
-        case 1: lo.1 = value
-        case 2: hi.0 = value
-        case 3: hi.1 = value
-        case 4: ex.0 = value
-        case 5: ex.1 = value
-        default: return
-        }
-        count += 1
-    }
-
-    subscript(index: Int) -> Int {
-        switch index {
-        case 0: return lo.0
-        case 1: return lo.1
-        case 2: return hi.0
-        case 3: return hi.1
-        case 4: return ex.0
-        case 5: return ex.1
-        default: return 0
-        }
-    }
-}
-
 // MARK: - Cached Theme Colors
 
 /// Pre-resolved UIColors for ANSI -> Tokyo Night mapping.
@@ -629,8 +592,8 @@ private struct SGRState {
             return
         }
 
-        // Multi-code sequence -- parse and apply in one pass to avoid the
-        // intermediate InlineSGRCodes buffer.
+        // Multi-code sequence -- parse and apply in one pass to avoid an
+        // intermediate array allocation.
         var current = 0
         var hasDigit = false
         var pendingColorTarget = 0 // 38 or 48

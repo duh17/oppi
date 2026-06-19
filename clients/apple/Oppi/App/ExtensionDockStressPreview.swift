@@ -46,7 +46,6 @@ struct ExtensionDockStressPreview: View {
                 ExtensionDockStressBottomRegion(
                     draft: $draft,
                     isComposerFocused: $isComposerFocused,
-                    maxExtensionHeight: extensionRegionMaxHeight(screenHeight: proxy.size.height),
                     onOpenGoalDetail: {
                         isComposerFocused = false
                         showGoalDetail = true
@@ -66,11 +65,6 @@ struct ExtensionDockStressPreview: View {
         }
         .preferredColorScheme(.dark)
         .accessibilityIdentifier("screenshot.ready")
-    }
-
-    private func extensionRegionMaxHeight(screenHeight: CGFloat) -> CGFloat {
-        let proportional = screenHeight * 0.34
-        return min(270, max(168, proportional))
     }
 }
 
@@ -363,7 +357,6 @@ private struct ExtensionDockStressWorkingRow: View {
 private struct ExtensionDockStressBottomRegion: View {
     @Binding var draft: String
     @Binding var isComposerFocused: Bool
-    let maxExtensionHeight: CGFloat
     let onOpenGoalDetail: () -> Void
 
     var body: some View {
@@ -758,29 +751,6 @@ private struct ExtensionDockAttachmentThumbnail: View {
         }
         .frame(width: 64, height: 64)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-private struct ExtensionDockComposerChip: View {
-    let systemImage: String?
-    let text: String?
-
-    var body: some View {
-        HStack(spacing: 5) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.caption.weight(.bold))
-            }
-            if let text {
-                Text(text)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-            }
-        }
-        .foregroundStyle(.themeFg)
-        .padding(.horizontal, text == nil ? 13 : 11)
-        .padding(.vertical, 7)
-        .glassEffect(.regular, in: Capsule())
     }
 }
 #endif

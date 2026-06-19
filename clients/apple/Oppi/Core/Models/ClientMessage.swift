@@ -107,26 +107,6 @@ struct ChatAttachmentRef: Codable, Sendable, Equatable, Identifiable {
     let kind: AttachmentKind?
     let workspacePath: String?
 
-    init(
-        id: String,
-        source: AttachmentSource,
-        name: String,
-        mimeType: String,
-        sizeBytes: Int,
-        sha256: String? = nil,
-        kind: AttachmentKind? = nil,
-        workspacePath: String? = nil
-    ) {
-        self.type = "attachment"
-        self.id = id
-        self.source = source
-        self.name = name
-        self.mimeType = mimeType
-        self.sizeBytes = sizeBytes
-        self.sha256 = sha256
-        self.kind = kind
-        self.workspacePath = workspacePath
-    }
 }
 
 enum StreamingBehavior: String, Codable, Sendable {

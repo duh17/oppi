@@ -26,18 +26,4 @@ struct GitCommitFileInfo: Codable, Sendable, Equatable, Identifiable {
     let removedLines: Int?
 
     var id: String { path }
-
-    /// Convert to WorkspaceReviewFile for reuse with existing review components.
-    func toReviewFile() -> WorkspaceReviewFile {
-        WorkspaceReviewFile(
-            path: path,
-            status: status,
-            addedLines: addedLines,
-            removedLines: removedLines,
-            isStaged: false,
-            isUnstaged: false,
-            isUntracked: status == "A",
-            selectedSessionTouched: false
-        )
-    }
 }

@@ -308,7 +308,6 @@ struct SessionOutlineView: View {
                 id: item.id,
                 item: item,
                 summary: summary,
-                lowercasedSummary: summary.lowercased(),
                 diffStats: diffStats,
                 isCompaction: isCompaction,
                 isForkable: isForkable,
@@ -1016,8 +1015,6 @@ private struct OutlineEntry: Identifiable {
     let id: String
     let item: ChatItem
     let summary: String
-    /// Pre-lowercased summary for fast search (avoids ICU locale overhead).
-    let lowercasedSummary: String
     let diffStats: ToolCallFormatting.DiffStats?
     let isCompaction: Bool
     let isForkable: Bool
@@ -1241,15 +1238,11 @@ enum SessionTreeDisplayLayout {
             return nil
         }
 
-        var visibleParentById: [String: String?] = [:]
-        visibleParentById.reserveCapacity(visibleNodes.count)
-
         var visibleChildren: [String?: [String]] = [nil: []]
         visibleChildren.reserveCapacity(visibleNodes.count)
 
         for node in visibleNodes {
             let parentId = nearestVisibleAncestorId(for: node)
-            visibleParentById[node.id] = parentId
             visibleChildren[parentId, default: []].append(node.id)
         }
 
@@ -1282,8 +1275,6 @@ enum SessionTreeDisplayLayout {
 
             displayNodes.append(SessionTreeDisplayNode(
                 node: node,
-                visibleParentId: visibleParentById[current.id] ?? nil,
-                indent: current.indent,
                 displayDepth: displayDepth,
                 showConnector: current.showConnector,
                 isLast: current.isLast,
@@ -1331,8 +1322,6 @@ enum SessionTreeDisplayLayout {
 
 struct SessionTreeDisplayNode: Identifiable, Equatable {
     let node: SessionTreeNodeSnapshot
-    let visibleParentId: String?
-    let indent: Int
     let displayDepth: Int
     let showConnector: Bool
     let isLast: Bool

@@ -138,7 +138,7 @@ struct ServerConnectionModelCommandsTests {
         let (connection, _) = makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         connection.chatState.slashCommands = [
-            SlashCommand(name: "compact", description: nil, source: .prompt)
+            Self.slashCommand(name: "compact", description: nil, source: .prompt)
         ]
         connection.chatState.slashCommandsCacheKey = connection.slashCommandCacheKey(for: session)
 
@@ -193,7 +193,7 @@ struct ServerConnectionModelCommandsTests {
         connection.sessionStore.upsert(session)
         connection.chatState.slashCommandsRequestId = "expected"
         connection.chatState.slashCommands = [
-            SlashCommand(name: "existing", description: nil, source: .prompt)
+            Self.slashCommand(name: "existing", description: nil, source: .prompt)
         ]
 
         connection.handleSlashCommandsResult(
@@ -230,7 +230,7 @@ struct ServerConnectionModelCommandsTests {
     @Test func handleSlashCommandsFailureClearsOnlyRequestTracking() {
         let (connection, _) = makeTestConnection()
         connection.chatState.slashCommandsRequestId = "expected"
-        connection.chatState.slashCommands = [SlashCommand(name: "existing", description: nil, source: .prompt)]
+        connection.chatState.slashCommands = [Self.slashCommand(name: "existing", description: nil, source: .prompt)]
 
         connection.handleSlashCommandsResult(
             requestId: "expected",
@@ -258,6 +258,21 @@ struct ServerConnectionModelCommandsTests {
         #expect(commands.map(\.name) == ["compact", "explain", "Skill:Lint"])
         #expect(commands.last?.source == .skill)
         #expect(commands.last?.description == "later duplicate")
+    }
+
+    private static func slashCommand(
+        name: String,
+        description: String?,
+        source: SlashCommand.Source
+    ) -> SlashCommand {
+        guard let command = SlashCommand(.object([
+            "name": .string(name),
+            "description": description.map(JSONValue.string) ?? .null,
+            "source": .string(source.rawValue),
+        ])) else {
+            fatalError("Invalid test slash command")
+        }
+        return command
     }
 
     @Test func parseSharedSessionLinkParsesPayload() {

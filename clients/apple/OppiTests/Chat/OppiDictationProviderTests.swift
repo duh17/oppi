@@ -484,7 +484,7 @@ struct OppiDictationProviderLifecycleTests {
         let credentials = makeCredentials()
         _ = connection.configure(credentials: credentials)
         connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
-        connection.focusedSessionStore.focus(sessionId: "s1", workspaceId: "w1")
+        connection.focusedSessionStore.focus(sessionId: "s1")
         let context = VoiceProviderContext(
             locale: Locale(identifier: "en-US"),
             source: "test",

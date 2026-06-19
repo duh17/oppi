@@ -6,9 +6,6 @@
 /// showing only what the current session modified.
 struct SessionScopedGitStatus: Sendable, Equatable {
 
-    /// The original unfiltered git status.
-    let gitStatus: GitStatus
-
     /// Files from `gitStatus.files` that were touched by the session.
     let sessionFiles: [GitFileStatus]
 
@@ -20,9 +17,6 @@ struct SessionScopedGitStatus: Sendable, Equatable {
 
     /// Sum of removed lines across session-touched files only.
     let sessionRemovedLines: Int
-
-    /// Total changed file count from the full git status (for "X of Y" display).
-    let totalFileCount: Int
 
     // MARK: - Filtering
 
@@ -38,12 +32,10 @@ struct SessionScopedGitStatus: Sendable, Equatable {
     ) -> Self {
         guard !sessionChangedFiles.isEmpty else {
             return Self(
-                gitStatus: gitStatus,
                 sessionFiles: [],
                 sessionFileCount: 0,
                 sessionAddedLines: 0,
-                sessionRemovedLines: 0,
-                totalFileCount: gitStatus.totalFiles
+                sessionRemovedLines: 0
             )
         }
 
@@ -60,12 +52,10 @@ struct SessionScopedGitStatus: Sendable, Equatable {
         let removedLines = filtered.compactMap(\.removedLines).reduce(0, +)
 
         return Self(
-            gitStatus: gitStatus,
             sessionFiles: filtered,
             sessionFileCount: filtered.count,
             sessionAddedLines: addedLines,
-            sessionRemovedLines: removedLines,
-            totalFileCount: gitStatus.totalFiles
+            sessionRemovedLines: removedLines
         )
     }
 

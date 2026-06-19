@@ -366,12 +366,10 @@ struct ContextBarScopingTests {
         let added = sessionFiles.compactMap(\.addedLines).reduce(0, +)
         let removed = sessionFiles.compactMap(\.removedLines).reduce(0, +)
         return SessionScopedGitStatus(
-            gitStatus: makeDirtyGitStatus(),
             sessionFiles: sessionFiles,
             sessionFileCount: sessionFiles.count,
             sessionAddedLines: added,
-            sessionRemovedLines: removed,
-            totalFileCount: 10
+            sessionRemovedLines: removed
         )
     }
 }

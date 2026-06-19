@@ -692,8 +692,7 @@ final class ServerConnection {
             cont.yield(SessionStreamEvent(
                 sessionId: sessionId,
                 message: message,
-                meta: frameEvent.meta,
-                source: .live
+                meta: frameEvent.meta
             ))
         }
 
@@ -1086,8 +1085,7 @@ final class ServerConnection {
             silenceWatchdog.stop()
         }
 
-        let workspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint)
-        focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
+        focusedSessionStore.focus(sessionId: sessionId)
         // Reset per-connection chat state for the new focused session.
         // Sheet-backed extension dialogs are derived from pendingExtensionDialogQueues.
         chatState.resetSessionState()
@@ -1226,7 +1224,7 @@ final class ServerConnection {
 
     func _setActiveSessionIdForTesting(_ sessionId: String?) {
         if let sessionId {
-            focusedSessionStore.focus(sessionId: sessionId, workspaceId: nil)
+            focusedSessionStore.focus(sessionId: sessionId)
         } else {
             focusedSessionStore.clear()
         }

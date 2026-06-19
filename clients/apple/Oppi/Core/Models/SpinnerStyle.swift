@@ -16,9 +16,4 @@ enum SpinnerStyle: String, CaseIterable, Sendable {
     static var current: Self {
         AppPreferences.Appearance.spinnerStyle
     }
-
-    /// Persist a new spinner style preference.
-    static func setCurrent(_ style: SpinnerStyle) {
-        AppPreferences.Appearance.setSpinnerStyle(style)
-    }
 }

@@ -46,15 +46,6 @@ enum TelemetryMode: Sendable, Equatable {
     var allowsRemoteDiagnosticsUpload: Bool {
         self == .internalDiagnostics
     }
-
-    var label: String {
-        switch self {
-        case .public:
-            return "public"
-        case .internalDiagnostics:
-            return "internal"
-        }
-    }
 }
 
 enum TelemetrySettings {

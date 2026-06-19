@@ -118,11 +118,6 @@ actor TimelineCache {
         load([Session].self, from: "session-list.json")
     }
 
-    /// Legacy single-server session-list cache.
-    func saveSessionList(_ sessions: [Session]) {
-        save(sessions, to: "session-list.json")
-    }
-
     /// Load the recent session projection for a specific server.
     func loadSessionList(serverId: String) -> [Session]? {
         ensureServerDir(serverId)
@@ -227,26 +222,6 @@ actor TimelineCache {
     }
 
     // MARK: - Cleanup
-
-    /// Remove trace caches for sessions that no longer exist.
-    func evictStaleTraces(keepIds: Set<String>) {
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: tracesDir,
-            includingPropertiesForKeys: nil
-        ) else { return }
-
-        var evicted = 0
-        for url in contents {
-            let sessionId = url.deletingPathExtension().lastPathComponent
-            if !keepIds.contains(sessionId) {
-                try? fileManager.removeItem(at: url)
-                evicted += 1
-            }
-        }
-        if evicted > 0 {
-            logger.info("Cache evicted \(evicted) stale trace(s)")
-        }
-    }
 
     /// Clear all cached data.
     func clear() {

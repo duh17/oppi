@@ -43,15 +43,6 @@ final class SessionStore {
         }
     }
 
-    // ── Per-server turn-ended dates (stable sort key) ──
-
-    /// Tracks when each session last completed a turn (agentEnd).
-    /// Used for stable list sorting — unlike `lastActivity` which updates on
-    /// every lifecycle event, this only changes when an agent finishes a turn,
-    /// preventing the active session list from constantly reordering during
-    /// parallel multi-agent tool calling.
-    private var serverTurnEndedDates: [String: [String: Date]] = [:]
-
     /// Sessions deleted locally or confirmed deleted by the server.
     ///
     /// Keep a short-lived tombstone so older in-flight snapshots or summary
@@ -160,7 +151,6 @@ final class SessionStore {
         serverSessions.removeValue(forKey: serverId)
         serverListProjectionSessions.removeValue(forKey: serverId)
         serverListAttentionCounts.removeValue(forKey: serverId)
-        serverTurnEndedDates.removeValue(forKey: serverId)
         serverDeletedSessionTombstones.removeValue(forKey: serverId)
         serverUnreadCompletionDates.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
@@ -169,24 +159,6 @@ final class SessionStore {
         if activeServerId == serverId {
             activeServerId = nil
         }
-    }
-
-    // ── Turn-ended tracking (stable sort key) ──
-
-    /// Record that a session completed a turn (agentEnd).
-    /// Only this event updates the sort key — agentStart, stop events, etc. do not.
-    func recordTurnEnded(sessionId: String, at date: Date = Date()) {
-        let key = activeServerKey
-        var dates = serverTurnEndedDates[key] ?? [:]
-        dates[sessionId] = date
-        serverTurnEndedDates[key] = dates
-    }
-
-    /// The date the session last completed a turn, or nil if no turn has ended yet.
-    /// Views should fall back to `session.createdAt` when nil.
-    func turnEndedDate(for sessionId: String) -> Date? {
-        let key = activeServerKey
-        return serverTurnEndedDates[key]?[sessionId]
     }
 
     /// Record a completed turn that should be shown as unread in session rows.
@@ -389,7 +361,6 @@ final class SessionStore {
         let removedIds = Set(current.map(\.id)).subtracting(nextIds)
         let key = activeServerKey
         for removedId in removedIds {
-            serverTurnEndedDates[key]?.removeValue(forKey: removedId)
             serverUnreadCompletionDates[key]?.removeValue(forKey: removedId)
         }
         if let activeSessionId, removedIds.contains(activeSessionId) {
@@ -739,7 +710,6 @@ final class SessionStore {
         sessions = list
         let key = activeServerKey
         serverListAttentionCounts[key]?.removeValue(forKey: id)
-        serverTurnEndedDates[key]?.removeValue(forKey: id)
         serverUnreadCompletionDates[key]?.removeValue(forKey: id)
         if activeSessionId == id {
             activeSessionId = nil

@@ -634,16 +634,9 @@ struct StreamFrameEvent: Sendable, Equatable {
 /// A session-routed stream event. Chat session consumers receive this instead
 /// of reconstructing metadata from a side queue.
 struct SessionStreamEvent: Sendable, Equatable {
-    enum Source: Sendable, Equatable {
-        case live
-        case catchUp
-        case replay
-    }
-
     let sessionId: String
     let message: ServerMessage
     let meta: InboundStreamMeta?
-    let source: Source
 }
 
 extension StreamMessage: Decodable {

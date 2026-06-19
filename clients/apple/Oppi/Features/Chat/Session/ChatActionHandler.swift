@@ -55,9 +55,6 @@ final class ChatActionHandler {
     /// Key for auto-title provider (server / onDevice / off). Tests use this
     /// to select the on-device path that invokes the test hook.
     static let autoTitleProviderDefaultsKey = AppPreferences.Session.autoTitleProviderKey
-    private static var isAutoTitleEnabled: Bool {
-        AppPreferences.Session.isAutoTitleEnabled
-    }
     private static let autoTitleInstructions = """
         You generate concise coding session titles.
         Return exactly one line containing only the title text.

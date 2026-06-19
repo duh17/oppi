@@ -52,9 +52,6 @@ struct SessionTreeDisplayLayoutTests {
         #expect(depth(of: "entry-1", in: display) == 0)
         #expect(depth(of: "entry-3", in: display) == 0)
         #expect(depth(of: "entry-4", in: display) == 0)
-
-        #expect(parent(of: "entry-3", in: display) == "entry-1")
-        #expect(parent(of: "entry-4", in: display) == "entry-3")
     }
 
     @Test("multiple roots use virtual branch indentation")
@@ -97,9 +94,5 @@ struct SessionTreeDisplayLayoutTests {
 
     private func depth(of id: String, in nodes: [SessionTreeDisplayNode]) -> Int? {
         nodes.first(where: { $0.id == id })?.displayDepth
-    }
-
-    private func parent(of id: String, in nodes: [SessionTreeDisplayNode]) -> String? {
-        nodes.first(where: { $0.id == id })?.visibleParentId
     }
 }

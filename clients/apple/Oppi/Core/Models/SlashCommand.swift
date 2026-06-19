@@ -46,32 +46,9 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
         }
     }
 
-    enum Location: String, Sendable, Equatable {
-        case user
-        case project
-        case path
-    }
-
     let name: String
     let description: String?
     let source: Source
-    let location: Location?
-    let path: String?
-
-    // periphery:ignore - API surface for constructing SlashCommand instances
-    init(
-        name: String,
-        description: String?,
-        source: Source,
-        location: Location? = nil,
-        path: String? = nil
-    ) {
-        self.name = name
-        self.description = description
-        self.source = source
-        self.location = location
-        self.path = path
-    }
 
     var id: String {
         name.lowercased()
@@ -100,7 +77,5 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
         }
 
         self.source = source
-        location = object["location"]?.stringValue.flatMap(Location.init(rawValue:))
-        path = object["path"]?.stringValue
     }
 }

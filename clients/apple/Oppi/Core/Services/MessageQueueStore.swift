@@ -59,21 +59,6 @@ final class MessageQueueStore {
         return item
     }
 
-    func enqueueOptimisticItem(
-        for sessionId: String,
-        kind: MessageQueueKind,
-        message: String,
-        optimisticImages: [ImageAttachment]?
-    ) -> MessageQueueItem {
-        enqueueOptimisticItem(
-            for: sessionId,
-            kind: kind,
-            message: message,
-            attachments: nil,
-            optimisticImages: optimisticImages
-        )
-    }
-
     func removeQueuedItem(
         for sessionId: String,
         kind: MessageQueueKind,

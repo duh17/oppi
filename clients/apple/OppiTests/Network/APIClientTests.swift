@@ -641,22 +641,6 @@ struct APIClientTests {
         )
     }
 
-    @Test func getWorkspaceBaseSystemPrompt() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "GET")
-            #expect(request.url?.path == "/workspaces/w1/system-prompt/base")
-            return self.mockResponse(json: """
-            {"systemPrompt":"You are a helpful coding assistant."}
-            """)
-        }
-
-        let prompt = try await client.getWorkspaceBaseSystemPrompt(id: "w1")
-        #expect(prompt == "You are a helpful coding assistant.")
-    }
-
     @Test func deleteWorkspace() async throws {
         let client = makeClient()
         defer { cleanup() }

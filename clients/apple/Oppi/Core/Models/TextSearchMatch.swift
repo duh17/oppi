@@ -14,7 +14,6 @@ enum TextSearchMatch {
     }
 
     struct ScoredCandidate: Sendable {
-        let candidate: String
         let index: Int
         let score: Int
         let positions: [Int]
@@ -49,7 +48,6 @@ enum TextSearchMatch {
         for (index, candidate) in candidates.enumerated() {
             guard let result = match(prepared: prepared, candidate: candidate) else { continue }
             scored.append(ScoredCandidate(
-                candidate: candidate,
                 index: index,
                 score: result.score,
                 positions: result.positions
