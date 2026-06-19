@@ -10,7 +10,6 @@ import SwiftUI
 /// - Multi-server picker when 2+ servers are paired
 struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
-    @Environment(ConnectionCoordinator.self) private var coordinator
 
     @State private var selectedServerId: String?
     @State private var stats: ServerStats?

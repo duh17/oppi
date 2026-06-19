@@ -489,7 +489,6 @@ final class ConnectionCoordinator {
     // MARK: - Cross-Server Queries
 
     struct SessionLookupResult {
-        let session: Session
         let serverId: String
         let connection: ServerConnection
     }
@@ -502,11 +501,6 @@ final class ConnectionCoordinator {
             .sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// Whether any audio playback is active across all servers.
-    var hasActiveAudioPlayback: Bool {
-        connections.values.contains { $0.audioPlayer.hasActivePlayback }
-    }
-
     /// Whether any active playback still depends on live focused-session delivery.
     var hasActiveAudioTransportPlayback: Bool {
         connections.values.contains { $0.audioPlayer.hasActiveLiveTransportPlayback }
@@ -515,8 +509,8 @@ final class ConnectionCoordinator {
     /// Find a session by ID across all servers.
     func findSession(id: String) -> SessionLookupResult? {
         for (serverId, conn) in connections {
-            if let session = conn.sessionStore.session(id: id) {
-                return SessionLookupResult(session: session, serverId: serverId, connection: conn)
+            if conn.sessionStore.session(id: id) != nil {
+                return SessionLookupResult(serverId: serverId, connection: conn)
             }
         }
         return nil

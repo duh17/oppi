@@ -210,7 +210,6 @@ private func precisionLiteralMatches(
         .map { rank, candidate in
             FuzzyMatch.ScoredPath(
                 path: candidate.path,
-                index: candidate.index,
                 score: (candidate.literalClass.rawValue * 10_000) - rank,
                 positions: candidate.positions
             )

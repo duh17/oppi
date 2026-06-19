@@ -171,7 +171,6 @@ struct WorkspaceContextBar: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
-    @Environment(AskRequestStore.self) private var askRequestStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var isExpanded = false

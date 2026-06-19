@@ -20,6 +20,7 @@ struct MessageQueueStoreTests {
             for: "s1",
             kind: .steer,
             message: "queued",
+            attachments: nil,
             optimisticImages: nil
         )
 
@@ -55,11 +56,14 @@ struct MessageQueueStoreTests {
         let store = MessageQueueStore()
         let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
         let attachment = ChatAttachmentRef(
+            type: "attachment",
             id: "att-1",
             source: .upload,
             name: "image-1.png",
             mimeType: "image/png",
             sizeBytes: 5,
+            sha256: nil,
+            kind: nil,
             workspacePath: ".pi/attachments/demo/image-1.png"
         )
 
@@ -106,6 +110,7 @@ struct MessageQueueStoreTests {
             for: "s1",
             kind: .steer,
             message: "queued",
+            attachments: nil,
             optimisticImages: nil
         )
 

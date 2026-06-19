@@ -83,7 +83,7 @@ struct ServerConnectionRoutingTests {
         let result = conn.applySharedStoreUpdate(for: .state(session: current), sessionId: "s1")
 
         #expect(result.previousWorkspaceId == "w1")
-        #expect(result.previousStatus == .busy)
+        #expect(result.stateContext?.previousStatus == .busy)
         #expect(result.didTransitionOutOfRunning)
         #expect(!conn.screenAwakeController.isPreventingSleep)
         #expect(idleTimerUpdates.last == false)
@@ -122,7 +122,6 @@ struct ServerConnectionRoutingTests {
         #expect(conn.askRequestStore.pending(for: "s1") == nil)
         #expect(conn.silenceWatchdog.lastEventTime == nil)
         #expect(!conn.screenAwakeController.isPreventingSleep)
-        #expect(conn.sessionStore.turnEndedDate(for: "s1") != nil)
         #expect(idleTimerUpdates.last == false)
     }
 

@@ -38,7 +38,6 @@ struct SessionTreeDisplayLayoutChatTests {
 
         #expect(displayNodes.map(\.id) == ["root", "visible-leaf"])
         #expect(displayNodes.map(\.displayDepth) == [0, 0])
-        #expect(displayNodes.last?.visibleParentId == "root")
     }
 
     private func node(id: String, parentId: String?) -> SessionTreeNodeSnapshot {

@@ -124,7 +124,6 @@ extension ServerConnection {
         sessionStore.applySummary(normalized)
         if previousSession?.status.isRunning == true, normalized.status.isTerminal {
             let completedAt = normalized.lastAgentReplyAt ?? normalized.lastActivity
-            sessionStore.recordTurnEnded(sessionId: normalized.id, at: completedAt)
             recordUnreadCompletionIfNeeded(sessionId: normalized.id, at: completedAt)
         }
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
@@ -162,7 +161,6 @@ extension ServerConnection {
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
         } else {
             if previousStatus.isRunning {
-                sessionStore.recordTurnEnded(sessionId: sessionId, at: completedAt)
                 recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
             }
             screenAwakeController.clearSessionActivity(sessionId: sessionId)

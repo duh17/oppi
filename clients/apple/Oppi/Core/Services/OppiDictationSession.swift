@@ -38,8 +38,6 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// Pending audio stream, transferred to the drain task on start.
     private var pendingAudioStream: AsyncStream<Data>?
     private var audioEngine: AVAudioEngine?
-    private var audioConverter: AVAudioConverter?
-    private var targetFormat: AVAudioFormat?
     private var stopped = false
     private struct TranscriptUpdate: Equatable {
         let text: String
@@ -160,8 +158,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         self.pendingAudioStream = audioStream
 
         let (engine, levelStream) = try DictationAudioEngineHelper.startEngine(
-            audioContinuation: audioContinuation,
-            audioLevelContinuation: audioLevelContinuation
+            audioContinuation: audioContinuation
         )
         self.audioEngine = engine
 
@@ -232,7 +229,6 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
-        audioConverter = nil
     }
 
     // MARK: - PCM Conversion
@@ -400,8 +396,7 @@ extension OppiDictationSession {
 /// so it is safe to call from the real-time audio callback.
 enum DictationAudioEngineHelper {
     static func startEngine(
-        audioContinuation: AsyncStream<Data>.Continuation,
-        audioLevelContinuation: AsyncStream<Float>.Continuation
+        audioContinuation: AsyncStream<Data>.Continuation
     ) throws -> (AVAudioEngine, AsyncStream<Float>) {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode

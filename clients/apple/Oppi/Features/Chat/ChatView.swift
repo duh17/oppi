@@ -981,27 +981,8 @@ struct ChatView: View {
         return true
     }
 
-    @discardableResult
-    private func updateReviewComment(
-        _ comment: ReviewComment,
-        body: String? = nil,
-        status: ReviewCommentStatus? = nil
-    ) async -> Bool {
-        if let error = await reviewComments.update(
-            comment,
-            body: body,
-            status: status,
-            api: connection.apiClient,
-            workspaceId: session?.workspaceId
-        ) {
-            connection.extensionToast = error
-            return false
-        }
-        return true
-    }
-
     private func deleteReviewComment(_ comment: ReviewComment) async {
-        if let error = await reviewComments.delete(comment, api: connection.apiClient, workspaceId: session?.workspaceId) {
+        if let error = await reviewComments.delete(comment, api: connection.apiClient) {
             connection.extensionToast = error
         }
     }

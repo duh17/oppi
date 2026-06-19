@@ -3,93 +3,6 @@ import ActivityKit
 import Foundation
 import Testing
 
-// MARK: - Alert Decision (P0: phantom vibrations)
-
-@Suite("LiveActivityManager.shouldAlert")
-@MainActor
-struct LiveActivityAlertTests {
-
-    // MARK: - awaitingReply must NEVER produce an alert
-
-    @Test("awaitingReply from working does not alert")
-    func awaitingReplyFromWorking() {
-        let state = makeState(phase: .awaitingReply)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .working
-        ))
-    }
-
-    @Test("awaitingReply from ended does not alert")
-    func awaitingReplyFromEnded() {
-        let state = makeState(phase: .awaitingReply)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .ended
-        ))
-    }
-
-    @Test("awaitingReply with unchanged count does not alert")
-    func awaitingReplyUnchangedCount() {
-        let state = makeState(phase: .awaitingReply)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .working
-        ))
-    }
-
-
-
-
-    // MARK: - Other phases never alert
-
-    @Test("working never alerts", arguments: [SessionPhase.ended, .awaitingReply, .working, .error])
-    func workingNeverAlerts(from: SessionPhase) {
-        let state = makeState(phase: .working)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: from
-        ))
-    }
-
-    @Test("error never alerts", arguments: [SessionPhase.working, .ended, .awaitingReply])
-    func errorNeverAlerts(from: SessionPhase) {
-        let state = makeState(phase: .error)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: from
-        ))
-    }
-
-    @Test("ended never alerts")
-    func endedNeverAlerts() {
-        let state = makeState(phase: .ended)
-        #expect(!LiveActivityManager.shouldAlert(
-            state: state, lastPushedPhase: .awaitingReply
-        ))
-    }
-
-    @Test("ten consecutive turn cycles produce zero alerts")
-    func tenTurnCyclesNoAlerts() {
-        var lastPhase: SessionPhase = .ended
-        let lastCount = 0
-        var alertCount = 0
-
-        for _ in 0..<10 {
-            // working phase
-            let working = makeState(phase: .working)
-            if LiveActivityManager.shouldAlert(
-                state: working, lastPushedPhase: lastPhase
-            ) { alertCount += 1 }
-            lastPhase = .working
-
-            // awaitingReply phase
-            let awaiting = makeState(phase: .awaitingReply)
-            if LiveActivityManager.shouldAlert(
-                state: awaiting, lastPushedPhase: lastPhase
-            ) { alertCount += 1 }
-            lastPhase = .awaitingReply
-        }
-
-        #expect(alertCount == 0, "Normal conversation turns must never vibrate")
-    }
-}
-
 // MARK: - State Aggregation
 
 @Suite("LiveActivityManager state aggregation", .serialized)
@@ -238,40 +151,6 @@ struct LiveActivityStateTests {
         mgr.recordEvent(connectionId: "c1", event: .sessionEnded(sessionId: "s1", reason: "done"))
         #expect(mgr.currentState.primaryPhase == .ended)
     }
-}
-
-// MARK: - Alert Integration (drives state machine → checks alert decision)
-
-@Suite("LiveActivityManager alert integration", .serialized)
-@MainActor
-struct LiveActivityAlertIntegrationTests {
-
-    @Test("working → awaitingReply → working cycle never alerts")
-    @MainActor func rapidCycleNoAlerts() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        var lastPhase: SessionPhase = mgr.lastPushedPrimaryPhase
-        var alerts = 0
-
-        // Agent ends
-        mgr.recordEvent(connectionId: "c1", event: .agentEnd(sessionId: "s1"))
-        if LiveActivityManager.shouldAlert(
-            state: mgr.currentState, lastPushedPhase: lastPhase
-        ) { alerts += 1 }
-        lastPhase = mgr.currentState.primaryPhase
-
-        // Agent restarts
-        mgr.recordEvent(connectionId: "c1", event: .agentStart(sessionId: "s1"))
-        if LiveActivityManager.shouldAlert(
-            state: mgr.currentState, lastPushedPhase: lastPhase
-        ) { alerts += 1 }
-
-        #expect(alerts == 0)
-    }
-
-
 }
 
 // MARK: - Lifecycle Recovery (P0: 8-hour silent death)

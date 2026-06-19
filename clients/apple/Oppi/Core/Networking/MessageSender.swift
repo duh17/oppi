@@ -88,17 +88,12 @@ final class MessageSender {
         // can't be routed — the server silently drops them, no ack arrives,
         // and the user waits for the full ack timeout with no feedback.
         // Fail fast so the error handler can restore the text immediately.
-        if resolvedSessionId == nil, !Self.isSessionLevelCommand(message) {
+        if resolvedSessionId == nil {
             logger.error("SEND blocked: targetSessionId is nil for session-scoped \(message.typeLabel, privacy: .public)")
             throw WebSocketError.notConnected
         }
 
         try await wsClient.send(message, sessionId: resolvedSessionId)
-    }
-
-    /// Returns true for messages that don't require a focused session envelope.
-    private static func isSessionLevelCommand(_ message: ClientMessage) -> Bool {
-        false
     }
 
     /// Standard timeout policy for command requests.

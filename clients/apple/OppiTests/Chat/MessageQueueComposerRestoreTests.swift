@@ -61,11 +61,14 @@ struct MessageQueueComposerRestoreTests {
     @Test("Given queued uploaded files, when stop restores the queue, then file references stay visible in the composer")
     func uploadedFileReferencesArePreservedInComposerText() {
         let attachment = ChatAttachmentRef(
+            type: "attachment",
             id: "att-1",
             source: .upload,
             name: "notes.txt",
             mimeType: "text/plain",
             sizeBytes: 42,
+            sha256: nil,
+            kind: nil,
             workspacePath: ".pi/attachments/s1/notes.txt"
         )
         let queue = MessageQueueState(

@@ -11,7 +11,6 @@ final class NativeExpandedReadMediaView: UIView {
     private weak var svgPreviewToggleView: UIView?
     private weak var svgSourceToggleView: UIView?
     private var svgDisplayMode: SVGDisplayMode = .preview
-    private var audioPlayer: AudioPlayerService?
 
     private enum SVGDisplayMode {
         case preview
@@ -54,7 +53,6 @@ final class NativeExpandedReadMediaView: UIView {
         sessionFileDataFetcher: ((String) async throws -> Data)?,
         sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)?
     ) {
-        self.audioPlayer = audioPlayer
         var hasher = Hasher()
         hasher.combine(output)
         hasher.combine(isError)
@@ -811,7 +809,6 @@ final class NativeExpandedVideoAttachmentView: UIView {
         guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
         SystemVideoPlaybackPresenter.present(
             source: source,
-            title: titleLabel.text,
             from: presenter,
             telemetrySource: "tool_video_attachment",
             telemetrySessionId: sessionId,

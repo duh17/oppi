@@ -108,36 +108,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(CodexUsageInfo.self, from: data)
     }
 
-    struct RuntimeUpdateResult: Decodable, Sendable, Equatable {
-        let ok: Bool
-        let message: String
-        let latestVersion: String?
-        let pendingVersion: String?
-        let restartRequired: Bool
-        let error: String?
-        let updatedPackages: [UpdatedPackage]?
-
-        struct UpdatedPackage: Decodable, Sendable, Equatable {
-            let name: String
-            let from: String
-            let to: String
-        }
-    }
-
-    struct RuntimeUpdateResponse: Decodable, Sendable, Equatable {
-        let ok: Bool
-        let result: RuntimeUpdateResult
-        let status: ServerInfo.RuntimeUpdateInfo
-    }
-
-    /// Trigger a server runtime update (`npm install -g <runtime>@latest`).
-    ///
-    /// Returns operation result plus the latest runtime update status snapshot.
-    func updateRuntime() async throws -> RuntimeUpdateResponse {
-        let data = try await post("/server/runtime/update", body: EmptyBody())
-        return try JSONDecoder().decode(RuntimeUpdateResponse.self, from: data)
-    }
-
     // MARK: - Sessions
 
     /// Full-text search across session content.
@@ -483,13 +453,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).workspace
     }
 
-    /// Fetch the current Pi base system prompt resolved for a workspace.
-    func getWorkspaceBaseSystemPrompt(id: String) async throws -> String {
-        let data = try await get("/workspaces/\(id)/system-prompt/base")
-        struct Response: Decodable { let systemPrompt: String }
-        return try JSONDecoder().decode(Response.self, from: data).systemPrompt
-    }
-
     /// Delete a workspace.
     func deleteWorkspace(id: String) async throws {
         _ = try await request("DELETE", path: "/workspaces/\(id)")
@@ -620,28 +583,6 @@ actor APIClient: ClientLogUploading {
             "/workspaces/\(workspaceId)/review/comments",
             body: Body(sessionId: sessionId, body: body, reference: reference)
         )
-        return try JSONDecoder().decode(ReviewCommentResponse.self, from: data).comment
-    }
-
-    func updateReviewComment(
-        workspaceId: String,
-        commentId: String,
-        body: String? = nil,
-        status: ReviewCommentStatus? = nil,
-        severity: ReviewCommentSeverity? = nil
-    ) async throws -> ReviewComment {
-        struct Body: Encodable {
-            let status: ReviewCommentStatus?
-            let severity: ReviewCommentSeverity?
-            let body: String?
-        }
-
-        let (data, response) = try await request(
-            "PATCH",
-            path: "/workspaces/\(workspaceId)/review/comments/\(commentId)",
-            body: Body(status: status, severity: severity, body: body)
-        )
-        try checkStatus(response, data: data)
         return try JSONDecoder().decode(ReviewCommentResponse.self, from: data).comment
     }
 
@@ -809,8 +750,6 @@ actor APIClient: ClientLogUploading {
     struct WorkspaceAttentionResponse: Decodable, Sendable {
         struct Attention: Decodable, Sendable {
             let asks: [AskRequest]
-
-            static let empty = Attention(asks: [])
         }
 
         let workspaceId: String
@@ -959,15 +898,6 @@ actor APIClient: ClientLogUploading {
             importableSessions: sections.importableSessions,
             archiveBuckets: buckets.buckets
         )
-    }
-
-    func getWorkspaceSessionList(
-        workspaceId: String,
-        since: Date,
-        until: Date
-    ) async throws -> WorkspaceSessionListResponse {
-        let workspace = try await getWorkspace(id: workspaceId)
-        return try await getWorkspaceSessionList(workspace: workspace, since: since, until: until)
     }
 
     func getWorkspaceSessionListBucket(
@@ -1208,7 +1138,6 @@ actor APIClient: ClientLogUploading {
         return text
     }
 
-    // periphery:ignore - used by RemoteFileView (transitively unused)
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))

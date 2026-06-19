@@ -55,6 +55,12 @@ final class LiveActivityManager {
             staleDate = content.staleDate
             relevanceScore = content.relevanceScore
         }
+
+        static func == (lhs: DeliveredSnapshot, rhs: DeliveredSnapshot) -> Bool {
+            lhs.state == rhs.state
+                && lhs.staleDate == rhs.staleDate
+                && lhs.relevanceScore == rhs.relevanceScore
+        }
     }
 
     private static let emptyState = PiSessionAttributes.ContentState(
@@ -93,8 +99,6 @@ final class LiveActivityManager {
     private var hasPendingPush = false
     private var pushThrottleTask: Task<Void, Never>?
 
-    /// Last pushed state used for alert transitions.
-    var lastPushedPrimaryPhase: SessionPhase = .ended
     private var lastDeliveredSnapshot: DeliveredSnapshot?
 
     /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
@@ -112,18 +116,6 @@ final class LiveActivityManager {
     private let lockScreenDismissDelaySeconds: TimeInterval = 4
 
     init() {}
-
-    /// Pure alert decision — no ActivityKit dependency, used by `executePush()`
-    /// and testable independently.
-    ///
-    /// HIG: "Alert people only for essential updates that require their attention."
-    /// Current Live Activity state is informational and does not trigger alerts.
-    nonisolated static func shouldAlert(
-        state: PiSessionAttributes.ContentState,
-        lastPushedPhase: SessionPhase
-    ) -> Bool {
-        false
-    }
 
     // MARK: - Public API
 
@@ -376,7 +368,6 @@ final class LiveActivityManager {
         activityObservationTask?.cancel()
         activityObservationTask = nil
         hasPendingPush = false
-        lastPushedPrimaryPhase = .ended
         lastDeliveredSnapshot = nil
         lastStateChangeAt = Date()
     }
@@ -406,7 +397,6 @@ final class LiveActivityManager {
         currentState = recoveredContent.state
         lastStateChangeAt = recoveredStateChangeDate(from: recoveredContent)
         lastDeliveredSnapshot = DeliveredSnapshot(from: recoveredContent)
-        lastPushedPrimaryPhase = recoveredContent.state.primaryPhase
         logger.error("Recovered orphaned Live Activity reference (id=\(recovered.id, privacy: .public), state=\(String(describing: recovered.activityState), privacy: .public))")
     }
 
@@ -589,7 +579,6 @@ final class LiveActivityManager {
             activeActivity = activity
             observeActivityLifecycle(activity)
             lastDeliveredSnapshot = DeliveredSnapshot(from: content)
-            lastPushedPrimaryPhase = currentState.primaryPhase
             logger.error("Live Activity started")
         } catch {
             logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
@@ -680,7 +669,6 @@ final class LiveActivityManager {
             return
         }
 
-        lastPushedPrimaryPhase = state.primaryPhase
         lastDeliveredSnapshot = deliveredSnapshot
 
         nonisolated(unsafe) let detachedActivity = activity

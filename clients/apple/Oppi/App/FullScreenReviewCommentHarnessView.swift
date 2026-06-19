@@ -76,7 +76,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     private let diffWrapSecondXLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.secondXHundredths")
     private let diffWrapExpectedXLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.expectedXHundredths")
     private let selectButton = UIButton(type: .system)
-    private var codeController: FullScreenCodeViewController?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -150,7 +149,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             content: content,
             reviewCommentSelectionContext: context
         )
-        codeController = controller
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(controller.view)

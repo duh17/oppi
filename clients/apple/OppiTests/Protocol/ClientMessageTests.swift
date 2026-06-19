@@ -77,13 +77,15 @@ struct ClientMessageTests {
 
     @Test func encodesPromptWithAttachments() throws {
         let ref = ChatAttachmentRef(
+            type: "attachment",
             id: "upl_123",
             source: .upload,
             name: "screenshot.png",
             mimeType: "image/png",
             sizeBytes: 1234,
             sha256: "abc",
-            kind: .image
+            kind: .image,
+            workspacePath: nil
         )
         let msg = ClientMessage.prompt(message: "describe this", attachments: [ref])
         let json = try decode(msg)

@@ -392,15 +392,6 @@ struct QuickSessionNav {
         self.autoSendMessage = autoSendMessage
         self.autoSendAttachments = autoSendAttachments
     }
-
-    var autoSendImages: [PendingImage]? {
-        autoSendAttachments?.compactMap { attachment in
-            guard attachment.source == .image,
-                  let thumbnail = attachment.thumbnail,
-                  let imageAttachment = attachment.imageAttachment else { return nil }
-            return PendingImage(id: attachment.id, thumbnail: thumbnail, attachment: imageAttachment)
-        }
-    }
 }
 
 enum AppTab: Hashable {

@@ -89,23 +89,6 @@ struct ServerStoreTests {
         #expect(store.servers.isEmpty)
     }
 
-    // MARK: - Rename
-
-    @Test func renameServer() {
-        let store = makeCleanStore()
-        defer { cleanupKeychain(store) }
-
-        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:rename-test"))
-        store.rename(id: "sha256:rename-test", to: "New Name")
-        #expect(store.servers[0].name == "New Name")
-    }
-
-    @Test func renameNonexistentServerIsNoOp() {
-        let store = makeCleanStore()
-        store.rename(id: "sha256:ghost", to: "Nope")
-        #expect(store.servers.isEmpty)
-    }
-
     // MARK: - Lookups
 
     @Test func lookupById() {

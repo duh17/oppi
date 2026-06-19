@@ -1230,8 +1230,7 @@ struct UIHangHarnessView: View {
         ] + bodySections).joined(separator: "\n")
     }
 
-    // periphery:ignore - debug harness; session param reserved for future use
-    private func visualWriteMarkdownContent(for session: HarnessSession) -> String {
+    private func visualWriteMarkdownContent() -> String {
         var sections: [String] = [
             "# Chat Timeline Code Paths (Streaming + Normal Output)",
             "Status: current as of 2026-03-01.",
@@ -1331,7 +1330,7 @@ struct UIHangHarnessView: View {
     private func seedWriteMarkdownFixtures() {
         for session in HarnessSession.allCases {
             let writeID = writeMarkdownToolItemID(for: session)
-            let markdown = visualWriteMarkdownContent(for: session)
+            let markdown = visualWriteMarkdownContent()
 
             harnessReducer.toolArgsStore.set([
                 "path": .string("design/chat-timeline-code-paths.md"),
@@ -1705,7 +1704,6 @@ struct HarnessFrameIntervalSnapshot: Sendable {
     let p95IntervalMs: Int
     let p99IntervalMs: Int
     let maxIntervalMs: Int
-    let over34MsCount: Int
     let over50MsCount: Int
     let over34MsPercent: Int
     let over50MsPercent: Int
@@ -1752,7 +1750,6 @@ final class HarnessFrameIntervalMonitor: NSObject {
                 p95IntervalMs: 0,
                 p99IntervalMs: 0,
                 maxIntervalMs: 0,
-                over34MsCount: 0,
                 over50MsCount: 0,
                 over34MsPercent: 0,
                 over50MsPercent: 0
@@ -1770,7 +1767,6 @@ final class HarnessFrameIntervalMonitor: NSObject {
             p95IntervalMs: p95,
             p99IntervalMs: p99,
             maxIntervalMs: maxInterval,
-            over34MsCount: over34MsCount,
             over50MsCount: over50MsCount,
             over34MsPercent: percent(part: over34MsCount, total: sampleCount),
             over50MsPercent: percent(part: over50MsCount, total: sampleCount)

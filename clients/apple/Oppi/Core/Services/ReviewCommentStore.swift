@@ -12,22 +12,6 @@ final class ReviewCommentStore {
 
     var stagedCount: Int { stagedComments.count }
 
-    var activeComments: [ReviewComment] {
-        comments(matching: { $0.status == .staged || $0.status == .sent || $0.status == .open }) {
-            $0.updatedAt > $1.updatedAt
-        }
-    }
-
-    var activeCount: Int { activeComments.count }
-
-    var sentOrOpenComments: [ReviewComment] {
-        comments(matching: { $0.status == .sent || $0.status == .open }) { $0.updatedAt > $1.updatedAt }
-    }
-
-    var resolvedComments: [ReviewComment] {
-        comments(matching: { $0.status == .resolved }) { $0.updatedAt > $1.updatedAt }
-    }
-
     func load(api: APIClient, workspaceId: String, sessionId: String? = nil) async {
         do {
             comments = try await api.listReviewComments(
@@ -58,33 +42,6 @@ final class ReviewCommentStore {
         upsert(comment)
         lastError = nil
         return comment
-    }
-
-    @discardableResult
-    func update(
-        api: APIClient,
-        workspaceId: String,
-        commentId: String,
-        body: String? = nil,
-        status: ReviewCommentStatus? = nil,
-        severity: ReviewCommentSeverity? = nil
-    ) async throws -> ReviewComment {
-        do {
-            let comment = try await api.updateReviewComment(
-                workspaceId: workspaceId,
-                commentId: commentId,
-                body: body,
-                status: status,
-                severity: severity
-            )
-            upsert(comment)
-            lastError = nil
-            return comment
-        } catch let APIError.server(status, _) where status == 404 {
-            removeLocalComment(id: commentId)
-            lastError = "Review comment no longer exists"
-            throw APIError.server(status: status, message: "Review comment no longer exists")
-        }
     }
 
     func delete(api: APIClient, workspaceId: String, commentId: String) async throws {

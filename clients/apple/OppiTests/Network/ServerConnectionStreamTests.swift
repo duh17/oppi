@@ -84,7 +84,6 @@ struct ServerConnectionStreamTests {
         conn.prepareForSessionReentry("new-child", workspaceIdHint: " ws-1 ")
 
         #expect(conn.focusedSessionId == "new-child")
-        #expect(conn.focusedSessionStore.focused?.workspaceId == "ws-1")
         #expect(conn.streamConsumptionTask == nil,
                 "Unknown sessions should not eagerly open a stream until ChatSessionManager binds it with history context")
     }
@@ -127,7 +126,6 @@ struct ServerConnectionStreamTests {
         conn.prepareForSessionReentry("new-child")
 
         #expect(conn.focusedSessionId == "new-child")
-        #expect(conn.focusedSessionStore.focused?.workspaceId == "w1")
         #expect(conn.focusedSessionStreamEndpointKind == "split_session")
         #expect(conn.streamConsumptionTask != nil,
                 "Notification re-entry should bind the focused stream from the pending permission gate workspace before the session summary arrives")

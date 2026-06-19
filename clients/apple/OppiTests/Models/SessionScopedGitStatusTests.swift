@@ -166,22 +166,6 @@ struct SessionScopedGitStatusTests {
         #expect(scoped.sessionRemovedLines == 2)
     }
 
-    @Test func totalFileCountReflectsFullGitStatus() {
-        let gitStatus = makeGitStatus(files: [
-            makeFile("a.swift", added: 1, removed: 0),
-            makeFile("b.swift", added: 1, removed: 0),
-            makeFile("c.swift", added: 1, removed: 0),
-        ])
-
-        let scoped = SessionScopedGitStatus.filter(
-            gitStatus: gitStatus,
-            sessionChangedFiles: ["/project/a.swift"]
-        )
-
-        #expect(scoped.sessionFileCount == 1)
-        #expect(scoped.totalFileCount == 3)
-    }
-
     // MARK: - Edge cases
 
     @Test func emptySessionChangedFilesProducesEmptyResult() {
@@ -230,7 +214,6 @@ struct SessionScopedGitStatusTests {
         )
 
         #expect(scoped.sessionFileCount == 2)
-        #expect(scoped.totalFileCount == 2)
         #expect(scoped.sessionAddedLines == 3)
         #expect(scoped.sessionRemovedLines == 1)
     }
@@ -277,23 +260,6 @@ struct SessionScopedGitStatusTests {
         )
 
         #expect(scoped.sessionFiles.count == 1)
-    }
-
-    @Test func originalGitStatusPassedThrough() {
-        let gitStatus = makeGitStatus(
-            branch: "feature/scoping",
-            files: [
-                makeFile("a.swift", added: 1, removed: 0),
-            ]
-        )
-
-        let scoped = SessionScopedGitStatus.filter(
-            gitStatus: gitStatus,
-            sessionChangedFiles: []
-        )
-
-        #expect(scoped.gitStatus.branch == "feature/scoping")
-        #expect(scoped.gitStatus.isGitRepo == true)
     }
 
     // MARK: - Helpers

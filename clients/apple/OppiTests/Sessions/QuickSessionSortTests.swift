@@ -264,7 +264,7 @@ struct QuickSessionNavTests {
         #expect(nav.target.serverId == "srv1")
         #expect(nav.target.workspace.id == "w1")
         #expect(nav.autoSendMessage == nil)
-        #expect(nav.autoSendImages == nil)
+        #expect(nav.autoSendAttachments == nil)
     }
 
     @Test func init_withAutoSend() {
@@ -277,6 +277,6 @@ struct QuickSessionNavTests {
         )
 
         #expect(nav.autoSendMessage == "Fix the bug")
-        #expect(nav.autoSendImages == nil)
+        #expect(nav.autoSendAttachments == nil)
     }
 }

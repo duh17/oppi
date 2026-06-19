@@ -34,11 +34,6 @@ final class AskRequestStore {
         })
     }
 
-    /// Total queued pending asks for the active server.
-    var count: Int {
-        activePendingQueues.values.reduce(0) { $0 + $1.count }
-    }
-
     /// Append a pending ask for a session, or update an existing request with the same id.
     ///
     /// Returns `true` when this is a new queued request, and `false` for an idempotent replay/update.
@@ -98,11 +93,6 @@ final class AskRequestStore {
     /// Get the visible pending ask for a specific session, if any.
     func pending(for sessionId: String) -> AskRequest? {
         activePendingQueues[sessionId]?.first
-    }
-
-    /// Get all queued asks for a session in display order.
-    func pendingRequests(for sessionId: String) -> [AskRequest] {
-        activePendingQueues[sessionId] ?? []
     }
 
     /// Check whether a session has any pending ask.
@@ -178,14 +168,6 @@ final class AskRequestStore {
         activeServerId = serverId
         if serverPending[serverId] == nil {
             serverPending[serverId] = [:]
-        }
-    }
-
-    /// Remove all data for a server (on unpair).
-    func removeServer(_ serverId: String) {
-        serverPending.removeValue(forKey: serverId)
-        if activeServerId == serverId {
-            activeServerId = nil
         }
     }
 

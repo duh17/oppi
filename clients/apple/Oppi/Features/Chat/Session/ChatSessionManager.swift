@@ -402,8 +402,7 @@ final class ChatSessionManager {
                     SessionStreamEvent(
                         sessionId: sessionId,
                         message: message,
-                        meta: _consumeInboundMetaForTesting?(),
-                        source: .live
+                        meta: _consumeInboundMetaForTesting?()
                     ),
                     connection: connection,
                     sessionStore: sessionStore,

@@ -11,7 +11,6 @@ struct AskRequestStoreTests {
     @Test func initiallyEmpty() {
         let store = AskRequestStore()
         #expect(store.pending.isEmpty)
-        #expect(store.count == 0)
     }
 
     @Test func setAndRetrieveAskRequest() {
@@ -26,7 +25,6 @@ struct AskRequestStoreTests {
             timeout: nil
         )
         store.set(ask, for: "s1")
-        #expect(store.count == 1)
         #expect(store.pending(for: "s1") != nil)
         #expect(store.pending(for: "s1")?.id == "ask-1")
     }
@@ -39,8 +37,9 @@ struct AskRequestStoreTests {
         store.set(first, for: "s1")
         store.set(second, for: "s1")
 
-        #expect(store.count == 2)
         #expect(store.pending(for: "s1")?.id == "ask-1")
+        _ = store.remove(id: "ask-1")
+        #expect(store.pending(for: "s1")?.id == "ask-2")
     }
 
     @Test func removeAskRequest() {
@@ -55,7 +54,6 @@ struct AskRequestStoreTests {
         store.set(ask, for: "s1")
         store.remove(for: "s1")
         #expect(store.pending(for: "s1") == nil)
-        #expect(store.count == 0)
     }
 
     @Test func pendingReturnsNilForUnknownSession() {
@@ -83,9 +81,9 @@ struct AskRequestStoreTests {
         let ask2 = AskRequest(id: "ask-2", sessionId: "s2", questions: [], allowCustom: true, timeout: nil)
         store.set(ask1, for: "s1")
         store.set(ask2, for: "s2")
-        #expect(store.count == 2)
+        #expect(store.pending.count == 2)
         store.remove(for: "s1")
-        #expect(store.count == 1)
+        #expect(store.pending.count == 1)
         #expect(store.hasPending(for: "s2"))
     }
 
@@ -97,7 +95,6 @@ struct AskRequestStoreTests {
         store.set(first, for: "s1")
         store.set(replay, for: "s1")
 
-        #expect(store.count == 1)
         #expect(store.pending(for: "s1")?.allowCustom == false)
         #expect(store.pending(for: "s1")?.timeout == 42)
     }
@@ -159,9 +156,11 @@ struct AskRequestStoreTests {
             workspaceSessionIds: ["s1"]
         )
 
-        #expect(store.pendingRequests(for: "s1").map(\.id) == ["ask-1", "select-1"])
+        #expect(store.pending(for: "s1")?.id == "ask-1")
         #expect(store.pending(for: "s1")?.allowCustom == false)
         #expect(store.pending(for: "s1")?.timeout == 30)
+        _ = store.remove(id: "ask-1")
+        #expect(store.pending(for: "s1")?.id == "select-1")
     }
 
     @Test func workspaceSnapshotReportsSessionWhenVisibleAskRemovedButInlinePromptRemains() {
@@ -192,7 +191,7 @@ struct AskRequestStoreTests {
         )
 
         #expect(changedSessionIds == ["s1"])
-        #expect(store.pendingRequests(for: "s1").map(\.id) == ["select-1"])
+        #expect(store.pending(for: "s1")?.id == "select-1")
     }
 
     // MARK: - Server switching
@@ -202,19 +201,10 @@ struct AskRequestStoreTests {
         store.switchServer(to: "server-a")
         let ask = AskRequest(id: "ask-1", sessionId: "s1", questions: [], allowCustom: true, timeout: nil)
         store.set(ask, for: "s1")
-        #expect(store.count == 1)
+        #expect(store.hasPending(for: "s1"))
 
         store.switchServer(to: "server-b")
-        #expect(store.count == 0)
+        #expect(store.pending.isEmpty)
         #expect(!store.hasPending(for: "s1"))
-    }
-
-    @Test func removeServerCleansUp() {
-        let store = AskRequestStore()
-        store.switchServer(to: "server-a")
-        let ask = AskRequest(id: "ask-1", sessionId: "s1", questions: [], allowCustom: true, timeout: nil)
-        store.set(ask, for: "s1")
-        store.removeServer("server-a")
-        #expect(store.count == 0)
     }
 }

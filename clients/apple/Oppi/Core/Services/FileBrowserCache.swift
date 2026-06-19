@@ -4,22 +4,14 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "FileBrowserCache")
 
-/// Disk cache for workspace file browser content.
+/// Disk cache for workspace file index data.
 ///
-/// Caches directory listings, file content, and the file index so
-/// previously viewed content loads instantly and survives connectivity
-/// gaps. Stored in the app's Caches directory (system may evict under
-/// storage pressure).
+/// Stores the file index in the app's Caches directory so path suggestions
+/// remain fast across view reloads. The system may evict this data under
+/// storage pressure.
 ///
-/// Cache keys are derived from workspace ID + path. File content uses
-/// `modifiedAt` from the directory listing for freshness — if the
-/// server timestamp hasn't changed, the cached bytes are still valid.
-///
-/// Invalidation:
-/// - `git_status` push events call `invalidateDirectoryListings(for:)`
-///   to clear stale listings (file content keyed by modifiedAt is
-///   self-invalidating).
-/// - Manual pull-to-refresh bypasses the cache.
+/// Cache keys are derived from workspace ID. Workspace mutation events clear
+/// stale cached paths.
 actor FileBrowserCache {
 
     static let shared = FileBrowserCache()
@@ -32,24 +24,9 @@ actor FileBrowserCache {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
-    // MARK: - Directory Listings
+    // MARK: - Invalidation
 
-    /// Cached directory listing, or nil if not cached.
-    func directoryListing(workspaceId: String, path: String) -> DirectoryListingResponse? {
-        let file = listingURL(workspaceId: workspaceId, path: path)
-        guard let data = try? Data(contentsOf: file) else { return nil }
-        return try? JSONDecoder().decode(DirectoryListingResponse.self, from: data)
-    }
-
-    /// Cache a directory listing response.
-    func cacheDirectoryListing(_ response: DirectoryListingResponse, workspaceId: String, path: String) {
-        let file = listingURL(workspaceId: workspaceId, path: path)
-        ensureParent(of: file)
-        guard let data = try? JSONEncoder().encode(response) else { return }
-        try? data.write(to: file, options: .atomic)
-    }
-
-    /// Clear all cached directory listings for a workspace (called on git_status).
+    /// Clear cached directory listings for a workspace when present.
     func invalidateDirectoryListings(for workspaceId: String) {
         let dir = workspaceDir(workspaceId).appendingPathComponent("dirs", isDirectory: true)
         try? FileManager.default.removeItem(at: dir)
@@ -63,42 +40,6 @@ actor FileBrowserCache {
         try? FileManager.default.removeItem(at: workspace.appendingPathComponent("dirs", isDirectory: true))
         try? FileManager.default.removeItem(at: workspace.appendingPathComponent("index.json"))
         logger.debug("Invalidated workspace file caches for \(workspaceId)")
-    }
-
-    // MARK: - File Content
-
-    /// Cached file content, or nil if not cached or stale.
-    ///
-    /// When `knownModifiedAt` is provided (from a directory listing),
-    /// the cache only returns data if the stored timestamp matches.
-    /// When nil (e.g. opened from search), returns whatever is cached.
-    func fileContent(workspaceId: String, path: String, knownModifiedAt: Int? = nil) -> Data? {
-        let dataFile = contentURL(workspaceId: workspaceId, path: path)
-        let metaFile = contentMetaURL(workspaceId: workspaceId, path: path)
-
-        guard let data = try? Data(contentsOf: dataFile) else { return nil }
-
-        if let expected = knownModifiedAt,
-           let meta = readMeta(at: metaFile),
-           meta.modifiedAt != expected {
-            return nil // stale
-        }
-
-        return data
-    }
-
-    /// Cache file content with its server-reported modification timestamp.
-    func cacheFileContent(_ data: Data, workspaceId: String, path: String, modifiedAt: Int) {
-        let dataFile = contentURL(workspaceId: workspaceId, path: path)
-        let metaFile = contentMetaURL(workspaceId: workspaceId, path: path)
-        ensureParent(of: dataFile)
-
-        try? data.write(to: dataFile, options: .atomic)
-
-        let meta = CacheMeta(modifiedAt: modifiedAt, cachedAt: Int(Date().timeIntervalSince1970 * 1000))
-        if let metaData = try? JSONEncoder().encode(meta) {
-            try? metaData.write(to: metaFile, options: .atomic)
-        }
     }
 
     // MARK: - File Index
@@ -124,24 +65,6 @@ actor FileBrowserCache {
         root.appendingPathComponent(stableKey(workspaceId), isDirectory: true)
     }
 
-    private func listingURL(workspaceId: String, path: String) -> URL {
-        workspaceDir(workspaceId)
-            .appendingPathComponent("dirs", isDirectory: true)
-            .appendingPathComponent(stableKey(path.isEmpty ? "__root__" : path) + ".json")
-    }
-
-    private func contentURL(workspaceId: String, path: String) -> URL {
-        workspaceDir(workspaceId)
-            .appendingPathComponent("files", isDirectory: true)
-            .appendingPathComponent(stableKey(path) + ".data")
-    }
-
-    private func contentMetaURL(workspaceId: String, path: String) -> URL {
-        workspaceDir(workspaceId)
-            .appendingPathComponent("files", isDirectory: true)
-            .appendingPathComponent(stableKey(path) + ".meta")
-    }
-
     private func indexURL(workspaceId: String) -> URL {
         workspaceDir(workspaceId)
             .appendingPathComponent("index.json")
@@ -160,13 +83,4 @@ actor FileBrowserCache {
         try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
     }
 
-    private struct CacheMeta: Codable {
-        let modifiedAt: Int
-        let cachedAt: Int
-    }
-
-    private func readMeta(at url: URL) -> CacheMeta? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(CacheMeta.self, from: data)
-    }
 }

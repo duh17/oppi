@@ -1,7 +1,4 @@
 import Foundation
-import os.log
-
-private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "ChatSessionTelemetry")
 
 /// Tracks session-level telemetry: TTFT, fresh content lag, and session load timing.
 ///
@@ -119,20 +116,6 @@ final class ChatSessionTelemetryTracker {
 
     func cancelTTFT() {
         pendingTTFTContext = nil
-    }
-
-    // MARK: - Reset
-
-    func reset() {
-        pendingTTFTContext = nil
-        freshContentLagStartMs = nil
-        freshContentLagRecorded = false
-        loadedFromCacheAtConnect = false
-        observedTransportPath = .paired
-        sessionLoadStartMs = nil
-        sessionLoadRecorded = false
-        sessionSwitchStartMs = nil
-        sessionSwitchRecorded = false
     }
 
     // MARK: - Helpers

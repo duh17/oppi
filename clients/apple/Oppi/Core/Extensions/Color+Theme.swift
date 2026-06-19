@@ -32,7 +32,6 @@ extension Color {
 
     // MARK: - Semantic UI Helpers
 
-    static var themeChipSubtleBg: Color { palette.comment.opacity(0.16) }
     static var themeScrim: Color { palette.bgDark.opacity(0.82) }
     static var themeOnBlue: Color { ThemeColorContrast.foreground(for: palette.blue) }
     static var themeOnGreen: Color { ThemeColorContrast.foreground(for: palette.green) }
@@ -53,7 +52,6 @@ extension Color {
 
     // periphery:ignore - used by OrgFoldableView; Periphery misses this Color extension accessor
     static var themeMdHeading: Color { palette.mdHeading }
-    static var themeMdCodeBlockBorder: Color { palette.mdCodeBlockBorder }
 
     // MARK: - Semantic Diff
 
@@ -77,7 +75,6 @@ extension ShapeStyle where Self == Color {
     static var themeRed: Color { Color.themeRed }
     static var themeYellow: Color { Color.themeYellow }
 
-    static var themeChipSubtleBg: Color { Color.themeChipSubtleBg }
     static var themeScrim: Color { Color.themeScrim }
     static var themeOnBlue: Color { Color.themeOnBlue }
     // periphery:ignore - used by ChatSubviews through SwiftUI contextual static member lookup

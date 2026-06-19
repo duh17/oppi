@@ -164,15 +164,12 @@ struct ConnectionCoordinatorTests {
         let connection = coordinator.activeConnection
 
         connection.audioPlayer._setPlaybackStateForTesting(playing: "voice-local", loading: nil)
-        #expect(coordinator.hasActiveAudioPlayback)
         #expect(!coordinator.hasActiveAudioTransportPlayback)
 
         connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: "s-live")
-        #expect(coordinator.hasActiveAudioPlayback)
         #expect(coordinator.hasActiveAudioTransportPlayback)
 
         connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: "s-live", receivedDone: true)
-        #expect(coordinator.hasActiveAudioPlayback)
         #expect(!coordinator.hasActiveAudioTransportPlayback)
     }
 
@@ -192,7 +189,7 @@ struct ConnectionCoordinatorTests {
         let result = coordinator.findSession(id: "s-on-a")
         #expect(result != nil)
         #expect(result?.serverId == "sha256:find-a")
-        #expect(result?.session.name == "On A")
+        #expect(result?.connection.sessionStore.session(id: "s-on-a")?.name == "On A")
     }
 
     // MARK: - Push Navigation

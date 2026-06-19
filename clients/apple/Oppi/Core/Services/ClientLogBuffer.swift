@@ -30,7 +30,6 @@ enum ClientLog {
         record(.info, category: category, message: message, metadata: metadata)
     }
 
-    // periphery:ignore - API surface; warning log level not yet consumed
     static func warning(_ category: String, _ message: String, metadata: [String: String] = [:]) {
         record(.warning, category: category, message: message, metadata: metadata)
     }

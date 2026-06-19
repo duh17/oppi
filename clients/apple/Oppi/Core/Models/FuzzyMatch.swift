@@ -63,7 +63,7 @@ enum FuzzyMatch {
         guard !query.isEmpty, !candidate.isEmpty else { return nil }
         let qBytes = Array(query.utf8).map { asciiLower($0) }
         let cBytes = Array(candidate.utf8)
-        guard let r = matchBytes(qLower: qBytes, cBytes: cBytes, true) else { return nil }
+        guard let r = matchBytes(qLower: qBytes, cBytes: cBytes) else { return nil }
         return Result(score: r.score, positions: byteToScalarPositions(r.positions, candidate: candidate))
     }
 
@@ -146,12 +146,12 @@ enum FuzzyMatch {
         for sc in scored {
             let candidate = candidates[sc.index]
             let cBytes = Array(candidate.utf8)
-            if let r = matchBytes(qLower: qBytes, cBytes: cBytes, true) {
+            if let r = matchBytes(qLower: qBytes, cBytes: cBytes) {
                 let scalarPositions = byteToScalarPositions(r.positions, candidate: candidate)
-                results.append(ScoredPath(path: candidate, index: sc.index,
+                results.append(ScoredPath(path: candidate,
                                           score: r.score, positions: scalarPositions))
             } else {
-                results.append(ScoredPath(path: candidate, index: sc.index,
+                results.append(ScoredPath(path: candidate,
                                           score: sc.score, positions: []))
             }
         }
@@ -160,7 +160,6 @@ enum FuzzyMatch {
 
     struct ScoredPath: Sendable {
         let path: String
-        let index: Int
         let score: Int
         /// Unicode scalar indices for highlighting. Use with `String.unicodeScalars`.
         let positions: [Int]
@@ -308,9 +307,7 @@ enum FuzzyMatch {
     // MARK: - Core: Full Match with Positions
 
     /// Match with position backtracking. Used by match() and for top-K position recovery.
-    private static func matchBytes(
-        qLower: [UInt8], cBytes: [UInt8], _ _needPositions: Bool
-    ) -> Result? {
+    private static func matchBytes(qLower: [UInt8], cBytes: [UInt8]) -> Result? {
         let qLen = qLower.count
         let cLen = cBytes.count
         guard qLen > 0, cLen > 0, qLen <= cLen else { return nil }

@@ -58,13 +58,6 @@ final class ServerStore {
         logger.warning("Removed server \(id.prefix(16), privacy: .public)")
     }
 
-    /// Rename a server.
-    func rename(id: String, to name: String) {
-        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
-        servers[idx].name = name
-        save(servers[idx])
-    }
-
     /// Update the badge icon for a server.
     func setBadgeIcon(id: String, to icon: ServerBadgeIcon) {
         guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
