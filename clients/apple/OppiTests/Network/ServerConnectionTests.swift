@@ -716,6 +716,112 @@ struct ServerConnectionTests {
         #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal"])
     }
 
+    @Test func statusWithSameRawKeyAttachesToScopedNativeSurface() throws {
+        let surface = ExtensionSurfaceState(
+            statuses: [
+                "goal": ExtensionStatusState(
+                    key: "goal",
+                    text: "goal: Active 1/25"
+                ),
+            ],
+            nativeSurfaces: [
+                "widget:goal": ExtensionNativeSurfaceState(
+                    key: "goal",
+                    surface: ExtensionUINativeSurface(
+                        version: 1,
+                        id: "widget:goal",
+                        source: "widget",
+                        presentation: ExtensionUINativePresentation(
+                            style: "surfacePanel",
+                            title: "Goal",
+                            subtitle: nil
+                        ),
+                        blocks: [
+                            .activityList(
+                                base: ExtensionUIBlockBase(id: "goal-status", accessibility: nil),
+                                rows: [
+                                    ExtensionUIActivityRow(
+                                        id: "goal-1",
+                                        title: "Keep working",
+                                        subtitle: "Active",
+                                        detail: nil,
+                                        state: "running",
+                                        progress: nil,
+                                        link: nil,
+                                        children: nil
+                                    ),
+                                ]
+                            ),
+                        ],
+                        fallback: nil
+                    ),
+                    placement: "aboveEditor",
+                    extensionScopeId: "repo:goal",
+                    extensionDisplayName: "Goal"
+                ),
+            ]
+        )
+
+        #expect(surface.standaloneStatusEntries().isEmpty)
+        #expect(
+            surface.attachedStatusText(
+                for: "goal",
+                extensionScopeId: "repo:goal"
+            ) == "goal: Active 1/25"
+        )
+    }
+
+    @Test func scopedSingletonStatusStillAttachesWhenKeysDiffer() {
+        let surface = ExtensionSurfaceState(
+            statuses: [
+                "subagents": ExtensionStatusState(
+                    key: "subagents",
+                    text: "1 running agent",
+                    extensionScopeId: "repo:subagents",
+                    extensionDisplayName: "Subagents"
+                ),
+            ],
+            widgets: [
+                "agents": ExtensionWidgetState(
+                    key: "agents",
+                    lines: ["Agents active"],
+                    placement: "aboveEditor",
+                    extensionScopeId: "repo:subagents",
+                    extensionDisplayName: "Subagents"
+                ),
+            ]
+        )
+
+        #expect(surface.standaloneStatusEntries().isEmpty)
+        #expect(
+            surface.attachedStatusText(
+                for: "agents",
+                extensionScopeId: "repo:subagents"
+            ) == "1 running agent"
+        )
+    }
+
+    @Test func standaloneStatusEntriesCollapseVisibleDuplicates() throws {
+        let surface = ExtensionSurfaceState(
+            statuses: [
+                "first": ExtensionStatusState(
+                    key: "oppi-dev",
+                    text: "running Oppi install"
+                ),
+                "second": ExtensionStatusState(
+                    key: "oppi-dev ",
+                    text: "running Oppi install"
+                ),
+            ]
+        )
+
+        let entries = surface.standaloneStatusEntries()
+        let entry = try #require(entries.first)
+        #expect(entries.count == 1)
+        #expect(entry.key == "oppi-dev")
+        #expect(entry.text == "running Oppi install")
+    }
+
     @Test func routeDefocusedTerminalStateKeepsFocusedExtensionSurface() {
         let (conn, pipe) = makeTestConnection(sessionId: "focused")
         conn.extensionSurfaceBySession["focused"] = ExtensionSurfaceState(
