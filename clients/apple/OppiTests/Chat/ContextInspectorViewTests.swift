@@ -80,12 +80,12 @@ struct ContextInspectorViewTests {
     /// lists unloaded/disabled skills from the host pool.
     @Test func sessionSkillsOnlyIncludesLoadedSkills() {
         let allSkills = [
-            SkillInfo(name: "sentry", description: "Sentry stuff", path: "/skills/sentry"),
+            SkillInfo(name: "crash-review", description: "Crash review", path: "/skills/crash-review"),
             SkillInfo(name: "web-fetch", description: "Fetch pages", path: "/skills/web-fetch"),
             SkillInfo(name: "agents-md", description: "AGENTS files", path: "/skills/agents-md"),
             SkillInfo(name: "apple-pim", description: "Apple PIM", path: "/skills/apple-pim"),
         ]
-        let sessionSkillNames = ["sentry", "web-fetch"]
+        let sessionSkillNames = ["crash-review", "web-fetch"]
 
         // Same logic the view uses for its "Session Skills" section:
         let byName = Dictionary(uniqueKeysWithValues: allSkills.map { ($0.name, $0) })
@@ -95,7 +95,7 @@ struct ContextInspectorViewTests {
         }
 
         let estimateNames = estimates.map(\.0)
-        #expect(estimateNames == ["sentry", "web-fetch"])
+        #expect(estimateNames == ["crash-review", "web-fetch"])
 
         // Unloaded skills must not appear
         #expect(!estimateNames.contains("agents-md"))
@@ -105,10 +105,10 @@ struct ContextInspectorViewTests {
     /// When every available skill is loaded, there are zero unloaded skills.
     @Test func noUnloadedSkillsWhenAllActive() {
         let allSkills = [
-            SkillInfo(name: "sentry", description: "Sentry stuff", path: "/skills/sentry"),
+            SkillInfo(name: "crash-review", description: "Crash review", path: "/skills/crash-review"),
             SkillInfo(name: "web-fetch", description: "Fetch pages", path: "/skills/web-fetch"),
         ]
-        let sessionSkillNames = ["sentry", "web-fetch"]
+        let sessionSkillNames = ["crash-review", "web-fetch"]
 
         let loaded = Set(sessionSkillNames)
         let unloaded = allSkills.filter { !loaded.contains($0.name) }
@@ -119,9 +119,9 @@ struct ContextInspectorViewTests {
     /// It should still appear in the session list with a fallback description.
     @Test func sessionSkillMissingFromPoolStillListed() {
         let allSkills = [
-            SkillInfo(name: "sentry", description: "Sentry stuff", path: "/skills/sentry"),
+            SkillInfo(name: "crash-review", description: "Crash review", path: "/skills/crash-review"),
         ]
-        let sessionSkillNames = ["sentry", "custom-skill"]
+        let sessionSkillNames = ["crash-review", "custom-skill"]
 
         let byName = Dictionary(uniqueKeysWithValues: allSkills.map { ($0.name, $0) })
         let estimates = sessionSkillNames.sorted().map { name -> (String, String) in
@@ -130,9 +130,9 @@ struct ContextInspectorViewTests {
         }
 
         #expect(estimates.count == 2)
-        #expect(estimates[0].0 == "custom-skill")
-        #expect(estimates[0].1 == "No description available")
-        #expect(estimates[1].0 == "sentry")
-        #expect(estimates[1].1 == "Sentry stuff")
+        #expect(estimates[0].0 == "crash-review")
+        #expect(estimates[0].1 == "Crash review")
+        #expect(estimates[1].0 == "custom-skill")
+        #expect(estimates[1].1 == "No description available")
     }
 }

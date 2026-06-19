@@ -26,16 +26,15 @@ struct FullScreenReviewCommentHarnessView: UIViewControllerRepresentable {
 
 final class FullScreenReviewCommentHarnessViewController: UIViewController {
     private static let fixtureCode = """
-    ensure_debug_sentry_dsn() {
-      if [[ -n "${SENTRY_DSN:-}" ]]; then
+    ensure_debug_fixture_cache() {
+      local cache_root="${OPPI_FIXTURE_CACHE_DIR:-$TMPDIR/oppi-fixture-cache}"
+      mkdir -p "$cache_root"
+
+      if [[ -f "$cache_root/ready" ]]; then
         return
       fi
 
-      local sentry_dsn_file="${SENTRY_DSN_FILE:-$SENTRY_DSN_FILE_DEFAULT}"
-      if [[ -f "$sentry_dsn_file" ]]; then
-        SENTRY_DSN="$(<"$sentry_dsn_file")"
-        export SENTRY_DSN
-      fi
+      printf 'ready\n' > "$cache_root/ready"
     }
     """
 
@@ -265,7 +264,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             return
         }
         let text = (textView.attributedText?.string ?? textView.text ?? "") as NSString
-        var range = text.range(of: "local sentry_dsn_file")
+        var range = text.range(of: "local cache_root=\"${OPPI_FIXTURE_CACHE_DIR:-$TMPDIR/oppi-fixture-cache}\"")
         if range.location == NSNotFound {
             range = NSRange(location: 0, length: min(5, text.length))
         }

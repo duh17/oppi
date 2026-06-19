@@ -431,7 +431,7 @@ struct TimelineReducerEdgeCaseTests {
         reducer.process(.textDelta(sessionId: "s1", delta: "Let me look at the spans"))
         reducer.process(.toolStart(
             sessionId: "s1", toolEventId: "t1", tool: "bash",
-            args: ["command": "cd /sentry && run"]
+            args: ["command": "cd /workspace && run"]
         ))
         // messageEnd for the API message that contained text + tool_use
         reducer.process(.messageEnd(
