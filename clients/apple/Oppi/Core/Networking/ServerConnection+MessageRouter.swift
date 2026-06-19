@@ -459,18 +459,6 @@ extension ServerConnection {
 
     // MARK: - Stop Lifecycle
 
-    /// Returns true if the message is a stop lifecycle event.
-    /// Timeline effects (system events, coalescer agentEnd) are now handled
-    /// by ChatSessionManager.routeToTimeline(). This only checks the type.
-    func isStopLifecycleMessage(_ message: ServerMessage) -> Bool {
-        switch message {
-        case .stopRequested, .stopConfirmed, .stopFailed:
-            return true
-        default:
-            return false
-        }
-    }
-
     func updateStopStatus(
         _ sessionId: String,
         status: SessionStatus,
@@ -561,54 +549,6 @@ extension ServerConnection {
 
     // MARK: - Live Activity Sync
 
-    func handleLiveActivityFlush(_ events: [AgentEvent]) {
-        guard ReleaseFeatures.liveActivitiesEnabled else {
-            return
-        }
-
-        let relevantEvents = liveActivityRelevantEvents(from: events)
-        guard !relevantEvents.isEmpty else {
-            return
-        }
-
-        for event in relevantEvents {
-            LiveActivityManager.shared.recordEvent(
-                connectionId: liveActivityConnectionId,
-                event: event
-            )
-        }
-
-        syncLiveActivityState()
-    }
-
-    func liveActivityRelevantEvents(from events: [AgentEvent]) -> [AgentEvent] {
-        events.filter(isLiveActivityRelevant)
-    }
-
-    func isLiveActivityRelevant(_ event: AgentEvent) -> Bool {
-        switch event {
-        case .agentStart,
-             .agentEnd,
-             .toolStart,
-             .toolEnd,
-             .sessionEnded:
-            return true
-        case .error(_, let message):
-            return !message.hasPrefix("Retrying (")
-        case .textDelta,
-             .thinkingDelta,
-             .messageEnd,
-             .toolUpdate,
-             .toolOutput,
-             .compactionStart,
-             .compactionEnd,
-             .retryStart,
-             .retryEnd,
-             .commandResult:
-            return false
-        }
-    }
-
     func syncLiveActivityState() {
         guard ReleaseFeatures.liveActivitiesEnabled else {
             return
@@ -635,18 +575,6 @@ extension ServerConnection {
                 logger.warning("Model prefetch failed: \(error.localizedDescription)")
             }
         }
-    }
-
-    /// Force refresh the model cache (e.g. pull-to-refresh in picker).
-    func refreshModelCache() async {
-        guard let api = apiClient else { return }
-        await chatState.refreshModelCache(api: api)
-    }
-
-    // periphery:ignore - API surface for model cache management
-    /// Invalidate the model cache so next connect re-fetches.
-    func invalidateModelCache() {
-        chatState.resetModelCache()
     }
 
 }

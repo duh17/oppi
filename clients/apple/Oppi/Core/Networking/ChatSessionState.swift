@@ -97,12 +97,4 @@ final class ChatSessionState {
         fileSuggestions = []
         extensionEditorTextUpdate = nil
     }
-
-    /// Reset model cache (called on server disconnect/invalidation).
-    func resetModelCache() {
-        modelsCacheReady = false
-        cachedModels = []
-        modelPrefetchTask?.cancel()
-        modelPrefetchTask = nil
-    }
 }

@@ -20,21 +20,6 @@ struct ChatSessionStateTests {
         #expect(state.fileSuggestions.isEmpty)
     }
 
-    // MARK: - resetModelCache
-
-    @Test func resetModelCache_clearsModelsAndReadyFlag() {
-        let state = ChatSessionState()
-        state.cachedModels = [
-            ModelInfo(id: "m-1", name: "Model 1", provider: "anthropic", contextWindow: 200_000),
-        ]
-        state.modelsCacheReady = true
-
-        state.resetModelCache()
-
-        #expect(state.cachedModels.isEmpty)
-        #expect(!state.modelsCacheReady)
-    }
-
     // MARK: - refreshModelCache (integration-like, using real APIClient with bad URL)
 
     @Test func refreshModelCache_setsModelsAndReady_whenAPISucceeds() async {

@@ -285,7 +285,7 @@ final class ChatSessionManager {
         ) {
             workspaceIdHint = resolvedWorkspaceId
         }
-        connection.focusSession(sessionId, workspaceIdHint: workspaceIdHint)
+        connection.focusSession(sessionId)
         connection.fatalSetupError = false
         cancelAutoReconnect()
         cancelStateSync()

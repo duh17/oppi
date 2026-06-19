@@ -31,15 +31,6 @@ final class ServerConnection {
     private var focusedSessionStreamURL: URL?
     private(set) var transportPath: ConnectionTransportPath = .paired
 
-    /// True when the server can accept remote ASR dictation streams.
-    ///
-    /// `serverDictationAvailable` is normally learned from a focused session
-    /// stream bootstrap. Pre-session composers rely on `/server/info` stream
-    /// capabilities instead.
-    var serverDictationTransportAvailable: Bool {
-        serverDictationAvailable || dictationStreamAvailable
-    }
-
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
         if streamCapabilitiesRefreshFailed, streamCapabilitiesLoaded, missingRequiredSplitStreamCapabilities.isEmpty {
             return "ready:refreshFailed"
@@ -208,7 +199,6 @@ final class ServerConnection {
     /// Test seam: observe refresh events emitted by list refresh paths.
     var _onRefreshEventForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
 
-    // periphery:ignore - test seam used by ServerConnectionStreamTests via @testable import
     /// Test seam: replace WebSocket opening with a deterministic stream.
     var _connectStreamForTesting: (() -> AsyncStream<StreamFrameEvent>)?
 
@@ -237,18 +227,6 @@ final class ServerConnection {
     }
     /// Queued sheet-backed generic extension dialogs keyed by session id.
     var pendingExtensionDialogQueues: [String: [ExtensionUIRequest]] = [:]
-    /// Visible sheet-backed dialog per session, kept for existing callers/tests.
-    var pendingExtensionDialogs: [String: ExtensionUIRequest] {
-        get {
-            Dictionary(uniqueKeysWithValues: pendingExtensionDialogQueues.compactMap { entry in
-                guard let first = entry.value.first else { return nil }
-                return (entry.key, first)
-            })
-        }
-        set {
-            pendingExtensionDialogQueues = newValue.mapValues { [$0] }
-        }
-    }
     var pendingExtensionDialogRequests: [ExtensionUIRequest] {
         pendingExtensionDialogQueues.values.flatMap { $0 }
     }
@@ -653,20 +631,6 @@ final class ServerConnection {
     /// Preserves subscriptions so `reconnectIfNeeded()` can reopen on foreground.
     func prepareForBackground() {
         wsClient?.prepareForBackground()
-    }
-
-    /// Route a message from the active session stream to the appropriate session.
-    func routeStreamMessage(_ streamMessage: StreamMessage) {
-        routeStreamMessage(StreamFrameEvent(
-            sessionId: streamMessage.sessionId,
-            message: streamMessage.message,
-            meta: InboundStreamMeta(
-                seq: streamMessage.seq,
-                currentSeq: streamMessage.currentSeq,
-                receivedAtMs: Date.nowMs(),
-                transportPath: transportPath
-            )
-        ))
     }
 
     func routeStreamMessage(_ frameEvent: StreamFrameEvent) {
@@ -1076,7 +1040,7 @@ final class ServerConnection {
     /// Unlike `disconnectSession`, this does NOT close the previous session stream
     /// continuations or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
-    func focusSession(_ sessionId: String, workspaceIdHint: String? = nil) {
+    func focusSession(_ sessionId: String) {
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
@@ -1100,7 +1064,7 @@ final class ServerConnection {
     /// chat view's async connect loop is still spinning up its per-session timeline.
     func prepareForSessionReentry(_ sessionId: String, workspaceIdHint: String? = nil) {
         _onPrepareForSessionReentryForTesting?(sessionId)
-        focusSession(sessionId, workspaceIdHint: workspaceIdHint)
+        focusSession(sessionId)
 
         let session = sessionStore.session(id: sessionId)
         guard hasRequiredSplitStreamCapabilities,
