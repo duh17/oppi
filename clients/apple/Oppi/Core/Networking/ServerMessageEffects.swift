@@ -8,16 +8,6 @@ struct ServerMessageCleanupEffects: Equatable {
     var clearExtensionDialogRequestIds: Set<String> = []
     var clearExtensionSurfaceSessionIds: Set<String> = []
     var clearMessageQueueSessionIds: Set<String> = []
-
-    var isEmpty: Bool {
-        !stopSilenceWatchdog
-            && clearAskSessionIds.isEmpty
-            && clearAskRequestIds.isEmpty
-            && clearExtensionDialogSessionIds.isEmpty
-            && clearExtensionDialogRequestIds.isEmpty
-            && clearExtensionSurfaceSessionIds.isEmpty
-            && clearMessageQueueSessionIds.isEmpty
-    }
 }
 
 struct ServerMessageQueueEffects: Equatable {
@@ -40,10 +30,6 @@ struct ServerMessageUIEffects {
     var extensionRequest: ExtensionUIRequest?
     var extensionNotification: ExtensionUINotification?
     var isFocusedSession = false
-
-    var isEmpty: Bool {
-        extensionRequest == nil && extensionNotification == nil
-    }
 }
 
 enum ServerMessageEffects {

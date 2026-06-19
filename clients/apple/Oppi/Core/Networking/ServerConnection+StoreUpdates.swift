@@ -391,9 +391,8 @@ extension ServerConnection {
 
     /// Record Live Activity events for cross-session messages.
     ///
-    /// Cross-session events bypass the coalescer, so they must record
-    /// Live Activity events directly. Active-session events go through
-    /// `coalescer.onFlush → handleLiveActivityFlush` instead.
+    /// Cross-session events bypass the active-session state updates, so they
+    /// record Live Activity events directly.
     func recordCrossSessionLiveActivityEvent(
         _ message: ServerMessage,
         sessionId: String

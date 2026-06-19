@@ -38,39 +38,6 @@ struct ServerConnectionInvariantTests {
         #expect(scenario.firstSessionStatus() == beforeStatus)
         #expect(scenario.reducer.renderVersion == beforeRenderVersion)
     }
-
-    @Test func liveActivityFilterSkipsDeltaOnlyFlushes() {
-        let connection = ServerConnection()
-        let events: [AgentEvent] = [
-            .textDelta(sessionId: "s1", delta: "a"),
-            .thinkingDelta(sessionId: "s1", delta: "b"),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "chunk", isError: false),
-            .messageEnd(sessionId: "s1", content: "done"),
-        ]
-
-        #expect(connection.liveActivityRelevantEvents(from: events).isEmpty)
-    }
-
-    @Test func liveActivityFilterKeepsLifecycleEventsOnly() {
-        let connection = ServerConnection()
-        let events: [AgentEvent] = [
-            .textDelta(sessionId: "s1", delta: "ignore"),
-            .agentStart(sessionId: "s1"),
-            .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "chunk", isError: false),
-            .error(sessionId: "s1", message: "Retrying (attempt 1/3)"),
-            .error(sessionId: "s1", message: "boom"),
-            .sessionEnded(sessionId: "s1", reason: "done"),
-        ]
-
-        let relevant = connection.liveActivityRelevantEvents(from: events)
-        #expect(relevant.map(\.typeLabel) == [
-            "agentStart",
-            "toolStart",
-            "error",
-            "sessionEnded",
-        ])
-    }
 }
 
 private enum StopLifecycleEvent: CaseIterable {

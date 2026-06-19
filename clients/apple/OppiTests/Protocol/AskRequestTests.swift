@@ -598,12 +598,12 @@ struct AskRequestTests {
             let conn = ServerConnection()
             conn._setActiveSessionIdForTesting("active")
 
-            conn.pendingExtensionDialogs["s2"] = ExtensionUIRequest(
+            conn.pendingExtensionDialogQueues["s2"] = [ExtensionUIRequest(
                 id: "editor-stale",
                 sessionId: "s2",
                 method: "editor",
                 title: "Edit"
-            )
+            )]
 
             conn.routeStreamMessage(StreamMessage(
                 sessionId: "s2",
@@ -612,7 +612,7 @@ struct AskRequestTests {
                 message: message
             ))
 
-            #expect(conn.pendingExtensionDialogs["s2"] == nil)
+            #expect(conn.pendingExtensionDialogQueues["s2"] == nil)
 
             conn.focusSession("s2")
             #expect(conn.activeExtensionDialog == nil)

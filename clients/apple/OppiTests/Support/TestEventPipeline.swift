@@ -44,7 +44,7 @@ final class TestEventPipeline {
         let conn = connection
         guard conn.isFocusedSession(sessionId) else { return }
 
-        if conn.isStopLifecycleMessage(message) {
+        if Self.isStopLifecycleMessage(message) {
             let storeResult = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: storeResult)
             switch message {
@@ -157,5 +157,29 @@ final class TestEventPipeline {
             let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)
         }
+    }
+
+    private static func isStopLifecycleMessage(_ message: ServerMessage) -> Bool {
+        switch message {
+        case .stopRequested, .stopConfirmed, .stopFailed:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+extension ServerConnection {
+    func routeStreamMessage(_ streamMessage: StreamMessage) {
+        routeStreamMessage(StreamFrameEvent(
+            sessionId: streamMessage.sessionId,
+            message: streamMessage.message,
+            meta: InboundStreamMeta(
+                seq: streamMessage.seq,
+                currentSeq: streamMessage.currentSeq,
+                receivedAtMs: Date.nowMs(),
+                transportPath: transportPath
+            )
+        ))
     }
 }

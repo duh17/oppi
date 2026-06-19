@@ -267,6 +267,12 @@ struct ServerMessageEffectsTests {
             isFocusedSession: true
         )
 
-        #expect(effects.isEmpty)
+        #expect(!effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearAskRequestIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogRequestIds.isEmpty)
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 }

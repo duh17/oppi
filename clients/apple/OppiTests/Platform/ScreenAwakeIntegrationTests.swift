@@ -101,10 +101,8 @@ struct ScreenAwakeIntegrationTests {
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
 
         pipe.handle(.agentStart, sessionId: "s1")
-        let isStop = conn.isStopLifecycleMessage(.stopConfirmed(source: .user, reason: nil))
         pipe.handle(.stopConfirmed(source: .user, reason: nil), sessionId: "s1")
 
-        #expect(isStop)
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().contains(true))
         #expect(updates().last == false)

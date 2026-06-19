@@ -194,7 +194,7 @@ struct ReliabilityTests {
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
-        #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
+        #expect(conn.pendingExtensionDialogQueues["s1"]?.first?.id == "ext1")
     }
 
     @Test func extensionDialogQueuesNewRequestBehindActiveRequest() {
@@ -266,11 +266,11 @@ struct ReliabilityTests {
         )
         pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
-        #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
+        #expect(conn.pendingExtensionDialogQueues["s1"]?.first?.id == "ext1")
 
         conn.focusSession("s2")
         #expect(conn.activeExtensionDialog == nil)
-        #expect(conn.pendingExtensionDialogs["s1"]?.id == "ext1")
+        #expect(conn.pendingExtensionDialogQueues["s1"]?.first?.id == "ext1")
 
         conn.focusSession("s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
