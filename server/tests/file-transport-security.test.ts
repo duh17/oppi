@@ -33,10 +33,10 @@ class MockWritableResponse extends PassThrough {
   }
 }
 
-function makeWorkspace(root: string): Workspace {
+function makeWorkspace(root: string, id = "ws-1"): Workspace {
   return {
-    id: "ws-1",
-    name: "workspace",
+    id,
+    name: id === "ws-1" ? "workspace" : `workspace ${id}`,
     hostMount: root,
   } as Workspace;
 }
@@ -68,11 +68,17 @@ function makeHelpers(errors: Array<{ status: number; message: string }>): RouteH
   };
 }
 
-function makeContext(workspace: Workspace, session: Session): RouteContext {
+function makeContext(
+  workspace: Workspace,
+  session: Session,
+  extraWorkspaces: Workspace[] = [],
+): RouteContext {
+  const workspaces = [workspace, ...extraWorkspaces];
   return {
     storage: {
-      getWorkspace: (workspaceId: string) => (workspaceId === workspace.id ? workspace : undefined),
+      getWorkspace: (workspaceId: string) => workspaces.find((item) => item.id === workspaceId),
       getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
+      listWorkspaces: () => workspaces,
     },
   } as unknown as RouteContext;
 }
@@ -306,7 +312,46 @@ describe("file transport security parity", () => {
     expect(res.body).toHaveLength(0);
   });
 
-  it("blocks session raw reads outside the workspace even when changeStats contains an absolute path", async () => {
+  it("serves session raw reads from another registered workspace", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
+    const otherRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-other-"));
+    const otherFile = join(otherRoot, "release-lanes.md");
+    writeFileSync(otherFile, "other workspace\n", "utf8");
+
+    try {
+      const workspace = makeWorkspace(root);
+      const otherWorkspace = makeWorkspace(otherRoot, "ws-2");
+      const session = makeSession({
+        changeStats: {
+          changedFiles: [otherFile],
+          filesChanged: 1,
+        } as Session["changeStats"],
+      });
+      const errors: Array<{ status: number; message: string }> = [];
+      const handlers = createSessionFileHandlers(
+        makeContext(workspace, session, [otherWorkspace]),
+        makeHelpers(errors),
+      );
+
+      const rawRes = new MockWritableResponse();
+      const rawFinished = once(rawRes, "finish");
+      await handlers.handleGetSessionRaw(
+        "ws-1",
+        "sess-1",
+        otherFile,
+        rawRes as unknown as ServerResponse,
+      );
+      await rawFinished;
+
+      expect(errors).toEqual([]);
+      expect(rawRes.statusCode).toBe(200);
+      expect(rawRes.body.toString("utf8")).toBe("other workspace\n");
+    } finally {
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks session raw reads outside configured workspaces", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-outside-"));
     const outsideFile = join(outsideRoot, "outside.txt");
@@ -333,7 +378,7 @@ describe("file transport security parity", () => {
         new MockWritableResponse() as unknown as ServerResponse,
       );
 
-      expect(errors).toEqual([{ status: 403, message: "Path outside workspace" }]);
+      expect(errors).toEqual([{ status: 403, message: "Path outside configured workspaces" }]);
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }

@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 
 import { isPathWithinRoot } from "../git-utils.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import type { Workspace } from "../types.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
 import {
   getContentType,
@@ -132,16 +133,14 @@ export function createSessionFileHandlers(
       return;
     }
 
-    let realWorkspaceRoot: string;
-    try {
-      realWorkspaceRoot = await realpath(resolveSdkSessionCwd(workspace));
-    } catch {
+    const readableWorkspaceRoots = await resolveReadableWorkspaceRoots(ctx, workspace);
+    if (readableWorkspaceRoots.length === 0) {
       helpers.error(res, 404, "Workspace root not found");
       return;
     }
 
-    if (!isPathWithinRoot(resolvedPath, realWorkspaceRoot)) {
-      helpers.error(res, 403, "Path outside workspace");
+    if (!readableWorkspaceRoots.some((root) => isPathWithinRoot(resolvedPath, root))) {
+      helpers.error(res, 403, "Path outside configured workspaces");
       return;
     }
 
@@ -183,4 +182,30 @@ export function createSessionFileHandlers(
     handleListSessionChanges,
     handleGetSessionRaw,
   };
+}
+
+async function resolveReadableWorkspaceRoots(
+  ctx: RouteContext,
+  currentWorkspace: Workspace,
+): Promise<string[]> {
+  const roots: string[] = [];
+  const workspaces = [
+    currentWorkspace,
+    ...ctx.storage.listWorkspaces().filter((workspace) => workspace.id !== currentWorkspace.id),
+  ];
+
+  for (const workspace of workspaces) {
+    let realWorkspaceRoot: string;
+    try {
+      realWorkspaceRoot = await realpath(resolveSdkSessionCwd(workspace));
+    } catch {
+      continue;
+    }
+
+    if (!roots.includes(realWorkspaceRoot)) {
+      roots.push(realWorkspaceRoot);
+    }
+  }
+
+  return roots;
 }
