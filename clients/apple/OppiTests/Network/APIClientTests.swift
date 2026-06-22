@@ -113,6 +113,42 @@ struct APIClientTests {
 
     // MARK: - Sessions
 
+    @Test func searchSessionsUsesQueryItemsAndDecodesResults() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            #expect(components?.path == "/sessions/search")
+            #expect(components?.queryItems?.first(where: { $0.name == "q" })?.value == "launch bug")
+            #expect(components?.queryItems?.first(where: { $0.name == "workspaceId" })?.value == "ws-1")
+            #expect(components?.queryItems?.first(where: { $0.name == "limit" })?.value == "7")
+            return self.mockResponse(json: """
+            {
+              "results": [
+                {
+                  "sessionId": "sess-1",
+                  "workspaceId": "ws-1",
+                  "title": "Launch bug",
+                  "snippet": "Fixed <b>launch</b> flash",
+                  "rank": 0.25,
+                  "session": null
+                }
+              ],
+              "query": "launch bug",
+              "totalResults": 1
+            }
+            """)
+        }
+
+        let response = try await client.searchSessions(query: "launch bug", workspaceId: "ws-1", limit: 7)
+
+        #expect(response.query == "launch bug")
+        #expect(response.totalResults == 1)
+        #expect(response.results.map(\.sessionId) == ["sess-1"])
+        #expect(response.results.first?.snippet == "Fixed <b>launch</b> flash")
+    }
+
     @Test func listRecentWorkspaceSessionSummariesUsesAggregatedEndpoint() async throws {
         let client = makeClient()
         defer { cleanup() }
