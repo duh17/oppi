@@ -419,7 +419,7 @@ struct WorkspaceDetailView: View {
                     ContentUnavailableView(
                         "No Sessions",
                         systemImage: "terminal",
-                        description: Text("Tap + to start a new session. Long press for incognito.")
+                        description: Text("Tap the compose button to start a new session. Long press for incognito.")
                     )
                     .listRowBackground(Color.themeBg)
                 }
@@ -686,6 +686,7 @@ struct WorkspaceDetailView: View {
                 Label("Incognito Session", systemImage: "eye.slash")
             }
         }
+        .accessibilityLabel("New Session")
         .accessibilityIdentifier("workspace.newSession")
         .disabled(isCreating)
     }
