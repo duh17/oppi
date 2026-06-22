@@ -2,7 +2,7 @@ import type { ServerResponse } from "node:http";
 import { createReadStream } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import { isPathWithinRoot } from "../git-utils.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
@@ -140,8 +140,17 @@ export function createSessionFileHandlers(
     }
 
     if (!readableWorkspaceRoots.some((root) => isPathWithinRoot(resolvedPath, root))) {
-      helpers.error(res, 403, "Path outside configured workspaces");
-      return;
+      const sessionCreatedFiles = session.changeStats?._sessionCreatedFiles ?? [];
+      const isSessionCreatedTempFile =
+        sessionCreatedFiles.includes(reqPath) &&
+        (await resolveReadableSessionTempRoots()).some((root) =>
+          isPathWithinRoot(resolvedPath, root),
+        );
+
+      if (!isSessionCreatedTempFile) {
+        helpers.error(res, 403, "Path outside configured workspaces");
+        return;
+      }
     }
 
     let fileStat: Awaited<ReturnType<typeof stat>>;
@@ -202,10 +211,29 @@ async function resolveReadableWorkspaceRoots(
       continue;
     }
 
-    if (!roots.includes(realWorkspaceRoot)) {
-      roots.push(realWorkspaceRoot);
+    addUniquePath(roots, realWorkspaceRoot);
+  }
+
+  return roots;
+}
+
+async function resolveReadableSessionTempRoots(): Promise<string[]> {
+  const candidates = [tmpdir(), "/tmp", "/private/tmp", "/var/tmp"];
+  const roots: string[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      addUniquePath(roots, await realpath(candidate));
+    } catch {
+      continue;
     }
   }
 
   return roots;
+}
+
+function addUniquePath(paths: string[], path: string): void {
+  if (!paths.includes(path)) {
+    paths.push(path);
+  }
 }
