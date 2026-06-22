@@ -127,6 +127,37 @@ struct LogBufferTests {
         #expect(pm.logBuffer[0].stream == .stdout)
         #expect(pm.logBuffer[1].stream == .stderr)
     }
+
+    @Test func persistentLogRotatesWhileRunning() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("oppi-server-log-rotation-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            ServerProcessManager._setLogFilePathForTesting(nil)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let logPath = root.appendingPathComponent("server.log").path
+        let rotatedPath = "\(logPath).1"
+        ServerProcessManager._setLogFilePathForTesting(logPath)
+
+        let pm = ServerProcessManager()
+        pm._openLogFileForTesting()
+        let chunkSize = Int(ServerProcessManager._maxLogFileSizeForTesting / 2) + 1_024
+        let chunk = String(repeating: "x", count: chunkSize)
+
+        pm._writeToLogFileForTesting(chunk)
+        pm._writeToLogFileForTesting(chunk)
+        pm._closeLogFileForTesting()
+
+        #expect(FileManager.default.fileExists(atPath: logPath))
+        #expect(FileManager.default.fileExists(atPath: rotatedPath))
+
+        let currentSize = try FileManager.default.attributesOfItem(atPath: logPath)[.size] as? UInt64
+        let rotatedSize = try FileManager.default.attributesOfItem(atPath: rotatedPath)[.size] as? UInt64
+        #expect((currentSize ?? 0) <= ServerProcessManager._maxLogFileSizeForTesting)
+        #expect((rotatedSize ?? 0) <= ServerProcessManager._maxLogFileSizeForTesting)
+    }
 }
 
 // MARK: - Path resolution

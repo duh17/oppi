@@ -50,6 +50,15 @@ final class ServerProcessManager {
 
     /// Test-only: inject log lines for buffer cap / clear testing.
     func _appendLogLinesForTesting(_ lines: [LogLine]) { appendLogLines(lines) }
+
+    /// Test-only: redirect persistent server logs away from the user's data dir.
+    static func _setLogFilePathForTesting(_ path: String?) { logFilePathOverrideForTesting = path }
+
+    /// Test-only: exercise persistent log rotation without spawning a process.
+    func _openLogFileForTesting() { openLogFile() }
+    func _writeToLogFileForTesting(_ text: String) { writeToLogFile(text, stream: .stdout) }
+    func _closeLogFileForTesting() { closeLogFile() }
+    static var _maxLogFileSizeForTesting: UInt64 { maxLogFileSize }
     #endif
 
     // MARK: - Configuration
@@ -64,11 +73,16 @@ final class ServerProcessManager {
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private var logFileHandle: FileHandle?
+    private var logFileSize: UInt64 = 0
     private var restartAttempts = 0
     private var isIntentionalStop = false
 
     /// Maximum size for the persistent log file before rotation (5 MB).
     private static let maxLogFileSize: UInt64 = 5 * 1024 * 1024
+
+    #if DEBUG
+    private static var logFilePathOverrideForTesting: String?
+    #endif
 
     // MARK: - Path resolution
 
@@ -562,12 +576,15 @@ final class ServerProcessManager {
 
     /// Path to the persistent server log file.
     static var logFilePath: String {
-        NSString("~/.config/oppi/server.log").expandingTildeInPath
+        #if DEBUG
+        if let override = logFilePathOverrideForTesting { return override }
+        #endif
+        return NSString("~/.config/oppi/server.log").expandingTildeInPath
     }
 
     /// Path to the rotated (previous) log file.
     private static var rotatedLogFilePath: String {
-        NSString("~/.config/oppi/server.log.1").expandingTildeInPath
+        "\(logFilePath).1"
     }
 
     /// Open (or rotate + reopen) the persistent log file.
@@ -596,27 +613,73 @@ final class ServerProcessManager {
             return
         }
         handle.seekToEndOfFile()
-
-        // Write a separator for this run
-        let header = "\n--- server start \(ISO8601DateFormatter().string(from: Date())) ---\n"
-        if let data = header.data(using: .utf8) {
-            handle.write(data)
-        }
-
+        logFileSize = (try? fm.attributesOfItem(atPath: path)[.size] as? UInt64) ?? 0
         logFileHandle = handle
+
+        writeLogFileHeader("server start")
     }
 
     /// Close the persistent log file.
     private func closeLogFile() {
         try? logFileHandle?.close()
         logFileHandle = nil
+        logFileSize = 0
+    }
+
+    private func writeLogFileHeader(_ label: String) {
+        let header = "\n--- \(label) \(ISO8601DateFormatter().string(from: Date())) ---\n"
+        guard let data = header.data(using: .utf8) else { return }
+        logFileHandle?.write(data)
+        logFileSize += UInt64(data.count)
+    }
+
+    private func persistentLogData(for text: String) -> Data? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        guard data.count <= Self.maxLogFileSize else {
+            let suffixByteCount = Int(Self.maxLogFileSize / 2)
+            let notice = "\n--- log chunk truncated: \(data.count) bytes exceeded \(Self.maxLogFileSize) byte file cap ---\n"
+            var truncated = Data(notice.utf8)
+            truncated.append(contentsOf: data.suffix(suffixByteCount))
+            return truncated
+        }
+        return data
+    }
+
+    private func rotateLogFileIfNeeded(additionalBytes: UInt64) {
+        guard logFileSize + additionalBytes > Self.maxLogFileSize else { return }
+
+        try? logFileHandle?.close()
+        logFileHandle = nil
+
+        let path = Self.logFilePath
+        let rotated = Self.rotatedLogFilePath
+        let fm = FileManager.default
+        try? fm.removeItem(atPath: rotated)
+        if fm.fileExists(atPath: path) {
+            try? fm.moveItem(atPath: path, toPath: rotated)
+        }
+        if !fm.fileExists(atPath: path) {
+            fm.createFile(atPath: path, contents: nil)
+        }
+        guard let handle = FileHandle(forWritingAtPath: path) else {
+            logFileSize = 0
+            logger.error("Failed to reopen server log file at \(path)")
+            return
+        }
+        handle.seekToEndOfFile()
+        logFileHandle = handle
+        logFileSize = 0
+        writeLogFileHeader("server log rotated")
+        logger.warning("Rotated server log while running")
     }
 
     /// Write raw text to the persistent log file.
     private func writeToLogFile(_ text: String, stream: Stream) {
-        guard let handle = logFileHandle,
-              let data = text.data(using: .utf8) else { return }
+        guard let data = persistentLogData(for: text) else { return }
+        rotateLogFileIfNeeded(additionalBytes: UInt64(data.count))
+        guard let handle = logFileHandle else { return }
         handle.write(data)
+        logFileSize += UInt64(data.count)
     }
 
     // MARK: - Pipe handling
