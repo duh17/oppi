@@ -67,6 +67,57 @@ function normalizeAudioPresentationDetails(details: unknown): unknown {
   };
 }
 
+/**
+ * Swift's JSONDecoder rejects unpaired UTF-16 surrogate escapes even though
+ * JavaScript can hold them in strings and JSON.stringify will emit them.
+ * Trace text includes arbitrary tool/web output, so normalize it at the
+ * mobile trace boundary instead of making every API serializer mutate data.
+ */
+export function replaceUnpairedSurrogates(value: string): string {
+  let output = "";
+  let changed = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        output += value[index] ?? "";
+        output += value[index + 1] ?? "";
+        index += 1;
+      } else {
+        output += "\uFFFD";
+        changed = true;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      output += "\uFFFD";
+      changed = true;
+    } else {
+      output += value[index] ?? "";
+    }
+  }
+
+  return changed ? output : value;
+}
+
+function normalizeTraceValueForMobile(value: unknown): unknown {
+  if (typeof value === "string") return replaceUnpairedSurrogates(value);
+  if (Array.isArray(value)) return value.map(normalizeTraceValueForMobile);
+  const record = asRecord(value);
+  if (!record) return value;
+
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entryValue]) => [
+      replaceUnpairedSurrogates(key),
+      normalizeTraceValueForMobile(entryValue),
+    ]),
+  );
+}
+
+function normalizeTraceEventsForMobile(events: TraceEvent[]): TraceEvent[] {
+  return events.map((event) => normalizeTraceValueForMobile(event) as TraceEvent);
+}
+
 // ─── Trace Event Types ───
 
 export interface TraceEvent {
@@ -357,7 +408,7 @@ export function buildSessionContext(
     }
   }
 
-  return events;
+  return normalizeTraceEventsForMobile(events);
 }
 
 function formatCompactionEvent(entry: SessionEntry): TraceEvent {

@@ -8,7 +8,12 @@ import {
   materializeToolAudioDetails,
   materializeToolMediaContentBlocks,
 } from "../src/session-attachments.js";
-import { parseJsonl, readSessionTrace, buildSessionContext } from "../src/trace.js";
+import {
+  parseJsonl,
+  readSessionTrace,
+  buildSessionContext,
+  replaceUnpairedSurrogates,
+} from "../src/trace.js";
 
 // ─── parseJsonl unit tests ───
 
@@ -57,6 +62,44 @@ describe("parseJsonl", () => {
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("assistant");
     expect(events[0].text).toBe("Plain string reply");
+  });
+
+  it("normalizes unpaired surrogate text in mobile trace events", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "msg-bad-surrogate",
+      timestamp: "2026-01-01T00:00:01Z",
+      message: { role: "assistant", content: [{ type: "text", text: "broken \uD83D... ok 😀" }] },
+    });
+
+    const events = parseJsonl(jsonl);
+    const body = JSON.stringify({ trace: events });
+
+    expect(events[0].text).toBe("broken �... ok 😀");
+    expect(body).not.toContain("\\ud83d...");
+  });
+
+  it("normalizes unpaired surrogate object keys in mobile trace events", () => {
+    const badKey = "bad\uD83Dkey";
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "msg-bad-surrogate-key",
+      timestamp: "2026-01-01T00:00:01Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tc-1", name: "bash", arguments: { [badKey]: "ok" } }],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    const body = JSON.stringify({ trace: events });
+
+    expect(events[0].args).toEqual({ "bad�key": "ok" });
+    expect(body).not.toContain("\\ud83d");
+  });
+
+  it("preserves valid surrogate pairs when normalizing trace text", () => {
+    expect(replaceUnpairedSurrogates("ok 😀")).toBe("ok 😀");
   });
 
   it("parses thinking blocks", () => {
