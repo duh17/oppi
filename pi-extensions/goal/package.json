@@ -1,0 +1,42 @@
+{
+  "name": "oppi-goal",
+  "version": "0.1.0",
+  "description": "Pi extension that provides Codex-style durable goals and autonomous continuation turns.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi",
+    "goal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "pi-extensions/goal"
+  },
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/goal#readme",
+  "files": [
+    "extensions/",
+    "index.ts",
+    "README.md",
+    "package.json"
+  ],
+  "dependencies": {
+    "typebox": "1.1.28"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/goal.ts"
+    ]
+  }
+}
