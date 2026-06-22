@@ -37,6 +37,7 @@ struct ChatInputBar<ActionRow: View>: View {
     var pendingReviewCommentCount: Int = 0
     var onReviewCommentsTap: (() -> Void)? = nil
     var placeholderOverride: String? = nil
+    var allowsEmptySubmit = false
     let sendProgressText: String?
     let isStopping: Bool
     var voiceInputManager: VoiceInputManager?
@@ -121,11 +122,13 @@ struct ChatInputBar<ActionRow: View>: View {
             return pendingAskSendTransition != nil
         }
 
-        let hasImages = pendingAttachments.contains { $0.source == .image }
-        let hasFiles = pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty
-        let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasReviewComments = pendingReviewCommentCount > 0
-        return hasText || hasImages || hasFiles || hasReviewComments
+        return Self.canSubmitMessage(
+            allowsEmptySubmit: allowsEmptySubmit,
+            text: composerDisplayText,
+            hasImages: pendingAttachments.contains { $0.source == .image },
+            hasFiles: pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty,
+            hasReviewComments: pendingReviewCommentCount > 0
+        )
     }
 
     private var activeAskQuestionID: String? {
@@ -778,6 +781,17 @@ struct ChatInputBar<ActionRow: View>: View {
 
     static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {
         showsExpandButton ? 10 : 0
+    }
+
+    static func canSubmitMessage(
+        allowsEmptySubmit: Bool,
+        text: String,
+        hasImages: Bool,
+        hasFiles: Bool,
+        hasReviewComments: Bool
+    ) -> Bool {
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return allowsEmptySubmit || hasText || hasImages || hasFiles || hasReviewComments
     }
 
     static func allowKeyboardRestoreOnTap(voiceState _: VoiceInputManager.State) -> Bool {
