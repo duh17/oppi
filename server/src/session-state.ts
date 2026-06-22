@@ -26,6 +26,10 @@ export function composeModelId(provider: string, modelId: string): string {
   return modelId.startsWith(`${provider}/`) ? modelId : `${provider}/${modelId}`;
 }
 
+function isTerminalSessionStatus(status: Session["status"]): boolean {
+  return status === "stopped" || status === "error";
+}
+
 export class SessionStateCoordinator {
   constructor(private readonly deps: SessionStateCoordinatorDeps) {}
 
@@ -158,6 +162,20 @@ export class SessionStateCoordinator {
 
     // Pi owns thinking defaults and per-session thinking changes. Oppi mirrors
     // the current value on Session only so clients can render the toolbar.
+
+    const runtimeBusy = state.isStreaming === true || state.isCompacting === true;
+    const runtimeIdle = state.isStreaming === false && state.isCompacting === false;
+    if (!isTerminalSessionStatus(session.status) && session.status !== "stopping") {
+      if (runtimeBusy && session.status !== "busy") {
+        session.status = "busy";
+        session.currentTurnStartedAt = session.currentTurnStartedAt ?? Date.now();
+        changed = true;
+      } else if (runtimeIdle && session.status === "busy") {
+        session.status = "ready";
+        session.currentTurnStartedAt = undefined;
+        changed = true;
+      }
+    }
 
     return changed;
   }

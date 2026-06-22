@@ -257,6 +257,39 @@ describe("turn delivery idempotency", () => {
     expect(asTurnAcks(events)).toHaveLength(0);
   });
 
+  it("treats SDK streaming as busy when stored session status is stale ready", async () => {
+    const { manager, events, prompt, session, sdkBackend } = makeManagerHarness("ready");
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await expect(
+      manager.sendPrompt("s1", "continue", {
+        clientTurnId: "turn-stale-ready",
+        requestId: "req-stale-ready",
+        timestamp: 1,
+      }),
+    ).rejects.toThrow("Prompt requires an idle session");
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(session.messageCount).toBe(0);
+    expect(session.lastMessage).toBeUndefined();
+    expect(asTurnAcks(events)).toHaveLength(0);
+  });
+
+  it("allows follow-up delivery when SDK is streaming but stored status is stale ready", async () => {
+    const { manager, prompt, sdkBackend } = makeManagerHarness("ready");
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await manager.sendFollowUp("s1", "continue", {
+      clientTurnId: "turn-follow-up-stale-ready",
+      requestId: "req-follow-up-stale-ready",
+    });
+
+    expect(prompt).toHaveBeenCalledWith("continue", {
+      images: undefined,
+      streamingBehavior: "followUp",
+    });
+  });
+
   it("rejects compact and navigate_tree while session is busy", async () => {
     const { manager, events, sdkBackend } = makeManagerHarness("busy");
 

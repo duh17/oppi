@@ -155,6 +155,25 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
     expect(session.thinkingLevel).toBe("high");
   });
 
+  it("marks a ready session busy when the SDK is still streaming", () => {
+    const session = makeSession({ status: "ready" });
+
+    const changed = applySnapshot(session, { isStreaming: true });
+
+    expect(changed).toBe(true);
+    expect(session.status).toBe("busy");
+    expect(session.currentTurnStartedAt).toEqual(expect.any(Number));
+  });
+
+  it("does not revive terminal sessions from a streaming SDK snapshot", () => {
+    const session = makeSession({ status: "stopped" });
+
+    const changed = applySnapshot(session, { isStreaming: true });
+
+    expect(changed).toBe(false);
+    expect(session.status).toBe("stopped");
+  });
+
   it("only mirrors Pi thinking level on state snapshot", () => {
     const session = makeSession({ model: "anthropic/claude-sonnet-4-0" });
 

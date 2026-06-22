@@ -72,6 +72,7 @@ export interface PiStateSnapshot {
   };
   thinkingLevel?: string;
   isStreaming?: boolean;
+  isCompacting?: boolean;
   autoCompaction?: boolean;
 }
 
@@ -96,6 +97,7 @@ export function parsePiStateSnapshot(raw: unknown): PiStateSnapshot | null {
       : undefined,
     thinkingLevel: asString(record.thinkingLevel),
     isStreaming: asBoolean(record.isStreaming),
+    isCompacting: asBoolean(record.isCompacting),
     autoCompaction: asBoolean(record.autoCompaction),
   };
 }
