@@ -10,6 +10,10 @@ import {
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
+  sdkBackend?: {
+    isStreaming?: boolean;
+    isCompacting?: boolean;
+  };
 }
 
 const log = createLogger({ base: { component: "session_input" } });
@@ -69,6 +73,14 @@ export class SessionInputCoordinator {
 
   constructor(private readonly deps: SessionInputCoordinatorDeps) {
     this.uploadStoreConfig = deps.uploadStoreConfig ?? resolveUploadStoreConfig(deps.config);
+  }
+
+  private isRuntimeBusy(active: SessionInputSessionState): boolean {
+    return (
+      active.session.status === "busy" ||
+      active.sdkBackend?.isStreaming === true ||
+      active.sdkBackend?.isCompacting === true
+    );
   }
 
   private async prepareMessageWithAttachments(
@@ -137,8 +149,10 @@ export class SessionInputCoordinator {
       streamingBehavior: opts?.streamingBehavior,
     };
 
+    const runtimeBusy = this.isRuntimeBusy(active);
+
     if (
-      active.session.status === "busy" &&
+      runtimeBusy &&
       !opts?.streamingBehavior &&
       !this.deps.turnCoordinator.isDuplicateTurnIntent(
         active,
@@ -199,7 +213,7 @@ export class SessionInputCoordinator {
     }
 
     // If agent is busy, add streaming behavior
-    if (active.session.status === "busy" && opts?.streamingBehavior) {
+    if (runtimeBusy && opts?.streamingBehavior) {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 
@@ -225,7 +239,7 @@ export class SessionInputCoordinator {
     }
     this.deps.turnCoordinator.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
 
-    if (active.session.status === "busy" && opts?.streamingBehavior) {
+    if (runtimeBusy && opts?.streamingBehavior) {
       const kind = opts.streamingBehavior === "steer" ? "steer" : "follow_up";
       this.deps.enqueueQueuedMessage?.(
         key,
@@ -280,7 +294,7 @@ export class SessionInputCoordinator {
       throw new Error(`Session not active: ${key}`);
     }
 
-    if (active.session.status !== "busy") {
+    if (!this.isRuntimeBusy(active)) {
       const label = kind === "steer" ? "Steer" : "Follow-up";
       throw new Error(
         this.deps.streamingInputBusyErrorMessage?.(kind) ??

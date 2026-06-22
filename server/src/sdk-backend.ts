@@ -845,6 +845,7 @@ export class SdkBackend {
       model: m ? { provider: m.provider, id: m.id, name: m.name } : undefined,
       thinkingLevel: this.piSession.thinkingLevel,
       isStreaming: this.piSession.isStreaming,
+      isCompacting: this.piSession.isCompacting,
       autoCompaction: this.piSession.autoCompactionEnabled,
     };
   }
@@ -855,6 +856,10 @@ export class SdkBackend {
 
   get isStreaming(): boolean {
     return this.piSession.isStreaming;
+  }
+
+  get isCompacting(): boolean {
+    return this.piSession.isCompacting;
   }
 
   private startShutdownCleanup(): Promise<void> {
