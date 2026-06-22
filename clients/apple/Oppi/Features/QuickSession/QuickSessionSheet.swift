@@ -96,7 +96,8 @@ struct QuickSessionSheet: View {
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
                 onSend: handleSend,
                 onModelTap: { showModelPicker = true },
-                onThinkingSelect: selectThinkingLevel
+                onThinkingSelect: selectThinkingLevel,
+                allowsEmptySubmit: true
             )
         }
         .task {
@@ -127,6 +128,7 @@ struct QuickSessionSheet: View {
                 isBusy: false,
                 busyStreamingBehavior: $busyStreamingBehavior,
                 isSending: isCreating,
+                allowsEmptySubmit: true,
                 sendProgressText: nil,
                 isStopping: false,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
@@ -417,11 +419,12 @@ struct QuickSessionSheet: View {
                 logger.notice("Quick session created: \(session.id, privacy: .public) in workspace \(workspace.name, privacy: .public)")
 
                 // Single atomic write — ContentView.onDismiss unpacks.
+                let shouldAutoSend = !transportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
                 nav.pendingQuickSessionNav = QuickSessionNav(
                     target: WorkspaceNavTarget(serverId: serverId, workspace: workspace),
                     sessionId: session.id,
-                    autoSendMessage: transportText,
-                    autoSendAttachments: pendingAttachments
+                    autoSendMessage: shouldAutoSend ? transportText : nil,
+                    autoSendAttachments: shouldAutoSend ? pendingAttachments : nil
                 )
 
                 dismiss()

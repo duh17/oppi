@@ -306,6 +306,35 @@ struct ChatInputBarTests {
         #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
     }
 
+    @Test("Empty submit is opt-in")
+    func emptySubmitIsOptIn() {
+        #expect(!ChatInputBar<EmptyView>.canSubmitMessage(
+            allowsEmptySubmit: false,
+            text: "   ",
+            hasImages: false,
+            hasFiles: false,
+            hasReviewComments: false
+        ))
+        #expect(ChatInputBar<EmptyView>.canSubmitMessage(
+            allowsEmptySubmit: true,
+            text: "   ",
+            hasImages: false,
+            hasFiles: false,
+            hasReviewComments: false
+        ))
+    }
+
+    @Test("Non-empty submit stays enabled")
+    func nonEmptySubmitStaysEnabled() {
+        #expect(ChatInputBar<EmptyView>.canSubmitMessage(
+            allowsEmptySubmit: false,
+            text: "hello",
+            hasImages: false,
+            hasFiles: false,
+            hasReviewComments: false
+        ))
+    }
+
     @Test("Ask with custom input updates the composer placeholder")
     func askWithCustomInputUpdatesComposerPlaceholder() {
         let request = AskRequest(
