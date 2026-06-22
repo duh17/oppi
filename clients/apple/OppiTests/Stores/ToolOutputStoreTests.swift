@@ -136,7 +136,24 @@ struct ToolOutputStoreTests {
         let store = ToolOutputStore()
         let oversized = String(repeating: "x", count: ToolOutputStore.totalCap + 1_000)
         store.replace(oversized, for: "t1")
+
         #expect(store.fullOutput(for: "t1") == oversized)
+        #expect(store.outputByteCount(for: "t1") == oversized.utf8.count)
+        #expect(store.hasCompleteOutput(for: "t1"))
+        #expect(!store.hasPreviewOnlyOutput(for: "t1"))
+    }
+
+    @Test func fullReplaceAfterPreviewStoresCompleteLargeOutputIntact() {
+        let store = ToolOutputStore()
+        let fullOutput = String(repeating: "# Heading\n\nBody paragraph.\n", count: 80_000)
+
+        store.replace("tail preview", for: "t1", previewOnly: true, totalBytes: fullOutput.utf8.count)
+        store.replace(fullOutput, for: "t1")
+
+        #expect(store.fullOutput(for: "t1") == fullOutput)
+        #expect(store.outputByteCount(for: "t1") == fullOutput.utf8.count)
+        #expect(store.hasCompleteOutput(for: "t1"))
+        #expect(!store.hasPreviewOnlyOutput(for: "t1"))
     }
 
     @Test func replacePreviewTracksReportedByteCountSeparatelyFromStoredBytes() {

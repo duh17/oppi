@@ -287,6 +287,56 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
+    @Test func unchangedStoppedFreshTraceFinalizesOpenToolLoadedFromRunningCache() async {
+        let sessionId = "unchanged-stopped-tool-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let toolId = "tool-without-result"
+        let openToolTrace = [
+            TraceEvent(
+                id: toolId,
+                type: .toolCall,
+                timestamp: "2026-02-11T00:00:00Z",
+                tool: "read",
+                args: ["path": .string("README.md")]
+            ),
+        ]
+
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (makeTestSession(id: sessionId, workspaceId: workspaceId, status: .stopped), openToolTrace)
+        }
+
+        await TimelineCache.shared.saveTrace(sessionId, events: openToolTrace)
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)))
+
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                guard case .toolCall(let id, _, _, let preview, _, let isError, let isDone) = manager.reducer.items.first else {
+                    return false
+                }
+                return id == toolId && isDone && isError && preview.contains("stopped before returning")
+            }
+        })
+
+        streams.finish(index: 0)
+        await connectTask.value
+        await TimelineCache.shared.removeTrace(sessionId)
+    }
+
     /// With per-session reducers, each connect() resets the reducer and
     /// loads from cache. Verify that cache loads correctly on reconnect.
     @Test func reconnectLoadsFromCache() async {

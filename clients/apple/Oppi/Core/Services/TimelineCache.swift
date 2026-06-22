@@ -38,6 +38,12 @@ actor TimelineCache {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
+    /// Avoid MetricKit disk-write exceptions from caching very large active traces.
+    private static let maxTraceCacheBytes = 8 * 1024 * 1024
+
+    // periphery:ignore - lets tests build an oversized fixture from the production cap
+    static var maxTraceCacheBytesForTesting: Int { maxTraceCacheBytes }
+
     // Telemetry (best-effort, process-local)
     private var hitCount = 0
     private var missCount = 0
@@ -88,16 +94,35 @@ actor TimelineCache {
     }
 
     func saveTrace(_ sessionId: String, events: [TraceEvent]) {
-        let cached = CachedTrace(
-            sessionId: sessionId,
-            eventCount: events.count,
-            lastEventId: events.last?.id,
-            savedAt: Date(),
-            events: events
-        )
         do {
+            let url = traceURL(sessionId)
+            if let existingData = try? Data(contentsOf: url),
+               let existing = try? decoder.decode(CachedTrace.self, from: existingData),
+               existing.events == events {
+                logger.debug("Cache unchanged: trace for \(sessionId) (\(events.count) events, \(existingData.count) bytes)")
+                return
+            }
+
+            let estimatedBytes = estimatedTracePayloadBytes(events)
+            guard estimatedBytes <= Self.maxTraceCacheBytes else {
+                removeOversizedTraceCache(url: url, sessionId: sessionId, eventCount: events.count, bytes: estimatedBytes)
+                return
+            }
+
+            let cached = CachedTrace(
+                sessionId: sessionId,
+                eventCount: events.count,
+                lastEventId: events.last?.id,
+                savedAt: Date(),
+                events: events
+            )
             let data = try encoder.encode(cached)
-            try data.write(to: traceURL(sessionId), options: .atomic)
+            guard data.count <= Self.maxTraceCacheBytes else {
+                removeOversizedTraceCache(url: url, sessionId: sessionId, eventCount: events.count, bytes: data.count)
+                return
+            }
+
+            try data.write(to: url, options: .atomic)
             writeCount += 1
             logger.debug("Cache saved: trace for \(sessionId) (\(events.count) events, \(data.count) bytes)")
         } catch {
@@ -290,6 +315,80 @@ actor TimelineCache {
             logger.debug("Cache saved: \(filename) (\(data.count) bytes)")
         } catch {
             logger.warning("Cache write failed for \(filename): \(error.localizedDescription)")
+        }
+    }
+
+    private func removeOversizedTraceCache(url: URL, sessionId: String, eventCount: Int, bytes: Int) {
+        try? fileManager.removeItem(at: url)
+        MetricKitCrashContextStore.recordLargeTimelinePayload(
+            sessionId: sessionId,
+            eventCount: eventCount,
+            bytes: bytes,
+            largestEventBytes: largestTraceEventPayloadBytes
+        )
+        logger.warning(
+            "Cache skipped oversized trace for \(sessionId, privacy: .public) (\(eventCount) events, \(bytes) bytes)"
+        )
+    }
+
+    private var largestTraceEventPayloadBytes = 0
+
+    private func estimatedTracePayloadBytes(_ events: [TraceEvent]) -> Int {
+        var total = 0
+        var largest = 0
+        for event in events {
+            let bytes = estimatedTraceEventPayloadBytes(event)
+            total += bytes
+            largest = max(largest, bytes)
+        }
+        largestTraceEventPayloadBytes = largest
+        return total
+    }
+
+    private func estimatedTraceEventPayloadBytes(_ event: TraceEvent) -> Int {
+        var total = event.id.utf8.count + event.timestamp.utf8.count + event.type.rawValue.utf8.count
+        total += event.text?.utf8.count ?? 0
+        total += event.tool?.utf8.count ?? 0
+        total += event.output?.utf8.count ?? 0
+        total += event.toolCallId?.utf8.count ?? 0
+        total += event.toolName?.utf8.count ?? 0
+        total += event.thinking?.utf8.count ?? 0
+        if let args = event.args {
+            total += estimatedPayloadBytes(.object(args))
+        }
+        if let details = event.details {
+            total += estimatedPayloadBytes(details)
+        }
+        if let presentation = event.presentation {
+            total += presentation.kind.utf8.count
+            total += presentation.title.utf8.count
+            total += presentation.subtitle?.utf8.count ?? 0
+            total += presentation.status?.utf8.count ?? 0
+            total += presentation.body?.utf8.count ?? 0
+            total += presentation.accent?.utf8.count ?? 0
+            total += presentation.fields?.reduce(0) { partial, field in
+                partial + field.label.utf8.count + field.value.utf8.count
+            } ?? 0
+        }
+        return total
+    }
+
+    private func estimatedPayloadBytes(_ value: JSONValue) -> Int {
+        switch value {
+        case .string(let string):
+            return string.utf8.count
+        case .number:
+            return MemoryLayout<Double>.size
+        case .bool:
+            return 1
+        case .null:
+            return 0
+        case .array(let values):
+            return values.reduce(0) { $0 + estimatedPayloadBytes($1) }
+        case .object(let object):
+            return object.reduce(0) { partial, entry in
+                partial + entry.key.utf8.count + estimatedPayloadBytes(entry.value)
+            }
         }
     }
 

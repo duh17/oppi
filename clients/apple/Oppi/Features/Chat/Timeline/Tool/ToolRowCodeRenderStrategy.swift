@@ -35,7 +35,9 @@ struct ToolRowCodeRenderStrategy {
         if isStreaming {
             let byteCount = displayText.utf8.count
             signature = byteCount ^ (resolvedStartLine &* 31)
-            shouldRerender = signature != previousSignature || !isCurrentModeCode
+            shouldRerender = signature != previousSignature
+                || !isCurrentModeCode
+                || previousRenderedText != displayText
         } else {
             signature = ToolTimelineRowRenderMetrics.codeSignature(
                 displayText: displayText,
@@ -75,7 +77,17 @@ struct ToolRowCodeRenderStrategy {
 
             switch tier {
             case .cheap:
-                applyPlainText(displayText, to: expandedLabel)
+                if isStreaming && usesFullReplaceStreamingRender {
+                    applyPlainText(displayText, to: expandedLabel)
+                } else if isCurrentModeCode {
+                    applyStreamingPlainText(
+                        displayText,
+                        previousRenderedText: previousRenderedText,
+                        to: expandedLabel
+                    )
+                } else {
+                    applyPlainText(displayText, to: expandedLabel)
+                }
 
             case .deferred, .full:
                 if let cached = ToolRowRenderCache.get(signature: signature) {
@@ -146,6 +158,48 @@ struct ToolRowCodeRenderStrategy {
             invalidateLayout: false,
             installAction: .none
         )
+    }
+
+    private static var usesFullReplaceStreamingRender: Bool {
+        ProcessInfo.processInfo.environment["OPPI_STREAMING_CODE_RENDER_MODE"] == "fullReplace"
+    }
+
+    private static func applyStreamingPlainText(
+        _ text: String,
+        previousRenderedText: String?,
+        to label: UITextView
+    ) {
+        guard let previousRenderedText,
+              !previousRenderedText.isEmpty,
+              text.hasPrefix(previousRenderedText) else {
+            applyPlainText(text, to: label)
+            return
+        }
+
+        let previousUTF16Length = (previousRenderedText as NSString).length
+        guard label.textStorage.length == previousUTF16Length else {
+            applyPlainText(text, to: label)
+            return
+        }
+
+        let nsText = text as NSString
+        guard nsText.length >= previousUTF16Length else {
+            applyPlainText(text, to: label)
+            return
+        }
+
+        let suffix = nsText.substring(from: previousUTF16Length)
+        guard !suffix.isEmpty else { return }
+
+        label.textStorage.append(NSAttributedString(
+            string: suffix,
+            attributes: [
+                .font: ToolFont.regular,
+                .foregroundColor: UIColor(.themeFg),
+            ]
+        ))
+        label.textColor = UIColor(.themeFg)
+        label.font = ToolFont.regular
     }
 
     private static func applyPlainText(_ text: String, to label: UITextView) {

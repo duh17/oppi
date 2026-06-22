@@ -30,8 +30,11 @@ final class DeltaCoalescer {
 
     /// Guardrail caps to prevent runaway queue growth during bursty streams.
     private let maxBufferedEvents = 512
-    private let maxBufferedBytes = 256 * 1024
+    private static let maxBufferedBytes = 256 * 1024
     private var bufferedBytes = 0
+
+    // periphery:ignore - validates large-payload chunking without duplicating the production cap in tests
+    static var maxBufferedBytesForTesting: Int { maxBufferedBytes }
 
     // Telemetry accumulator — aggregate over ~10s of active flushes instead
     // of emitting per-flush (~30/sec). Flush/disconnect drains partial windows
@@ -73,7 +76,7 @@ final class DeltaCoalescer {
         switch event {
         // High-frequency: batch
         case .textDelta, .thinkingDelta, .toolOutput:
-            appendBuffered(event)
+            appendAppendableEvent(event)
 
         case .toolStart(let sessionId, let toolEventId, _, _, _):
             let key = ToolStartKey(sessionId: sessionId, toolEventId: toolEventId)
@@ -213,11 +216,90 @@ final class DeltaCoalescer {
             || bytes >= telemetryDrainMinimumBytes
     }
 
+    private func appendAppendableEvent(_ event: AgentEvent) {
+        switch event {
+        case .textDelta(let sessionId, let delta):
+            recordOversizedTimelinePayloadIfNeeded(
+                sessionId: sessionId,
+                eventCount: 1,
+                bytes: delta.utf8.count
+            )
+            appendChunkedText(delta) { chunk in
+                .textDelta(sessionId: sessionId, delta: chunk)
+            }
+        case .thinkingDelta(let sessionId, let delta, let contentIndex):
+            recordOversizedTimelinePayloadIfNeeded(
+                sessionId: sessionId,
+                eventCount: 1,
+                bytes: delta.utf8.count
+            )
+            appendChunkedText(delta) { chunk in
+                .thinkingDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
+            }
+        case .toolOutput(let payload) where payload.mode == .append:
+            recordOversizedTimelinePayloadIfNeeded(
+                sessionId: payload.sessionId,
+                eventCount: 1,
+                bytes: payload.output.utf8.count
+            )
+            appendChunkedText(payload.output) { chunk in
+                .toolOutput(.init(
+                    sessionId: payload.sessionId,
+                    toolEventId: payload.toolEventId,
+                    output: chunk,
+                    isError: payload.isError,
+                    mode: payload.mode,
+                    truncated: payload.truncated,
+                    totalBytes: payload.totalBytes,
+                    details: payload.details
+                ))
+            }
+        default:
+            appendBuffered(event)
+        }
+    }
+
+    private func recordOversizedTimelinePayloadIfNeeded(sessionId: String?, eventCount: Int, bytes: Int) {
+        guard bytes > Self.maxBufferedBytes else { return }
+        MetricKitCrashContextStore.recordLargeTimelinePayload(
+            sessionId: sessionId,
+            eventCount: eventCount,
+            bytes: bytes,
+            largestEventBytes: bytes
+        )
+    }
+
+    private func appendChunkedText(_ text: String, makeEvent: (String) -> AgentEvent) {
+        guard text.utf8.count > Self.maxBufferedBytes else {
+            appendBuffered(makeEvent(text))
+            return
+        }
+
+        var chunk = ""
+        chunk.reserveCapacity(Self.maxBufferedBytes)
+        var chunkBytes = 0
+
+        for scalar in text.unicodeScalars {
+            let scalarBytes = scalar.utf8.count
+            if chunkBytes > 0, chunkBytes + scalarBytes > Self.maxBufferedBytes {
+                appendBuffered(makeEvent(chunk))
+                chunk.removeAll(keepingCapacity: true)
+                chunkBytes = 0
+            }
+            chunk.unicodeScalars.append(scalar)
+            chunkBytes += scalarBytes
+        }
+
+        if !chunk.isEmpty {
+            appendBuffered(makeEvent(chunk))
+        }
+    }
+
     private func appendBuffered(_ event: AgentEvent) {
         buffer.append(event)
         bufferedBytes += estimatedPayloadBytes(event)
 
-        if buffer.count >= maxBufferedEvents || bufferedBytes >= maxBufferedBytes {
+        if buffer.count >= maxBufferedEvents || bufferedBytes >= Self.maxBufferedBytes {
             flushNow()
         } else {
             scheduleFlushIfNeeded()
@@ -230,7 +312,7 @@ final class DeltaCoalescer {
             buffer[existingIndex] = event
             bufferedBytes += estimatedPayloadBytes(event)
 
-            if buffer.count >= maxBufferedEvents || bufferedBytes >= maxBufferedBytes {
+            if buffer.count >= maxBufferedEvents || bufferedBytes >= Self.maxBufferedBytes {
                 flushNow()
             }
             return
