@@ -150,6 +150,44 @@ struct QuickSessionTriggerTests {
 
         trigger.isPresented = false
     }
+
+    @Test func checkForPendingRequestConsumesStoredSharePayload() throws {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingSharePayload()
+
+        let payload = ShareQuickSessionPayload(
+            id: "share-payload-test",
+            text: "Summarize this page",
+            files: [
+                ShareQuickSessionPayload.SharedFile(
+                    name: "notes.pdf",
+                    relativePath: "share-payload-test/notes.pdf",
+                    mimeType: "application/pdf"
+                )
+            ],
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        try ShareQuickSessionPayload.store(payload)
+        defer {
+            let defaults = SharedConstants.sharedDefaults
+            defaults.removeObject(forKey: ShareQuickSessionPayload.defaultsKey(for: payload.id))
+            defaults.removeObject(forKey: ShareQuickSessionPayload.pendingPayloadIdKey)
+            defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
+            _ = trigger.consumePendingSharePayload()
+            trigger.isPresented = false
+        }
+
+        let before = trigger.presentationRequestID
+
+        trigger.checkForPendingRequest()
+
+        #expect(trigger.presentationRequestID == before + 1)
+        #expect(trigger.consumePendingSharePayload() == payload)
+        #expect(SharedConstants.sharedDefaults.bool(forKey: SharedConstants.quickSessionPendingKey) == false)
+        #expect(SharedConstants.sharedDefaults.string(forKey: ShareQuickSessionPayload.pendingPayloadIdKey) == nil)
+        #expect(ShareQuickSessionPayload.load(id: payload.id) == nil)
+    }
 }
 
 // MARK: - ThinkingLevelEnum (Intent type)

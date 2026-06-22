@@ -274,6 +274,8 @@ struct QuickSessionSheet: View {
     }
 
     private func applySharedPayload(_ payload: ShareQuickSessionPayload) {
+        defer { ShareQuickSessionPayload.removePayloadFiles(id: payload.id) }
+
         if let sharedText = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines), !sharedText.isEmpty {
             text = sharedText
         }
