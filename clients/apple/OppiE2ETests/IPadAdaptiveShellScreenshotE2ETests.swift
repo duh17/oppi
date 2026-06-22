@@ -26,6 +26,8 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPadMainAndChatTimelineScreenshots() throws {
+        try prepareIPadLandscapeCanvas()
+
         let workspaceList = app.collectionViews["workspace.list"]
         XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace home list not visible")
         dismissExtensionSheetIfNeeded(timeout: 3)
@@ -152,6 +154,46 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(
             sessionList.waitForExistence(timeout: 10),
             "Workspace session-list column did not return after dismissing edit form"
+        )
+    }
+
+    private func prepareIPadLandscapeCanvas(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let size = app.frame.size
+            if min(size.width, size.height) >= 700,
+               size.width >= 980,
+               size.width >= size.height {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        let size = app.frame.size
+        try XCTSkipUnless(
+            min(size.width, size.height) >= 700,
+            "iPad adaptive shell screenshots require an iPad-sized simulator",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            size.width,
+            980,
+            "iPad adaptive shell screenshots require a landscape canvas wide enough for the split shell. App frame: \(size)",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            size.width,
+            size.height,
+            "iPad adaptive shell screenshots require landscape orientation. App frame: \(size)",
+            file: file,
+            line: line
         )
     }
 
