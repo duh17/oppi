@@ -40,21 +40,40 @@ Example:
 
 No unreleased public changes yet.
 
-## [0.42.0] - 2026-06-16
+## [0.42.0] - 2026-06-22
 
 ### Notes
 
-- Minor update for npm `oppi-server` and `oppi-mirror` after the `0.41.0` compatibility release.
-- This release updates the embedded Pi runtime to the latest published `0.79.6` packages and refreshes direct WebSocket dependencies.
+- Coordinated release prep for iOS TestFlight build 39 plus npm `oppi-server@0.42.0` and `oppi-mirror@0.42.0` after the `0.41.0` compatibility release.
+- This release focuses on share-sheet Quick Sessions, grouped session files, extension UI stability, large-output/timeline reliability, and a Pi runtime refresh to `0.79.10`.
+
+### Added
+
+- **Client:** Added the iOS share extension for starting Quick Sessions from shared text, URLs, images, and files.
+- **Client:** Added directory grouping in Session Files so touched files are easier to scan in large sessions.
+- **Client/Server:** Added a redacted app event stream and UX telemetry coverage for live client/session events.
+- **Client/Server:** Added extension-surface viewport entry points and replay coverage for scoped widget/status UI.
+- **Server/Extensions:** Added first-party Pi extension packages for the existing `ask` flow and browser automation video tool.
 
 ### Changed
 
-- **Server:** Updated the embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.79.6`, `@earendil-works/pi-ai@0.79.6`, and `@earendil-works/pi-tui@0.79.6`.
+- **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.79.10`, `@earendil-works/pi-ai@0.79.10`, and `@earendil-works/pi-tui@0.79.10`; this brings Pi extension compaction event metadata (`reason`, `willRetry`) and exact-version `pi update` fixes into future Oppi-seeded runtimes.
 - **Packaging:** Bumped coordinated server and first-party Pi extension package metadata to `0.42.0` so the update can publish after npm `0.41.0`.
+- **Client:** Session rows and titles now follow generated Pi session names, real completion/unread timing, and server health instead of heartbeat noise.
+- **Client:** Large markdown/code/diff tool output and cached timeline rows now use bounded caches, viewport policies, and deferred fullscreen rendering instead of letting release-candidate rows keep growing memory or layout cost.
+- **Client/Server:** Extension UI state is grouped by semantic scope, keeps background widgets out of blocking prompt badges, and reconnects permission-gate sessions before sending responses.
+- **Client/Server:** Pi settings/resources now live in the workspace resource UI, with loaded resource counts visible in session stats.
 
 ### Fixed
 
+- **Client:** Fixed Quick Session share presentation timing, shared-payload cleanup, and empty Quick Session creation.
+- **Client:** Fixed busy timeline anchoring, top-scroll edge cases, streaming markdown rendering, markdown code-block sizing, escaped inline LaTeX delimiters, and full-screen code font metrics.
+- **Client:** Fixed workspace directory listings for dot/generated folders and safe reads for session-created workspace files.
+- **Client:** Fixed disabled biometric gates, nearby-pairing callback safety, and redacted push/session event payloads.
+- **Client/Server:** Fixed mirrored session heartbeat timestamp churn, compact session-tree payloads, Pi TUI task-record log spam, bridge reuse resilience, and session-catch-up reconnect behavior.
+- **Server:** Fixed release diagnostics so WebSocket telemetry avoids raw URL metadata and the mechanical review gate checks the current protocol type file.
 - **Dependencies:** Updated direct `ws` usage to `8.21.0` for the Oppi server and `oppi-mirror` package.
+- **Dependencies:** Updated Vite/esbuild/tsx lockfile entries, the duplication-scan CLI flag, and the server lockfile's `undici` resolution to `6.27.0`, clearing `npm audit --omit=dev` for production dependencies.
 
 ### Migration notes
 
@@ -68,7 +87,7 @@ No unreleased public changes yet.
 
 - Public server and Pi extension compatibility release for npm `oppi-server@0.41.0` and `oppi-mirror@0.41.0`.
 - This release focuses on Pi extension compatibility, mirrored terminal sessions, media playback, long tool output, review tools, and safer server packaging.
-- iOS TestFlight build 38 covers the main compatibility release. The build 39 candidate adds share-sheet Quick Sessions, neutral themes, grouped Session Files, and targeted stability fixes on top of build 38.
+- iOS TestFlight build 38 covers the main compatibility release. The build 39 candidate adds share-sheet Quick Sessions, grouped Session Files, and targeted stability fixes on top of build 38.
 
 ### Added
 
@@ -78,7 +97,7 @@ No unreleased public changes yet.
 - **Client/Server:** Added video playback from workspace files, session attachments, and expanded tool rows with authenticated byte-range streaming and system controls.
 - **Client:** Added reader controls for text size, line spacing, wrapping, Mermaid state diagrams, markdown code-block wrapping, and full-output viewers for large tool results.
 - **Client:** Added review-comment drafts for selected code and tool output, with composer draft restoration before sending.
-- **Client:** Added share-sheet Quick Sessions, Neutral Dark/Neutral Light themes, and directory-grouped Session Files in the build 39 candidate.
+- **Client:** Added share-sheet Quick Sessions and directory-grouped Session Files in the build 39 candidate.
 
 ### Changed
 

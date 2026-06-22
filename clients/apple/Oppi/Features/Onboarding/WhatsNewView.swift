@@ -41,28 +41,28 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "terminal",
-            iconColor: .themeGreen,
-            title: String(localized: "Pi Terminal Mirroring"),
-            description: String(localized: "Keep working in a Pi terminal while Oppi mirrors the same session on iPhone or iPad. Watch output, steer, queue follow-ups, and reconnect without taking ownership from the terminal.")
-        ),
-        WhatsNewFeature(
             icon: "puzzlepiece.extension",
             iconColor: .themePurple,
-            title: String(localized: "Extension UI on Mobile"),
-            description: String(localized: "Oppi bridges most standard Pi extension UI to device, including input and confirm flows from extensions.")
+            title: String(localized: "More Reliable Extension UI"),
+            description: String(localized: "Extension prompts, widgets, status panels, and permission gates stay attached to the right session, replay more cleanly, and avoid misleading question badges.")
         ),
         WhatsNewFeature(
-            icon: "checkmark.shield",
+            icon: "terminal",
+            iconColor: .themeGreen,
+            title: String(localized: "Stronger Pi Session Mirroring"),
+            description: String(localized: "Mirrored terminal sessions reconnect more reliably, keep row timestamps stable, and handle reload, compaction, and bridge reuse cases with fewer stuck states.")
+        ),
+        WhatsNewFeature(
+            icon: "doc.text.magnifyingglass",
             iconColor: .themeOrange,
-            title: String(localized: "Extension Permission Flow"),
-            description: String(localized: "Oppi replaces its built-in permission gate with standard Pi extension permission flows, improving compatibility for extension-driven tools.")
+            title: String(localized: "Large Output Stays Responsive"),
+            description: String(localized: "Long markdown, code, and diff output uses bounded timeline caches, viewport policies, and fullscreen viewing so busy sessions stay easier to scroll.")
         ),
         WhatsNewFeature(
-            icon: "ipad.landscape",
+            icon: "square.and.arrow.down",
             iconColor: .themeCyan,
-            title: String(localized: "iPad Workspace Layout"),
-            description: String(localized: "The workspace shell adapts to iPad, with a split layout that keeps workspaces, sessions, and chat easier to move between.")
+            title: String(localized: "Quick Sessions and Session Files"),
+            description: String(localized: "Start Quick Sessions from shared text, URLs, images, or files, and review touched files grouped by directory inside Session Files.")
         ),
     ]
 
