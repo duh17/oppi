@@ -5,7 +5,7 @@
  * and extracts actionable app-frame candidates from crash/hang/CPU diagnostics.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -59,6 +59,14 @@ interface StackFrame {
   depth?: number;
   isLeaf?: boolean;
   symbolicated?: string;
+  symbolicationIssue?: string;
+  symbolicationTargetUUIDs?: string[];
+}
+
+interface SymbolicationTarget {
+  inputPath: string;
+  binaryPath: string;
+  uuids: string[];
 }
 
 interface DiagnosticSummary {
@@ -90,6 +98,7 @@ export interface MetricKitReviewResult {
   countsByType: Record<string, number>;
   countsByBuild: Record<string, Record<string, number>>;
   recentDiagnostics: DiagnosticSummary[];
+  symbolicationTarget?: SymbolicationTarget;
 }
 
 interface ParsedArgs {
@@ -278,34 +287,119 @@ function hex(value: number): string {
   return `0x${Math.trunc(value).toString(16)}`;
 }
 
-function symbolicateFrame(frame: StackFrame, binaryPath: string): string | undefined {
-  if (frame.address == null || frame.offsetIntoBinaryTextSegment == null) return undefined;
-  if (!existsSync(binaryPath)) return undefined;
+function normalizeUUID(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function firstExistingPath(paths: string[]): string | undefined {
+  return paths.find((path) => existsSync(path));
+}
+
+function resolveSymbolicationBinaryPath(inputPath: string): string {
+  const path = resolve(inputPath);
+  if (!isDirectory(path)) return path;
+
+  const archiveCandidates = [
+    join(path, "dSYMs", "Oppi.app.dSYM", "Contents", "Resources", "DWARF", "Oppi"),
+    join(path, "dSYMs", "OppiMac.app.dSYM", "Contents", "Resources", "DWARF", "OppiMac"),
+    join(path, "Products", "Applications", "Oppi.app", "Oppi"),
+    join(path, "Products", "Applications", "OppiMac.app", "Contents", "MacOS", "OppiMac"),
+  ];
+  const archiveMatch = firstExistingPath(archiveCandidates);
+  if (archiveMatch) return archiveMatch;
+
+  const dsymCandidates = [
+    join(path, "Contents", "Resources", "DWARF", "Oppi"),
+    join(path, "Contents", "Resources", "DWARF", "OppiMac"),
+  ];
+  const dsymMatch = firstExistingPath(dsymCandidates);
+  if (dsymMatch) return dsymMatch;
+
+  const appCandidates = [join(path, "Oppi"), join(path, "Contents", "MacOS", "OppiMac")];
+  return firstExistingPath(appCandidates) ?? path;
+}
+
+function readBinaryUUIDs(binaryPath: string): string[] {
+  if (!existsSync(binaryPath)) return [];
+  const result = spawnSync("xcrun", ["dwarfdump", "--uuid", binaryPath], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  if (result.status !== 0) return [];
+  const uuids = new Set<string>();
+  for (const line of result.stdout.split("\n")) {
+    const match = line.match(/UUID:\s*([0-9a-fA-F-]+)/);
+    if (match?.[1]) uuids.add(normalizeUUID(match[1]));
+  }
+  return [...uuids].sort();
+}
+
+function resolveSymbolicationTarget(
+  inputPath: string | undefined,
+): SymbolicationTarget | undefined {
+  if (!inputPath) return undefined;
+  const binaryPath = resolveSymbolicationBinaryPath(inputPath);
+  return {
+    inputPath: resolve(inputPath),
+    binaryPath,
+    uuids: readBinaryUUIDs(binaryPath),
+  };
+}
+
+function symbolicateFrame(
+  frame: StackFrame,
+  target: SymbolicationTarget,
+): Pick<StackFrame, "symbolicated" | "symbolicationIssue" | "symbolicationTargetUUIDs"> {
+  if (!existsSync(target.binaryPath)) return { symbolicationIssue: "symbol_file_missing" };
+  const frameUUID = frame.binaryUUID ? normalizeUUID(frame.binaryUUID) : undefined;
+  if (frameUUID && target.uuids.length > 0 && !target.uuids.includes(frameUUID)) {
+    return {
+      symbolicationIssue: "uuid_mismatch",
+      symbolicationTargetUUIDs: target.uuids,
+    };
+  }
+  if (frame.address == null || frame.offsetIntoBinaryTextSegment == null) {
+    return { symbolicationIssue: "missing_address" };
+  }
   const loadAddress = frame.address - frame.offsetIntoBinaryTextSegment;
-  if (!Number.isFinite(loadAddress) || loadAddress <= 0) return undefined;
+  if (!Number.isFinite(loadAddress) || loadAddress <= 0) {
+    return { symbolicationIssue: "invalid_load_address" };
+  }
 
   const result = spawnSync(
     "xcrun",
-    ["atos", "-arch", "arm64", "-o", binaryPath, "-l", hex(loadAddress), hex(frame.address)],
+    ["atos", "-arch", "arm64", "-o", target.binaryPath, "-l", hex(loadAddress), hex(frame.address)],
     { encoding: "utf8", timeout: 5_000 },
   );
-  if (result.status !== 0) return undefined;
+  if (result.status !== 0) return { symbolicationIssue: "atos_failed" };
   const out = result.stdout.trim();
-  return out && !out.includes(hex(frame.address)) ? out : undefined;
+  if (!out || out.includes(hex(frame.address))) return { symbolicationIssue: "symbol_not_found" };
+  return { symbolicated: out };
 }
 
-function symbolicateFrames(frames: StackFrame[], binaryPath: string | undefined): StackFrame[] {
-  if (!binaryPath) return frames;
+function symbolicateFrames(
+  frames: StackFrame[],
+  target: SymbolicationTarget | undefined,
+): StackFrame[] {
+  if (!target) return frames;
   return frames.map((frame) => ({
     ...frame,
-    symbolicated: symbolicateFrame(frame, binaryPath),
+    ...symbolicateFrame(frame, target),
   }));
 }
 
 function diagnosticsFromPayload(
   record: MetricKitRecord,
   payload: MetricKitPayload,
-  symbolicatePath: string | undefined,
+  symbolicationTarget: SymbolicationTarget | undefined,
 ): DiagnosticSummary[] {
   const raw = parseRawPayload(payload.raw);
   const summaries: DiagnosticSummary[] = [];
@@ -323,7 +417,7 @@ function diagnosticsFromPayload(
     const allFrames = diagnostics.flatMap(framesFromDiagnostic);
     const appFrames = symbolicateFrames(
       dedupeFrames(allFrames.filter(isAppFrame), 8),
-      symbolicatePath,
+      symbolicationTarget,
     );
     const rootFrames = dedupeFrames(allFrames.slice(0, 12), 5);
 
@@ -357,6 +451,7 @@ export function buildMetricKitReview(options: {
   symbolicatePath?: string;
 }): MetricKitReviewResult {
   const dir = telemetryDir(options.dataDir);
+  const symbolicationTarget = resolveSymbolicationTarget(options.symbolicatePath);
   const cutoffMs = Date.now() - options.days * DAY_MS;
   const countsByType: Record<string, number> = {};
   const countsByBuild: Record<string, Record<string, number>> = {};
@@ -379,7 +474,7 @@ export function buildMetricKitReview(options: {
         const ts = safeNumber(payload.windowEndMs) ?? safeNumber(record.generatedAt) ?? 0;
         if (ts < cutoffMs) continue;
         payloads += 1;
-        const payloadDiagnostics = diagnosticsFromPayload(record, payload, options.symbolicatePath);
+        const payloadDiagnostics = diagnosticsFromPayload(record, payload, symbolicationTarget);
         for (const diagnostic of payloadDiagnostics) {
           diagnostics += diagnostic.count;
           inc(countsByType, diagnostic.type, diagnostic.count);
@@ -403,6 +498,7 @@ export function buildMetricKitReview(options: {
     countsByType,
     countsByBuild,
     recentDiagnostics: recentDiagnostics.slice(0, limit),
+    symbolicationTarget,
   };
 }
 
@@ -414,8 +510,14 @@ function frameLabel(frame: StackFrame): string {
   const depth = frame.depth == null ? "" : ` depth=${frame.depth}`;
   const leaf = frame.isLeaf ? " leaf" : "";
   const uuid = frame.binaryUUID ? ` uuid=${frame.binaryUUID}` : "";
+  const targetUUIDs = frame.symbolicationTargetUUIDs?.length
+    ? ` targetUUIDs=${frame.symbolicationTargetUUIDs.join(",")}`
+    : "";
+  const issue = frame.symbolicationIssue
+    ? ` symbolication=${frame.symbolicationIssue}${targetUUIDs}`
+    : "";
   const symbol = frame.symbolicated ? ` ${truncate(frame.symbolicated, 100)}` : "";
-  return `${binary} ${offset}${samples}${depth}${leaf}${uuid}${symbol}`;
+  return `${binary} ${offset}${samples}${depth}${leaf}${uuid}${issue}${symbol}`;
 }
 
 function printHuman(result: MetricKitReviewResult): void {
@@ -424,6 +526,14 @@ function printHuman(result: MetricKitReviewResult): void {
   console.log(
     `  files=${result.filesRead} records=${result.records} payloads=${result.payloads} diagnostics=${result.diagnostics}`,
   );
+  if (result.symbolicationTarget) {
+    const uuids =
+      result.symbolicationTarget.uuids.length > 0
+        ? result.symbolicationTarget.uuids.join(", ")
+        : "unknown";
+    console.log(`  symbolicate: ${result.symbolicationTarget.binaryPath}`);
+    console.log(`  symbol UUIDs: ${uuids}`);
+  }
   console.log();
 
   console.log("Diagnostic counts");
@@ -526,13 +636,13 @@ function printHelp(): void {
 
   bun server/scripts/metrickit-review.ts
   bun server/scripts/metrickit-review.ts --days 14 --limit 50
-  bun server/scripts/metrickit-review.ts --symbolicate /path/to/Oppi.app/Oppi
+  bun server/scripts/metrickit-review.ts --symbolicate /path/to/Oppi.xcarchive
 
 Options:
   --data-dir <path>       Oppi data dir (default: ~/.config/oppi)
   --days <n>              Days of MetricKit payloads (default: 7)
   --limit <n>             Number of recent diagnostics (default: 20)
-  --symbolicate <binary>  Best-effort atos symbolication for app frames
+  --symbolicate <path>    Best-effort atos symbolication for app frames; accepts .xcarchive, .dSYM, .app, or binary paths
   --json                  Machine-readable JSON
   --help                  Show this help
 `);
