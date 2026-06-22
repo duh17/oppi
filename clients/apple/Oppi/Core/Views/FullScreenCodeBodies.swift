@@ -1438,7 +1438,29 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     }
 }
 
+/// Runs detached work while propagating cancellation from the awaiting parent task.
+///
+/// `Task.detached` does not inherit cancellation from the caller. Use this for
+/// expensive full-screen renderer work so closing or replacing a reader cancels
+/// the background build instead of letting stale parses pile up.
+func withCancellableDetachedTask<Value: Sendable>(
+    priority: TaskPriority? = nil,
+    operation: @escaping @Sendable () async -> Value?
+) async -> Value? {
+    let task = Task.detached(priority: priority, operation: operation)
+    return await withTaskCancellationHandler {
+        await task.value
+    } onCancel: {
+        task.cancel()
+    }
+}
+
 final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
+    private static let deferredInitialRenderByteThreshold = 200 * 1024
+    // Give UIKit/XCUITest and real users a visible reader shell before the large
+    // CommonMark pass starts for huge completed documents.
+    private static let deferredInitialRenderDelayMs = 750
+
     private let collectionView: UICollectionView
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
@@ -1455,6 +1477,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     private let perfSurface: MarkdownStreamingPerf.Surface?
 
+    private var deferredInitialRenderTask: Task<Void, Never>?
+    private var asyncRenderTask: Task<Void, Never>?
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
     private var renderedSegments: [FlatSegment] = []
@@ -1462,6 +1486,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var currentConfig: AssistantMarkdownContentView.Configuration?
     private var viewportDoubleTapActivation: (() -> Void)?
     private var streamObserverID: UUID?
+
+    private struct AsyncMarkdownBuild: Sendable {
+        let segments: [FlatSegment]
+        let parseDurationNs: UInt64
+        let buildDurationNs: UInt64
+        let lineCount: Int
+    }
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
         scrollView: collectionView,
@@ -1540,7 +1571,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        render(snapshot: initialSnapshot)
+        if Self.shouldDeferInitialRender(snapshot: initialSnapshot, stream: stream) {
+            installDeferredRenderPlaceholder(palette: palette)
+            scheduleDeferredInitialRender(snapshot: initialSnapshot)
+        } else {
+            render(snapshot: initialSnapshot)
+        }
 
         guard let stream else { return }
         streamObserverID = stream.addObserver { [weak self] snapshot in
@@ -1558,6 +1594,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     deinit {
+        deferredInitialRenderTask?.cancel()
+        asyncRenderTask?.cancel()
         if let streamObserverID {
             let stream = stream
             Task { @MainActor in
@@ -1569,6 +1607,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     override func layoutSubviews() {
         super.layoutSubviews()
         tailFollowCoordinator.onLayoutPass()
+    }
+
+    private static func shouldDeferInitialRender(
+        snapshot: ThinkingTraceStream.Snapshot,
+        stream: ThinkingTraceStream?
+    ) -> Bool {
+        stream == nil
+            && snapshot.isDone
+            && snapshot.text.utf8.count >= deferredInitialRenderByteThreshold
     }
 
     private static func makeCollectionLayout(spacing: CGFloat) -> UICollectionViewLayout {
@@ -1591,7 +1638,31 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
+    private func installDeferredRenderPlaceholder(palette: ThemePalette) {
+        let label = UILabel()
+        label.text = String(localized: "Preparing preview…")
+        label.textColor = UIColor(palette.fgDim)
+        label.font = AppFont.systemFeedback
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        collectionView.backgroundView = label
+    }
+
+    private func scheduleDeferredInitialRender(snapshot: ThinkingTraceStream.Snapshot) {
+        deferredInitialRenderTask?.cancel()
+        deferredInitialRenderTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.deferredInitialRenderDelayMs))
+            guard let self, !Task.isCancelled else { return }
+            self.deferredInitialRenderTask = nil
+            self.render(snapshot: snapshot)
+        }
+    }
+
     private func handleStreamUpdate(_ snapshot: ThinkingTraceStream.Snapshot) {
+        deferredInitialRenderTask?.cancel()
+        deferredInitialRenderTask = nil
+        asyncRenderTask?.cancel()
+        asyncRenderTask = nil
         latestSnapshot = snapshot
         render(snapshot: snapshot)
     }
@@ -1603,6 +1674,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool
     ) {
+        deferredInitialRenderTask?.cancel()
+        deferredInitialRenderTask = nil
+        asyncRenderTask?.cancel()
+        asyncRenderTask = nil
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.textSelectionEnabled = textSelectionEnabled
@@ -1636,7 +1711,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             return
         }
 
+        asyncRenderTask?.cancel()
+        asyncRenderTask = nil
         renderedSnapshot = snapshot
+        collectionView.backgroundView = nil
         let config = AssistantMarkdownContentView.Configuration.make(
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
@@ -1655,6 +1733,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let cycleStart = MarkdownStreamingPerf.timestampNs()
         currentConfig = config
         let shouldResolveFileLines = !config.isStreaming && config.reviewCommentSourceContext?.filePath != nil
+        if shouldRenderLargeCompletedSnapshotAsync(config: config, shouldResolveFileLines: shouldResolveFileLines) {
+            renderLargeCompletedSnapshotAsync(snapshot: snapshot, config: config, cycleStart: cycleStart)
+            return
+        }
         if shouldResolveFileLines {
             let build = segmentSource.buildSegmentsWithSourceLineRanges(
                 config,
@@ -1683,6 +1765,100 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
 
         tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
+    }
+
+    private func shouldRenderLargeCompletedSnapshotAsync(
+        config: AssistantMarkdownContentView.Configuration,
+        shouldResolveFileLines: Bool
+    ) -> Bool {
+        !config.isStreaming
+            && !shouldResolveFileLines
+            && config.content.utf8.count >= Self.deferredInitialRenderByteThreshold
+    }
+
+    private func renderLargeCompletedSnapshotAsync(
+        snapshot: ThinkingTraceStream.Snapshot,
+        config: AssistantMarkdownContentView.Configuration,
+        cycleStart: UInt64
+    ) {
+        installDeferredRenderPlaceholder(palette: ThemeRuntimeState.currentPalette())
+        renderedSegments = []
+        renderedSegmentLineRanges = []
+        collectionView.reloadData()
+        collectionView.collectionViewLayout.invalidateLayout()
+
+        let source = config.content
+        let themeID = config.themeID
+        let workspaceID = config.workspaceID
+        let sessionID = config.sessionID
+        let serverBaseURL = config.serverBaseURL
+        let sourceDirectory = config.sourceDirectory
+        asyncRenderTask = Task { @MainActor [weak self] in
+            let build: AsyncMarkdownBuild? = await withCancellableDetachedTask(priority: .userInitiated) {
+                guard !Task.isCancelled else { return nil }
+                let parseStart = DispatchTime.now().uptimeNanoseconds
+                let blocks = parseCommonMark(source)
+                let parseEnd = DispatchTime.now().uptimeNanoseconds
+                guard !Task.isCancelled else { return nil }
+                let segments = FlatSegment.build(
+                    from: blocks,
+                    themeID: themeID,
+                    workspaceID: workspaceID,
+                    sessionID: sessionID,
+                    serverBaseURL: serverBaseURL,
+                    sourceDirectory: sourceDirectory,
+                    mergeAdjacentTextSegments: false
+                )
+                let buildEnd = DispatchTime.now().uptimeNanoseconds
+                guard !Task.isCancelled else { return nil }
+                return AsyncMarkdownBuild(
+                    segments: segments,
+                    parseDurationNs: parseEnd - parseStart,
+                    buildDurationNs: buildEnd - parseEnd,
+                    lineCount: Self.countNewlines(source) + 1
+                )
+            }
+
+            guard let build, !Task.isCancelled else { return }
+            guard let self, self.latestSnapshot == snapshot else { return }
+
+            let segments = AssistantMarkdownSegmentSource.applyReaderPreferences(
+                to: build.segments,
+                config: config
+            )
+            self.asyncRenderTask = nil
+            self.collectionView.backgroundView = nil
+            self.renderedSegments = segments
+            self.renderedSegmentLineRanges = []
+            self.collectionView.reloadData()
+            self.collectionView.collectionViewLayout.invalidateLayout()
+
+            MarkdownStreamingPerf.record(
+                parseDurationNs: build.parseDurationNs,
+                buildDurationNs: build.buildDurationNs,
+                lineCount: build.lineCount,
+                isTailOnly: false,
+                isStreaming: false
+            )
+            if let surface = config.perfSurface {
+                MarkdownStreamingPerf.recordFullCycle(
+                    totalNs: MarkdownStreamingPerf.timestampNs() - cycleStart,
+                    segmentCount: segments.count,
+                    isStreaming: false,
+                    surface: surface
+                )
+            }
+
+            self.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
+        }
+    }
+
+    nonisolated private static func countNewlines(_ string: String) -> Int {
+        var count = 0
+        for byte in string.utf8 where byte == UInt8(ascii: "\n") {
+            count += 1
+        }
+        return count
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
