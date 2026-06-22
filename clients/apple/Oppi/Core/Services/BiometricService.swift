@@ -52,17 +52,22 @@ final class BiometricService {
 
     // MARK: - Authentication
 
-    /// Authenticate via Face ID / Touch ID / device passcode.
+    /// Authenticate via Face ID / Touch ID / device passcode when enabled.
     ///
-    /// Returns `true` if authentication succeeded, `false` if the user
-    /// cancelled or biometric failed. Never throws — failures are
-    /// logged and returned as `false`.
+    /// Returns `true` if authentication is disabled or succeeded, `false`
+    /// if the user cancelled or biometric failed. Never throws — failures
+    /// are logged and returned as `false`.
     ///
     /// Uses `.deviceOwnerAuthentication` (biometric + passcode fallback),
     /// not `.deviceOwnerAuthenticationWithBiometrics` (biometric-only).
     /// This ensures the user can always approve even if Face ID is
     /// temporarily unavailable (wet face, sunglasses, etc.).
     func authenticate(reason: String) async -> Bool {
+        guard isEnabled else {
+            logger.info("Biometric auth skipped because local setting is disabled")
+            return true
+        }
+
         let context = LAContext()
         context.localizedCancelTitle = "Cancel"
 
