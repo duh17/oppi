@@ -139,3 +139,16 @@ struct WorkspaceDetailSortTests {
         #expect(shouldPresent)
     }
 }
+
+@Suite("Workspace Pi Resource Error Policy")
+struct WorkspacePiResourceErrorPolicyTests {
+    @Test func cancellationDoesNotPresentAsSettingsError() {
+        #expect(!WorkspacePiResourceErrorPolicy.shouldPresent(CancellationError()))
+        #expect(!WorkspacePiResourceErrorPolicy.shouldPresent(URLError(.cancelled)))
+    }
+
+    @Test func nonCancellationErrorPresentsAsSettingsError() {
+        #expect(WorkspacePiResourceErrorPolicy.shouldPresent(URLError(.notConnectedToInternet)))
+        #expect(WorkspacePiResourceErrorPolicy.shouldPresent(APIError.server(status: 500, message: "boom")))
+    }
+}

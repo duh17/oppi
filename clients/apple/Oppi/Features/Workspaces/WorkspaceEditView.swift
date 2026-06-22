@@ -1,4 +1,19 @@
+import Foundation
 import SwiftUI
+
+/// Classifies Pi resource load failures for workspace settings.
+/// Cancellation is control flow for stale/background requests, not a Pi resource failure.
+enum WorkspacePiResourceErrorPolicy {
+    static func shouldPresent(_ error: any Error) -> Bool {
+        if error is CancellationError { return false }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return false }
+
+        return true
+    }
+}
 
 /// Edit an existing workspace's configuration.
 struct WorkspaceEditView: View {
@@ -49,6 +64,7 @@ struct WorkspaceEditView: View {
     @State private var runtime: WorkspaceRuntime?
     @State private var allowedHostsText: String = ""
     @State private var loadedWorkspaceID: String?
+    @State private var piResourceLoadGeneration = 0
 
     private var activeServerId: String? {
         workspaceStore.activeServerId
@@ -304,13 +320,17 @@ struct WorkspaceEditView: View {
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath, cwd: dest.cwd)
         }
         .onAppear {
-            guard loadedWorkspaceID != workspace.id else { return }
-            loadFromWorkspace()
-            loadedWorkspaceID = workspace.id
+            if loadedWorkspaceID != workspace.id {
+                loadFromWorkspace()
+                loadedWorkspaceID = workspace.id
+            }
+            schedulePiResourceLoad()
         }
-        .task(id: trimmedHostMount) {
-            await loadSkills()
-            await loadExtensions()
+        .onChange(of: trimmedHostMount) { _, _ in
+            schedulePiResourceLoad()
+        }
+        .onDisappear {
+            piResourceLoadGeneration += 1
         }
         .task {
             await loadModels()
@@ -459,6 +479,29 @@ struct WorkspaceEditView: View {
         "\(type)|\(path)"
     }
 
+    private func isCurrentPiResourceLoad(_ generation: Int?) -> Bool {
+        guard let generation else { return true }
+        return generation == piResourceLoadGeneration
+    }
+
+    @MainActor
+    private func schedulePiResourceLoad() {
+        piResourceLoadGeneration += 1
+        let generation = piResourceLoadGeneration
+        let cwd = trimmedHostMount
+        isLoadingSkills = true
+        isLoadingExtensions = true
+        skillsError = nil
+        extensionsError = nil
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard isCurrentPiResourceLoad(generation) else { return }
+            await loadSkills(cwd: cwd, generation: generation)
+            await loadExtensions(cwd: cwd, generation: generation)
+        }
+    }
+
     private func togglePiResource(type: String, path: String, enabled: Bool) {
         let key = resourceKey(type: type, path: path)
         guard !togglingResourceKeys.contains(key) else { return }
@@ -486,6 +529,8 @@ struct WorkspaceEditView: View {
                     await loadExtensions()
                 }
             } catch {
+                guard WorkspacePiResourceErrorPolicy.shouldPresent(error) else { return }
+
                 if type == "skills" {
                     skillsError = error.localizedDescription
                 } else {
@@ -609,37 +654,65 @@ struct WorkspaceEditView: View {
         }
     }
 
-    private func loadSkills() async {
-        guard let api = apiClient else { return }
+    @MainActor
+    private func loadSkills(cwd explicitCwd: String? = nil, generation: Int? = nil) async {
+        guard isCurrentPiResourceLoad(generation) else { return }
+        guard let api = apiClient else {
+            if isCurrentPiResourceLoad(generation) {
+                isLoadingSkills = false
+            }
+            return
+        }
 
         isLoadingSkills = true
         skillsError = nil
-        defer { isLoadingSkills = false }
+        defer {
+            if isCurrentPiResourceLoad(generation) {
+                isLoadingSkills = false
+            }
+        }
 
         do {
-            let cwd = hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
-            availableSkills = try await api.listSkills(cwd: cwd.isEmpty ? nil : cwd)
+            let cwd = explicitCwd ?? hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+            let loaded = try await api.listSkills(cwd: cwd.isEmpty ? nil : cwd)
+            guard isCurrentPiResourceLoad(generation) else { return }
+            availableSkills = loaded
         } catch {
+            guard isCurrentPiResourceLoad(generation) else { return }
+            guard WorkspacePiResourceErrorPolicy.shouldPresent(error) else { return }
             skillsError = error.localizedDescription
         }
     }
 
-    private func loadExtensions() async {
+    @MainActor
+    private func loadExtensions(cwd explicitCwd: String? = nil, generation: Int? = nil) async {
+        guard isCurrentPiResourceLoad(generation) else { return }
         guard let api = apiClient else {
-            if let previewAvailableExtensions {
-                availableExtensions = previewAvailableExtensions
+            if isCurrentPiResourceLoad(generation) {
+                if let previewAvailableExtensions {
+                    availableExtensions = previewAvailableExtensions
+                }
+                isLoadingExtensions = false
             }
             return
         }
 
         isLoadingExtensions = true
         extensionsError = nil
-        defer { isLoadingExtensions = false }
+        defer {
+            if isCurrentPiResourceLoad(generation) {
+                isLoadingExtensions = false
+            }
+        }
 
         do {
-            let cwd = hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
-            availableExtensions = try await api.listExtensions(cwd: cwd.isEmpty ? nil : cwd)
+            let cwd = explicitCwd ?? hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+            let loaded = try await api.listExtensions(cwd: cwd.isEmpty ? nil : cwd)
+            guard isCurrentPiResourceLoad(generation) else { return }
+            availableExtensions = loaded
         } catch {
+            guard isCurrentPiResourceLoad(generation) else { return }
+            guard WorkspacePiResourceErrorPolicy.shouldPresent(error) else { return }
             extensionsError = error.localizedDescription
         }
     }
