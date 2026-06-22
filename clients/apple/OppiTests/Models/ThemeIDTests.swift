@@ -16,16 +16,8 @@ struct ThemeIDTests {
         #expect(ThemeID.oled.rawValue == "oled")
     }
 
-    @Test func neutralDarkRawValue() {
-        #expect(ThemeID.neutralDark.rawValue == "neutral-dark")
-    }
-
     @Test func lightRawValue() {
         #expect(ThemeID.light.rawValue == "light")
-    }
-
-    @Test func neutralLightRawValue() {
-        #expect(ThemeID.neutralLight.rawValue == "neutral-light")
     }
 
     @Test func nightRawValue() {
@@ -47,19 +39,9 @@ struct ThemeIDTests {
         #expect(id == .oled)
     }
 
-    @Test func roundTripNeutralDark() {
-        let id = ThemeID(rawValue: "neutral-dark")
-        #expect(id == .neutralDark)
-    }
-
     @Test func roundTripLight() {
         let id = ThemeID(rawValue: "light")
         #expect(id == .light)
-    }
-
-    @Test func roundTripNeutralLight() {
-        let id = ThemeID(rawValue: "neutral-light")
-        #expect(id == .neutralLight)
     }
 
     @Test func roundTripNight() {
@@ -75,6 +57,11 @@ struct ThemeIDTests {
     @Test func unknownRawValueDefaultsToDark() {
         let id = ThemeID(rawValue: "unknown-value")
         #expect(id == .dark, "Unrecognized raw values should default to .dark")
+    }
+
+    @Test func retiredNeutralRawValuesDefaultToDark() {
+        #expect(ThemeID(rawValue: "neutral-dark") == .dark)
+        #expect(ThemeID(rawValue: "neutral-light") == .dark)
     }
 
     @Test func customWithEmptyName() {
@@ -103,22 +90,10 @@ struct ThemeIDTests {
         #expect(str == "\"oled\"")
     }
 
-    @Test func encodeNeutralDark() throws {
-        let data = try JSONEncoder().encode(ThemeID.neutralDark)
-        let str = String(data: data, encoding: .utf8)
-        #expect(str == "\"neutral-dark\"")
-    }
-
     @Test func encodeLight() throws {
         let data = try JSONEncoder().encode(ThemeID.light)
         let str = String(data: data, encoding: .utf8)
         #expect(str == "\"light\"")
-    }
-
-    @Test func encodeNeutralLight() throws {
-        let data = try JSONEncoder().encode(ThemeID.neutralLight)
-        let str = String(data: data, encoding: .utf8)
-        #expect(str == "\"neutral-light\"")
     }
 
     @Test func encodeNight() throws {
@@ -145,18 +120,6 @@ struct ThemeIDTests {
         #expect(id == .oled)
     }
 
-    @Test func decodeNeutralDark() throws {
-        let data = Data("\"neutral-dark\"".utf8)
-        let id = try JSONDecoder().decode(ThemeID.self, from: data)
-        #expect(id == .neutralDark)
-    }
-
-    @Test func decodeNeutralLight() throws {
-        let data = Data("\"neutral-light\"".utf8)
-        let id = try JSONDecoder().decode(ThemeID.self, from: data)
-        #expect(id == .neutralLight)
-    }
-
     @Test func decodeUnknown() throws {
         let data = Data("\"future-theme\"".utf8)
         let id = try JSONDecoder().decode(ThemeID.self, from: data)
@@ -168,9 +131,7 @@ struct ThemeIDTests {
     @Test func displayNames() {
         #expect(ThemeID.dark.displayName == "Dark")
         #expect(ThemeID.oled.displayName == "OLED")
-        #expect(ThemeID.neutralDark.displayName == "Neutral Dark")
         #expect(ThemeID.light.displayName == "Light")
-        #expect(ThemeID.neutralLight.displayName == "Neutral Light")
         #expect(ThemeID.night.displayName == "Night")
         #expect(ThemeID.custom("Nord").displayName == "Nord")
     }
@@ -180,9 +141,7 @@ struct ThemeIDTests {
     @Test func detailStrings() {
         #expect(!ThemeID.dark.detail.isEmpty)
         #expect(!ThemeID.oled.detail.isEmpty)
-        #expect(!ThemeID.neutralDark.detail.isEmpty)
         #expect(!ThemeID.light.detail.isEmpty)
-        #expect(!ThemeID.neutralLight.detail.isEmpty)
         #expect(!ThemeID.night.detail.isEmpty)
         #expect(ThemeID.custom("X").detail.isEmpty, "Custom themes have no detail text")
     }
@@ -197,16 +156,8 @@ struct ThemeIDTests {
         #expect(ThemeID.oled.preferredColorScheme == .dark)
     }
 
-    @Test func neutralDarkPrefersDarkScheme() {
-        #expect(ThemeID.neutralDark.preferredColorScheme == .dark)
-    }
-
     @Test func lightPrefersLightScheme() {
         #expect(ThemeID.light.preferredColorScheme == .light)
-    }
-
-    @Test func neutralLightPrefersLightScheme() {
-        #expect(ThemeID.neutralLight.preferredColorScheme == .light)
     }
 
     @Test func nightPrefersDarkScheme() {
@@ -237,22 +188,8 @@ struct ThemeIDTests {
         _ = palette.blue
     }
 
-    @Test func neutralDarkPaletteIsNotNil() {
-        let palette = ThemeID.neutralDark.palette
-        _ = palette.bg
-        _ = palette.fg
-        _ = palette.blue
-    }
-
     @Test func lightPaletteIsNotNil() {
         let palette = ThemeID.light.palette
-        _ = palette.bg
-        _ = palette.fg
-        _ = palette.blue
-    }
-
-    @Test func neutralLightPaletteIsNotNil() {
-        let palette = ThemeID.neutralLight.palette
         _ = palette.bg
         _ = palette.fg
         _ = palette.blue
@@ -275,7 +212,7 @@ struct ThemeIDTests {
     // MARK: - builtins
 
     @Test func builtinsContainsShippedThemes() {
-        #expect(ThemeID.builtins == [.dark, .oled, .neutralDark, .light, .neutralLight, .night])
+        #expect(ThemeID.builtins == [.dark, .oled, .light, .night])
     }
 
     // MARK: - Hashable
@@ -284,10 +221,8 @@ struct ThemeIDTests {
         #expect(ThemeID.dark == ThemeID.dark)
         #expect(ThemeID.dark != ThemeID.oled)
         #expect(ThemeID.dark != ThemeID.light)
-        #expect(ThemeID.dark != ThemeID.neutralDark)
         #expect(ThemeID.dark != ThemeID.night)
         #expect(ThemeID.oled == ThemeID.oled)
-        #expect(ThemeID.neutralLight == ThemeID.neutralLight)
         #expect(ThemeID.night == ThemeID.night)
         #expect(ThemeID.custom("A") == ThemeID.custom("A"))
         #expect(ThemeID.custom("A") != ThemeID.custom("B"))
