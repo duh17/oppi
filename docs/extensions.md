@@ -20,12 +20,13 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 
 ## Extension surfaces
 
-| Surface                 | Enabled by                                                  | Declared in                              | Loaded by          | Notes                                                                                                      |
-| ----------------------- | ----------------------------------------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
-| Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                     |
-| Ask extension example   | Local/package install + workspace `extensions` allowlist    | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs     |
-| Browser video example   | Local/package install + workspace `extensions` allowlist    | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available     |
-| Mobile UI compatibility | Native Oppi client + server bridge                          | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
+| Surface                  | Enabled by                                                  | Declared in                              | Loaded by          | Notes                                                                                                      |
+| ------------------------ | ----------------------------------------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Host pi extensions       | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                     |
+| Ask extension example    | Local/package install + workspace `extensions` allowlist    | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs    |
+| Goal extension prototype | Local/package install + workspace `extensions` allowlist    | `pi-extensions/goal`                     | pi resource loader | Pi-only prototype for durable goals, model goal tools, and extension-owned continuation turns              |
+| Browser video example    | Local/package install + workspace `extensions` allowlist    | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available    |
+| Mobile UI compatibility  | Native Oppi client + server bridge                          | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
 
@@ -40,6 +41,12 @@ Rendering path:
 3. **Other Pi UI contexts:** use `ctx.ui.select()` and `ctx.ui.input()` fallbacks.
 
 `ctx.ui.ask()` is an Oppi-defined UI request because plain Pi's standard dialog API does not include a multi-question or multi-select form. The extension stays portable by checking for `ctx.ui.ask()` and using Pi UI fallbacks when it is absent.
+
+## Goal extension prototype
+
+`pi-extensions/goal` is a Pi-only prototype for Codex-style durable goals. It registers `/goal`, `get_goal`, `create_goal`, and `update_goal`, persists state as Pi custom session entries, and uses Pi lifecycle hooks plus `pi.sendMessage(..., { triggerTurn: true })` to queue continuation turns while a goal remains active.
+
+This keeps the first implementation out of Oppi server lifecycle code. Oppi's role is normal extension loading, workspace allowlist filtering, and rendering the extension widget through the native extension UI contract when available.
 
 ## Pi package layout
 
@@ -258,15 +265,16 @@ Mirror mode uses the same protocol surface from an interactive terminal Pi proce
 
 ## Relevant implementation files
 
-| File                                     | Why it matters                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------- |
-| `pi-extensions/ask`                      | Ask extension example with multi-select support                           |
+| File                                     | Why it matters                                                              |
+| ---------------------------------------- | --------------------------------------------------------------------------- |
+| `pi-extensions/ask`                      | Ask extension example with multi-select support                             |
+| `pi-extensions/goal`                     | Goal extension prototype with durable state and continuation turns          |
 | `pi-extensions/browser-automation-video` | Oppi-compatible Pi extension package using the documented attachment helper |
-| `server/src/routes/skills.ts`            | Workspace extension picker (`GET /extensions`)                            |
-| `server/src/sdk-backend.ts`              | Pi resource loading and allowlist rules                                   |
-| `server/src/sdk-ui-bridge.ts`            | Extension UI bridge from pi APIs to Oppi protocol events                  |
-| `server/src/extension-ui-contract.ts`    | Shared extension UI request, notification, and settled message builders   |
-| `server/src/mobile-renderer.ts`          | Mobile tool-row rendering                                                 |
+| `server/src/routes/skills.ts`            | Workspace extension picker (`GET /extensions`)                              |
+| `server/src/sdk-backend.ts`              | Pi resource loading and allowlist rules                                     |
+| `server/src/sdk-ui-bridge.ts`            | Extension UI bridge from pi APIs to Oppi protocol events                    |
+| `server/src/extension-ui-contract.ts`    | Shared extension UI request, notification, and settled message builders     |
+| `server/src/mobile-renderer.ts`          | Mobile tool-row rendering                                                   |
 
 ## When to read pi docs instead
 
