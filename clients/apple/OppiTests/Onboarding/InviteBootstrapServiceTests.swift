@@ -130,6 +130,22 @@ struct InviteBootstrapServiceTests {
     }
 }
 
+@Suite("WhatsNewManager")
+@MainActor
+struct WhatsNewManagerTests {
+    @Test func markSeenSuppressesPromptForCurrentVersion() {
+        let key = "\(AppIdentifiers.subsystem).whatsNew.lastSeenVersion"
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        #expect(WhatsNewManager.shouldShow)
+
+        WhatsNewManager.markSeen()
+
+        #expect(!WhatsNewManager.shouldShow)
+    }
+}
+
 private actor InviteBootstrapCallLog {
     private var calls: [String] = []
 
