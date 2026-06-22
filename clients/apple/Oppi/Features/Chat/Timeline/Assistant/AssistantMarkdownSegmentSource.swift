@@ -356,7 +356,7 @@ final class AssistantMarkdownSegmentSource {
         return prefix + tail
     }
 
-    private static func applyReaderPreferences(
+    static func applyReaderPreferences(
         to segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration
     ) -> [FlatSegment] {
