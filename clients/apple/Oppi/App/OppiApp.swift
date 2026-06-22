@@ -5,6 +5,7 @@ import UIKit
 private let appLog = Logger(subsystem: AppIdentifiers.subsystem, category: "App")
 #if DEBUG
 nonisolated(unsafe) private var e2eInviteProcessedThisProcess = false
+nonisolated(unsafe) private var e2ePendingQuickSessionShareSeededThisProcess = false
 #endif
 
 /// Gate reconnect work so foreground transitions only trigger recovery
@@ -266,6 +267,7 @@ struct OppiApp: App {
                 await setupNotifications()
 #if DEBUG
                 scheduleE2EInAppBrowserIfRequested()
+                seedE2EPendingQuickSessionShareIfRequested()
 #endif
 #if DEBUG
                 // E2E test support: process invite URL from launch environment.
@@ -299,10 +301,34 @@ struct OppiApp: App {
 #else
                 await reconnectOnLaunch()
 #endif
+                QuickSessionTrigger.shared.checkForPendingRequest()
             }
     }
 
 #if DEBUG
+    @MainActor
+    private func seedE2EPendingQuickSessionShareIfRequested() {
+        guard !e2ePendingQuickSessionShareSeededThisProcess else { return }
+        guard let text = ProcessInfo.processInfo.environment["OPPI_E2E_PENDING_QUICK_SESSION_SHARE_TEXT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !text.isEmpty else {
+            return
+        }
+
+        e2ePendingQuickSessionShareSeededThisProcess = true
+        let payload = ShareQuickSessionPayload(
+            id: "e2e-quick-session-share-\(UUID().uuidString)",
+            text: text,
+            files: [],
+            createdAt: Date()
+        )
+        do {
+            try ShareQuickSessionPayload.store(payload)
+        } catch {
+            appLog.error("Failed to seed E2E quick session share payload: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     @MainActor
     private func scheduleE2EInAppBrowserIfRequested() {
         guard let url = Self.e2eInAppBrowserURL() else {
