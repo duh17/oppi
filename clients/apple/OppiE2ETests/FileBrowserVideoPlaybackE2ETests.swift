@@ -10,6 +10,8 @@ final class FileBrowserVideoPlaybackE2ETests: E2ETestCase {
 
     override var e2eLaunchesWorkspaceHomeOnly: Bool { true }
 
+    override var e2eRequiresFreshLaunch: Bool { true }
+
     override func seedE2EFixtures() throws {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         workspaceName = "video-playback-\(suffix)"
