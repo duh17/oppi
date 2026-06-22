@@ -398,10 +398,8 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             ],
         ])
 
-        waitForText("Open linked activity session", timeout: 10)
-        let rowButton = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "Open linked activity session")
-        ).firstMatch
+        expandNativeSurface(title: "Related Sessions")
+        let rowButton = app.descendants(matching: .any)["extension.native.activity.row.\(linkedSessionId)"]
         tap(rowButton, named: "native activity row link")
         XCTAssertEqual(
             waitForFocusedSessionId(linkedSessionId, timeout: 20),
@@ -423,9 +421,14 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         let bodyText = "Double-tap this expanded viewport body to open the full-screen surface."
         let identifierSuffix = "widget-\(widgetKey)"
         let viewportIdentifier = "extension-native-surface-\(identifierSuffix)-viewport"
-        let detailDoneIdentifier = "extension-native-surface-\(identifierSuffix)-detail-done"
 
         // Given a native extension widget whose detail view is available from the header.
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setStatus",
+            "statusKey": widgetKey,
+            "statusText": "Viewport gesture ready",
+        ])
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
             "method": "setWidget",
@@ -466,12 +469,22 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             viewport.frame.insetBy(dx: -1, dy: -1).contains(CGPoint(x: body.frame.midX, y: body.frame.midY)),
             "Body text should be inside the expanded scroll viewport before the double tap. viewport=\(viewport.frame), body=\(body.frame)"
         )
+        XCTAssertLessThanOrEqual(
+            body.frame.minY - viewport.frame.minY,
+            28,
+            "Short native surface content should start near the top of the expanded viewport. viewport=\(viewport.frame), body=\(body.frame)"
+        )
+        XCTAssertLessThanOrEqual(
+            viewport.frame.maxY - body.frame.maxY,
+            44,
+            "Short native surface content should not leave a large blank area inside the expanded viewport. viewport=\(viewport.frame), body=\(body.frame)"
+        )
 
-        // When the person double taps content inside the expanded scroll viewport.
-        body.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).doubleTap()
+        // When the person double taps inside the expanded scroll viewport.
+        viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).doubleTap()
 
         // Then the native surface opens in its full-screen detail presentation.
-        let detailDoneButton = app.buttons[detailDoneIdentifier]
+        let detailDoneButton = app.buttons["Done"]
         XCTAssertTrue(
             detailDoneButton.waitForExistence(timeout: 5),
             "Double tapping an expanded native surface viewport should open full-screen detail"
@@ -483,6 +496,127 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             "type": "extension_ui_notification",
             "method": "setWidget",
             "widgetKey": widgetKey,
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setStatus",
+            "statusKey": widgetKey,
+        ])
+    }
+
+    func testUpdatedNativeSurfaceViewportShrinksWithoutEmptyScrollSpace() throws {
+        createAndEnterSession()
+        _ = waitForWebSocketConnected(timeout: 20)
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        let widgetKey = "viewport-empty-space"
+        let headerTitle = "Viewport empty space native surface"
+        let shortBody = "Updated native surface fits its content."
+        let identifierSuffix = "widget-\(widgetKey)"
+        let viewportIdentifier = "extension-native-surface-\(identifierSuffix)-viewport"
+        let longRows = (1 ... 18).map { index in
+            [
+                "id": "task-\(index)",
+                "title": "Scrollable native surface task \(index)",
+                "subtitle": "Forces the expanded viewport to scroll before replacement",
+                "state": index == 18 ? "running" : "inactive",
+            ]
+        }
+
+        // Given a native extension widget whose expanded viewport has scrollable content.
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setStatus",
+            "statusKey": widgetKey,
+            "statusText": "Viewport should compact",
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+            "widgetLines": ["Scrollable native surface task 1"],
+            "nativeSurface": [
+                "version": 1,
+                "id": "widget:\(widgetKey)",
+                "source": "widget",
+                "presentation": [
+                    "style": "surfacePanel",
+                    "title": headerTitle,
+                ],
+                "blocks": [
+                    [
+                        "type": "activityList",
+                        "id": "long-activity-list",
+                        "rows": longRows,
+                    ],
+                ],
+                "fallback": [
+                    "lines": ["Scrollable native surface task 1"],
+                ],
+            ],
+        ])
+
+        let header = waitForText(headerTitle, timeout: 10)
+        tap(header, named: "native surface header")
+        let viewport = app.descendants(matching: .any)[viewportIdentifier]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Native surface expanded viewport did not appear")
+        viewport.swipeUp()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        // When the same widget updates to content shorter than the viewport limit.
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+            "widgetLines": [shortBody],
+            "nativeSurface": [
+                "version": 1,
+                "id": "widget:\(widgetKey)",
+                "source": "widget",
+                "presentation": [
+                    "style": "surfacePanel",
+                    "title": headerTitle,
+                ],
+                "blocks": [
+                    [
+                        "type": "markdown",
+                        "id": "short-markdown",
+                        "markdown": shortBody,
+                    ],
+                ],
+                "fallback": [
+                    "lines": [shortBody],
+                ],
+            ],
+        ])
+
+        // Then the viewport clamps stale scroll position and fits the updated content.
+        let body = waitForText(shortBody, timeout: 5)
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Native surface expanded viewport disappeared after update")
+        XCTAssertLessThanOrEqual(
+            body.frame.minY - viewport.frame.minY,
+            28,
+            "Updated native surface content should start near the top of the expanded viewport. viewport=\(viewport.frame), body=\(body.frame)"
+        )
+        XCTAssertLessThanOrEqual(
+            viewport.frame.maxY - body.frame.maxY,
+            44,
+            "Updated native surface content should not leave a large blank area inside the expanded viewport. viewport=\(viewport.frame), body=\(body.frame)"
+        )
+        XCTAssertLessThan(
+            viewport.frame.height,
+            140,
+            "Updated short native surface should shrink below the max scroll height. viewport=\(viewport.frame), body=\(body.frame)"
+        )
+
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+        ])
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setStatus",
+            "statusKey": widgetKey,
         ])
     }
 
@@ -829,6 +963,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
                 ],
             ],
         ])
+        expandNativeSurface(title: "RPC Demo")
         waitForText("Native RPC widget ready", timeout: 10)
         try saveLabScreenshot(name: "extension-ui-01-rpc-surface-e2e")
     }
@@ -920,12 +1055,11 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         ])
 
         waitForText("Inspecting lifecycle", timeout: 10)
+        expandNativeSurface(title: "1 of 4 tasks completed")
         waitForText("Trace server setWidget", timeout: 10)
         try saveLabScreenshot(name: "extension-ui-normal-timeline-widget-e2e")
 
-        let activeTaskButton = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "Trace server setWidget event ingestion")
-        ).firstMatch
+        let activeTaskButton = app.descendants(matching: .any)["extension.native.activity.row.trace-server"]
         tap(activeTaskButton, named: "normal timeline active task row", timeout: 5)
         RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         try saveLabScreenshot(name: "extension-ui-normal-timeline-widget-expanded-e2e")
@@ -1018,6 +1152,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
                 ],
             ],
         ])
+        expandNativeSurface(title: "Native Blocks")
         waitForText("Native text block visible", timeout: 10)
         waitForText("Markdown block rendered", timeout: 5)
         waitForText("Indexing workspace", timeout: 5)
@@ -1331,6 +1466,22 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         let match = app.descendants(matching: .any).matching(predicate).firstMatch
         XCTAssertTrue(match.waitForExistence(timeout: timeout), "Expected text did not appear: \(text)")
         return match
+    }
+
+    private func expandNativeSurface(title: String, timeout: TimeInterval = 10) {
+        let collapsePredicate = NSPredicate(format: "label CONTAINS[c] %@", "Collapse \(title) preview")
+        let collapseToggle = app.descendants(matching: .any).matching(collapsePredicate).firstMatch
+        if collapseToggle.waitForExistence(timeout: 0.5) {
+            return
+        }
+
+        let expandPredicate = NSPredicate(format: "label CONTAINS[c] %@", "Expand \(title) preview")
+        let expandToggle = app.descendants(matching: .any).matching(expandPredicate).firstMatch
+        tap(expandToggle, named: "native surface \(title) expand toggle", timeout: timeout)
+        XCTAssertTrue(
+            collapseToggle.waitForExistence(timeout: timeout),
+            "Native surface \(title) did not expand"
+        )
     }
 
     private func waitForWidgetPlacement(

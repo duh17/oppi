@@ -268,7 +268,11 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
     }
 
     var body: some View {
-        ScrollView {
+        NativeSurfaceViewportScrollContainer(
+            maxHeight: maxHeight,
+            accessibilityIdentifier: "extension-native-surface-\(identifierSuffix)-viewport",
+            onDoubleTap: onOpenFullScreen
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 if displayBlocks.isEmpty {
                     let fallbackLines = surface.fallbackDisplayLines
@@ -287,18 +291,7 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                ExtensionNativeSurfaceViewportGestureInstaller(onDoubleTap: onOpenFullScreen)
-            )
         }
-        .frame(maxHeight: maxHeight)
-        .contentShape(Rectangle())
-        .highPriorityGesture(
-            TapGesture(count: 2).onEnded {
-                onOpenFullScreen()
-            }
-        )
-        .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-viewport")
         .accessibilityHint("Double tap to open full screen.")
         .accessibilityAction(named: Text("Open Full Screen")) {
             onOpenFullScreen()
@@ -307,91 +300,203 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
     }
 }
 
-private struct ExtensionNativeSurfaceViewportGestureInstaller: UIViewRepresentable {
+private struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable {
+    let maxHeight: CGFloat
+    let accessibilityIdentifier: String
     let onDoubleTap: () -> Void
+    let content: Content
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onDoubleTap: onDoubleTap)
+    init(
+        maxHeight: CGFloat,
+        accessibilityIdentifier: String,
+        onDoubleTap: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.maxHeight = maxHeight
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.onDoubleTap = onDoubleTap
+        self.content = content()
     }
 
-    func makeUIView(context: Context) -> ExtensionNativeSurfaceViewportGestureHostView {
-        let view = ExtensionNativeSurfaceViewportGestureHostView()
-        view.isUserInteractionEnabled = false
-        view.onHierarchyChanged = { [weak coordinator = context.coordinator] hostView in
-            coordinator?.installIfNeeded(from: hostView)
-        }
-        return view
+    func makeUIView(context: Context) -> NativeSurfaceViewportContainerView<Content> {
+        NativeSurfaceViewportContainerView(
+            rootView: content,
+            maxHeight: maxHeight,
+            accessibilityIdentifier: accessibilityIdentifier,
+            onDoubleTap: onDoubleTap
+        )
     }
 
-    func updateUIView(_ uiView: ExtensionNativeSurfaceViewportGestureHostView, context: Context) {
-        context.coordinator.onDoubleTap = onDoubleTap
-        context.coordinator.installIfNeeded(from: uiView)
+    func updateUIView(_ uiView: NativeSurfaceViewportContainerView<Content>, context: Context) {
+        uiView.update(
+            rootView: content,
+            maxHeight: maxHeight,
+            accessibilityIdentifier: accessibilityIdentifier,
+            onDoubleTap: onDoubleTap
+        )
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onDoubleTap: () -> Void
-        private let recognizer = UITapGestureRecognizer()
-        private weak var installedScrollView: UIScrollView?
-
-        init(onDoubleTap: @escaping () -> Void) {
-            self.onDoubleTap = onDoubleTap
-            super.init()
-            recognizer.numberOfTapsRequired = 2
-            recognizer.cancelsTouchesInView = false
-            recognizer.delegate = self
-            recognizer.addTarget(self, action: #selector(handleDoubleTap(_:)))
-        }
-
-        deinit {
-            installedScrollView?.removeGestureRecognizer(recognizer)
-        }
-
-        func installIfNeeded(from view: UIView) {
-            guard let scrollView = view.firstSuperview(of: UIScrollView.self),
-                  installedScrollView !== scrollView else { return }
-            installedScrollView?.removeGestureRecognizer(recognizer)
-            scrollView.addGestureRecognizer(recognizer)
-            installedScrollView = scrollView
-        }
-
-        @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-            guard recognizer.state == .ended else { return }
-            onDoubleTap()
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            true
-        }
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: NativeSurfaceViewportContainerView<Content>,
+        context: Context
+    ) -> CGSize? {
+        let measuredWidth = proposal.width ?? uiView.bounds.width
+        guard measuredWidth.isFinite, measuredWidth > 0 else { return nil }
+        return CGSize(
+            width: measuredWidth,
+            height: uiView.viewportHeight(for: measuredWidth)
+        )
     }
 }
 
-private final class ExtensionNativeSurfaceViewportGestureHostView: UIView {
-    var onHierarchyChanged: ((UIView) -> Void)?
+private final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGestureRecognizerDelegate {
+    private let scrollView = UIScrollView()
+    private let hostingController: UIHostingController<Content>
+    private var hostedHeightConstraint: NSLayoutConstraint?
+    private var maxHeight: CGFloat
+    private var onDoubleTap: () -> Void
+    private var lastIntrinsicHeight: CGFloat = 0
 
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        onHierarchyChanged?(self)
+    private lazy var doubleTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
+        return recognizer
+    }()
+
+    init(
+        rootView: Content,
+        maxHeight: CGFloat,
+        accessibilityIdentifier: String,
+        onDoubleTap: @escaping () -> Void
+    ) {
+        hostingController = UIHostingController(rootView: rootView)
+        self.maxHeight = maxHeight
+        self.onDoubleTap = onDoubleTap
+        super.init(frame: .zero)
+        setup(accessibilityIdentifier: accessibilityIdentifier)
     }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        onHierarchyChanged?(self)
-    }
-}
-
-private extension UIView {
-    func firstSuperview<T: UIView>(of type: T.Type) -> T? {
-        var current = superview
-        while let candidate = current {
-            if let match = candidate as? T {
-                return match
-            }
-            current = candidate.superview
-        }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
         return nil
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let width = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
+        return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateScrollBehavior()
+    }
+
+    func update(
+        rootView: Content,
+        maxHeight: CGFloat,
+        accessibilityIdentifier: String,
+        onDoubleTap: @escaping () -> Void
+    ) {
+        hostingController.rootView = rootView
+        hostingController.view.invalidateIntrinsicContentSize()
+        self.maxHeight = maxHeight
+        self.onDoubleTap = onDoubleTap
+        scrollView.accessibilityIdentifier = accessibilityIdentifier
+        setNeedsLayout()
+        invalidateIntrinsicContentSize()
+    }
+
+    private func setup(accessibilityIdentifier: String) {
+        backgroundColor = .clear
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.backgroundColor = .clear
+        scrollView.alwaysBounceVertical = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.accessibilityIdentifier = accessibilityIdentifier
+        scrollView.addGestureRecognizer(doubleTapRecognizer)
+        addSubview(scrollView)
+
+        let hostedView = hostingController.view
+        hostedView?.translatesAutoresizingMaskIntoConstraints = false
+        hostedView?.backgroundColor = .clear
+        hostedView?.setContentHuggingPriority(.required, for: .vertical)
+        hostedView?.setContentCompressionResistancePriority(.required, for: .vertical)
+        if let hostedView {
+            let heightConstraint = hostedView.heightAnchor.constraint(equalToConstant: 1)
+            hostedHeightConstraint = heightConstraint
+            scrollView.addSubview(hostedView)
+            NSLayoutConstraint.activate([
+                hostedView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+                hostedView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+                hostedView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+                hostedView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+                hostedView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+                heightConstraint,
+            ])
+        }
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    private func updateScrollBehavior() {
+        guard bounds.width > 0 else { return }
+        let contentHeight = measuredContentHeight(for: bounds.width)
+        hostedHeightConstraint?.constant = max(1, contentHeight)
+
+        let targetHeight = viewportHeight(for: bounds.width)
+        let canScrollVertically = contentHeight > maxHeight + 0.5
+        scrollView.isScrollEnabled = canScrollVertically
+        scrollView.alwaysBounceVertical = canScrollVertically
+        clampContentOffset(contentHeight: contentHeight, canScrollVertically: canScrollVertically)
+
+        if abs(targetHeight - lastIntrinsicHeight) > 0.5 {
+            lastIntrinsicHeight = targetHeight
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    func viewportHeight(for width: CGFloat) -> CGFloat {
+        let contentHeight = measuredContentHeight(for: width)
+        return min(max(1, maxHeight), max(1, contentHeight))
+    }
+
+    private func measuredContentHeight(for width: CGFloat) -> CGFloat {
+        let measuredHeight = hostingController.sizeThatFits(
+            in: CGSize(width: max(1, width), height: CGFloat.greatestFiniteMagnitude)
+        ).height
+        return measuredHeight.isFinite ? measuredHeight : maxHeight
+    }
+
+    private func clampContentOffset(contentHeight: CGFloat, canScrollVertically: Bool) {
+        let currentOffset = scrollView.contentOffset
+        let maxOffsetY = canScrollVertically ? max(0, contentHeight - scrollView.bounds.height) : 0
+        let clampedY = min(max(currentOffset.y, 0), maxOffsetY)
+        guard abs(currentOffset.y - clampedY) > 0.5 || abs(currentOffset.x) > 0.5 else { return }
+        scrollView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: false)
+    }
+
+    @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        onDoubleTap()
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 }
 
@@ -866,7 +971,11 @@ private struct ExtensionNativeActivityRowView: View {
                     content
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityValue(accessibilityValue)
                 .accessibilityHint("Opens the related session")
+                .accessibilityIdentifier(activityRowAccessibilityIdentifier)
             } else if canExpandInline && !startsExpanded {
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
@@ -876,7 +985,11 @@ private struct ExtensionNativeActivityRowView: View {
                     content
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityValue(accessibilityValue)
                 .accessibilityHint(isExpanded ? "Collapse task text" : "Show full task text")
+                .accessibilityIdentifier(activityRowAccessibilityIdentifier)
             } else {
                 content
             }
@@ -899,6 +1012,46 @@ private struct ExtensionNativeActivityRowView: View {
             return nil
         }
         return url
+    }
+
+    private var activityRowAccessibilityIdentifier: String {
+        "extension.native.activity.row.\(row.id)"
+    }
+
+    private var accessibilityLabel: String {
+        [row.title, row.subtitle, row.detail]
+            .compactMap { value in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: ", ")
+    }
+
+    private var accessibilityValue: String {
+        [stateAccessibilityText, progressAccessibilityText]
+            .compactMap { value in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: ", ")
+    }
+
+    private var stateAccessibilityText: String? {
+        switch row.state {
+        case "running": return "Working"
+        case "success": return "Done"
+        case "warning": return "Warning"
+        case "error": return "Error"
+        case "queued": return "Queued"
+        case "inactive": return "Not started"
+        default: return nil
+        }
+    }
+
+    private var progressAccessibilityText: String? {
+        guard let progress = row.progress, progress.isFinite else { return nil }
+        let normalized = min(max(progress, 0), 1)
+        return "\(Int(round(normalized * 100))) percent"
     }
 }
 
@@ -971,6 +1124,7 @@ private struct ExtensionNativeActivityRowContent: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue)
+        .accessibilityIdentifier("extension.native.activity.row.\(row.id)")
     }
 
     private var rowAccentColor: Color {
@@ -1468,4 +1622,3 @@ struct ExtensionSurfacePanel: View {
         }
     }
 }
-
