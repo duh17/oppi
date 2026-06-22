@@ -88,16 +88,8 @@ struct ThemePaletteBuiltinTests {
         assertAllTokensPresent(ThemePalettes.oled, name: "oled")
     }
 
-    @Test func neutralDarkPaletteHasAll49Tokens() {
-        assertAllTokensPresent(ThemePalettes.neutralDark, name: "neutral-dark")
-    }
-
     @Test func lightPaletteHasAll49Tokens() {
         assertAllTokensPresent(ThemePalettes.light, name: "light")
-    }
-
-    @Test func neutralLightPaletteHasAll49Tokens() {
-        assertAllTokensPresent(ThemePalettes.neutralLight, name: "neutral-light")
     }
 
     @Test func nightPaletteHasAll49Tokens() {
