@@ -190,6 +190,35 @@ struct QuickSessionTriggerTests {
     }
 }
 
+@Suite("ExtensionContextOpenSupport")
+struct ExtensionContextOpenSupportTests {
+    @Test func shareExtensionPointCannotOpenContainingAppOnIOS() {
+        #expect(
+            ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
+                extensionPointIdentifier: ExtensionContextOpenSupport.shareServicesExtensionPointIdentifier
+            ) == false
+        )
+    }
+
+    @Test func documentedOpenExtensionPointsCanOpenContainingAppOnIOS() {
+        #expect(
+            ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
+                extensionPointIdentifier: ExtensionContextOpenSupport.todayExtensionPointIdentifier
+            )
+        )
+        #expect(
+            ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
+                extensionPointIdentifier: ExtensionContextOpenSupport.iMessageExtensionPointIdentifier
+            )
+        )
+    }
+
+    @Test func missingOrUnknownExtensionPointCannotOpenContainingAppOnIOS() {
+        #expect(!ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(extensionPointIdentifier: nil))
+        #expect(!ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(extensionPointIdentifier: "com.apple.ui-services"))
+    }
+}
+
 // MARK: - ThinkingLevelEnum (Intent type)
 
 @Suite("ThinkingLevelEnum")

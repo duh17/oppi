@@ -24,6 +24,14 @@ class E2ETestCase: XCTestCase {
         false
     }
 
+    /// Override for tests that must control launch-only state such as pending app-group handoff data.
+    var e2eRequiresFreshLaunch: Bool {
+        false
+    }
+
+    /// Override to add launch environment or arguments before the app starts.
+    func configureE2ELaunch(_ application: XCUIApplication) {}
+
     /// Override in labs that need server-side fixtures before the app refreshes.
     func seedE2EFixtures() throws {}
 
@@ -33,6 +41,11 @@ class E2ETestCase: XCTestCase {
         try super.setUpWithError()
         continueAfterFailure = false
         try seedE2EFixtures()
+
+        if e2eRequiresFreshLaunch {
+            Self._app?.terminate()
+            Self._app = nil
+        }
 
         if Self._app == nil {
             try launchAndPair()
@@ -63,6 +76,7 @@ class E2ETestCase: XCTestCase {
             application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
             application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
         }
+        configureE2ELaunch(application)
         application.launch()
         Self._app = application
 

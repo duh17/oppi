@@ -68,3 +68,36 @@ struct ShareQuickSessionPayload: Codable, Equatable, Sendable {
         try? FileManager.default.removeItem(at: url)
     }
 }
+
+/// iOS support matrix for `NSExtensionContext.open(_:completionHandler:)`.
+///
+/// Apple documents that each extension point decides whether this API works.
+/// On iOS, the supported extension points are Today widgets and iMessage apps;
+/// share extensions should hand data through an app group and let the app consume
+/// it on its next launch or foreground transition.
+enum ExtensionContextOpenSupport {
+    static let shareServicesExtensionPointIdentifier = "com.apple.share-services"
+    static let todayExtensionPointIdentifier = "com.apple.widget-extension"
+    static let iMessageExtensionPointIdentifier = "com.apple.message-payload-provider"
+
+    static func extensionPointIdentifier(in bundle: Bundle = .main) -> String? {
+        guard let extensionInfo = bundle.object(forInfoDictionaryKey: "NSExtension") as? [String: Any] else {
+            return nil
+        }
+        return extensionInfo["NSExtensionPointIdentifier"] as? String
+    }
+
+    static func supportsOpeningContainingAppOnIOS(extensionPointIdentifier: String?) -> Bool {
+        guard let normalized = extensionPointIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !normalized.isEmpty else {
+            return false
+        }
+
+        switch normalized {
+        case Self.todayExtensionPointIdentifier, Self.iMessageExtensionPointIdentifier:
+            return true
+        default:
+            return false
+        }
+    }
+}

@@ -130,25 +130,38 @@ final class ShareViewController: UIViewController {
 
             do {
                 try ShareQuickSessionPayload.store(payload)
-                self.openHostApp(payloadId: payloadId)
+                self.finishOrOpenHostAppIfSupported(payloadId: payloadId)
             } catch {
                 self.finish(cancelled: true)
             }
         }
     }
 
-    private func openHostApp(payloadId: String) {
+    private func finishOrOpenHostAppIfSupported(payloadId: String) {
+        let extensionPointIdentifier = ExtensionContextOpenSupport.extensionPointIdentifier()
+        guard ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
+            extensionPointIdentifier: extensionPointIdentifier
+        ) else {
+            finish(cancelled: false)
+            return
+        }
+
         guard var components = URLComponents(string: "oppi://quick-session-share") else {
-            finish(cancelled: true)
+            finish(cancelled: false)
             return
         }
         components.queryItems = [URLQueryItem(name: "id", value: payloadId)]
         guard let url = components.url else {
-            finish(cancelled: true)
+            finish(cancelled: false)
             return
         }
 
-        extensionContext?.open(url) { [weak self] _ in
+        guard let extensionContext else {
+            finish(cancelled: false)
+            return
+        }
+
+        extensionContext.open(url) { [weak self] _ in
             self?.finish(cancelled: false)
         }
     }
