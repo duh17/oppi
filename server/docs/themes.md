@@ -1,6 +1,6 @@
 # Oppi Theme System
 
-Create custom color themes for the Oppi iOS app. A theme is a single JSON file with 49 color tokens. Upload it to your server, then import it from Settings in the app.
+Create custom color themes for the Oppi iOS app. A theme is a single JSON file with 49 color tokens. Write it to the server's theme directory, then import it from Settings in the app.
 
 ## File format
 
@@ -163,16 +163,14 @@ For agents, prefer the `build_theme` tool from the `oppi-admin` workspace extens
 
 If `oppi-admin` is not enabled, an agent can still create a theme by writing the JSON file directly to `~/.config/oppi/themes/`, or `$OPPI_DATA_DIR/themes/` when the server uses a custom data dir. No server restart is required.
 
-Theme routes are also available for clients:
+Theme routes are available for clients:
 
-| Method   | Path            | Purpose                           |
-| -------- | --------------- | --------------------------------- |
-| `GET`    | `/themes`       | List bundled, pi, and user themes |
-| `GET`    | `/themes/:name` | Fetch a theme                     |
-| `PUT`    | `/themes/:name` | Save a user theme                 |
-| `DELETE` | `/themes/:name` | Delete a user theme               |
+| Method | Path            | Purpose                           |
+| ------ | --------------- | --------------------------------- |
+| `GET`  | `/themes`       | List bundled, pi, and user themes |
+| `GET`  | `/themes/:name` | Fetch a theme                     |
 
-Bundled themes live in `server/themes/`. User themes live in `~/.config/oppi/themes/`. Pi TUI themes in `~/.pi/agent/themes/` are detected and converted for Oppi automatically when possible.
+Bundled themes live in `server/themes/`. User themes live in `~/.config/oppi/themes/`. Pi TUI themes in `~/.pi/agent/themes/` are detected and converted for Oppi automatically when possible. The current server API does not write or delete themes; create, update, or remove user themes by changing files in the theme directory.
 
 ## Relationship to pi TUI themes
 
