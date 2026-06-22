@@ -1,10 +1,12 @@
 # Oppi extension behavior
 
-This page explains Oppi's runtime behavior for pi extensions: what Oppi loads, what workspaces can enable, what standalone pi sees, and how terminal-oriented extension UI appears on mobile.
+This page explains Oppi's runtime behavior for pi extensions: what Oppi loads, how the workspace editor toggles Pi resources, what standalone pi sees, and how terminal-oriented extension UI appears on mobile.
+
+Use it when you install an extension for Oppi, adjust Pi resource settings from a workspace, or adapt a Pi extension so its prompts and tool output work well in the Apple app.
 
 For Oppi's public native UI block contract and Apple presentation mapping, see [`extension-native-ui.md`](extension-native-ui.md). For media attachments in messages and expanded tool output, see [`attachment-rendering.md`](attachment-rendering.md).
 
-It is for Oppi workspace admins and Oppi developers. It is not an extension-authoring guide. For pi package layout, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
+This is not a general Pi extension-authoring guide. For pi package layout, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
 
 - pi extension docs: `@earendil-works/pi-coding-agent/docs/extensions.md`
 - pi package docs: `@earendil-works/pi-coding-agent/docs/packages.md`
@@ -12,7 +14,7 @@ It is for Oppi workspace admins and Oppi developers. It is not an extension-auth
 
 ## Core rule
 
-Oppi does not inject extension tools into SDK sessions. Extension tools, including `ask`, load from Pi's own resource system, then pass through the workspace allowlist.
+Oppi does not inject extension tools into SDK sessions. Extension tools, including `ask`, load from Pi's own resource system for the session cwd. There is no `workspace.extensions` allowlist in the current workspace model.
 
 Approval behavior is extension-owned. If a session needs approval before an action, use a Pi extension that handles `tool_call` or session events and asks through `ctx.ui`.
 
@@ -23,9 +25,9 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 | Surface                  | Enabled by                                                  | Declared in                              | Loaded by          | Notes                                                                                                      |
 | ------------------------ | ----------------------------------------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
 | Host pi extensions       | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                     |
-| Ask extension example    | Local/package install + workspace `extensions` allowlist    | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs    |
-| Goal extension prototype | Local/package install + workspace `extensions` allowlist    | `pi-extensions/goal`                     | pi resource loader | Pi-only prototype for durable goals, model goal tools, and extension-owned continuation turns              |
-| Browser video example    | Local/package install + workspace `extensions` allowlist    | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available    |
+| Ask extension example    | Pi package/settings install or auto-discovered extension path | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs    |
+| Goal extension prototype | Pi package/settings install or auto-discovered extension path | `pi-extensions/goal`                     | pi resource loader | Pi-only prototype for durable goals, model goal tools, and extension-owned continuation turns              |
+| Browser video example    | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available    |
 | Mobile UI compatibility  | Native Oppi client + server bridge                          | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
@@ -46,7 +48,7 @@ Rendering path:
 
 `pi-extensions/goal` is a Pi-only prototype for Codex-style durable goals. It registers `/goal`, `get_goal`, `create_goal`, and `update_goal`, persists state as Pi custom session entries, and uses Pi lifecycle hooks plus `pi.sendMessage(..., { triggerTurn: true })` to queue continuation turns while a goal remains active.
 
-This keeps the first implementation out of Oppi server lifecycle code. Oppi's role is normal extension loading, workspace allowlist filtering, and rendering the extension widget through the native extension UI contract when available.
+This keeps the first implementation out of Oppi server lifecycle code. Oppi's role is normal Pi resource loading, resource-setting edits from the workspace UI, and rendering the extension widget through the native extension UI contract when available.
 
 ## Pi package layout
 
@@ -78,11 +80,113 @@ pi -e <package-or-path>
 
 Oppi keeps Pi's extension system, then adds these rules:
 
-1. **Workspace allowlist filtering** through `workspace.extensions`.
-2. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
-3. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
+1. **Cwd-scoped Pi resource resolution** for host sessions. User settings, project settings, installed packages, and auto-discovered extension directories remain the source of truth.
+2. **Pi resource toggles** from the workspace editor. The editor writes Pi resource settings (`+` / `-` entries) for skills and extensions; it does not write a workspace-level extension allowlist.
+3. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
+4. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
 
-Oppi does not replace Pi discovery. It filters host-loaded extensions through the workspace allowlist. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
+Oppi does not replace Pi discovery. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
+
+## Mobile compatibility checklist
+
+Build the extension as a normal Pi extension first. Then make the user-facing parts semantic enough for Oppi to render without a terminal.
+
+### Minimum path
+
+1. Ship a real Pi package or extension path that works in standalone Pi.
+2. Ask the user through `ctx.ui.ask()`, `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, or `ctx.ui.editor()` when mobile users need to respond.
+3. Keep tool `content` concise for the model, and put readable mobile output in `details.expandedText` with `details.presentationFormat`.
+4. Put generated images and video in stored attachment metadata, not markdown links or inline base64. Use the audio presentation shape for audio cards. For PDFs and generic files, return a workspace/session-accessible path or link in `content` / `details.expandedText`; `details.media[]` does not render them today.
+5. Keep collapsed timeline summaries one line. Rich text, JSON, diffs, code, logs, and media belong in expanded content.
+6. Provide terminal/text fallback for custom widgets. Oppi must be able to show something readable when native blocks are unsupported.
+7. Test both paths: terminal Pi and an Oppi workspace with the extension enabled.
+
+### What translates to mobile
+
+| Pi / Oppi extension API | Use it for | Oppi mobile behavior |
+| --- | --- | --- |
+| `ctx.ui.ask()` | multi-question prompts, multi-select, optional custom answers | native AskCard; portable extensions need a Pi fallback because `ask` is Oppi-defined |
+| `ctx.ui.select()` | one choice from a short list | native prompt card |
+| `ctx.ui.confirm()` | yes/no decisions such as approval gates | native confirmation card |
+| `ctx.ui.input()` | one short text answer | native text prompt |
+| `ctx.ui.editor()` | longer text input | native editor sheet |
+| `ctx.ui.notify()` | non-blocking status | toast, banner, or notification-style UI |
+| `ctx.ui.setTitle()` | session or extension heading | extension surface heading |
+| `ctx.ui.setStatus()` | persistent status text | status row or chip |
+| `ctx.ui.setWidget(string[])` | compact persistent widget text | monospaced widget card |
+| `ctx.ui.setWidget(component)` with `renderNative()` | structured persistent widget | native surface panel with fallback |
+| `ctx.ui.setWorkingMessage()` / `setWorkingVisible()` / `setWorkingIndicator()` | working-row customization | native timeline working row |
+| `ctx.ui.setEditorText()` / `pasteToEditor()` | hand text to the composer | one-shot composer text handoff |
+| `ctx.ui.setToolsExpanded()` / `getToolsExpanded()` | default tool expansion state | native tool-row expansion state |
+
+Terminal-first APIs such as `ctx.ui.custom()`, `setFooter`, `setHeader`, `setEditorComponent`, and raw terminal input remain terminal-owned unless the extension also provides a semantic native surface or a standard blocking prompt. Do not use those APIs for a decision the user must answer from the phone.
+
+### Tool output that renders well
+
+Oppi reads the normal Pi tool result, then looks for structured `details` fields before falling back to generic text parsing.
+
+```typescript
+return {
+  content: [{ type: "text", text: "Created release notes." }],
+  details: {
+    expandedText: "# Release notes\n\n- Added mobile extension defaults",
+    presentationFormat: "markdown",
+  },
+};
+```
+
+Use these fields when they apply:
+
+| Details field | Mobile behavior |
+| --- | --- |
+| `expandedText` | text shown when the user expands the tool row |
+| `presentationFormat: "markdown"` | render `expandedText` as markdown |
+| `presentationFormat: "json"` | render structured output as formatted JSON |
+| `presentationFormat: "code"` with `language` or `filePath` | render code with syntax highlighting |
+| `presentationFormat: "diff"` | render a unified diff |
+| `startLine` | set the first code line number |
+| `media` | render stored image and video attachment rows; see [`attachment-rendering.md`](attachment-rendering.md) |
+
+For generated images or video, prefer Oppi's attachment helper when it is available:
+
+```typescript
+const video = await ctx.attachments.addFile({
+  path: mp4Path,
+  kind: "video",
+  mimeType: "video/mp4",
+  fileName: "browser-run.mp4",
+  deleteSource: true,
+});
+
+return {
+  content: [{ type: "text", text: "Recorded browser run." }],
+  details: { media: [video] },
+};
+```
+
+Portable extensions need a non-Oppi fallback, such as writing the output path into `content`, when `ctx.attachments` is unavailable.
+
+### Native widgets
+
+Use native widgets for display-only state: progress, task lists, status summaries, and links to existing Oppi destinations. The extension still owns its terminal renderer.
+
+A widget component that works well in both places has:
+
+- `render()` for terminal Pi
+- `renderNative()` for Oppi
+- `fallback.lines` or `fallback.text` for clients that do not understand a native block
+- stable IDs for rows that update over time
+
+Keep native widgets generic. They are data rendered by Oppi, not downloaded Swift views. If the user needs to click a row, use a normal app link such as `oppi://session/<id>` and let Oppi route it.
+
+### Common mistakes
+
+- Returning a beautiful `renderResult()` TUI component but no `details.expandedText`; the phone can only show generic text.
+- Putting long markdown, tables, or logs into the collapsed summary.
+- Requiring `ctx.ui.custom()` for approval or input.
+- Embedding base64 video/audio or local file paths in markdown.
+- Assuming installing Oppi installs or enables your extension in standalone Pi.
+- Depending on raw ANSI colors instead of semantic roles or plain fallback text.
 
 ## Approval prompts
 
@@ -103,30 +207,32 @@ At session startup, Oppi begins with pi's normal extension sources for the sessi
 - settings-declared extension paths (`settings.json` `extensions` arrays)
 - package-provided extensions installed through pi (`pi install`)
 
-Oppi then prunes and filters that list before the session uses it:
+Pi resolves the resources for the session cwd. The picker starts with those resolved resources, also scans global and project `.pi/extensions` directories so newly copied files appear, and normalizes extension names:
 
-- file extensions must be `.ts` or `.js`; `.test` and `.spec` files are ignored
-- package `index` entries use the package identity for their allowlist name, such as `npm:@tintinweb/pi-subagents` becoming `tintinweb-subagents`
+- file extensions must be `.ts` or `.js`; `.test` and `.spec` files are ignored in the picker
+- package `index` entries use the package identity for display, such as `npm:@tintinweb/pi-subagents` becoming `tintinweb-subagents`
 - directory-style entries such as `extensions/foo/index.ts` use `foo` as the extension name
-- when `workspace.extensions` is set, host extensions must appear in that allowlist
 
-After pruning, Oppi loads the remaining Pi extensions without injecting an extra Ask tool. Install or enable a Pi extension named `ask` when a workspace needs the ask tool.
+Enable/disable writes only match Pi-resolved resources. A direct-scan entry that Pi's resolver cannot match can appear in the picker but fail with `Pi resource not found for cwd` if toggled.
+
+Oppi loads the Pi-resolved extensions without injecting an extra Ask tool. Install or enable a Pi extension named `ask` when a workspace needs the ask tool.
 
 ## Reload behavior
 
 `/reload` reloads host pi extensions, skills, prompts, and themes through pi's resource loader.
 
-## Workspace allowlist behavior
+## Pi resource toggle behavior
 
-If a workspace sets `extensions`, that field is authoritative for optional workspace extensions in Oppi SDK sessions.
+Current Oppi workspaces do not store `extensions`. Extension enablement comes from Pi resource settings for the session cwd.
 
-That means:
+The workspace editor can toggle skills and extensions by writing Pi settings:
 
-- include `ask` explicitly if you want an Ask tool from an installed Pi extension named `ask`
-- include a Pi extension name explicitly if you want it when the workspace has an allowlist
-- omitting an extension name disables it for that workspace
+- `+path` enables a resource that is otherwise filtered out.
+- `-path` disables a resource that Pi would otherwise load.
+- Package resources use the same `+` / `-` filtering inside the package entry.
+- Temporary resources cannot be edited from Oppi.
 
-If `workspace.extensions` is unset, Oppi keeps normal pi discovery.
+This is Pi resource filtering, not a workspace-owned allowlist or denylist. A host-backed workspace starts sessions with whatever Pi resolves for that cwd after those settings are applied. Sandbox workspaces still have a separate `workspace.tools` allowlist for VM-backed tools only.
 
 ## Extension picker behavior
 
@@ -148,120 +254,27 @@ Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](e
 
 The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components.
 
-## Mobile rendering differences
+## Mobile rendering fallback
 
 Pi's terminal UI uses extension `renderCall()` and `renderResult()` hooks. Oppi iOS does not execute those TUI renderers.
 
-On mobile, Oppi renders tool activity with native timeline rows. Rendering uses this fallback chain:
+For tool rows, Oppi uses this order:
 
 1. built-in mobile renderers in `server/src/mobile-renderer.ts`
-2. optional sidecars in `~/.pi/agent/mobile-renderers/*.ts`
+2. optional collapsed-summary sidecars in `~/.pi/agent/mobile-renderers/*.ts`
 3. server-provided `StyledSegment[]` summaries for the collapsed row
-4. generic extension output rendering from tool `content` and `details`
+4. generic rendering from tool `content` and `details`
 
-That means an extension can look polished in terminal pi but look generic in Oppi unless it provides mobile-friendly text, structured details, or a sidecar renderer.
-
-### Generic mobile defaults
-
-For extension tools without a dedicated mobile renderer, Oppi renders useful native output:
-
-- collapsed row title defaults to the tool name plus a compact argument summary
-- collapsed rows are treated as compact summaries, not rich output containers
-- expanded output renders JSON objects/arrays as formatted JSON
-- markdown-looking text renders as markdown
-- unified diffs render with the native diff view
-- code-like output can render with syntax highlighting when a language hint is present
-- otherwise output renders as plain/ANSI text
-
-Extension authors can improve the default expanded view by returning these `details` keys from the tool result:
-
-| Key                  | Purpose                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `expandedText`       | Text shown in the expanded mobile view instead of raw output                                                 |
-| `presentationFormat` | One of `markdown`, `json`, `code`, or `diff`                                                                 |
-| `language`           | Syntax hint for `presentationFormat: "code"`                                                                 |
-| `filePath`           | File path hint for language detection and diff/code metadata                                                 |
-| `startLine`          | Starting line number for code views                                                                          |
-| `media`              | Stored media attachment metadata for expanded rows; see [`attachment-rendering.md`](attachment-rendering.md) |
-
-Example:
-
-```typescript
-return {
-  content: [{ type: "text", text: "Created release notes." }],
-  details: {
-    expandedText: "# Release notes\n\n- Added mobile extension defaults",
-    presentationFormat: "markdown",
-  },
-};
-```
-
-Use `content` for the LLM-facing result. Use `details.expandedText` when the best mobile display text should differ from the concise result text.
-
-### Compatibility policy for terminal-first extensions
-
-Oppi's goal is safe best-effort compatibility with terminal pi extensions. Mobile should show something useful without letting terminal-oriented layouts destabilize the chat timeline.
-
-Rules for mobile compatibility:
-
-- preserve terminal extension behavior where practical
-- do not require terminal extensions to ship an Oppi-specific renderer
-- keep collapsed tool rows height-stable
-- treat rich or multiline output as expanded content, not collapsed row chrome
-- prefer structured tool `details` over terminal-rendered snapshots when both exist
-
-If a terminal renderer or mobile sidecar produces multiple lines for a collapsed summary, Oppi uses the first line for the collapsed row and treats the remaining lines as expanded fallback content when no better `details.expandedText` / `presentationFormat` output exists.
-
-Priority for expanded output:
+Expanded output uses this order:
 
 1. `details.expandedText` plus `details.presentationFormat`
-2. generic parsing of the tool's text output (`json`, markdown, diff, code hints)
+2. generic parsing of the tool text as JSON, markdown, diff, or code
 3. sanitized terminal/mobile-renderer snapshot fallback
 4. plain text
 
-### Mobile renderer sidecars
+Sidecars are for short collapsed summaries only. Use semantic segment styles such as `muted`, `accent`, `success`, `warning`, and `error`; the iOS app maps those roles to the active theme. Put rich readable output in `details.expandedText` instead of sidecar summary lines.
 
-Mobile renderer sidecars are compatibility adapters for collapsed timeline summaries. They are not the general extension UI system and should not own rich output rendering.
-
-Current sidecars live in `~/.pi/agent/mobile-renderers/*.ts` and return `StyledSegment[]` for tool call/result summaries. Segment styles are semantic, not raw colors:
-
-- `bold`
-- `muted`
-- `dim`
-- `accent`
-- `success`
-- `warning`
-- `error`
-
-The iOS app maps those semantic styles to the active theme. Sidecars should not choose raw colors.
-
-Durable sidecar contract:
-
-- use sidecars for short collapsed summaries only
-- keep summaries single-line whenever possible
-- avoid embedding markdown, tables, large JSON, logs, or multiline terminal layouts in summary segments
-- put rich readable output in tool result `details.expandedText` with `presentationFormat`
-- if a summary contains newlines, Oppi may normalize it for timeline stability
-
-This keeps user-installed terminal extensions broadly compatible while making mobile behavior predictable.
-
-### Persistent extension surface
-
-Oppi maps fire-and-forget extension UI calls to generic native presentation above the composer:
-
-- `ctx.ui.setTitle()` → card heading
-- `ctx.ui.setStatus()` → status rows
-- `ctx.ui.setWidget(string[])` → monospaced widget lines
-- `ctx.ui.setWidget(component)` with `renderNative()` → display-only native surface panel
-- `ctx.ui.notify()` → toast/banner
-- `ctx.ui.setEditorText()` / `pasteToEditor()` → composer text handoff
-- `ctx.ui.setWorkingMessage()` / `setWorkingVisible()` / `setWorkingIndicator()` → native timeline working row
-- `ctx.ui.setHiddenThinkingLabel()` → thinking row accessibility and source metadata
-- `ctx.ui.setToolsExpanded()` / `getToolsExpanded()` → native tool-row expansion state
-
-This is a native mobile surface, not a terminal footer/header. `setFooter`, `setHeader`, arbitrary `custom()` components, and editor replacement remain terminal-first APIs; SDK sessions ignore them or preserve factories only when Pi compatibility requires it.
-
-Mirror mode uses the same protocol surface from an interactive terminal Pi process. Keep the mirror-specific support table and first-wins dialog race rules in `docs/oppi-mirror.md#extension-ui-compatibility-matrix` rather than duplicating them here.
+Mirror mode uses the same semantic request payloads from an interactive terminal Pi process. Mirror-specific first-wins dialog behavior lives in [`oppi-mirror.md`](oppi-mirror.md#extension-ui-compatibility-matrix).
 
 ## Relevant implementation files
 
@@ -271,7 +284,7 @@ Mirror mode uses the same protocol surface from an interactive terminal Pi proce
 | `pi-extensions/goal`                     | Goal extension prototype with durable state and continuation turns          |
 | `pi-extensions/browser-automation-video` | Oppi-compatible Pi extension package using the documented attachment helper |
 | `server/src/routes/skills.ts`            | Workspace extension picker (`GET /extensions`)                              |
-| `server/src/sdk-backend.ts`              | Pi resource loading and allowlist rules                                     |
+| `server/src/sdk-backend.ts`              | Pi resource loading and SDK session setup                                   |
 | `server/src/sdk-ui-bridge.ts`            | Extension UI bridge from pi APIs to Oppi protocol events                    |
 | `server/src/extension-ui-contract.ts`    | Shared extension UI request, notification, and settled message builders     |
 | `server/src/mobile-renderer.ts`          | Mobile tool-row rendering                                                   |
