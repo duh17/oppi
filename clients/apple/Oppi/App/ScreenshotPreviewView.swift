@@ -45,6 +45,8 @@ struct ScreenshotPreviewView: View {
             ContextBarOverlapPreview()
         case "feature-tips":
             FeatureEducationTipsPreview()
+        case "feature-tip-p0":
+            FeatureEducationP0TipPreview()
         case "voice-message-expanded":
             VoiceMessageExpandedPreview()
         case "global-audio-banner":
