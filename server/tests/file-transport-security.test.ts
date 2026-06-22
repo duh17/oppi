@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { once } from "node:events";
@@ -348,6 +348,79 @@ describe("file transport security parity", () => {
       expect(rawRes.body.toString("utf8")).toBe("other workspace\n");
     } finally {
       rmSync(otherRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("serves session-created temp artifacts outside configured workspaces", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "oppi-session-artifact-"));
+    const artifactFile = join(artifactRoot, "pi-codex-websocket-limit-issue.md");
+    writeFileSync(artifactFile, "temp artifact\n", "utf8");
+
+    try {
+      const workspace = makeWorkspace(root);
+      const session = makeSession({
+        changeStats: {
+          changedFiles: [artifactFile],
+          filesChanged: 1,
+          _sessionCreatedFiles: [artifactFile],
+        } as Session["changeStats"],
+      });
+      const errors: Array<{ status: number; message: string }> = [];
+      const handlers = createSessionFileHandlers(
+        makeContext(workspace, session),
+        makeHelpers(errors),
+      );
+
+      const rawRes = new MockWritableResponse();
+      const rawFinished = once(rawRes, "finish");
+      await handlers.handleGetSessionRaw(
+        "ws-1",
+        "sess-1",
+        artifactFile,
+        rawRes as unknown as ServerResponse,
+      );
+      await rawFinished;
+
+      expect(errors).toEqual([]);
+      expect(rawRes.statusCode).toBe(200);
+      expect(rawRes.body.toString("utf8")).toBe("temp artifact\n");
+    } finally {
+      rmSync(artifactRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks session-created files outside configured workspaces and temp artifact roots", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
+    const unsafeRoot = mkdtempSync(join(homedir(), ".oppi-file-security-unsafe-"));
+    const unsafeFile = join(unsafeRoot, "report.md");
+    writeFileSync(unsafeFile, "home artifact\n", "utf8");
+
+    try {
+      const workspace = makeWorkspace(root);
+      const session = makeSession({
+        changeStats: {
+          changedFiles: [unsafeFile],
+          filesChanged: 1,
+          _sessionCreatedFiles: [unsafeFile],
+        } as Session["changeStats"],
+      });
+      const errors: Array<{ status: number; message: string }> = [];
+      const handlers = createSessionFileHandlers(
+        makeContext(workspace, session),
+        makeHelpers(errors),
+      );
+
+      await handlers.handleGetSessionRaw(
+        "ws-1",
+        "sess-1",
+        unsafeFile,
+        new MockWritableResponse() as unknown as ServerResponse,
+      );
+
+      expect(errors).toEqual([{ status: 403, message: "Path outside configured workspaces" }]);
+    } finally {
+      rmSync(unsafeRoot, { recursive: true, force: true });
     }
   });
 
