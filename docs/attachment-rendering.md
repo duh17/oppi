@@ -12,13 +12,13 @@ Oppi already has three attachment paths:
 - tool-produced image attachments through `details.image`
 - tool-produced audio through `kind: "audio_presentation"` and `details.audio`
 
-Expanded tool rows understand `details.media[]` for stored media attachment metadata. Video attachments use `details.media[]` rather than a markdown URL scheme.
+Expanded tool rows understand `details.media[]` for stored image and video attachment metadata. Video attachments use `details.media[]` rather than a markdown URL scheme.
 
 ## Core rule
 
 Attachments are structured metadata plus server-owned bytes. They are not markdown URLs.
 
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, video, or file views. Markdown `![]()` keeps its current job: resolving image file paths and remote images.
+Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Markdown `![]()` keeps its current job: resolving image file paths and remote images. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
 ## Deployment model and trust boundary
 
@@ -38,7 +38,7 @@ Renderable tool attachments use this shape.
 
 ```ts
 type ToolMediaAttachment = {
-  kind: "image" | "audio" | "video" | "file";
+  kind: "image" | "audio" | "video";
   id: string;
   mimeType: string;
   fileName?: string;
@@ -55,7 +55,7 @@ Required fields:
 
 | Field      | Requirement                                                         |
 | ---------- | ------------------------------------------------------------------- |
-| `kind`     | Rendering category: `image`, `audio`, `video`, or `file`.           |
+| `kind`     | Rendering category: `image`, `audio`, or `video`.                   |
 | `id`       | Stable session-local attachment ID.                                 |
 | `mimeType` | Normalized MIME type such as `image/png`, `audio/wav`, `video/mp4`. |
 
@@ -66,9 +66,9 @@ Optional fields improve rendering:
 - `width` and `height` let clients reserve image/video layout before loading bytes.
 - `durationSeconds` lets clients label audio/video before playback.
 
-## User message attachments
+## User message uploads
 
-User files are uploaded before sending a prompt. The message carries `ChatAttachmentRef` values rather than raw file bytes.
+User files uploaded before a prompt use `ChatAttachmentRef`, not tool-result `details.media[]`. Uploads can be PDFs or archives because they render as attachment badges and prompt context rather than expanded tool media rows.
 
 ```ts
 type ChatAttachmentRef = {
@@ -245,19 +245,19 @@ type StoredToolAttachment = ToolMediaAttachment & {
 
 Workspace file rendering and attachment rendering solve different jobs.
 
-Use workspace/session file routes for current project files:
+Use workspace/session file routes for current project files, PDFs, reports, and generic files:
 
 - `docs/example.png`
+- `reports/run-summary.pdf`
 - a source-controlled media file
 - a touched session file that passes the session raw-file policy
 
-Use stored tool attachments for files associated with a message or tool result:
+Use stored tool attachments for media associated with a message or tool result:
 
 - screenshots captured by a tool
 - generated images
 - voice or TTS audio
 - browser automation recordings
-- exported PDFs or reports
 
 Direct file previews can change when the file changes. Stored tool attachments preserve the bytes associated with the tool result.
 
