@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -353,6 +353,29 @@ describe("JsonlMetricWriter", () => {
 
     const files = readdirSync(tempDir).filter((f) => f.startsWith("server-ops-metrics-"));
     expect(files).toHaveLength(0);
+  });
+
+  it("drops batches that would exceed the daily JSONL byte cap", () => {
+    const writer = new JsonlMetricWriter(tempDir, 30, 512);
+
+    writer.writeBatch([{ ts: Date.now(), metric: "server.ws_ping_rtt_ms", value: 5 }]);
+    const [fileName] = readdirSync(tempDir).filter((f) => f.startsWith("server-ops-metrics-"));
+    expect(fileName).toBeDefined();
+    const filePath = join(tempDir, fileName!);
+    const before = statSync(filePath).size;
+
+    writer.writeBatch([
+      {
+        ts: Date.now(),
+        metric: "server.ws_ping_rtt_ms",
+        value: 10,
+        tags: { payload: "x".repeat(1_000) },
+      },
+    ]);
+
+    expect(statSync(filePath).size).toBe(before);
+    const lines = readFileSync(filePath, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(1);
   });
 
   it("creates telemetry directory if it doesn't exist", () => {

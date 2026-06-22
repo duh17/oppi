@@ -3,7 +3,7 @@
  * server-stats). Extracted to eliminate copy-paste across metric modules.
  */
 
-import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 /** Format epoch-ms as "YYYY-MM-DD" in UTC. */
@@ -26,6 +26,54 @@ export function retentionDaysFromEnv(envVarName: string, defaultDays: number): n
   const parsed = Number.parseInt(raw, 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return defaultDays;
+}
+
+/**
+ * Read a per-file byte budget from an environment variable.
+ *
+ * No default budget is applied here: silent telemetry dropping should be an
+ * explicit operator choice, not a hidden constant. A value of 0 disables the
+ * cap explicitly for local debugging.
+ */
+export function jsonlMaxBytesFromEnv(envVarName: string): number | null {
+  const raw = process.env[envVarName]?.trim() ?? "";
+  if (raw === "" || raw === "0") return null;
+
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return null;
+}
+
+/**
+ * Append a JSONL record only if doing so keeps the file under a byte budget.
+ *
+ * Returns false when the record is dropped. The caller decides whether to log a
+ * warning; this helper stays silent so a full telemetry file cannot cause a
+ * warning loop that writes another unbounded log.
+ */
+export function appendJsonlLineWithByteLimit(
+  filePath: string,
+  line: string,
+  maxBytes: number | null,
+): boolean {
+  if (maxBytes === null) {
+    appendFileSync(filePath, line, { encoding: "utf8", mode: 0o600 });
+    return true;
+  }
+
+  const lineBytes = Buffer.byteLength(line, "utf8");
+  if (lineBytes > maxBytes) return false;
+
+  let currentBytes = 0;
+  try {
+    currentBytes = statSync(filePath).size;
+  } catch {
+    currentBytes = 0;
+  }
+
+  if (currentBytes + lineBytes > maxBytes) return false;
+  appendFileSync(filePath, line, { encoding: "utf8", mode: 0o600 });
+  return true;
 }
 
 /**

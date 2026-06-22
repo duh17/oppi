@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ describe("ServerResourceSampler", () => {
   afterEach(() => {
     delete process.env.OPPI_SERVER_METRICS_INTERVAL_MS;
     delete process.env.OPPI_SERVER_METRICS_RETENTION_DAYS;
+    delete process.env.OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES;
     vi.restoreAllMocks();
     rmSync(telemetryDir, { recursive: true, force: true });
   });
@@ -123,6 +124,39 @@ describe("ServerResourceSampler", () => {
     expect(setIntervalSpy.mock.calls[0]?.[1]).toBe(30_000);
     expect(setIntervalSpy.mock.calls[1]?.[1]).toBe(6_000);
     expect((fakeTimer.unref as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+  });
+
+  it("drops samples that would exceed the daily JSONL byte cap", () => {
+    process.env.OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES = "32";
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    vi.spyOn(Date, "now").mockReturnValue(2_000);
+    vi.spyOn(process, "memoryUsage").mockReturnValue({
+      rss: 100 * 1024 * 1024,
+      heapTotal: 50 * 1024 * 1024,
+      heapUsed: 25 * 1024 * 1024,
+      external: 5 * 1024 * 1024,
+      arrayBuffers: 0,
+    });
+    vi.spyOn(process, "cpuUsage").mockReturnValue({ user: 0, system: 0 });
+
+    const existingFile = join(telemetryDir, "server-metrics-1970-01-01.jsonl");
+    writeFileSync(existingFile, '{"existing":true}\n');
+    const before = statSync(existingFile).size;
+
+    const sampler = new ServerResourceSampler({
+      telemetryDir,
+      getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
+      getWebSocketCount: () => 0,
+    });
+
+    (
+      sampler as unknown as {
+        sample: () => void;
+      }
+    ).sample();
+
+    expect(statSync(existingFile).size).toBe(before);
+    expect(readFileSync(existingFile, "utf8")).toBe('{"existing":true}\n');
   });
 
   it("swallows sampling errors without writing a record", () => {

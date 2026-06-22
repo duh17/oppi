@@ -404,6 +404,61 @@ describe("telemetry module", () => {
     }
   });
 
+  it("accepts chat metrics without appending when the daily telemetry file is capped", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-cap-"));
+    const previousMaxBytes = process.env.OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES;
+    process.env.OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES = "32";
+
+    try {
+      const generatedAt = Date.now();
+      const telemetryDir = join(dataDir, "diagnostics", "telemetry");
+      mkdirSync(telemetryDir, { recursive: true });
+      const dayFile = join(
+        telemetryDir,
+        `chat-metrics-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+      );
+      writeFileSync(dayFile, '{"existing":true}\n');
+      const before = readFileSync(dayFile, "utf8");
+
+      const ctx = {
+        storage: {
+          getDataDir: () => dataDir,
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const handled = await dispatch({
+        method: "POST",
+        path: "/telemetry/chat-metrics",
+        url: new URL("http://localhost/telemetry/chat-metrics"),
+        req: makeRequest({
+          generatedAt,
+          samples: [
+            {
+              ts: generatedAt,
+              metric: "chat.ttft_ms",
+              value: 120,
+              unit: "ms",
+            },
+          ],
+        }) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(readFileSync(dayFile, "utf8")).toBe(before);
+    } finally {
+      if (previousMaxBytes === undefined) {
+        delete process.env.OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES;
+      } else {
+        process.env.OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES = previousMaxBytes;
+      }
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("drops invalid chat metric samples while persisting valid ones", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-mixed-"));
     try {
