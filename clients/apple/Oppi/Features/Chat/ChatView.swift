@@ -1055,9 +1055,6 @@ struct ChatView: View {
         switch phase {
         case .background:
             sessionManager.coalescer.pause()
-            Task {
-                await sessionManager.flushSnapshotIfNeeded(connection: connection)
-            }
         case .active:
             sessionManager.coalescer.resume()
         default:

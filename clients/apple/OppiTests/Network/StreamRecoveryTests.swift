@@ -25,13 +25,16 @@ struct StreamRecoveryTests {
         // No toolEnd events — simulate missed events
         reducer.process(.agentEnd(sessionId: "s1"))
 
-        let tools = reducer.items.compactMap { item -> (String, Bool)? in
-            guard case .toolCall(let id, _, _, _, _, _, let isDone) = item else { return nil }
-            return (id, isDone)
+        let tools = reducer.items.filter {
+            if case .toolCall = $0 { return true }
+            return false
         }
         #expect(tools.count == 3)
-        for (id, isDone) in tools {
+        for item in tools {
+            guard case .toolCall(let id, _, _, let preview, _, let isError, let isDone) = item else { continue }
             #expect(isDone, "Tool \(id) should be marked done after agentEnd")
+            #expect(isError, "Tool \(id) should not render as a green success without toolEnd")
+            #expect(preview.contains("stopped before returning"), "Tool \(id) should explain why no output/log is available")
         }
     }
 
@@ -211,12 +214,19 @@ struct StreamRecoveryTests {
         ]
         reducer.processBatch(events)
 
-        let tools = reducer.items.compactMap { item -> (String, Bool)? in
-            guard case .toolCall(let id, _, _, _, _, _, let isDone) = item else { return nil }
-            return (id, isDone)
+        let tools = reducer.items.filter {
+            if case .toolCall = $0 { return true }
+            return false
         }
         #expect(tools.count == 2)
-        #expect(tools.allSatisfy { $0.1 })
+        #expect(tools.allSatisfy {
+            guard case .toolCall(_, _, _, _, _, _, let isDone) = $0 else { return false }
+            return isDone
+        })
+        #expect(tools.allSatisfy {
+            guard case .toolCall(_, _, _, _, _, let isError, _) = $0 else { return false }
+            return isError
+        })
     }
 
     @Test func processBatchAgentStartCleansUpPreviousTurn() {

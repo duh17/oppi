@@ -464,7 +464,8 @@ final class ChatSessionManager {
             // the bottom. The scheduled fresh trace load will reconcile properly.
             if reducer.items.isEmpty {
                 let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
-                reducer.loadSession(cached.events)
+                let finalizeCachedOpenTools = !(sessionStore.session(id: sessionId)?.status.isRunning ?? true)
+                reducer.loadSession(cached.events, finalizeOpenTools: finalizeCachedOpenTools)
                 let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
 
                 ChatSessionTelemetry.recordReducerLoad(
@@ -1103,14 +1104,19 @@ final class ChatSessionManager {
             let timelineTrace = Self.timelineTrace(from: trace, session: session)
             let freshSignature = Self.traceSignature(for: timelineTrace)
             let usedFirstMessageFallback = trace.isEmpty && !timelineTrace.isEmpty
+            let finalizeOpenTools = !session.status.isRunning
             var freshnessReason = "history_empty"
 
             if !timelineTrace.isEmpty {
                 // Skip rebuild if the timeline projection hasn't changed since
-                // the cached/fallback version.
+                // the cached/fallback version, unless the session terminal policy
+                // changed. Identical trace IDs still need a reducer pass when a
+                // running cache is reconciled with a stopped fresh session (or the
+                // reverse), because open tool rows are rendered differently.
                 if let cachedCount = cachedEventCount,
                    cachedCount == freshSignature.eventCount,
-                   cachedLastEventId == freshSignature.lastEventId {
+                   cachedLastEventId == freshSignature.lastEventId,
+                   !reducer.needsTraceProjectionRefresh(finalizeOpenTools: finalizeOpenTools) {
                     log.info("Trace unchanged for \(self.sessionId) — skipping rebuild")
                     if let replayID {
                         reducer.discardHistoryReplayBuffer(id: replayID)
@@ -1123,13 +1129,21 @@ final class ChatSessionManager {
                     let usedReplay = replayID.map { reducer.isReplayBuffering(id: $0) } ?? false
                     let reducerStartMs = ChatSessionTelemetry.nowMs()
                     if usedReplay, let replayID {
-                        reducer.applyTraceWithLiveReplay(timelineTrace, replayID: replayID)
+                        reducer.applyTraceWithLiveReplay(
+                            timelineTrace,
+                            replayID: replayID,
+                            finalizeOpenTools: finalizeOpenTools
+                        )
                     } else {
                         // Fresh trace is authoritative — don't preserve orphans.
                         // Orphan detection creates "ghost" user messages at the
                         // bottom (no matching assistant response) when the trace
                         // lags behind locally-appended items.
-                        reducer.loadSession(timelineTrace, preserveOrphans: false)
+                        reducer.loadSession(
+                            timelineTrace,
+                            preserveOrphans: false,
+                            finalizeOpenTools: finalizeOpenTools
+                        )
                     }
                     let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
 

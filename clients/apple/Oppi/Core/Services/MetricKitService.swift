@@ -311,20 +311,48 @@ struct MetricKitCrashContext: Codable, Equatable, Sendable {
     let sessionId: String?
     let workspaceId: String?
     let streamState: String
+    let lastTimelinePayloadRecordedAtMs: Int64?
+    let lastTimelinePayloadBytes: Int?
+    let lastTimelinePayloadEventCount: Int?
+    let lastTimelinePayloadLargestEventBytes: Int?
 }
 
 enum MetricKitCrashContextStore {
     private static let defaultsKey = "oppi.diagnostics.lastActiveContext.v1"
 
     static func record(sessionId: String?, workspaceId: String?, streamState: String) {
+        let previous = snapshot()
         let context = MetricKitCrashContext(
             recordedAtMs: Date.nowMs(),
             sessionId: clean(sessionId),
             workspaceId: clean(workspaceId),
-            streamState: clean(streamState) ?? "unknown"
+            streamState: clean(streamState) ?? "unknown",
+            lastTimelinePayloadRecordedAtMs: previous?.lastTimelinePayloadRecordedAtMs,
+            lastTimelinePayloadBytes: previous?.lastTimelinePayloadBytes,
+            lastTimelinePayloadEventCount: previous?.lastTimelinePayloadEventCount,
+            lastTimelinePayloadLargestEventBytes: previous?.lastTimelinePayloadLargestEventBytes
         )
-        guard let data = try? JSONEncoder().encode(context) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+        save(context)
+    }
+
+    static func recordLargeTimelinePayload(
+        sessionId: String?,
+        eventCount: Int,
+        bytes: Int,
+        largestEventBytes: Int
+    ) {
+        let previous = snapshot()
+        let context = MetricKitCrashContext(
+            recordedAtMs: previous?.recordedAtMs ?? Date.nowMs(),
+            sessionId: clean(sessionId) ?? previous?.sessionId,
+            workspaceId: previous?.workspaceId,
+            streamState: previous?.streamState ?? "unknown",
+            lastTimelinePayloadRecordedAtMs: Date.nowMs(),
+            lastTimelinePayloadBytes: bytes,
+            lastTimelinePayloadEventCount: eventCount,
+            lastTimelinePayloadLargestEventBytes: largestEventBytes
+        )
+        save(context)
     }
 
     static func snapshot() -> MetricKitCrashContext? {
@@ -344,7 +372,24 @@ enum MetricKitCrashContextStore {
         if let workspaceId = context.workspaceId {
             metadata["lastWorkspaceId"] = workspaceId
         }
+        if let recordedAtMs = context.lastTimelinePayloadRecordedAtMs {
+            metadata["lastTimelinePayloadRecordedAtMs"] = String(recordedAtMs)
+        }
+        if let bytes = context.lastTimelinePayloadBytes {
+            metadata["lastTimelinePayloadBytes"] = String(bytes)
+        }
+        if let eventCount = context.lastTimelinePayloadEventCount {
+            metadata["lastTimelinePayloadEventCount"] = String(eventCount)
+        }
+        if let largestEventBytes = context.lastTimelinePayloadLargestEventBytes {
+            metadata["lastTimelinePayloadLargestEventBytes"] = String(largestEventBytes)
+        }
         return metadata
+    }
+
+    private static func save(_ context: MetricKitCrashContext) {
+        guard let data = try? JSONEncoder().encode(context) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
     }
 
     private static func clean(_ value: String?) -> String? {

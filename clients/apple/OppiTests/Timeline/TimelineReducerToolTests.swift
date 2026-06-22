@@ -86,7 +86,7 @@ struct TimelineReducerToolTests {
         #expect(text == "Done!")
     }
 
-    @Test func orphanedToolIsClosedOnAgentEnd() {
+    @Test func orphanedToolIsClosedAsErrorOnAgentEnd() {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
@@ -94,11 +94,14 @@ struct TimelineReducerToolTests {
         // No toolEnd before agentEnd
         reducer.process(.agentEnd(sessionId: "s1"))
 
-        guard case .toolCall(_, _, _, _, _, _, let isDone) = reducer.items[0] else {
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items[0] else {
             Issue.record("Expected toolCall")
             return
         }
         #expect(isDone, "Orphaned tool should be marked done on agentEnd")
+        #expect(isError, "Orphaned tool should not render as a green success")
+        #expect(preview.contains("stopped before returning"), "Orphaned tool should explain why no output/log is available")
+        #expect(reducer.toolOutputStore.fullOutput(for: "t1").contains("stopped before returning"))
     }
 
     @Test func toolStartStoresArgs() {
@@ -233,6 +236,75 @@ struct TimelineReducerToolTests {
         #expect(reducer.items.isEmpty)
     }
 
+    @Test func loadSessionMarksToolCallWithoutResultAsErrorWithDiagnostic() {
+        let reducer = TimelineReducer()
+        let events = traceWithToolCallWithoutResult()
+
+        reducer.loadSession(events)
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isDone, "Loaded orphaned tool should be closed")
+        #expect(isError, "Loaded orphaned tool should not render as a green success")
+        #expect(preview.contains("stopped before returning"), "Loaded orphaned tool should explain missing output")
+    }
+
+    @Test func loadSessionCanKeepToolCallWithoutResultOpenWhileSessionIsRunning() {
+        let reducer = TimelineReducer()
+        let events = traceWithToolCallWithoutResult()
+
+        reducer.loadSession(events, finalizeOpenTools: false)
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(!isDone, "Running session history should keep missing-result tools open")
+        #expect(!isError, "Running session history should not mark in-flight tools as failed")
+        #expect(preview.isEmpty)
+        #expect(reducer.needsTraceProjectionRefresh(finalizeOpenTools: true))
+    }
+
+    @Test func realTraceResultReplacesSyntheticStoppedDiagnostic() {
+        let reducer = TimelineReducer()
+        let openTrace = traceWithToolCallWithoutResult()
+        let completedTrace = openTrace + [
+            TraceEvent(
+                id: "result-missing-result", type: .toolResult, timestamp: "2026-01-01T00:00:02Z",
+                output: "real output", toolCallId: "missing-result", toolName: "web_search_read",
+                isError: false
+            ),
+        ]
+
+        reducer.loadSession(openTrace)
+        #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").contains("stopped before returning"))
+
+        reducer.loadSession(completedTrace)
+
+        #expect(reducer.toolOutputStore.fullOutput(for: "missing-result") == "real output")
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isDone)
+        #expect(!isError)
+        #expect(preview == "real output")
+    }
+
+    private func traceWithToolCallWithoutResult() -> [TraceEvent] {
+        let toolId = "missing-result"
+        return [
+            TraceEvent(
+                id: toolId, type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                text: nil, tool: "web_search_read",
+                args: ["query": .string("Aristotle practice")],
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+        ]
+    }
+
     @Test func traceToolResultDetailsPopulatesToolDetailsStore() {
         let reducer = TimelineReducer()
         let toolId = "tc-ext-1"
@@ -298,6 +370,26 @@ struct TimelineReducerToolTests {
         // Args should still be available after tool completion
         #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
         #expect(reducer.toolArgsStore.args(for: toolId)?["path"]?.stringValue == "docs/guide.md")
+    }
+
+    @Test func streamingToolUpdateCapsLargePreviewArgsUntilExecutionStarts() {
+        let reducer = TimelineReducer()
+        let toolId = "write-large-preview"
+        let largeContent = String(repeating: "x", count: ToolArgsStore.maxPreviewStringBytes + 1_000)
+        let args: [String: JSONValue] = [
+            "path": .string("docs/large.md"),
+            "content": .string(largeContent),
+        ]
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolUpdate(sessionId: "s1", toolEventId: toolId, tool: "write", args: args))
+
+        let previewContent = reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue
+        #expect(previewContent?.utf8.count == ToolArgsStore.maxPreviewStringBytes)
+        #expect(reducer.toolArgsStore.args(for: toolId)?["path"]?.stringValue == "docs/large.md")
+
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "write", args: args))
+        #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue?.utf8.count == largeContent.utf8.count)
     }
 
     @Test func editPreviewTitleUsesUpdatedPathBeforeExecutionStart() {

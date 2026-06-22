@@ -300,14 +300,34 @@ struct DeltaCoalescerTests {
 
         let oversized = String(repeating: "z", count: (256 * 1024) + 8)
         coalescer.receive(.textDelta(sessionId: "s1", delta: oversized))
+        coalescer.flushNow()
 
-        #expect(flushed.count == 1)
+        #expect(flushed.count == 2)
         #expect(flushed[0].count == 1)
-        guard case .textDelta(_, let payload) = flushed[0][0] else {
-            Issue.record("Expected textDelta payload")
-            return
+        #expect(flushed[1].count == 1)
+        let payload = flushed.flatMap { $0 }.compactMap { event -> String? in
+            guard case .textDelta(_, let payload) = event else { return nil }
+            return payload
+        }.joined()
+        #expect(payload == oversized)
+    }
+
+    @Test func oversizedAppendPayloadsAreChunkedBeforeTimelineFlush() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        let oversized = String(repeating: "z", count: (DeltaCoalescer.maxBufferedBytesForTesting * 2) + 17)
+        coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: oversized, isError: false))
+        coalescer.flushNow()
+
+        let outputs = flushed.flatMap { $0 }.compactMap { event -> String? in
+            guard case .toolOutput(let payload) = event else { return nil }
+            #expect(payload.output.utf8.count <= DeltaCoalescer.maxBufferedBytesForTesting)
+            return payload.output
         }
-        #expect(payload.count == oversized.count)
+        #expect(outputs.count == 3)
+        #expect(outputs.joined() == oversized)
     }
 
     // MARK: - Timer-based flush

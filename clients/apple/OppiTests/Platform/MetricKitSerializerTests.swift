@@ -130,6 +130,29 @@ struct MetricKitSerializerTests {
         #expect(context?["lastSessionId"] == "session-1")
     }
 
+    @Test func crashContextIncludesLargeTimelinePayloadBreadcrumbs() {
+        MetricKitCrashContextStore.record(
+            sessionId: "session-large",
+            workspaceId: "workspace-1",
+            streamState: "streaming"
+        )
+        MetricKitCrashContextStore.recordLargeTimelinePayload(
+            sessionId: "session-large",
+            eventCount: 1,
+            bytes: 14_500_000,
+            largestEventBytes: 14_500_000
+        )
+
+        let metadata = MetricKitCrashContextStore.snapshotMetadata()
+
+        #expect(metadata["lastSessionId"] == "session-large")
+        #expect(metadata["lastWorkspaceId"] == "workspace-1")
+        #expect(metadata["lastStreamState"] == "streaming")
+        #expect(metadata["lastTimelinePayloadBytes"] == "14500000")
+        #expect(metadata["lastTimelinePayloadEventCount"] == "1")
+        #expect(metadata["lastTimelinePayloadLargestEventBytes"] == "14500000")
+    }
+
     // MARK: - Empty/broken payloads (the old bug)
 
     @Test func emptyDictionaryProducesMinimalItem() {
