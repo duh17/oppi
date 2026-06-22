@@ -123,6 +123,10 @@ export class AuthStore {
     return this.configStore.getConfig().authDeviceTokens || [];
   }
 
+  getPushDeviceTokens(): string[] {
+    return this.configStore.getConfig().pushDeviceTokens || [];
+  }
+
   addPushDeviceToken(token: string): void {
     const tokens = this.configStore.getConfig().pushDeviceTokens || [];
     if (!tokens.includes(token)) {

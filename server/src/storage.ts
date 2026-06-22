@@ -219,6 +219,10 @@ export class Storage {
     return this.authStore.getAuthDeviceTokens();
   }
 
+  getPushDeviceTokens(): string[] {
+    return this.authStore.getPushDeviceTokens();
+  }
+
   addPushDeviceToken(token: string): void {
     this.authStore.addPushDeviceToken(token);
   }

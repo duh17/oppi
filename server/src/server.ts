@@ -27,6 +27,7 @@ import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
+import { SessionPushNotifier } from "./session-push-notifier.js";
 import { ServerResourceSampler } from "./server-resource-sampler.js";
 import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
@@ -385,6 +386,8 @@ export class Server {
 
   // Live Activity push bridge (debounced APNs updates)
   private liveActivity: LiveActivityBridge;
+  // Regular APNs alerts for terminal/error session events.
+  private sessionPushNotifier: SessionPushNotifier;
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
@@ -467,6 +470,7 @@ export class Server {
 
     this.push = createPushClient(apnsConfig, this.opsMetrics);
     this.liveActivity = new LiveActivityBridge(this.push, this.storage);
+    this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage);
     this.sessions = new SessionManager(storage, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
@@ -588,6 +592,7 @@ export class Server {
 
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
       this.liveActivity.handleSessionEvent(payload);
+      this.sessionPushNotifier.handleSessionEvent(payload);
       this.appEventStreamMux.handleSessionBroadcastEvent(payload);
     };
     this.sessions.on("session_event", handleSessionEvent);
