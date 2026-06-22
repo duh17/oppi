@@ -238,6 +238,7 @@ class E2ETestCase: XCTestCase {
     private func dismissExtensionSurfaceIfNeeded(in application: XCUIApplication, timeout: TimeInterval) {
         let buttons = [
             application.buttons["extension.dialog.cancel"],
+            application.buttons["Cancel"],
             application.buttons["Done"],
         ]
 
@@ -315,15 +316,16 @@ class E2ETestCase: XCTestCase {
             "Session list did not appear before entering session \(sessionId)"
         )
 
-        let rowTitle = app.staticTexts["Session \(sessionId)"]
-        if !rowTitle.waitForExistence(timeout: 5) {
+        let rowIdentifier = "session.nav.\(sessionId)"
+        let row = app.descendants(matching: .any)[rowIdentifier]
+        for _ in 0..<14 where !row.waitForExistence(timeout: 0.5) {
             sessionList.swipeUp()
         }
         XCTAssertTrue(
-            rowTitle.waitForExistence(timeout: 10),
+            row.waitForExistence(timeout: 10),
             "Session row \(sessionId) did not appear"
         )
-        tap(rowTitle, named: "session row \(sessionId)")
+        tap(row, named: "session row \(sessionId)")
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(

@@ -12,7 +12,7 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
     }
 
     override func seedE2EFixtures() throws {
-        try seedLabWorkspaces(currentScenario.fixtures)
+        try seedLabWorkspaces(WorkspaceHomeLabScenario.allFixtures)
     }
 
     func testWorkspaceHomeWrappingScreenshotLab() throws {
@@ -113,6 +113,10 @@ private enum WorkspaceHomeLabScenario {
         case .denseCounts:
             return "Archive Saturation Workspace"
         }
+    }
+
+    static var allFixtures: [E2ELabWorkspaceFixture] {
+        WorkspaceHomeLabScenario.wrapping.fixtures + WorkspaceHomeLabScenario.denseCounts.fixtures
     }
 
     var fixtures: [E2ELabWorkspaceFixture] {

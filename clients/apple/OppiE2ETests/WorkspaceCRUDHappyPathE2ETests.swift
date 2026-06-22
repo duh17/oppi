@@ -67,18 +67,13 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
     private func createWorkspaceWithNewFolder(name: String, hostPath: String) {
         let nameField = app.textFields["workspace.create.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "Workspace name field not shown")
-        tap(nameField, named: "workspace name field")
-        nameField.typeText(name)
+        replaceText(in: nameField, with: name)
+        dismissKeyboardIfNeeded()
 
         let hostField = app.textFields["workspace.create.hostMount"]
         XCTAssertTrue(hostField.waitForExistence(timeout: 10), "Host path field not shown")
-        tap(hostField, named: "workspace host path field")
-        hostField.typeText(hostPath)
-
-        let keyboardReturn = app.keyboards.buttons["Return"]
-        if keyboardReturn.exists { keyboardReturn.tap() }
-        let doneButton = app.buttons["Done"]
-        if doneButton.exists && doneButton.isHittable { doneButton.tap() }
+        replaceText(in: hostField, with: hostPath)
+        dismissKeyboardIfNeeded()
 
         let pathExists = app.staticTexts["Path exists"]
         let submit = app.buttons["workspace.create.submit"]
@@ -259,12 +254,37 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
     }
 
     private func replaceText(in element: XCUIElement, with text: String) {
-        tap(element, named: "text field")
+        focusTextEntry(element)
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         if let value = element.value as? String, !value.isEmpty {
             element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count))
         }
         element.typeText(text)
+    }
+
+    private func focusTextEntry(_ element: XCUIElement) {
+        for _ in 0..<4 where !element.isHittable {
+            app.swipeUp()
+        }
+
+        tap(element, named: "text field")
+        let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
+        if !focusPredicate.evaluate(with: element) {
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+
+        let deadline = Date().addingTimeInterval(5)
+        while !focusPredicate.evaluate(with: element) && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(focusPredicate.evaluate(with: element), "Text field did not gain keyboard focus")
+    }
+
+    private func dismissKeyboardIfNeeded() {
+        let keyboardReturn = app.keyboards.buttons["Return"]
+        if keyboardReturn.exists { keyboardReturn.tap() }
+        let doneButton = app.buttons["Done"]
+        if doneButton.exists && doneButton.isHittable { doneButton.tap() }
     }
 
     private func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
