@@ -3,6 +3,10 @@ import UIKit
 
 enum QuickSessionSheetLayout {
     static let compactDetentHeight: CGFloat = 150
+    /// Stable target for normal multiline composer growth. This is tall enough
+    /// for wrapped dictation text without the old large blank header, and stable
+    /// enough to avoid retargeting the sheet on every measured text-row change.
+    static let multilineComposerDetentHeight: CGFloat = 224
     private static let detentIncrement: CGFloat = 4
 
     static func normalizedContentHeight(_ height: CGFloat) -> CGFloat {
@@ -15,10 +19,13 @@ enum QuickSessionSheetLayout {
         guard contentHeight > 0 else { return compactDetentHeight }
 
         // `.height` detents already reserve the sheet presentation chrome/safe area.
-        // Keep the compact rest height for short input, then track measured content
-        // directly. A coarse expanded bucket leaves an empty sheet header when the
-        // composer barely grows past one line.
+        // Keep the compact rest height for short input. Once wrapped dictation
+        // text needs more room, hold a smaller stable multiline detent instead
+        // of retargeting the sheet for every TextKit measurement change.
         guard contentHeight > compactDetentHeight else { return compactDetentHeight }
+        guard contentHeight > multilineComposerDetentHeight else {
+            return multilineComposerDetentHeight
+        }
         return contentHeight
     }
 

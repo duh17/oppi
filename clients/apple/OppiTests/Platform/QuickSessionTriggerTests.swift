@@ -456,23 +456,29 @@ struct QuickSessionSheetLayoutTests {
         ))
     }
 
-    @Test func contentJustOverCompactUsesMeasuredDetent() {
+    @Test func contentJustOverCompactUsesStableMultilineDetent() {
         #expect(QuickSessionSheetLayout.normalizedContentHeight(151) == 152)
-        #expect(QuickSessionSheetLayout.detentHeight(forContentHeight: 151) == 152)
+        #expect(
+            QuickSessionSheetLayout.detentHeight(forContentHeight: 151)
+                == QuickSessionSheetLayout.multilineComposerDetentHeight
+        )
+        #expect(QuickSessionSheetLayout.multilineComposerDetentHeight > QuickSessionSheetLayout.compactDetentHeight)
+        #expect(QuickSessionSheetLayout.multilineComposerDetentHeight < 260)
     }
 
-    @Test func wrappedComposerGrowthTracksMeasuredHeight() {
+    @Test func wrappedComposerGrowthDoesNotRetargetSheetEveryRow() {
         let firstWrappedRowDetent = QuickSessionSheetLayout.detentHeight(forContentHeight: 181)
         let secondWrappedRowDetent = QuickSessionSheetLayout.detentHeight(forContentHeight: 205)
 
-        #expect(firstWrappedRowDetent == 184)
-        #expect(secondWrappedRowDetent == 208)
+        #expect(firstWrappedRowDetent == QuickSessionSheetLayout.multilineComposerDetentHeight)
+        #expect(firstWrappedRowDetent == secondWrappedRowDetent)
+        #expect(firstWrappedRowDetent < 260)
     }
 
-    @Test func contentHeightChangesWithinSameNormalizedDetentAreIgnored() {
+    @Test func contentHeightChangesWithinStableMultilineDetentAreIgnored() {
         #expect(!QuickSessionSheetLayout.shouldApplyContentHeightChange(
             currentContentHeight: 181,
-            incomingContentHeight: 183
+            incomingContentHeight: 205
         ))
     }
 
