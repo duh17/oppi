@@ -51,7 +51,7 @@ npm install -g oppi-server
 oppi serve
 ```
 
-On first run, `oppi serve` creates `~/.config/oppi/`, generates owner credentials, boots local HTTPS/WSS, and prints a pairing QR code and invite link. In the iOS TestFlight app, choose **Pair with server** and scan the QR code.
+On first run, `oppi serve` creates `~/.config/oppi/`, generates owner credentials, boots local HTTPS/WSS, and prints a pairing QR code plus invite link. In the iOS TestFlight app, pair with one of the visible options: **Pair Nearby Mac**, **Scan QR Code**, or **Enter manually**. Opening the printed `oppi://connect` invite link on the phone also starts pairing.
 
 To run Oppi as a background service on macOS:
 

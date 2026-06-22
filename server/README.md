@@ -13,8 +13,9 @@ oppi serve
 ```
 
 On first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials,
-and bootstraps local HTTPS/WSS with `tls.mode=self-signed`. Run `oppi pair` to
-show a pairing QR for the iPhone/iPad app.
+bootstraps local HTTPS/WSS with `tls.mode=self-signed`, and prints a pairing QR
+plus invite link for the iPhone/iPad app. Use `oppi pair` later to generate a
+fresh single-use invite.
 
 Upgrade or uninstall the global CLI with npm:
 
