@@ -59,7 +59,7 @@ enum SessionDeleteConfirmationPolicy {
     }
 
     static func deleteMessage(for session: Session) -> String {
-        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), and generated media attachments served by Oppi."
+        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, and this device's cached timeline copy."
     }
 }
 
@@ -780,6 +780,7 @@ struct WorkspaceDetailView: View {
         guard let api = apiClient else { return }
         sessionStore.remove(id: session.id)
         removeArchiveSession(session.id)
+        await TimelineCache.shared.removeTrace(session.id)
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
         } catch let apiError as APIError {
