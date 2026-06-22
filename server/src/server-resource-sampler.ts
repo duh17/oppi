@@ -8,10 +8,17 @@
  * File pattern: server-metrics-YYYY-MM-DD.jsonl
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
 import { join } from "node:path";
-import { dateString, pruneOldJsonlFiles, retentionDaysFromEnv, round2 } from "./metric-utils.js";
+import {
+  appendJsonlLineWithByteLimit,
+  dateString,
+  jsonlMaxBytesFromEnv,
+  pruneOldJsonlFiles,
+  retentionDaysFromEnv,
+  round2,
+} from "./metric-utils.js";
 import { createLogger } from "./logger.js";
 
 const FILE_PREFIX = "server-metrics-";
@@ -58,6 +65,8 @@ export class ServerResourceSampler {
   private timer: NodeJS.Timeout | null = null;
   private lastCpu: CpuSnapshot | null = null;
   private eventLoopDelay: IntervalHistogram | null = null;
+  private readonly maxFileBytes = jsonlMaxBytesFromEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES");
+  private readonly cappedFiles = new Set<string>();
   /** Peak active session count since last sample — reset each interval. */
   private activeSessionPeak = 0;
 
@@ -220,7 +229,23 @@ export class ServerResourceSampler {
     }
     const fileName = `${FILE_PREFIX}${dateString(ts)}${FILE_SUFFIX}`;
     const filePath = join(dir, fileName);
-    appendFileSync(filePath, JSON.stringify(record) + "\n");
+    const wrote = appendJsonlLineWithByteLimit(
+      filePath,
+      JSON.stringify(record) + "\n",
+      this.maxFileBytes,
+    );
+    if (!wrote) {
+      this.warnDailyCapOnce(filePath);
+    }
+  }
+
+  private warnDailyCapOnce(filePath: string): void {
+    if (this.cappedFiles.has(filePath)) return;
+    this.cappedFiles.add(filePath);
+    log.warn("server_metrics.write.daily_file_cap_reached", {
+      filePath,
+      maxFileBytes: this.maxFileBytes,
+    });
   }
 
   private pruneOldFiles(): void {

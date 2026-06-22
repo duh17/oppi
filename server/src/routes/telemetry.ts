@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { isSensitiveLogKey, redactLogString, REDACTED } from "../log-redact.js";
+import { appendJsonlLineWithByteLimit, jsonlMaxBytesFromEnv } from "../metric-utils.js";
+import { createLogger } from "../logger.js";
 import {
   CHAT_METRIC_NAME_VALUES,
   CHAT_METRIC_REGISTRY,
@@ -41,6 +43,9 @@ const CLIENT_LOG_MAX_METADATA_FIELDS = 24;
 const CLIENT_LOG_MAX_METADATA_KEY_CHARS = 96;
 const CLIENT_LOG_MAX_METADATA_VALUE_CHARS = 512;
 const CLIENT_LOG_MAX_ID_CHARS = 128;
+
+const log = createLogger({ base: { component: "telemetry_routes" } });
+const cappedTelemetryFiles = new Set<string>();
 
 function telemetryDir(ctx: RouteContext): string {
   return join(ctx.storage.getDataDir(), "diagnostics", METRICKIT_DIR);
@@ -297,6 +302,21 @@ function parseRequest(body: unknown): MetricKitUploadRequest | null {
   return result;
 }
 
+function appendTelemetryRecord(kind: string, path: string, record: unknown): void {
+  const maxBytes = jsonlMaxBytesFromEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES");
+  const wrote = appendJsonlLineWithByteLimit(path, `${JSON.stringify(record)}\n`, maxBytes);
+  if (wrote) return;
+
+  const key = `${kind}:${path}`;
+  if (cappedTelemetryFiles.has(key)) return;
+  cappedTelemetryFiles.add(key);
+  log.warn("telemetry.write.daily_file_cap_reached", {
+    kind,
+    path,
+    maxBytes,
+  });
+}
+
 function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadRequest): void {
   const dir = telemetryDir(ctx);
   if (!existsSync(dir)) {
@@ -318,10 +338,7 @@ function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadReques
   };
 
   const path = join(dir, metrickitFileName(request.generatedAt));
-  appendFileSync(path, `${JSON.stringify(record)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  appendTelemetryRecord("metrickit", path, record);
 }
 
 const CHAT_METRIC_NAMES = new Set<ChatMetricSample["metric"]>(CHAT_METRIC_NAME_VALUES);
@@ -483,10 +500,7 @@ function appendChatMetricRecord(ctx: RouteContext, request: ChatMetricUploadRequ
     dir,
     `${CHAT_METRIC_FILE_PREFIX}${new Date(request.generatedAt).toISOString().slice(0, 10)}${METRICKIT_FILE_SUFFIX}`,
   );
-  appendFileSync(path, `${JSON.stringify(record)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  appendTelemetryRecord("chat_metrics", path, record);
 }
 
 function isClientKind(value: string): value is ClientKind {
@@ -658,10 +672,7 @@ function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadReques
     dir,
     `${CLIENT_LOG_FILE_PREFIX}${new Date(request.generatedAt).toISOString().slice(0, 10)}${METRICKIT_FILE_SUFFIX}`,
   );
-  appendFileSync(path, `${JSON.stringify(record)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  appendTelemetryRecord("client_logs", path, record);
 }
 
 export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {

@@ -8,10 +8,16 @@
  * Retention default: 30 days, configurable via OPPI_SERVER_OPS_METRICS_RETENTION_DAYS.
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerMetricSample } from "./server-metric-collector.js";
-import { dateString, pruneOldJsonlFiles, retentionDaysFromEnv } from "./metric-utils.js";
+import {
+  appendJsonlLineWithByteLimit,
+  dateString,
+  jsonlMaxBytesFromEnv,
+  pruneOldJsonlFiles,
+  retentionDaysFromEnv,
+} from "./metric-utils.js";
 import { createLogger } from "./logger.js";
 
 const FILE_PREFIX = "server-ops-metrics-";
@@ -26,14 +32,21 @@ export interface MetricWriter {
 
 export class JsonlMetricWriter implements MetricWriter {
   private readonly retentionDays: number;
+  private readonly maxFileBytes: number | null;
+  private readonly cappedFiles = new Set<string>();
 
   constructor(
     private readonly telemetryDir: string,
     retentionDays?: number,
+    maxFileBytes?: number | null,
   ) {
     this.retentionDays =
       retentionDays ??
       retentionDaysFromEnv("OPPI_SERVER_OPS_METRICS_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
+    this.maxFileBytes =
+      maxFileBytes === undefined
+        ? jsonlMaxBytesFromEnv("OPPI_SERVER_OPS_METRICS_DAILY_FILE_MAX_BYTES")
+        : maxFileBytes;
   }
 
   writeBatch(samples: ServerMetricSample[]): void {
@@ -53,7 +66,14 @@ export class JsonlMetricWriter implements MetricWriter {
 
       const fileName = `${FILE_PREFIX}${dateString(now)}${FILE_SUFFIX}`;
       const filePath = join(this.telemetryDir, fileName);
-      appendFileSync(filePath, JSON.stringify(record) + "\n");
+      const wrote = appendJsonlLineWithByteLimit(
+        filePath,
+        JSON.stringify(record) + "\n",
+        this.maxFileBytes,
+      );
+      if (!wrote) {
+        this.warnDailyCapOnce(filePath);
+      }
 
       this.pruneOldFiles();
     } catch (err) {
@@ -61,6 +81,15 @@ export class JsonlMetricWriter implements MetricWriter {
       const message = err instanceof Error ? err.message : String(err);
       log.error("server_ops_metrics.write.failed", { error: message });
     }
+  }
+
+  private warnDailyCapOnce(filePath: string): void {
+    if (this.cappedFiles.has(filePath)) return;
+    this.cappedFiles.add(filePath);
+    log.warn("server_ops_metrics.write.daily_file_cap_reached", {
+      filePath,
+      maxFileBytes: this.maxFileBytes,
+    });
   }
 
   private pruneOldFiles(): void {
