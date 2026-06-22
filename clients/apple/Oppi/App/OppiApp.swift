@@ -171,6 +171,10 @@ struct OppiApp: App {
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        FeatureEducationTips.configure()
+    }
+
     var body: some Scene {
         WindowGroup {
 #if DEBUG

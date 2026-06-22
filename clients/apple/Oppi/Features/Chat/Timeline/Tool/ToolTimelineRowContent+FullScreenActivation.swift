@@ -20,10 +20,14 @@ extension ToolTimelineRowContentView {
     private func performOutputFullScreenOrCopy(feedbackView: UIView) {
         if canShowFullScreenContent {
             showFullScreenContent()
+            FeatureEducationTips.markToolOutputShortcutUsed()
+            dismissFeatureEducationTipForAction()
             return
         }
 
         guard let text = outputCopyText else { return }
         copy(text: text, feedbackView: feedbackView)
+        FeatureEducationTips.markToolOutputShortcutUsed()
+        dismissFeatureEducationTipForAction()
     }
 }

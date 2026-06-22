@@ -166,6 +166,36 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(textView.selectedRange == NSRange(location: 4, length: 6))
     }
 
+    @Test func reviewSelectionTipReservesSpaceAndUsesCompactInstructionCopy() throws {
+        FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
+        FullScreenReviewCommentTextView.forcesReviewSelectionTipForTesting = true
+        defer {
+            FullScreenReviewCommentTextView.forcesReviewSelectionTipForTesting = false
+            FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
+        }
+
+        let textView = FullScreenReviewCommentTextView(frame: CGRect(x: 0, y: 0, width: 390, height: 400), textContainer: nil)
+        let baseInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 8)
+        textView.textContainerInset = baseInset
+        textView.text = "let answer = 42\nlet done = true"
+
+        textView.configureReviewCommentSelection(
+            router: ReviewCommentSelectionRouter { _ in },
+            sourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenCode,
+                filePath: "Answer.swift"
+            )
+        )
+        textView.layoutIfNeeded()
+
+        let tipView = try #require(timelineAllViews(in: textView).first {
+            $0.accessibilityIdentifier == "feature-tip.review-selection.tip"
+        })
+        #expect(tipView.accessibilityLabel?.contains("Select text, then tap Comment") == true)
+        #expect(textView.textContainerInset.top > baseInset.top + 50)
+    }
+
     @Test func codeGutterKeepsWrappedContinuationRowsBlank() throws {
         let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
         let body = NativeFullScreenCodeBody(

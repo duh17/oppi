@@ -377,6 +377,8 @@ enum ReviewCommentSelectionMenuBuilder {
             title: "Comment",
             image: UIImage(systemName: "text.bubble")
         ) { _ in
+            FeatureEducationTips.markReviewCommentCreated()
+            (textView as? FullScreenReviewCommentTextView)?.dismissReviewCommentSelectionTip()
             if router.supportsInlineCommentComposer,
                sourceContext.surface.usesInlineCommentWidget,
                let textView,

@@ -104,6 +104,12 @@ struct AskCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            FeatureEducationTipBannerHost(
+                tip: FeatureEducationTips.AnswerPromptTip(),
+                descriptor: FeatureEducationTips.answerPrompt,
+                contentInsets: EdgeInsets(top: 0, leading: 12, bottom: 8, trailing: 12)
+            )
+
             if let question = currentQuestion {
                 questionPageContent(question)
             }
@@ -415,11 +421,13 @@ struct AskCard: View {
     private func submitAnswers(_ submittedAnswers: [String: AskAnswer], surface: String) {
         recordResponseMetric(outcome: submittedAnswers.isEmpty ? "empty" : "answered", surface: surface, submittedAnswers: submittedAnswers)
         onSubmit(submittedAnswers)
+        FeatureEducationTips.markPromptAnswered()
     }
 
     private func ignoreAll(surface: String) {
         recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
         onIgnoreAll()
+        FeatureEducationTips.markPromptAnswered()
     }
 
     private func recordResponseMetric(
