@@ -414,6 +414,78 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         )
     }
 
+    func testDoubleTappingNativeSurfaceViewportOpensFullScreenDetail() throws {
+        createAndEnterSession()
+        _ = waitForWebSocketConnected(timeout: 20)
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        let widgetKey = "viewport-double-tap"
+        let headerTitle = "Viewport double-tap native surface"
+        let bodyText = "Double-tap this expanded viewport body to open the full-screen surface."
+        let identifierSuffix = "widget-\(widgetKey)"
+        let viewportIdentifier = "extension-native-surface-\(identifierSuffix)-viewport"
+        let detailDoneIdentifier = "extension-native-surface-\(identifierSuffix)-detail-done"
+
+        // Given a native extension widget whose detail view is available from the header.
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+            "widgetLines": [bodyText],
+            "nativeSurface": [
+                "version": 1,
+                "id": "widget:\(widgetKey)",
+                "source": "widget",
+                "presentation": [
+                    "style": "surfacePanel",
+                    "title": headerTitle,
+                ],
+                "blocks": [
+                    [
+                        "type": "markdown",
+                        "id": "viewport-double-tap-body",
+                        "markdown": bodyText,
+                    ],
+                ],
+                "fallback": [
+                    "lines": [bodyText],
+                ],
+            ],
+        ])
+
+        let header = waitForText(headerTitle, timeout: 10)
+        tap(header, named: "native surface header")
+        let body = waitForText(bodyText, timeout: 5)
+        let viewport = app.descendants(matching: .any)[viewportIdentifier]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Native surface expanded viewport did not appear")
+        XCTAssertGreaterThan(
+            viewport.frame.midY,
+            header.frame.maxY,
+            "Test must double tap inside the expanded scroll viewport, not the header row"
+        )
+        XCTAssertTrue(
+            viewport.frame.insetBy(dx: -1, dy: -1).contains(CGPoint(x: body.frame.midX, y: body.frame.midY)),
+            "Body text should be inside the expanded scroll viewport before the double tap. viewport=\(viewport.frame), body=\(body.frame)"
+        )
+
+        // When the person double taps content inside the expanded scroll viewport.
+        body.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).doubleTap()
+
+        // Then the native surface opens in its full-screen detail presentation.
+        let detailDoneButton = app.buttons[detailDoneIdentifier]
+        XCTAssertTrue(
+            detailDoneButton.waitForExistence(timeout: 5),
+            "Double tapping an expanded native surface viewport should open full-screen detail"
+        )
+        try saveLabScreenshot(name: "extension-ui-native-surface-viewport-double-tap-e2e")
+        tap(detailDoneButton, named: "native surface detail done button", timeout: 5)
+
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_notification",
+            "method": "setWidget",
+            "widgetKey": widgetKey,
+        ])
+    }
+
     func testExtensionUIWorkingRowNotifications() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
