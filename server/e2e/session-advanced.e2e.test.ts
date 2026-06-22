@@ -19,6 +19,7 @@ import {
   closeStream,
   waitForEvent,
   autoApprovePermissions,
+  listWorkspaceSessions,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -292,10 +293,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       );
       expect(delRes.status).toBe(200);
 
-      const listRes = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
-      expect(listRes.status).toBe(200);
-
-      const sessions = (listRes.json?.sessions ?? []) as { id: string }[];
+      const sessions = await listWorkspaceSessions(deviceToken, workspaceId, "active");
       const found = sessions.find((s) => s.id === sessionId);
       expect(found).toBeUndefined();
     } finally {
