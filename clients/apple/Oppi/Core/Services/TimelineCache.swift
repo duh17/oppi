@@ -25,7 +25,8 @@ struct TimelineCacheMetrics: Sendable {
 /// Local disk cache for server responses.
 ///
 /// Stores session traces, server-scoped session lists, workspaces, and skills
-/// under `Library/Application Support/` for durable read continuity.
+/// under `Library/Caches/`. Session traces are plaintext JSON copies of server
+/// history, so this cache is sandbox-private but intentionally disposable.
 ///
 /// All disk I/O runs on the actor's serial executor, off the main thread.
 /// Decode failures return nil (cache miss), never crash.
@@ -37,12 +38,9 @@ actor TimelineCache {
     private let tracesDir: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
-
-    /// Avoid MetricKit disk-write exceptions from caching very large active traces.
-    private static let maxTraceCacheBytes = 8 * 1024 * 1024
-
-    // periphery:ignore - lets tests build an oversized fixture from the production cap
-    static var maxTraceCacheBytesForTesting: Int { maxTraceCacheBytes }
+    private let maxDiskBytes: Int64
+    private let maxTraceAge: TimeInterval?
+    private let now: @Sendable () -> Date
 
     // Telemetry (best-effort, process-local)
     private var hitCount = 0
@@ -54,19 +52,38 @@ actor TimelineCache {
 
     init(
         rootURL: URL? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        maxDiskBytes: Int64 = 256 * 1024 * 1024,
+        maxTraceAge: TimeInterval? = 30 * 24 * 60 * 60,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.fileManager = fileManager
 
+        let usesDefaultRoot = rootURL == nil
         let resolvedRoot = rootURL ?? Self.defaultRootURL(fileManager: fileManager)
+        let resolvedTracesDir = resolvedRoot.appending(path: "traces", directoryHint: .isDirectory)
+        let resolvedMaxDiskBytes = max(0, maxDiskBytes)
         root = resolvedRoot
-        tracesDir = resolvedRoot.appending(path: "traces", directoryHint: .isDirectory)
-
-        // Ensure directories exist
-        try? fileManager.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+        tracesDir = resolvedTracesDir
+        self.maxDiskBytes = resolvedMaxDiskBytes
+        self.maxTraceAge = maxTraceAge
+        self.now = now
 
         encoder = JSONEncoder()
         decoder = JSONDecoder()
+
+        if usesDefaultRoot {
+            Self.removeApplicationSupportCacheRoot(fileManager: fileManager)
+        }
+        Self.prepareStorageDirectories(fileManager: fileManager, root: resolvedRoot, tracesDir: resolvedTracesDir)
+        Self.pruneIfNeeded(
+            fileManager: fileManager,
+            root: resolvedRoot,
+            tracesDir: resolvedTracesDir,
+            maxDiskBytes: resolvedMaxDiskBytes,
+            maxTraceAge: maxTraceAge,
+            now: now()
+        )
 
         logger.notice("Cache root initialized at \(self.root.lastPathComponent, privacy: .public)")
     }
@@ -103,12 +120,6 @@ actor TimelineCache {
                 return
             }
 
-            let estimatedBytes = estimatedTracePayloadBytes(events)
-            guard estimatedBytes <= Self.maxTraceCacheBytes else {
-                removeOversizedTraceCache(url: url, sessionId: sessionId, eventCount: events.count, bytes: estimatedBytes)
-                return
-            }
-
             let cached = CachedTrace(
                 sessionId: sessionId,
                 eventCount: events.count,
@@ -117,13 +128,11 @@ actor TimelineCache {
                 events: events
             )
             let data = try encoder.encode(cached)
-            guard data.count <= Self.maxTraceCacheBytes else {
-                removeOversizedTraceCache(url: url, sessionId: sessionId, eventCount: events.count, bytes: data.count)
-                return
-            }
 
             try data.write(to: url, options: .atomic)
+            applyFileProtection(to: url)
             writeCount += 1
+            pruneIfNeeded()
             logger.debug("Cache saved: trace for \(sessionId) (\(events.count) events, \(data.count) bytes)")
         } catch {
             logger.warning("Cache write failed for trace \(sessionId): \(error.localizedDescription)")
@@ -229,21 +238,7 @@ actor TimelineCache {
 
     /// Total bytes consumed by all cached files under the cache root.
     func diskSize() -> Int64 {
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return 0 }
-
-        var total: Int64 = 0
-        for case let url as URL in enumerator {
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
-                  values.isRegularFile == true,
-                  let size = values.fileSize
-            else { continue }
-            total += Int64(size)
-        }
-        return total
+        Self.diskSize(fileManager: fileManager, root: root)
     }
 
     // MARK: - Cleanup
@@ -251,7 +246,7 @@ actor TimelineCache {
     /// Clear all cached data.
     func clear() {
         try? fileManager.removeItem(at: root)
-        try? fileManager.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+        prepareStorageDirectories()
 
         hitCount = 0
         missCount = 0
@@ -266,9 +261,22 @@ actor TimelineCache {
     // MARK: - Private
 
     private static func defaultRootURL(fileManager: FileManager) -> URL {
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let appRoot = caches.appending(path: AppIdentifiers.subsystem, directoryHint: .isDirectory)
+        return appRoot.appending(path: "timeline-cache", directoryHint: .isDirectory)
+    }
+
+    private static func applicationSupportCacheRootURL(fileManager: FileManager) -> URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let appRoot = appSupport.appending(path: AppIdentifiers.subsystem, directoryHint: .isDirectory)
         return appRoot.appending(path: "cache", directoryHint: .isDirectory)
+    }
+
+    private static func removeApplicationSupportCacheRoot(fileManager: FileManager) {
+        let oldRoot = applicationSupportCacheRootURL(fileManager: fileManager)
+        guard fileManager.fileExists(atPath: oldRoot.path) else { return }
+        try? fileManager.removeItem(at: oldRoot)
+        logger.notice("Removed previous Application Support timeline cache")
     }
 
     private func traceURL(_ sessionId: String) -> URL {
@@ -311,85 +319,186 @@ actor TimelineCache {
         do {
             let data = try encoder.encode(value)
             try data.write(to: url, options: .atomic)
+            applyFileProtection(to: url)
             writeCount += 1
+            pruneIfNeeded()
             logger.debug("Cache saved: \(filename) (\(data.count) bytes)")
         } catch {
             logger.warning("Cache write failed for \(filename): \(error.localizedDescription)")
         }
     }
 
-    private func removeOversizedTraceCache(url: URL, sessionId: String, eventCount: Int, bytes: Int) {
-        try? fileManager.removeItem(at: url)
-        MetricKitCrashContextStore.recordLargeTimelinePayload(
-            sessionId: sessionId,
-            eventCount: eventCount,
-            bytes: bytes,
-            largestEventBytes: largestTraceEventPayloadBytes
+    private struct CacheFileEntry {
+        let url: URL
+        let size: Int64
+        let modifiedAt: Date
+    }
+
+    private func prepareStorageDirectories() {
+        Self.prepareStorageDirectories(fileManager: fileManager, root: root, tracesDir: tracesDir)
+    }
+
+    private static func prepareStorageDirectories(fileManager: FileManager, root: URL, tracesDir: URL) {
+        try? fileManager.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+        excludeFromBackup(root)
+        applyFileProtection(fileManager: fileManager, to: root)
+        applyFileProtection(fileManager: fileManager, to: tracesDir)
+    }
+
+    private func pruneIfNeeded() {
+        Self.pruneIfNeeded(
+            fileManager: fileManager,
+            root: root,
+            tracesDir: tracesDir,
+            maxDiskBytes: maxDiskBytes,
+            maxTraceAge: maxTraceAge,
+            now: now()
         )
-        logger.warning(
-            "Cache skipped oversized trace for \(sessionId, privacy: .public) (\(eventCount) events, \(bytes) bytes)"
+    }
+
+    private static func pruneIfNeeded(
+        fileManager: FileManager,
+        root: URL,
+        tracesDir: URL,
+        maxDiskBytes: Int64,
+        maxTraceAge: TimeInterval?,
+        now: Date
+    ) {
+        removeExpiredTraceFiles(
+            fileManager: fileManager,
+            tracesDir: tracesDir,
+            maxTraceAge: maxTraceAge,
+            now: now
+        )
+        enforceDiskBudget(
+            fileManager: fileManager,
+            root: root,
+            tracesDir: tracesDir,
+            maxDiskBytes: maxDiskBytes
         )
     }
 
-    private var largestTraceEventPayloadBytes = 0
+    private static func removeExpiredTraceFiles(
+        fileManager: FileManager,
+        tracesDir: URL,
+        maxTraceAge: TimeInterval?,
+        now: Date
+    ) {
+        guard let maxTraceAge else { return }
+        let cutoff = now.addingTimeInterval(-maxTraceAge)
+        var removedCount = 0
+        var removedBytes: Int64 = 0
 
-    private func estimatedTracePayloadBytes(_ events: [TraceEvent]) -> Int {
-        var total = 0
-        var largest = 0
-        for event in events {
-            let bytes = estimatedTraceEventPayloadBytes(event)
-            total += bytes
-            largest = max(largest, bytes)
-        }
-        largestTraceEventPayloadBytes = largest
-        return total
-    }
-
-    private func estimatedTraceEventPayloadBytes(_ event: TraceEvent) -> Int {
-        var total = event.id.utf8.count + event.timestamp.utf8.count + event.type.rawValue.utf8.count
-        total += event.text?.utf8.count ?? 0
-        total += event.tool?.utf8.count ?? 0
-        total += event.output?.utf8.count ?? 0
-        total += event.toolCallId?.utf8.count ?? 0
-        total += event.toolName?.utf8.count ?? 0
-        total += event.thinking?.utf8.count ?? 0
-        if let args = event.args {
-            total += estimatedPayloadBytes(.object(args))
-        }
-        if let details = event.details {
-            total += estimatedPayloadBytes(details)
-        }
-        if let presentation = event.presentation {
-            total += presentation.kind.utf8.count
-            total += presentation.title.utf8.count
-            total += presentation.subtitle?.utf8.count ?? 0
-            total += presentation.status?.utf8.count ?? 0
-            total += presentation.body?.utf8.count ?? 0
-            total += presentation.accent?.utf8.count ?? 0
-            total += presentation.fields?.reduce(0) { partial, field in
-                partial + field.label.utf8.count + field.value.utf8.count
-            } ?? 0
-        }
-        return total
-    }
-
-    private func estimatedPayloadBytes(_ value: JSONValue) -> Int {
-        switch value {
-        case .string(let string):
-            return string.utf8.count
-        case .number:
-            return MemoryLayout<Double>.size
-        case .bool:
-            return 1
-        case .null:
-            return 0
-        case .array(let values):
-            return values.reduce(0) { $0 + estimatedPayloadBytes($1) }
-        case .object(let object):
-            return object.reduce(0) { partial, entry in
-                partial + entry.key.utf8.count + estimatedPayloadBytes(entry.value)
+        for entry in traceFileEntries(fileManager: fileManager, tracesDir: tracesDir) where entry.modifiedAt < cutoff {
+            if removeTraceFile(fileManager: fileManager, entry: entry) {
+                removedCount += 1
+                removedBytes += entry.size
             }
         }
+
+        if removedCount > 0 {
+            logger.info("Cache pruned expired traces count=\(removedCount, privacy: .public) bytes=\(removedBytes, privacy: .public)")
+        }
+    }
+
+    private static func enforceDiskBudget(
+        fileManager: FileManager,
+        root: URL,
+        tracesDir: URL,
+        maxDiskBytes: Int64
+    ) {
+        var total = diskSize(fileManager: fileManager, root: root)
+        guard total > maxDiskBytes else { return }
+
+        let entries = traceFileEntries(fileManager: fileManager, tracesDir: tracesDir).sorted { lhs, rhs in
+            if lhs.modifiedAt != rhs.modifiedAt { return lhs.modifiedAt < rhs.modifiedAt }
+            return lhs.url.lastPathComponent < rhs.url.lastPathComponent
+        }
+
+        var removedCount = 0
+        var removedBytes: Int64 = 0
+        for entry in entries {
+            guard total > maxDiskBytes else { break }
+            if removeTraceFile(fileManager: fileManager, entry: entry) {
+                total = max(0, total - entry.size)
+                removedCount += 1
+                removedBytes += entry.size
+            }
+        }
+
+        if removedCount > 0 {
+            logger.info("Cache pruned traces for budget count=\(removedCount, privacy: .public) bytes=\(removedBytes, privacy: .public) budget=\(maxDiskBytes, privacy: .public)")
+        }
+    }
+
+    private static func diskSize(fileManager: FileManager, root: URL) -> Int64 {
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true,
+                  let size = values.fileSize
+            else { continue }
+            total += Int64(size)
+        }
+        return total
+    }
+
+    private static func traceFileEntries(fileManager: FileManager, tracesDir: URL) -> [CacheFileEntry] {
+        guard let enumerator = fileManager.enumerator(
+            at: tracesDir,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var entries: [CacheFileEntry] = []
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true,
+                  let size = values.fileSize
+            else { continue }
+            entries.append(CacheFileEntry(
+                url: url,
+                size: Int64(size),
+                modifiedAt: values.contentModificationDate ?? .distantPast
+            ))
+        }
+        return entries
+    }
+
+    private static func removeTraceFile(fileManager: FileManager, entry: CacheFileEntry) -> Bool {
+        do {
+            try fileManager.removeItem(at: entry.url)
+            return true
+        } catch {
+            logger.warning("Cache prune failed for \(entry.url.lastPathComponent, privacy: .public): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private static func excludeFromBackup(_ url: URL) {
+        var mutableURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? mutableURL.setResourceValues(values)
+    }
+
+    private func applyFileProtection(to url: URL) {
+        Self.applyFileProtection(fileManager: fileManager, to: url)
+    }
+
+    private static func applyFileProtection(fileManager: FileManager, to url: URL) {
+        #if os(iOS)
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+        #endif
     }
 
     private func recordLoad(startedAt: Date, hit: Bool) {
