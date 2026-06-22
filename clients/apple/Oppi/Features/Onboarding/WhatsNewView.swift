@@ -43,26 +43,32 @@ struct WhatsNewView: View {
         WhatsNewFeature(
             icon: "puzzlepiece.extension",
             iconColor: .themePurple,
-            title: String(localized: "More Reliable Extension UI"),
-            description: String(localized: "Extension prompts, widgets, status panels, and permission gates stay attached to the right session, replay more cleanly, and avoid misleading question badges.")
+            title: String(localized: "More Reliable Extension Prompts"),
+            description: String(localized: "Ask cards, widgets, status panels, and permission prompts stay attached to the right session and replay cleanly after reconnects.")
         ),
         WhatsNewFeature(
             icon: "terminal",
             iconColor: .themeGreen,
-            title: String(localized: "Stronger Pi Session Mirroring"),
-            description: String(localized: "Mirrored terminal sessions reconnect more reliably, keep row timestamps stable, and handle reload, compaction, and bridge reuse cases with fewer stuck states.")
+            title: String(localized: "Better Mirrored Pi Sessions"),
+            description: String(localized: "Mirrored terminal sessions reconnect more reliably, keep timestamps steady, and recover from reload, compaction, and bridge reuse cases.")
         ),
         WhatsNewFeature(
             icon: "doc.text.magnifyingglass",
             iconColor: .themeOrange,
-            title: String(localized: "Large Output Stays Responsive"),
-            description: String(localized: "Long markdown, code, and diff output uses bounded timeline caches, viewport policies, and fullscreen viewing so busy sessions stay easier to scroll.")
+            title: String(localized: "Smoother Long Output"),
+            description: String(localized: "Large markdown, code, diff, and terminal output now use bounded timeline caches and fullscreen readers so busy sessions keep scrolling.")
         ),
         WhatsNewFeature(
-            icon: "square.and.arrow.down",
+            icon: "square.and.arrow.up",
             iconColor: .themeCyan,
-            title: String(localized: "Quick Sessions and Session Files"),
-            description: String(localized: "Start Quick Sessions from shared text, URLs, images, or files, and review touched files grouped by directory inside Session Files.")
+            title: String(localized: "Quick Sessions from Share Sheet"),
+            description: String(localized: "Start a Quick Session from shared text, URLs, images, and files. Pending shares are picked up the next time Oppi opens.")
+        ),
+        WhatsNewFeature(
+            icon: "folder",
+            iconColor: .themeYellow,
+            title: String(localized: "Grouped Session Files"),
+            description: String(localized: "Session Files now groups touched files by directory, making large sessions easier to scan before opening a file.")
         ),
     ]
 
@@ -98,7 +104,7 @@ struct WhatsNewView: View {
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
 
-            Text("in Oppi")
+            Text("Build 39")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
         }
