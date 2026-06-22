@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 private extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
@@ -146,6 +147,10 @@ struct ExtensionNativeSurfaceView: View {
         ExtensionSurfaceHeaderText(title: titleText, statusText: statusText)
     }
 
+    private var identifierSuffix: String {
+        surface.id.extensionAccessibilityIdentifierComponent
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
@@ -200,15 +205,25 @@ struct ExtensionNativeSurfaceView: View {
             if isExpanded {
                 ExtensionNativeSurfaceExpandedViewport(
                     surface: surface,
+                    identifierSuffix: identifierSuffix,
                     maxHeight: Self.maxExpandedViewportHeight,
+                    onOpenFullScreen: openDetail,
                     onOpenURL: onOpenURL
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .highPriorityGesture(
+            TapGesture(count: 2).onEnded {
+                if isExpanded {
+                    openDetail()
+                }
+            }
+        )
         .fullScreenCover(isPresented: $isDetailPresented) {
             ExtensionNativeSurfaceDetailSheet(
                 surface: surface,
+                identifierSuffix: identifierSuffix,
                 title: headerText.title,
                 subtitle: headerText.subtitle ?? previewText,
                 statusText: statusText,
@@ -243,7 +258,9 @@ struct ExtensionNativeSurfaceView: View {
 
 private struct ExtensionNativeSurfaceExpandedViewport: View {
     let surface: ExtensionUINativeSurface
+    let identifierSuffix: String
     let maxHeight: CGFloat
+    let onOpenFullScreen: () -> Void
     var onOpenURL: ((URL) -> Bool)?
 
     private var displayBlocks: [ExtensionUINativeBlock] {
@@ -270,9 +287,111 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                ExtensionNativeSurfaceViewportGestureInstaller(onDoubleTap: onOpenFullScreen)
+            )
         }
         .frame(maxHeight: maxHeight)
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            TapGesture(count: 2).onEnded {
+                onOpenFullScreen()
+            }
+        )
+        .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-viewport")
+        .accessibilityHint("Double tap to open full screen.")
+        .accessibilityAction(named: Text("Open Full Screen")) {
+            onOpenFullScreen()
+        }
         .extensionSubtleInset(cornerRadius: 12)
+    }
+}
+
+private struct ExtensionNativeSurfaceViewportGestureInstaller: UIViewRepresentable {
+    let onDoubleTap: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDoubleTap: onDoubleTap)
+    }
+
+    func makeUIView(context: Context) -> ExtensionNativeSurfaceViewportGestureHostView {
+        let view = ExtensionNativeSurfaceViewportGestureHostView()
+        view.isUserInteractionEnabled = false
+        view.onHierarchyChanged = { [weak coordinator = context.coordinator] hostView in
+            coordinator?.installIfNeeded(from: hostView)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: ExtensionNativeSurfaceViewportGestureHostView, context: Context) {
+        context.coordinator.onDoubleTap = onDoubleTap
+        context.coordinator.installIfNeeded(from: uiView)
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onDoubleTap: () -> Void
+        private let recognizer = UITapGestureRecognizer()
+        private weak var installedScrollView: UIScrollView?
+
+        init(onDoubleTap: @escaping () -> Void) {
+            self.onDoubleTap = onDoubleTap
+            super.init()
+            recognizer.numberOfTapsRequired = 2
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = self
+            recognizer.addTarget(self, action: #selector(handleDoubleTap(_:)))
+        }
+
+        deinit {
+            installedScrollView?.removeGestureRecognizer(recognizer)
+        }
+
+        func installIfNeeded(from view: UIView) {
+            guard let scrollView = view.firstSuperview(of: UIScrollView.self),
+                  installedScrollView !== scrollView else { return }
+            installedScrollView?.removeGestureRecognizer(recognizer)
+            scrollView.addGestureRecognizer(recognizer)
+            installedScrollView = scrollView
+        }
+
+        @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            onDoubleTap()
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+    }
+}
+
+private final class ExtensionNativeSurfaceViewportGestureHostView: UIView {
+    var onHierarchyChanged: ((UIView) -> Void)?
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        onHierarchyChanged?(self)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onHierarchyChanged?(self)
+    }
+}
+
+private extension UIView {
+    func firstSuperview<T: UIView>(of type: T.Type) -> T? {
+        var current = superview
+        while let candidate = current {
+            if let match = candidate as? T {
+                return match
+            }
+            current = candidate.superview
+        }
+        return nil
     }
 }
 
@@ -280,6 +399,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let surface: ExtensionUINativeSurface
+    let identifierSuffix: String
     let title: String
     let subtitle: String?
     let statusText: String?
@@ -312,6 +432,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
                     dismiss()
                 }
                 .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
             }
             .padding(.horizontal, 18)
             .padding(.top, 18)
@@ -341,6 +462,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
             }
         }
         .background(Color.themeBg.ignoresSafeArea())
+        .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
     }
 }
 
