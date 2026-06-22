@@ -339,6 +339,11 @@ struct WorkspaceContextBar: View {
             } else if hasContent {
                 VStack(spacing: 0) {
                     collapsedBar
+                    FeatureEducationTipBannerHost(
+                        tip: FeatureEducationTips.ChangedFilesBarTip(),
+                        descriptor: FeatureEducationTips.changedFilesBar,
+                        contentInsets: EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+                    )
                     if isExpanded {
                         expandedContent
                     }
@@ -416,12 +421,16 @@ struct WorkspaceContextBar: View {
     private var collapsedBar: some View {
         HStack(spacing: 0) {
             Button {
+                let wasExpanded = isExpanded
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isExpanded.toggle()
                     if !isExpanded {
                         isSelecting = false
                         selectedPaths.removeAll()
                     }
+                }
+                if !wasExpanded, isExpanded {
+                    FeatureEducationTips.markChangedFilesBarExpanded()
                 }
             } label: {
                 HStack(spacing: 8) {

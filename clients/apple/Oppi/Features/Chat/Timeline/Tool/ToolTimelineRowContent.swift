@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 import UIKit
 
 /// Native UIKit tool row.
@@ -94,6 +95,11 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
+    private static var activeInlineFeatureTipIDs: Set<String> = []
+#if DEBUG
+    static var forcesInlineFeatureTipsForTesting = false
+    static var featureEducationTipLayoutInvalidationHookForTesting: (() -> Void)?
+#endif
     private static let maxValidHeight: CGFloat = 10_000
     static let minOutputViewportHeight: CGFloat = 56
     static let minDiffViewportHeight: CGFloat = 68
@@ -147,6 +153,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     let expandedScrollView = HorizontalPanPassthroughScrollView()
     private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
     private let compactHostedSurfaceHostView = ToolExpandedSurfaceHostView()
+    private let featureTipPresentationOwnerID = UUID()
+    private var featureTipView: FeatureEducationTipBannerView?
+    private var featureTipID: String?
     let expandedLabel = UITextView()
     private let expandedMarkdownView = AssistantMarkdownContentView()
     private let expandedReadMediaContainer = UIView()
@@ -263,6 +272,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     deinit {
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
+        if let featureTipID {
+            Self.activeInlineFeatureTipIDs.remove(featureTipID)
+            let ownerID = featureTipPresentationOwnerID
+            Task { @MainActor in
+                FeatureEducationTipPresentationCoordinator.shared.release(
+                    tipID: featureTipID,
+                    ownerID: ownerID
+                )
+            }
+        }
     }
 
     var configuration: UIContentConfiguration {
@@ -306,6 +325,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             verticalFittingPriority: verticalFittingPriority
         )
         return Self.sanitizedFittingSize(fitted, fallbackWidth: targetSize.width)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            clearInlineFeatureEducationTip()
+            return
+        }
+        scheduleFeatureEducationTipIfNeeded(
+            configuration: currentConfiguration,
+            showExpanded: !expandedContainer.isHidden,
+            showOutput: !bashToolRowView.outputContainer.isHidden
+        )
     }
 
     override func layoutSubviews() {
@@ -1244,6 +1276,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         // 7. Elapsed timer
         updateElapsedTimer(configuration: configuration)
+
+        // 8. Contextual education for hidden row gestures.
+        scheduleFeatureEducationTipIfNeeded(
+            configuration: configuration,
+            showExpanded: showExpanded,
+            showOutput: showOutput
+        )
     }
 
     // MARK: - apply() decomposition
@@ -1297,7 +1336,120 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
 
+    private func scheduleFeatureEducationTipIfNeeded(
+        configuration: ToolTimelineRowConfiguration,
+        showExpanded: Bool,
+        showOutput: Bool
+    ) {
+        if shouldShowToolDetailsTip(configuration: configuration) {
+            showInlineFeatureEducationTip(
+                FeatureEducationTips.OpenToolDetailsTip(),
+                descriptor: FeatureEducationTips.openToolDetails,
+                before: previewLabel
+            )
+            return
+        }
 
+        if shouldShowToolOutputShortcutsTip(
+            configuration: configuration,
+            showExpanded: showExpanded,
+            showOutput: showOutput
+        ) {
+            showInlineFeatureEducationTip(
+                FeatureEducationTips.ToolOutputShortcutsTip(),
+                descriptor: FeatureEducationTips.toolOutputShortcuts,
+                before: showExpanded ? expandedContainer : bashToolRowView
+            )
+            return
+        }
+
+        clearInlineFeatureEducationTip()
+    }
+
+    private func showInlineFeatureEducationTip<TipType: Tip>(
+        _ tip: TipType,
+        descriptor: FeatureEducationTipDescriptor,
+        before arrangedView: UIView
+    ) {
+#if DEBUG
+        let force = Self.forcesInlineFeatureTipsForTesting
+            || ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
+        let shouldDisplay = tip.shouldDisplay || force
+#else
+        let force = false
+        let shouldDisplay = tip.shouldDisplay
+#endif
+        guard shouldDisplay else {
+            if featureTipID == descriptor.id { clearInlineFeatureEducationTip() }
+            return
+        }
+        if featureTipID == descriptor.id, featureTipView?.superview === bodyStack { return }
+        guard !Self.activeInlineFeatureTipIDs.contains(descriptor.id) else { return }
+        guard FeatureEducationTipPresentationCoordinator.shared.claim(
+            tipID: descriptor.id,
+            ownerID: featureTipPresentationOwnerID,
+            force: force
+        ) else { return }
+
+        clearInlineFeatureEducationTip()
+
+        let tipView = FeatureEducationTipBannerView()
+        let tipToClose = tip
+        tipView.configure(descriptor: descriptor) { [weak self] in
+            tipToClose.invalidate(reason: .tipClosed)
+            self?.clearInlineFeatureEducationTip()
+        }
+        tipView.translatesAutoresizingMaskIntoConstraints = false
+        featureTipView = tipView
+        featureTipID = descriptor.id
+        Self.activeInlineFeatureTipIDs.insert(descriptor.id)
+
+        let index = bodyStack.arrangedSubviews.firstIndex(of: arrangedView) ?? 0
+        bodyStack.insertArrangedSubview(tipView, at: index)
+        invalidateLayoutForFeatureEducationTipSizeChange()
+    }
+
+    func dismissFeatureEducationTipForAction() {
+        clearInlineFeatureEducationTip()
+    }
+
+    private func clearInlineFeatureEducationTip() {
+        guard let featureTipView else { return }
+        bodyStack.removeArrangedSubview(featureTipView)
+        featureTipView.removeFromSuperview()
+        if let featureTipID {
+            Self.activeInlineFeatureTipIDs.remove(featureTipID)
+            FeatureEducationTipPresentationCoordinator.shared.release(
+                tipID: featureTipID,
+                ownerID: featureTipPresentationOwnerID
+            )
+        }
+        self.featureTipView = nil
+        featureTipID = nil
+        invalidateLayoutForFeatureEducationTipSizeChange()
+    }
+
+    private func invalidateLayoutForFeatureEducationTipSizeChange() {
+#if DEBUG
+        Self.featureEducationTipLayoutInvalidationHookForTesting?()
+#endif
+        setNeedsLayout()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
+
+    private func shouldShowToolDetailsTip(configuration: ToolTimelineRowConfiguration) -> Bool {
+        guard configuration.isDone, !configuration.isExpanded else { return false }
+        return configuration.toolNamePrefix?.localizedCaseInsensitiveCompare("ask") != .orderedSame
+    }
+
+    private func shouldShowToolOutputShortcutsTip(
+        configuration: ToolTimelineRowConfiguration,
+        showExpanded: Bool,
+        showOutput: Bool
+    ) -> Bool {
+        guard configuration.isExpanded, showExpanded || showOutput else { return false }
+        return canShowFullScreenContent || outputCopyText != nil
+    }
 
     private func shouldRenderExpandedContent(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Bool {
         switch content {
@@ -1884,6 +2036,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
             expandedPinchDidTriggerFullScreen = true
             showFullScreenContent()
+            FeatureEducationTips.markToolOutputShortcutUsed()
+            dismissFeatureEducationTipForAction()
 
         case .ended, .cancelled, .failed:
             expandedPinchDidTriggerFullScreen = false
@@ -2062,9 +2216,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     imagePreviewContainer: self.imagePreviewContainer
                 )
                 self.copy(text: output, feedbackView: feedbackView)
+                FeatureEducationTips.markToolOutputShortcutUsed()
+                self.dismissFeatureEducationTipForAction()
             },
             onOpenFullScreenContent: { [weak self] in
                 self?.showFullScreenContent()
+                FeatureEducationTips.markToolOutputShortcutUsed()
+                self?.dismissFeatureEducationTipForAction()
             },
             onViewFullScreenImage: { [weak self] in
                 guard let self, let image = self.imagePreviewImageView.image else { return }

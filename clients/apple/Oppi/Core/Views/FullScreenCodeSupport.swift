@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 import UIKit
 
 /// Shared chrome convention for all fullscreen viewer controllers.
@@ -143,10 +144,21 @@ private final class FullScreenTextSelectionHighlightOverlayView: UIView {
 /// also owns a fallback `UIEditMenuInteraction`; the fallback stands down when
 /// the native delegate has already built the menu for the current selection.
 final class FullScreenReviewCommentTextView: UITextView {
+#if DEBUG
+    static var forcesReviewSelectionTipForTesting = false
+#endif
+
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSourceContext: ReviewCommentSourceContext?
 
+    private static let reviewSelectionTipTopPadding: CGFloat = 10
+    private static let reviewSelectionTipHorizontalPadding: CGFloat = 12
+    private static let reviewSelectionTipReservedHeight = FeatureEducationTipBannerView.preferredHeight + 18
+
     private let selectionHighlightOverlay = FullScreenTextSelectionHighlightOverlayView()
+    private let reviewSelectionTipPresentationOwnerID = UUID()
+    private var reviewSelectionTipView: FeatureEducationTipBannerView?
+    private var reviewSelectionTipBaseTextContainerInset: UIEdgeInsets?
     private lazy var reviewCommentEditMenuInteraction = UIEditMenuInteraction(delegate: self)
     private var pendingEditMenuPresentation = false
     private var currentEditMenuTargetRect: CGRect?
@@ -196,14 +208,92 @@ final class FullScreenReviewCommentTextView: UITextView {
     ) {
         reviewCommentSelectionRouter = router
         reviewCommentSourceContext = sourceContext
+        presentReviewCommentSelectionTipIfNeeded()
         scheduleReviewCommentEditMenuPresentation()
+    }
+
+    private func presentReviewCommentSelectionTipIfNeeded() {
+        guard reviewCommentSelectionRouter != nil, reviewCommentSourceContext != nil else {
+            clearReviewCommentSelectionTip()
+            return
+        }
+        let tip = FeatureEducationTips.ReviewCommentSelectionTip()
+#if DEBUG
+        let forceTip = ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
+            || Self.forcesReviewSelectionTipForTesting
+#else
+        let forceTip = false
+#endif
+        guard tip.shouldDisplay || forceTip else {
+            clearReviewCommentSelectionTip()
+            return
+        }
+        guard reviewSelectionTipView == nil else { return }
+        guard FeatureEducationTipPresentationCoordinator.shared.claim(
+            tipID: FeatureEducationTips.reviewCommentSelection.id,
+            ownerID: reviewSelectionTipPresentationOwnerID,
+            force: forceTip
+        ) else { return }
+
+        reserveSpaceForReviewCommentSelectionTip()
+
+        let tipView = FeatureEducationTipBannerView()
+        tipView.configure(descriptor: FeatureEducationTips.reviewCommentSelection) { [weak self] in
+            tip.invalidate(reason: .tipClosed)
+            self?.clearReviewCommentSelectionTip()
+        }
+        tipView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tipView)
+        reviewSelectionTipView = tipView
+        NSLayoutConstraint.activate([
+            tipView.leadingAnchor.constraint(equalTo: frameLayoutGuide.leadingAnchor, constant: Self.reviewSelectionTipHorizontalPadding),
+            tipView.trailingAnchor.constraint(equalTo: frameLayoutGuide.trailingAnchor, constant: -Self.reviewSelectionTipHorizontalPadding),
+            tipView.topAnchor.constraint(equalTo: frameLayoutGuide.topAnchor, constant: Self.reviewSelectionTipTopPadding),
+            tipView.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight),
+        ])
+        bringSubviewToFront(tipView)
+    }
+
+    func dismissReviewCommentSelectionTip() {
+        clearReviewCommentSelectionTip()
+    }
+
+    private func clearReviewCommentSelectionTip() {
+        guard reviewSelectionTipView != nil else { return }
+        reviewSelectionTipView?.removeFromSuperview()
+        reviewSelectionTipView = nil
+        restoreSpaceReservedForReviewCommentSelectionTip()
+        FeatureEducationTipPresentationCoordinator.shared.release(
+            tipID: FeatureEducationTips.reviewCommentSelection.id,
+            ownerID: reviewSelectionTipPresentationOwnerID
+        )
+    }
+
+    private func reserveSpaceForReviewCommentSelectionTip() {
+        guard reviewSelectionTipBaseTextContainerInset == nil else { return }
+        let baseInset = textContainerInset
+        reviewSelectionTipBaseTextContainerInset = baseInset
+        textContainerInset = UIEdgeInsets(
+            top: baseInset.top + Self.reviewSelectionTipReservedHeight,
+            left: baseInset.left,
+            bottom: baseInset.bottom,
+            right: baseInset.right
+        )
+    }
+
+    private func restoreSpaceReservedForReviewCommentSelectionTip() {
+        guard let baseInset = reviewSelectionTipBaseTextContainerInset else { return }
+        reviewSelectionTipBaseTextContainerInset = nil
+        textContainerInset = baseInset
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
             reviewCommentEditMenuInteraction.dismissMenu()
+            clearReviewCommentSelectionTip()
         } else {
+            presentReviewCommentSelectionTipIfNeeded()
             scheduleReviewCommentEditMenuPresentation()
         }
     }
@@ -235,6 +325,9 @@ final class FullScreenReviewCommentTextView: UITextView {
 
     private func updateSelectionHighlightOverlay() {
         bringSubviewToFront(selectionHighlightOverlay)
+        if let reviewSelectionTipView {
+            bringSubviewToFront(reviewSelectionTipView)
+        }
         selectionHighlightOverlay.frame = bounds
         selectionHighlightOverlay.fillColor = tintColor.withAlphaComponent(0.30)
         selectionHighlightOverlay.rects = selectionHighlightRects(for: selectedRange)

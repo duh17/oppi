@@ -944,6 +944,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     cancelToolOutputLoadTasks(for: [itemID])
                 } else {
                     reducer.expandedItemIDs.insert(itemID)
+                    FeatureEducationTips.markToolDetailsOpened()
                     ensureExpandedToolOutputLoaded(
                         itemID: itemID,
                         tool: tool,

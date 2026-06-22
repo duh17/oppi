@@ -445,6 +445,19 @@ struct ChatInputBar<ActionRow: View>: View {
             .padding(.horizontal, composerHorizontalPadding)
             .padding(.vertical, 10)
 
+            if showsBusyModeSelector {
+                FeatureEducationTipBannerHost(
+                    tip: FeatureEducationTips.BusySendModeTip(),
+                    descriptor: FeatureEducationTips.busySendMode,
+                    contentInsets: EdgeInsets(
+                        top: 8,
+                        leading: composerHorizontalPadding,
+                        bottom: 2,
+                        trailing: composerHorizontalPadding
+                    )
+                )
+            }
+
             if showsComposerActionRow {
                 GlassEffectContainer(spacing: 0) {
                     HStack(spacing: 6) {
@@ -518,6 +531,7 @@ struct ChatInputBar<ActionRow: View>: View {
         Menu {
             Button {
                 busyStreamingBehavior = .steer
+                FeatureEducationTips.markBusySendModeUsed()
             } label: {
                 HStack {
                     Text("Steering")
@@ -529,6 +543,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
             Button {
                 busyStreamingBehavior = .followUp
+                FeatureEducationTips.markBusySendModeUsed()
             } label: {
                 HStack {
                     Text("Follow-up")
@@ -646,7 +661,10 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var ignoreAskActionButton: some View {
-        Button(action: { onAskIgnoreAll?() }) {
+        Button(action: {
+            onAskIgnoreAll?()
+            FeatureEducationTips.markPromptAnswered()
+        }) {
             ZStack {
                 Circle().fill(Color.themeBgHighlight)
                 Circle().stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
@@ -1019,7 +1037,11 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         if askRequest != nil {
             onAskIgnoreAll?()
+            FeatureEducationTips.markPromptAnswered()
             return
+        }
+        if isBusy {
+            FeatureEducationTips.markBusySendModeUsed()
         }
         onSend()
     }
@@ -1041,6 +1063,7 @@ struct ChatInputBar<ActionRow: View>: View {
         if transition.shouldSubmit {
             keepComposerClearedForSubmittedAskRequestID = askRequest?.id
             onAskSubmit?(transition.answers)
+            FeatureEducationTips.markPromptAnswered()
         } else {
             withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
                 askCurrentPage = transition.nextPage
@@ -1055,6 +1078,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
         if isBusy {
             busyStreamingBehavior = .followUp
+            FeatureEducationTips.markBusySendModeUsed()
         }
 
         handleSend()
