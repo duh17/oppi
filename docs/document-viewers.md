@@ -2,7 +2,7 @@
 
 Oppi renders text and document output in native full-screen viewers on iPhone and iPad. These viewers are for reading, review, copy/share, and selection. They do not modify the underlying file, tool output, session transcript, or agent context.
 
-This page covers full-screen viewers for markdown, code, source text, diffs, terminal output, HTML, and rendered document formats such as Org, LaTeX, Mermaid, and Graphviz. Media viewers such as images, audio, video placeholders, and PDFs use their own controls.
+This page covers full-screen viewers for markdown, code, source text, diffs, terminal output, HTML, and rendered document formats such as Org, LaTeX, Mermaid, and Graphviz. Media viewers such as images, audio, video players, and PDFs use their own controls.
 
 ## Viewing Options
 

@@ -12,7 +12,7 @@ Oppi already has three attachment paths:
 - tool-produced image attachments through `details.image`
 - tool-produced audio through `kind: "audio_presentation"` and `details.audio`
 
-Expanded tool rows also understand `details.media[]` for stored media attachment metadata. The video path should extend `details.media[]` rather than add a new markdown URL scheme.
+Expanded tool rows understand `details.media[]` for stored media attachment metadata. Video attachments use `details.media[]` rather than a markdown URL scheme.
 
 ## Core rule
 
@@ -84,7 +84,7 @@ type ChatAttachmentRef = {
 };
 ```
 
-Current message rendering treats uploaded files primarily as message attachment badges and image previews. The client also keeps a legacy `ImageAttachment` path for base64 image blobs used by pending/optimistic UI and older traces.
+Message rendering treats uploaded files primarily as message attachment badges and image previews. The client also keeps an `ImageAttachment` path for base64 image blobs used by pending/optimistic UI and archived traces.
 
 Message attachments and tool-result attachments share the same product idea: files associated with a chat entry. Their wire shapes differ because user uploads and tool results enter the system at different points.
 

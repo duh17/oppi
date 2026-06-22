@@ -23,10 +23,13 @@ Use `oppi ...` commands for normal installs. Source checkouts can use `node dist
 2. Open Oppi on iPhone.
 
 3. In onboarding, choose one:
-   - **Scan QR Code**
-   - **Paste Invite Link**
+   - **Pair Nearby Mac**: discover a Mac already showing Oppi pairing.
+   - **Scan QR Code**: scan the QR code printed by the server.
+   - **Enter manually** or **Connect to Server**: enter scheme, host, port, token, and display name.
 
-4. Confirm server trust.
+   Opening an `oppi://connect` invite link on the phone also starts pairing.
+
+4. Confirm server trust. If **Require Face ID/Touch ID/Optic ID/Passcode** is enabled, iOS asks for local authentication before accepting the server identity.
 
 5. Oppi opens **Workspaces**.
 
@@ -36,6 +39,7 @@ Notes:
 
 - Oppi does not auto-create starter workspaces for you.
 - The guided create flow lets you pick a project, enter a path manually, or start with a blank workspace.
+- Manual connection keeps **Connect** disabled until host and token are filled. If the port is invalid, Oppi uses `7749`.
 
 If your phone is not on the same LAN (for example Tailscale or VPS), generate an invite with an explicit host:
 
@@ -66,7 +70,7 @@ Host override notes:
    oppi pair
    ```
 
-2. On the new phone, scan the QR code or paste the invite link.
+2. On the new phone, use **Pair Nearby Mac**, scan the QR code, enter details manually, or open the invite link.
 
 ## Invite rules
 

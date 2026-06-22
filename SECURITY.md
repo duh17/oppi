@@ -21,9 +21,9 @@ Plain HTTP is allowed for loopback development. Binding HTTP to a non-loopback i
 
 ## Privacy
 
-Oppi does not phone home. There are no accounts, no analytics, and no data sent to any external service. All session data stays on your machine.
+Oppi does not phone home. There are no accounts, no external analytics, and no data sent to a hosted Oppi service. Session data stays on your machine.
 
-MetricKit performance telemetry is only collected in internal/TestFlight builds and stored locally on the server.
+Diagnostics upload only to the paired Oppi server. Public builds require **Settings → Diagnostics → Send Diagnostics to Server** before uploading MetricKit, resource, or client-log diagnostics. Internal/debug builds upload diagnostics to the configured server automatically.
 
 See [`docs/telemetry.md`](docs/telemetry.md) for the full telemetry policy.
 
