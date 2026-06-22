@@ -62,4 +62,9 @@ struct ShareQuickSessionPayload: Codable, Equatable, Sendable {
         defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
         return payload
     }
+
+    static func removePayloadFiles(id: String) {
+        guard let url = payloadDirectoryURL(id: id) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
 }
