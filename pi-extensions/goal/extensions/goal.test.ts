@@ -273,8 +273,13 @@ describe("goal extension", () => {
         }>;
       };
     };
-    const requestRender = vi.fn();
-    const native = widgetFactory({ requestRender }).renderNative();
+    const tui = {
+      renderRequested: false,
+      requestRender() {
+        this.renderRequested = true;
+      },
+    };
+    const native = widgetFactory(tui).renderNative();
 
     expect(native.presentation.title).toBe("Goal");
     expect(native.presentation.subtitle).toContain("Active");
@@ -296,7 +301,7 @@ describe("goal extension", () => {
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("goal", "goal: Active 0/3");
 
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(requestRender).toHaveBeenCalled();
+    expect(tui.renderRequested).toBe(true);
   });
 
   it("waits for compaction instead of blocking when context usage is high", async () => {
