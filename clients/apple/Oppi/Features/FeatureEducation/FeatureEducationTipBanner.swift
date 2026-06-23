@@ -112,7 +112,8 @@ final class FeatureEducationTipPresentationCoordinator: ObservableObject {
 
 @MainActor
 final class FeatureEducationTipBannerView: UIView {
-    static let preferredHeight: CGFloat = 58
+    static let preferredHeight: CGFloat = 60
+    private static let minimumControlSize: CGFloat = 44
 
     private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
     private let iconContainer = UIView()
@@ -135,12 +136,19 @@ final class FeatureEducationTipBannerView: UIView {
     }
 
     func configure(descriptor: FeatureEducationTipDescriptor, onClose: (() -> Void)?) {
+        applyThemeColors()
         iconView.image = UIImage(systemName: descriptor.systemImageName)
         titleLabel.text = descriptor.title
         messageLabel.text = descriptor.message
         accessibilityIdentifier = "feature-tip.\(descriptor.id).tip"
         accessibilityLabel = "\(descriptor.title). \(descriptor.message)"
         self.onClose = onClose
+    }
+
+    private func applyThemeColors() {
+        let accent = UIColor(Color.themeCyan)
+        iconContainer.backgroundColor = UIColor(Color.themeCyan.opacity(0.16))
+        iconView.tintColor = accent
     }
 
     private func setupViews() {
@@ -157,12 +165,10 @@ final class FeatureEducationTipBannerView: UIView {
         addSubview(blurView)
 
         iconContainer.translatesAutoresizingMaskIntoConstraints = false
-        iconContainer.backgroundColor = UIColor.systemCyan.withAlphaComponent(0.16)
         iconContainer.layer.cornerRadius = 14
         iconContainer.layer.cornerCurve = .continuous
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.tintColor = .systemCyan
         iconView.contentMode = .scaleAspectFit
         iconContainer.addSubview(iconView)
 
@@ -214,8 +220,8 @@ final class FeatureEducationTipBannerView: UIView {
             iconView.widthAnchor.constraint(equalToConstant: 17),
             iconView.heightAnchor.constraint(equalToConstant: 17),
 
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            closeButton.widthAnchor.constraint(equalToConstant: Self.minimumControlSize),
+            closeButton.heightAnchor.constraint(equalToConstant: Self.minimumControlSize),
 
             contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
