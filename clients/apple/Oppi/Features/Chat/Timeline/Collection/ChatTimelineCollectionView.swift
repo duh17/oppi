@@ -938,6 +938,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // transiently reconfigured while still representing the same
                 // tool item, and strict type checks can drop taps.
                 let wasExpanded = reducer.expandedItemIDs.contains(itemID)
+                AppHaptics.toolbarExpansion()
                 if wasExpanded {
                     reducer.expandedItemIDs.remove(itemID)
                     cancelToolOutputRetryWork(for: itemID)

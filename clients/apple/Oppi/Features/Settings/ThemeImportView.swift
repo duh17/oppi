@@ -93,7 +93,7 @@ struct ThemeImportView: View {
             }
             CustomThemeStore.save(theme)
             themeStore.selectedThemeID = .custom(theme.name)
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            AppHaptics.success()
             importingName = nil
         } catch {
             importingName = nil

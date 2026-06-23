@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
+    @State private var hapticFeedbackEnabled = AppPreferences.Interaction.isHapticFeedbackEnabled
 
     var body: some View {
         List {
@@ -107,6 +108,17 @@ struct SettingsView: View {
                 Text("Chat Display")
             } footer: {
                 Text("Controls how chat activity appears on this device.")
+            }
+
+            Section {
+                Toggle("Haptic Feedback", isOn: $hapticFeedbackEnabled)
+                    .onChange(of: hapticFeedbackEnabled) { _, newValue in
+                        AppPreferences.Interaction.setHapticFeedbackEnabled(newValue)
+                    }
+            } header: {
+                Text("Interaction")
+            } footer: {
+                Text("Adds short taps for optional in-app interactions like toolbar expansion, copy, selection, and long-press thresholds. Oppi also respects iOS System Haptics.")
             }
 
             Section {

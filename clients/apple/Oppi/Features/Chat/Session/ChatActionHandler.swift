@@ -171,7 +171,7 @@ final class ChatActionHandler {
         isSending = true
 
         if isBusy {
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            AppHaptics.impact(style: .soft)
 
             let queuedAttachments = attachments.isEmpty ? nil : attachments
             let queuedKind: MessageQueueKind = busyStreamingBehavior == .steer ? .steer : .followUp
@@ -230,7 +230,7 @@ final class ChatActionHandler {
                 }
             }
         } else {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AppHaptics.impact(style: .light)
 
             launchTask { @MainActor in
                 self.beginSendTracking()

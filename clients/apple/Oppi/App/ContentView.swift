@@ -528,8 +528,7 @@ private struct ExtensionToastSheet: View {
 
                                     Button {
                                         UIPasteboard.general.string = url.absoluteString
-                                        let feedback = UIImpactFeedbackGenerator(style: .light)
-                                        feedback.impactOccurred(intensity: 0.8)
+                                        AppHaptics.impact(style: .light, intensity: 0.8)
                                     } label: {
                                         Image(systemName: "doc.on.doc")
                                             .imageScale(.medium)

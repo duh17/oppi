@@ -153,7 +153,7 @@ struct ModelPickerSheet: View {
         ModelRow(model: model, isCurrent: isCurrent)
             .contentShape(Rectangle())
             .onTapGesture {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AppHaptics.selectionChanged()
                 onSelect(model)
                 dismiss()
             }

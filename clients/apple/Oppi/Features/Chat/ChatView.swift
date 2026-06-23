@@ -757,7 +757,7 @@ struct ChatView: View {
                 suppressNextContextTap = false
                 return
             }
-            triggerToolbarHaptic(style: .soft, intensity: 0.55)
+            AppHaptics.toolbarExpansion()
             showContextInspector = true
         } label: {
             ContextUsageRingBadge(
@@ -770,7 +770,7 @@ struct ChatView: View {
             LongPressGesture(minimumDuration: 0.4)
                 .onEnded { _ in
                     suppressNextContextTap = true
-                    triggerToolbarHaptic(style: .rigid, intensity: 0.75)
+                    AppHaptics.longPressThreshold()
                     showCompactConfirmation = true
                     Task { @MainActor in
                         try? await Task.sleep(for: .seconds(0.6))
@@ -926,6 +926,7 @@ struct ChatView: View {
     }
 
     private func presentComposer() {
+        AppHaptics.toolbarExpansion()
         showComposer = true
     }
 
@@ -998,12 +999,6 @@ struct ChatView: View {
                 connection.extensionToast = error
             }
         }
-    }
-
-    private func triggerToolbarHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat) {
-        let feedback = UIImpactFeedbackGenerator(style: style)
-        feedback.prepare()
-        feedback.impactOccurred(intensity: intensity)
     }
 
     @MainActor

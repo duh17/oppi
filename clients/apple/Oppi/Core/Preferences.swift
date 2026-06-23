@@ -497,6 +497,21 @@ enum AppPreferences {
 
     }
 
+    // MARK: - Interaction
+
+    /// User-facing preference for optional tactile feedback.
+    enum Interaction {
+        private static let hapticFeedbackEnabledKey = "\(AppIdentifiers.subsystem).interaction.hapticFeedback.enabled"
+
+        static var isHapticFeedbackEnabled: Bool {
+            UserDefaults.standard.object(forKey: hapticFeedbackEnabledKey) as? Bool ?? true
+        }
+
+        static func setHapticFeedbackEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: hapticFeedbackEnabledKey)
+        }
+    }
+
     // MARK: - Recent Models
 
     /// Tracks recently-used model IDs so the picker can show them first.
