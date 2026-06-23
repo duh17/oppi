@@ -68,6 +68,7 @@ final class NearbyPairingAdvertiser: NSObject {
     private var sessionID: ObjectIdentifier?
     private var connectedPeerID: MCPeerID?
     private var pendingInvitation: PendingInvitation?
+    private var inviteCleanupTask: Task<Void, Never>?
 
     override init() {
         localPeerID = MCPeerID(displayName: Host.current().localizedName ?? "Oppi Mac")
@@ -95,6 +96,9 @@ final class NearbyPairingAdvertiser: NSObject {
         advertiser?.delegate = nil
         advertiser = nil
         advertiserID = nil
+
+        inviteCleanupTask?.cancel()
+        inviteCleanupTask = nil
 
         session?.disconnect()
         session?.delegate = nil
@@ -127,6 +131,9 @@ final class NearbyPairingAdvertiser: NSObject {
     }
 
     private func makeSession() -> MCSession {
+        inviteCleanupTask?.cancel()
+        inviteCleanupTask = nil
+
         if let session {
             session.disconnect()
             session.delegate = nil
@@ -169,35 +176,38 @@ final class NearbyPairingAdvertiser: NSObject {
             return
         }
 
+        nearbyPairingAdvertiserLogger.info("Received nearby pairing invitation from \(peerID.displayName, privacy: .public)")
         pendingInvitation = PendingInvitation(peerID: peerID, invitationHandler: invitationHandler)
         approvalRequest = ApprovalRequest(peerName: peerID.displayName, id: peerID.displayName)
         state = .awaitingApproval(peerID.displayName)
     }
 
     private func sendInvite(to peerID: MCPeerID) {
-        guard let session, session.connectedPeers.contains(peerID) else {
+        guard let session else {
             state = .failed("Nearby pairing disconnected before the invite could be sent.")
             connectedPeerID = nil
             return
         }
 
         state = .sendingInvite(peerID.displayName)
+        let currentSessionID = ObjectIdentifier(session)
 
         Task {
             do {
                 let invite = try await PairingInviteService.generate()
+                guard self.sessionID == currentSessionID,
+                      connectedPeerID == peerID else { return }
                 guard let inviteURL = invite.inviteURL else {
                     throw NearbyPairingAdvertiserError.missingInviteURL
                 }
                 let payload = try NearbyPairingInviteCodec.encode(inviteURL: inviteURL)
                 try session.send(payload, toPeers: [peerID], with: .reliable)
                 nearbyPairingAdvertiserLogger.info("Sent nearby invite to \(peerID.displayName, privacy: .public)")
-                session.disconnect()
-                session.delegate = nil
-                self.session = nil
-                sessionID = nil
-                connectedPeerID = nil
-                state = .advertising
+                inviteCleanupTask?.cancel()
+                inviteCleanupTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(3))
+                    self?.finishInviteDelivery(sessionID: currentSessionID, peerID: peerID)
+                }
             } catch {
                 nearbyPairingAdvertiserLogger.error("Failed to send nearby invite: \(error.localizedDescription, privacy: .public)")
                 session.disconnect()
@@ -208,6 +218,27 @@ final class NearbyPairingAdvertiser: NSObject {
                 state = .failed(error.localizedDescription)
             }
         }
+    }
+
+    private func finishInviteDelivery(sessionID: ObjectIdentifier, peerID: MCPeerID) {
+        guard self.sessionID == sessionID,
+              connectedPeerID == peerID else { return }
+        inviteCleanupTask?.cancel()
+        inviteCleanupTask = nil
+        session?.disconnect()
+        session?.delegate = nil
+        session = nil
+        self.sessionID = nil
+        connectedPeerID = nil
+        state = .advertising
+    }
+
+    private func handleInviteAck(data: Data, from peerID: MCPeerID, sessionID: ObjectIdentifier) {
+        guard NearbyPairingInviteCodec.isInviteReceivedAck(data),
+              self.sessionID == sessionID,
+              connectedPeerID == peerID else { return }
+        nearbyPairingAdvertiserLogger.info("Received nearby invite acknowledgement from \(peerID.displayName, privacy: .public)")
+        finishInviteDelivery(sessionID: sessionID, peerID: peerID)
     }
 
     private func handleAdvertisingFailure(advertiserID: ObjectIdentifier) {
@@ -222,14 +253,21 @@ final class NearbyPairingAdvertiser: NSObject {
 
         switch sessionState {
         case .connected:
+            nearbyPairingAdvertiserLogger.info("Nearby pairing connected to \(peerID.displayName, privacy: .public)")
             sendInvite(to: peerID)
         case .connecting:
             state = .connecting(peerID.displayName)
         case .notConnected:
+            nearbyPairingAdvertiserLogger.info("Nearby pairing disconnected from \(peerID.displayName, privacy: .public)")
             connectedPeerID = nil
-            if case .sendingInvite = state {
-                state = .failed("Nearby pairing disconnected before the invite could be sent.")
-            } else if case .connecting = state {
+            inviteCleanupTask?.cancel()
+            inviteCleanupTask = nil
+            session?.delegate = nil
+            session = nil
+            self.sessionID = nil
+            if case .connecting = state {
+                state = .advertising
+            } else if case .sendingInvite = state {
                 state = .advertising
             }
         @unknown default:
@@ -283,7 +321,13 @@ extension NearbyPairingAdvertiser: MCSessionDelegate {
         }
     }
 
-    nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {}
+    nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+        let peer = NearbyPairingPeerReference(peerID: peerID)
+        let sessionID = ObjectIdentifier(session)
+        Task { @MainActor [weak self, peer, data, sessionID] in
+            self?.handleInviteAck(data: data, from: peer.peerID, sessionID: sessionID)
+        }
+    }
 
     nonisolated func session(
         _ session: MCSession,

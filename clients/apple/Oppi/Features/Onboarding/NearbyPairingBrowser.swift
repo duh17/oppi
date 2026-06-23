@@ -189,6 +189,11 @@ final class NearbyPairingBrowser: NSObject {
         }
 
         nearbyPairingBrowserLogger.info("Received nearby invite from \(peerID.displayName, privacy: .public)")
+        if let session,
+           session.connectedPeers.contains(peerID),
+           let ack = try? NearbyPairingInviteCodec.encodeInviteReceivedAck() {
+            try? session.send(ack, toPeers: [peerID], with: .reliable)
+        }
         selectedPeerID = nil
         session?.disconnect()
         session?.delegate = nil
