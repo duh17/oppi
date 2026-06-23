@@ -13,13 +13,18 @@ final class MacAPIClient: Sendable {
     private let token: String
     private let session: URLSession
 
-    init(baseURL: URL, token: String) {
+    init(
+        baseURL: URL,
+        token: String,
+        timeoutIntervalForRequest: TimeInterval = 10,
+        timeoutIntervalForResource: TimeInterval = 15
+    ) {
         self.baseURL = baseURL
         self.token = token
 
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 15
+        config.timeoutIntervalForRequest = timeoutIntervalForRequest
+        config.timeoutIntervalForResource = timeoutIntervalForResource
 
         // Accept self-signed certs from the local server.
         let delegate = SelfSignedTrustDelegate()

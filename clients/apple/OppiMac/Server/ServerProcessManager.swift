@@ -25,6 +25,12 @@ final class ServerProcessManager {
         case stderr
     }
 
+    enum ProcessOwner: Sendable, Equatable {
+        case none
+        case childProcess
+        case externalProcess
+    }
+
     struct LogLine: Identifiable, Sendable {
         let id: UUID
         let timestamp: Date
@@ -42,11 +48,15 @@ final class ServerProcessManager {
     // MARK: - Public state
 
     private(set) var state: State = .stopped
+    private(set) var processOwner: ProcessOwner = .none
     private(set) var logBuffer: [LogLine] = []
 
     #if DEBUG
     /// Test-only: override state for unit test setup.
     func _setStateForTesting(_ newState: State) { state = newState }
+
+    /// Test-only: override owner for unit test setup.
+    func _setProcessOwnerForTesting(_ newOwner: ProcessOwner) { processOwner = newOwner }
 
     /// Test-only: inject log lines for buffer cap / clear testing.
     func _appendLogLinesForTesting(_ lines: [LogLine]) { appendLogLines(lines) }
@@ -497,8 +507,10 @@ final class ServerProcessManager {
         do {
             try proc.run()
             self.process = proc
+            processOwner = .childProcess
             logger.warning("Server process launched (pid \(proc.processIdentifier))")
         } catch {
+            processOwner = .none
             state = .failed(error.localizedDescription)
             logger.error("Failed to launch server process: \(error.localizedDescription)")
         }
@@ -506,7 +518,14 @@ final class ServerProcessManager {
 
     /// Gracefully stop the server: SIGTERM, then SIGKILL after 5 seconds.
     func stop() async {
+        guard processOwner == .childProcess else {
+            detachExternalServer()
+            return
+        }
+
         guard let proc = process, proc.isRunning else {
+            cleanup()
+            processOwner = .none
             state = .stopped
             return
         }
@@ -534,6 +553,21 @@ final class ServerProcessManager {
         logger.warning("Server stopped")
     }
 
+    func detachExternalServer() {
+        guard processOwner != .childProcess else { return }
+        cleanup()
+        processOwner = .none
+        state = .stopped
+        logger.warning("Detached from external server")
+    }
+
+    func markFailed(_ reason: String) {
+        cleanup()
+        processOwner = .none
+        state = .failed(reason)
+        logger.error("Server marked failed: \(reason, privacy: .public)")
+    }
+
     /// Stop, then start the server.
     func restart() async {
         restartAttempts = 0
@@ -554,6 +588,9 @@ final class ServerProcessManager {
             return
         case .starting, .stopped, .failed:
             let previous = state
+            if processOwner == .none {
+                processOwner = .externalProcess
+            }
             state = .running
             restartAttempts = 0
             logger.warning("Server marked as running (was \(String(describing: previous)))")
@@ -570,6 +607,12 @@ final class ServerProcessManager {
     private var isFailedState: Bool {
         if case .failed = state { return true }
         return false
+    }
+
+    static func isAddressInUseFailure(_ stderr: String) -> Bool {
+        let normalized = stderr.lowercased()
+        return normalized.contains("eaddrinuse")
+            || normalized.contains("address already in use")
     }
 
     // MARK: - Persistent log file
@@ -730,6 +773,13 @@ final class ServerProcessManager {
             logger.error("Last stderr before exit:\n\(recentStderr)")
         }
 
+        if Self.isAddressInUseFailure(recentStderr) {
+            processOwner = .none
+            state = .failed("Port 7749 is already in use by another server")
+            logger.error("Server port is already in use; not auto-restarting")
+            return
+        }
+
         // Unexpected exit — attempt auto-restart
         if restartAttempts < Self.maxRestartAttempts {
             restartAttempts += 1
@@ -754,6 +804,9 @@ final class ServerProcessManager {
         stderrPipe = nil
         closeLogFile()
         process = nil
+        if processOwner == .childProcess {
+            processOwner = .none
+        }
     }
 
     static func serverSeedDependenciesChanged(
