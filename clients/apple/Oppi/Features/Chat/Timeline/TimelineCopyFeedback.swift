@@ -18,8 +18,7 @@ enum TimelineCopyFeedback {
 
         UIPasteboard.general.string = value
 
-        let feedback = UIImpactFeedbackGenerator(style: .light)
-        feedback.impactOccurred(intensity: 0.8)
+        AppHaptics.impact(style: .light, intensity: 0.8)
 
         guard let feedbackView else { return }
 

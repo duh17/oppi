@@ -470,14 +470,14 @@ struct AskCardExpanded: View {
     // MARK: - Selection Logic
 
     private func confirmMultiSelect() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AppHaptics.impact(style: .light)
         if !isLastQuestionPage {
             navigateForward()
         }
     }
 
     private func handleIgnore() {
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        AppHaptics.impact(style: .soft)
         if let question = currentQuestion {
             cancelDictationIfNeeded(for: question.id)
             suppressKeyboard = false

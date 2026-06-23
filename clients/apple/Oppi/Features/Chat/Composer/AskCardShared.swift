@@ -65,7 +65,7 @@ enum AskCardShared {
         answers: Binding<[String: AskAnswer]>,
         onSingleSelect: () -> Void
     ) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AppHaptics.selectionChanged()
 
         if question.multiSelect {
             var current: Set<String>

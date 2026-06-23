@@ -19,6 +19,7 @@ extension ToolTimelineRowContentView {
 
     private func performOutputFullScreenOrCopy(feedbackView: UIView) {
         if canShowFullScreenContent {
+            AppHaptics.toolbarExpansion()
             showFullScreenContent()
             FeatureEducationTips.markToolOutputShortcutUsed()
             dismissFeatureEducationTipForAction()

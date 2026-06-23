@@ -265,8 +265,7 @@ final class NativeCodeBlockView: UIView {
 
     private func copyCodeAndShowFeedback() {
         UIPasteboard.general.string = currentCode
-        let feedback = UIImpactFeedbackGenerator(style: .light)
-        feedback.impactOccurred(intensity: 0.7)
+        AppHaptics.impact(style: .light, intensity: 0.7)
 
         copyButton.configuration?.image = UIImage(systemName: "checkmark")
         Task { @MainActor in
@@ -803,8 +802,7 @@ final class NativeTableBlockView: UIView {
 
         UIPasteboard.general.string = markdownTableText()
 
-        let feedback = UIImpactFeedbackGenerator(style: .light)
-        feedback.impactOccurred(intensity: 0.7)
+        AppHaptics.impact(style: .light, intensity: 0.7)
 
         showCopiedFlash()
     }

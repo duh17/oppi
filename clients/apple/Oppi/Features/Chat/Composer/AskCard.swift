@@ -238,6 +238,7 @@ struct AskCard: View {
 
     private var expandButton: some View {
         Button {
+            AppHaptics.toolbarExpansion()
             isExpanded = true
         } label: {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -388,14 +389,14 @@ struct AskCard: View {
     // MARK: - Selection Logic
 
     private func confirmMultiSelect(for question: AskQuestion) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AppHaptics.impact(style: .light)
         withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
             advanceToNextPage()
         }
     }
 
     private func handleIgnore(question: AskQuestion) {
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        AppHaptics.impact(style: .soft)
         // Remove any existing answer — ignored = omitted from map
         answers[question.id] = nil
 

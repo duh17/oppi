@@ -889,7 +889,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             guard let self else { return }
             let didSave = await router.saveInlineComment(body: body, request: request)
             if didSave {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.7)
+                AppHaptics.success()
                 dismiss()
             } else {
                 isSaving = false
