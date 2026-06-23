@@ -933,7 +933,9 @@ export function createGoalExtension(
       ctx.ui.setWidget(
         WIDGET_KEY,
         (tui: unknown) => {
-          widgetRender = (tui as { requestRender?: () => void }).requestRender;
+          widgetRender = () => {
+            (tui as { requestRender?: () => void }).requestRender?.();
+          };
           return createGoalWidget(() => currentGoal);
         },
         { placement: "aboveEditor" },
