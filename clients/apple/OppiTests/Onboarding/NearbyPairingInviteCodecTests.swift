@@ -24,4 +24,17 @@ struct NearbyPairingInviteCodecTests {
 
         #expect(NearbyPairingInviteCodec.decodeInviteURL(from: data) == nil)
     }
+
+    @Test func roundTripsInviteReceivedAck() throws {
+        let data = try NearbyPairingInviteCodec.encodeInviteReceivedAck()
+
+        #expect(NearbyPairingInviteCodec.isInviteReceivedAck(data))
+        #expect(NearbyPairingInviteCodec.decodeInviteURL(from: data) == nil)
+    }
+
+    @Test func inviteMessageIsNotAck() throws {
+        let data = try NearbyPairingInviteCodec.encode(inviteURL: "oppi://connect?v=3&invite=test-payload")
+
+        #expect(!NearbyPairingInviteCodec.isInviteReceivedAck(data))
+    }
 }
