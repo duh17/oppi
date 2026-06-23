@@ -4,6 +4,7 @@ struct StatusView: View {
 
     let processManager: ServerProcessManager
     let healthMonitor: ServerHealthMonitor
+    let sessionMonitor: MacSessionMonitor
 
     var body: some View {
         Form {
@@ -35,14 +36,34 @@ struct StatusView: View {
                 switch processManager.state {
                 case .stopped, .failed:
                     Button("Start Server") {
-                        processManager.startWithDefaults()
+                        Task {
+                            await MacServerLifecycle.startOrAttachFromLocalConfig(
+                                processManager: processManager,
+                                healthMonitor: healthMonitor,
+                                sessionMonitor: sessionMonitor,
+                                allowKillingExistingServer: true
+                            )
+                        }
                     }
                 case .running:
-                    Button("Restart Server") {
-                        Task { await processManager.restart() }
+                    Button(processManager.processOwner == .externalProcess ? "Restart Background Server" : "Restart Server") {
+                        Task {
+                            await MacServerLifecycle.restartFromLocalConfig(
+                                processManager: processManager,
+                                healthMonitor: healthMonitor,
+                                sessionMonitor: sessionMonitor,
+                                allowKillingExistingServer: true
+                            )
+                        }
                     }
-                    Button("Stop Server") {
-                        Task { await processManager.stop() }
+                    Button(processManager.processOwner == .externalProcess ? "Stop Background Server" : "Stop Server") {
+                        Task {
+                            await MacServerLifecycle.stopFromLocalConfig(
+                                processManager: processManager,
+                                healthMonitor: healthMonitor,
+                                sessionMonitor: sessionMonitor
+                            )
+                        }
                     }
                 case .starting, .stopping:
                     ProgressView()
@@ -58,7 +79,7 @@ struct StatusView: View {
         switch processManager.state {
         case .stopped: "Stopped"
         case .starting: "Starting..."
-        case .running: "Running"
+        case .running: processManager.processOwner == .externalProcess ? "Running (Background)" : "Running"
         case .stopping: "Stopping..."
         case .failed(let reason): "Failed: \(reason)"
         }

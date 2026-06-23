@@ -91,36 +91,27 @@ struct ServerInitView: View {
         error = nil
         phase = .creatingConfig
 
-        Task.detached {
+        Task {
             do {
                 // Step 1: Run `oppi init --yes`
                 try await runServerInit()
 
+                // Step 2: Start or attach to the local server. A LaunchAgent or
+                // prior debug app may already own port 7749, so probe health
+                // before spawning another child process.
                 await MainActor.run { phase = .startingServer }
-
-                // Step 2: Start the server process
-                await MainActor.run {
-                    processManager.startWithDefaults()
+                let started = await MacServerLifecycle.startOrAttachFromLocalConfig(
+                    processManager: processManager,
+                    healthMonitor: healthMonitor,
+                    allowKillingExistingServer: true
+                )
+                guard started else {
+                    throw InitError.noToken
                 }
 
                 await MainActor.run { phase = .waitingHealth }
 
-                // Step 3: Wire health monitor and wait for /health
-                let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-                guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else {
-                    throw InitError.noToken
-                }
-
-                let baseURL = URL(string: "https://localhost:7749")!
-                await MainActor.run {
-                    healthMonitor.startMonitoring(
-                        baseURL: baseURL,
-                        token: token,
-                        processManager: processManager
-                    )
-                }
-
-                // Wait for health monitor to detect healthy state
+                // Step 3: Wait for health monitor to detect healthy state.
                 let healthy = try await waitForHealthMonitor()
 
                 await MainActor.run {

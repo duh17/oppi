@@ -126,9 +126,13 @@ final class ServerHealthMonitor {
                 logger.warning("Health check failed (\(self.consecutiveFailures) consecutive)")
 
                 if consecutiveFailures >= Self.consecutiveFailuresForRestart {
-                    logger.error("Triggering restart after \(self.consecutiveFailures) consecutive health check failures")
+                    if processManager?.processOwner == .externalProcess {
+                        logger.error("External server health failed after \(self.consecutiveFailures) consecutive checks; waiting for background owner")
+                    } else {
+                        logger.error("Triggering restart after \(self.consecutiveFailures) consecutive health check failures")
+                        await processManager?.restart()
+                    }
                     consecutiveFailures = 0
-                    await processManager?.restart()
                     // Re-enter startup polling to wait for the restarted server
                     // instead of exiting the loop (which leaves no one to call markRunning).
                     await startupPoll(client: client)

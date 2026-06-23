@@ -34,18 +34,11 @@ struct OppiMacApp: App {
             guard !obs.needsOnboarding else { return }
             guard pm.state == .stopped else { return }
 
-            let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-            guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
-            let baseURL = URL(string: "https://localhost:7749")!
-            let client = MacAPIClient(baseURL: baseURL, token: token)
-
-            Self.startOrAttachServer(
+            await MacServerLifecycle.startOrAttachFromLocalConfig(
                 processManager: pm,
                 healthMonitor: hm,
                 sessionMonitor: sm,
-                baseURL: baseURL,
-                token: token,
-                client: client
+                allowKillingExistingServer: !Self.isRunningTests
             )
         }
     }
@@ -86,6 +79,7 @@ struct OppiMacApp: App {
                 processManager: processManager,
                 healthMonitor: healthMonitor,
                 permissionState: permissionState,
+                sessionMonitor: sessionMonitor,
                 checkForUpdates: { [updaterController] in
                     updaterController.checkForUpdates(nil)
                 }
@@ -117,90 +111,13 @@ struct OppiMacApp: App {
     private func autoStartServer() {
         guard processManager.state == .stopped else { return }
 
-        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-        guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
-
-        let baseURL = URL(string: "https://localhost:7749")!
-        let client = MacAPIClient(baseURL: baseURL, token: token)
-
         Task {
-            Self.startOrAttachServer(
+            await MacServerLifecycle.startOrAttachFromLocalConfig(
                 processManager: processManager,
                 healthMonitor: healthMonitor,
                 sessionMonitor: sessionMonitor,
-                baseURL: baseURL,
-                token: token,
-                client: client
+                allowKillingExistingServer: !Self.isRunningTests
             )
-        }
-    }
-
-    /// Detect whether a launchd-managed server is already running.
-    /// If so, attach to it. Otherwise, spawn a child process as before.
-    ///
-    /// Detection: check if a LaunchAgent plist exists AND the health
-    /// endpoint responds. If health responds, we know launchd has the
-    /// server running — no need to spawn our own.
-    private static func startOrAttachServer(
-        processManager: ServerProcessManager,
-        healthMonitor: ServerHealthMonitor,
-        sessionMonitor: MacSessionMonitor,
-        baseURL: URL,
-        token: String,
-        client: MacAPIClient
-    ) {
-        let launchAgentPlists = [
-            "~/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
-            "~/Library/LaunchAgents/dev.chenda.oppi.plist",
-        ].map { NSString(string: $0).expandingTildeInPath }
-        let launchdInstalled = launchAgentPlists.contains {
-            FileManager.default.fileExists(atPath: $0)
-        }
-
-        if launchdInstalled {
-            // LaunchAgent is installed — probe health to see if it's running.
-            // Don't kill anything; launchd owns the process.
-            Task.detached {
-                let healthy = await client.checkHealth()
-                await MainActor.run {
-                    if healthy {
-                        // Server is running via launchd — attach to it.
-                        // Mark process manager as running so the UI shows green.
-                        processManager.markRunning()
-                        healthMonitor.startMonitoring(
-                            baseURL: baseURL,
-                            token: token,
-                            processManager: processManager
-                        )
-                        healthMonitor.checkPiCLIVersion()
-                        sessionMonitor.startPolling(client: client)
-                    } else {
-                        // LaunchAgent installed but server not responding.
-                        // launchd may still be starting it (ThrottleInterval=5).
-                        // Start health monitoring which will poll and wait.
-                        healthMonitor.startMonitoring(
-                            baseURL: baseURL,
-                            token: token,
-                            processManager: processManager
-                        )
-                        healthMonitor.checkPiCLIVersion()
-                        sessionMonitor.startPolling(client: client)
-                    }
-                }
-            }
-        } else {
-            // No LaunchAgent — use the original child-process model.
-            if !isRunningTests {
-                ServerProcessManager.killExistingServer()
-            }
-            processManager.startWithDefaults()
-            healthMonitor.startMonitoring(
-                baseURL: baseURL,
-                token: token,
-                processManager: processManager
-            )
-            healthMonitor.checkPiCLIVersion()
-            sessionMonitor.startPolling(client: client)
         }
     }
 

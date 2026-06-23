@@ -10,6 +10,7 @@ struct MainWindowView: View {
     let processManager: ServerProcessManager
     let healthMonitor: ServerHealthMonitor
     let permissionState: TCCPermissionState
+    let sessionMonitor: MacSessionMonitor
     let checkForUpdates: @MainActor () -> Void
 
     @State private var selectedTab: SidebarTab?
@@ -18,11 +19,13 @@ struct MainWindowView: View {
         processManager: ServerProcessManager,
         healthMonitor: ServerHealthMonitor,
         permissionState: TCCPermissionState,
+        sessionMonitor: MacSessionMonitor,
         checkForUpdates: @escaping @MainActor () -> Void
     ) {
         self.processManager = processManager
         self.healthMonitor = healthMonitor
         self.permissionState = permissionState
+        self.sessionMonitor = sessionMonitor
         self.checkForUpdates = checkForUpdates
         _selectedTab = State(initialValue: MacAPIClient.hasPairedClients() ? .status : .pair)
     }
@@ -58,7 +61,8 @@ struct MainWindowView: View {
         case .status:
             StatusView(
                 processManager: processManager,
-                healthMonitor: healthMonitor
+                healthMonitor: healthMonitor,
+                sessionMonitor: sessionMonitor
             )
         case .pair:
             PairView()

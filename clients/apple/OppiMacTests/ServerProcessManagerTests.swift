@@ -22,6 +22,18 @@ struct MarkRunningTests {
         pm.markRunning()
 
         #expect(pm.state == .running)
+        #expect(pm.processOwner == .externalProcess)
+    }
+
+    @Test func markRunningPreservesChildProcessOwner() {
+        let pm = ServerProcessManager()
+        pm._setStateForTesting(.starting)
+        pm._setProcessOwnerForTesting(.childProcess)
+
+        pm.markRunning()
+
+        #expect(pm.state == .running)
+        #expect(pm.processOwner == .childProcess)
     }
 
     @Test("no-op from non-recoverable states",
@@ -259,11 +271,41 @@ struct PathResolutionTests {
     }
 }
 
+// MARK: - Crash classification
+
+@Suite("ServerProcessManager — crash classification")
+@MainActor
+struct CrashClassificationTests {
+    @Test func detectsAddressAlreadyInUseFailures() {
+        #expect(ServerProcessManager.isAddressInUseFailure(
+            "Fatal error: listen EADDRINUSE: address already in use 0.0.0.0:7749"
+        ))
+        #expect(ServerProcessManager.isAddressInUseFailure(
+            "Error: Address already in use"
+        ))
+    }
+
+    @Test func ignoresUnrelatedFailures() {
+        #expect(!ServerProcessManager.isAddressInUseFailure("SyntaxError: Unexpected token"))
+    }
+}
+
 // MARK: - Process lifecycle (integration — uses /bin/sleep)
 
 @Suite("ServerProcessManager — process lifecycle")
 @MainActor
 struct ProcessLifecycleTests {
+
+    @Test func detachExternalServerStopsTrackingWithoutKillingAProcess() {
+        let pm = ServerProcessManager()
+        pm._setStateForTesting(.running)
+        pm._setProcessOwnerForTesting(.externalProcess)
+
+        pm.detachExternalServer()
+
+        #expect(pm.state == .stopped)
+        #expect(pm.processOwner == .none)
+    }
 
     @Test func startTransitionsToStartingThenStopWorks() async {
         let pm = ServerProcessManager()
@@ -275,10 +317,12 @@ struct ProcessLifecycleTests {
         // start() sets .starting, then proc.run() succeeds (sleep is a valid binary).
         // Note: the cliPath becomes an argument to sleep, so this runs "sleep 60".
         #expect(pm.state == .starting)
+        #expect(pm.processOwner == .childProcess)
 
         await pm.stop()
 
         #expect(pm.state == .stopped)
+        #expect(pm.processOwner == .none)
     }
 
     @Test func stopFromStoppedIsNoOp() async {
@@ -288,6 +332,7 @@ struct ProcessLifecycleTests {
         await pm.stop()
 
         #expect(pm.state == .stopped)
+        #expect(pm.processOwner == .none)
     }
 
     @Test func startCapturesLogOutput() async throws {
@@ -310,8 +355,10 @@ struct ProcessLifecycleTests {
         pm.start(nodePath: "/bin/sleep", cliPath: "60", dataDir: "/tmp")
 
         #expect(pm.state == .starting)
+        #expect(pm.processOwner == .childProcess)
 
         await pm.stop()
         #expect(pm.state == .stopped)
+        #expect(pm.processOwner == .none)
     }
 }
