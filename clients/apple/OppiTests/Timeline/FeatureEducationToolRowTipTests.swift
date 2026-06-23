@@ -1,10 +1,40 @@
 import Testing
+import SwiftUI
 import UIKit
 @testable import Oppi
 
 @MainActor
 @Suite("Feature education tool row tips")
 struct FeatureEducationToolRowTipTests {
+    @Test func tipBannerDismissControlUsesMinimumHitTargetAndThemeAccent() throws {
+        let originalTheme = ThemeRuntimeState.currentThemeID()
+        ThemeRuntimeState.setThemeID(.dark)
+        defer { ThemeRuntimeState.setThemeID(originalTheme) }
+
+        let view = FeatureEducationTipBannerView(
+            frame: CGRect(
+                x: 0,
+                y: 0,
+                width: 360,
+                height: FeatureEducationTipBannerView.preferredHeight
+            )
+        )
+        view.configure(descriptor: FeatureEducationTips.openToolDetails, onClose: {})
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let dismissButton = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "feature-tip.dismiss"
+        })
+        #expect(dismissButton.bounds.width >= 44)
+        #expect(dismissButton.bounds.height >= 44)
+
+        let iconView = try #require(timelineAllImageViews(in: view).first {
+            $0.image != nil && !timelineColor($0.tintColor, approximatelyEquals: .secondaryLabel)
+        })
+        #expect(timelineColor(iconView.tintColor, approximatelyEquals: UIColor(Color.themeCyan)))
+    }
+
     @Test func inlineToolTipInsertionInvalidatesEnclosingCollectionLayout() throws {
         FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
         ToolTimelineRowContentView.forcesInlineFeatureTipsForTesting = true
@@ -68,4 +98,27 @@ private func makeFeatureEducationToolConfiguration(isDone: Bool) -> ToolTimeline
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil
     )
+}
+
+private func timelineColor(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {
+    guard let lhs else { return false }
+
+    var lr: CGFloat = 0
+    var lg: CGFloat = 0
+    var lb: CGFloat = 0
+    var la: CGFloat = 0
+    var rr: CGFloat = 0
+    var rg: CGFloat = 0
+    var rb: CGFloat = 0
+    var ra: CGFloat = 0
+
+    guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+          rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else {
+        return lhs.cgColor == rhs.cgColor
+    }
+
+    return abs(lr - rr) <= tolerance &&
+        abs(lg - rg) <= tolerance &&
+        abs(lb - rb) <= tolerance &&
+        abs(la - ra) <= tolerance
 }
