@@ -114,6 +114,27 @@ struct MermaidSequenceRendererTests {
         drawLayout(layout)
     }
 
+    @Test func participantStereotypeMetadataRenders() {
+        let layout = layoutFor("""
+            sequenceDiagram
+                participant API@{ "type": "boundary", "alias": "Public API" }
+                participant Auth@{ "type": "control", "alias": "Auth Service" }
+                participant User@{ "type": "entity", "alias": "User Entity" }
+                participant DB@{ "type": "database", "alias": "User Database" }
+                participant Cache@{ "type": "collections", "alias": "Cache Cluster" }
+                participant Queue@{ "type": "queue", "alias": "Job Queue" }
+                API->>Auth: Login
+                Auth->>User: Load
+                Auth->>DB: Query
+                Auth->>Cache: Store
+                Auth->>Queue: Enqueue
+            """)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+        #expect(drawLayout(layout))
+    }
+
     // MARK: - Messages between participants
 
     @Test func messagesBetweenParticipantsRender() {
@@ -137,6 +158,72 @@ struct MermaidSequenceRendererTests {
         #expect(size.width > 0)
         #expect(size.height > 0)
         #expect(drawLayout(layout))
+    }
+
+    // MARK: - Blocks and notes
+
+    @Test func sequenceBlocksAndRectsRender() {
+        let layout = layoutFor("""
+            sequenceDiagram
+                participant Alice
+                participant Bob
+                rect rgb(191, 223, 255)
+                    Alice->>Bob: Hello
+                    loop Every minute
+                        Bob-->>Alice: Ping
+                    end
+                end
+                alt ok
+                    Alice->>Bob: Done
+                else retry
+                    Bob-->>Alice: Again
+                end
+        """)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+        #expect(drawLayout(layout))
+    }
+
+    @Test func sequenceBoxesRender() {
+        let layout = layoutFor("""
+            sequenceDiagram
+                box Purple Alice and Bob
+                    participant Alice
+                    participant Bob
+                end
+                box transparent Carol
+                    participant Carol
+                end
+                box hsl(10, 40%, 90%) Service
+                    participant Service
+                end
+                Alice->>Bob: Hello
+                Bob->>Carol: Forward
+                Carol->>Service: Render color
+        """)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+        #expect(drawLayout(layout))
+    }
+
+    @Test func sequenceNotesRenderAndAffectHeight() {
+        let withoutNote = layoutFor("""
+            sequenceDiagram
+                Alice->>Bob: Hello
+            """)
+        let withNote = layoutFor("""
+            sequenceDiagram
+                Alice->>Bob: Hello
+                Note right of Bob: A rendered note
+                Note over Alice,Bob: A spanning note
+                Note left of Alice: A left note
+            """)
+        let withoutSize = renderer.boundingBox(withoutNote)
+        let withSize = renderer.boundingBox(withNote)
+        #expect(withSize.height > withoutSize.height)
+        #expect(drawLayout(withNote))
     }
 
     // MARK: - Self-messages
@@ -203,6 +290,40 @@ struct MermaidSequenceRendererTests {
                 Bob-->Alice: dashedOpen
                 Alice-xBob: solidCross
                 Bob--xAlice: dashedCross
+            """)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+        #expect(drawLayout(layout))
+    }
+
+    @Test func v11ArrowStylesRender() {
+        let layout = layoutFor(#"""
+            sequenceDiagram
+                Alice<<->>Bob: bidirectional
+                Alice<<-->>Bob: dashed bidirectional
+                Alice-\|\Bob: top half
+                Alice--\|/Bob: dashed bottom half
+                Alice/\|-Bob: reverse top half
+                Alice\\--Bob: dashed reverse bottom half
+                Alice-\\Bob: top stick
+                Alice--//Bob: dashed bottom stick
+                Alice//--Bob: dashed reverse top stick
+                Alice->>()Bob: central end
+                Alice()->>Bob: central start
+            """#)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+        #expect(drawLayout(layout))
+    }
+
+    @Test func autonumberStartAndIncrementRender() {
+        let layout = layoutFor("""
+            sequenceDiagram
+                autonumber 10.5 0.25
+                Alice->>Bob: One
+                Bob-->>Alice: Two
             """)
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)

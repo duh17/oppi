@@ -120,11 +120,12 @@ struct MermaidMindmapParserTests {
             "    (rounded node)",
             "    ((circle node))",
             "    ))bang node((",
-            "    )hexagon node(",
+            "    )cloud node(",
+            "    {{hexagon node}}",
         ]
         let diagram = MermaidMindmapParser.parse(lines: lines)
         let children = diagram.root.children
-        #expect(children.count == 6)
+        #expect(children.count == 7)
 
         #expect(children[0].label == "plain text")
         #expect(children[0].shape == .default)
@@ -141,8 +142,11 @@ struct MermaidMindmapParserTests {
         #expect(children[4].label == "bang node")
         #expect(children[4].shape == .bang)
 
-        #expect(children[5].label == "hexagon node")
-        #expect(children[5].shape == .hexagon)
+        #expect(children[5].label == "cloud node")
+        #expect(children[5].shape == .cloud)
+
+        #expect(children[6].label == "hexagon node")
+        #expect(children[6].shape == .hexagon)
     }
 
     @Test func rootShapePreserved() {
@@ -364,5 +368,67 @@ struct MermaidMindmapRendererTests {
         #expect(layout.customSize!.width > 0)
         #expect(layout.customSize!.height > 0)
         #expect(layout.customDraw != nil)
+    }
+
+    @Test func tidyTreeLayoutUsesDistinctTopDownGeometry() {
+        let parser = MermaidParser()
+        let renderer = MermaidFlowchartRenderer()
+        let horizontal = parser.parse("""
+            mindmap
+            root((mindmap is a long thing))
+              A
+              B
+              C
+              D
+        """)
+        let tidy = parser.parse("""
+            ---
+            config:
+              layout: tidy-tree
+            ---
+            mindmap
+            root((mindmap is a long thing))
+              A
+              B
+              C
+              D
+        """)
+        let horizontalLayout = renderer.layout(horizontal, configuration: config)
+        let tidyLayout = renderer.layout(tidy, configuration: config)
+        let horizontalSize = renderer.boundingBox(horizontalLayout)
+        let tidySize = renderer.boundingBox(tidyLayout)
+
+        #expect(tidySize.width > horizontalSize.width)
+        #expect(tidySize.height != horizontalSize.height)
+        #expect(tidyLayout.customDraw != nil)
+    }
+
+    @Test func tidyTreeDrawDoesNotCrash() {
+        let parser = MermaidParser()
+        let renderer = MermaidFlowchartRenderer()
+        let diagram = parser.parse("""
+            ---
+            config:
+              layout: tidy-tree
+            ---
+            mindmap
+            root((Ideas))
+              Topic A
+                Detail 1
+                Detail 2
+              Topic B
+        """)
+        let layout = renderer.layout(diagram, configuration: config)
+        let size = renderer.boundingBox(layout)
+        let ctx = CGContext(
+            data: nil,
+            width: max(1, Int(size.width)),
+            height: max(1, Int(size.height)),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        renderer.draw(layout, in: ctx, at: .zero)
     }
 }

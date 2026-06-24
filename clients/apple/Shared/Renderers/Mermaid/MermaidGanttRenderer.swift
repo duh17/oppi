@@ -51,7 +51,8 @@ enum MermaidGanttRenderer {
 
         // Dimensions.
         let timelineWidth = CGFloat(timelineUnits) * pixelsPerUnit
-        let chartLeft = leftMargin + sectionLabelWidth + taskLabelWidth
+        let isCompact = diagram.displayMode == .compact
+        let chartLeft = leftMargin + sectionLabelWidth + (isCompact ? 0 : taskLabelWidth)
         let totalWidth = chartLeft + timelineWidth + rightMargin
 
         var y: CGFloat = leftMargin
@@ -61,9 +62,15 @@ enum MermaidGanttRenderer {
             y += titleHeight
         }
 
-        // Axis.
-        let axisY = y
-        y += axisHeight
+        let topAxisY: CGFloat?
+        if diagram.topAxis {
+            topAxisY = y
+            y += axisHeight
+        } else {
+            topAxisY = nil
+        }
+
+        let chartBodyTop = y
 
         // Compute row positions per section.
         struct RowInfo {
@@ -76,6 +83,7 @@ enum MermaidGanttRenderer {
             let name: String
             let headerY: CGFloat
             let rows: [RowInfo]
+            let markers: [RowInfo]
         }
 
         var sectionInfos: [SectionInfo] = []
@@ -84,14 +92,41 @@ enum MermaidGanttRenderer {
             y += sectionHeaderHeight
 
             var rows: [RowInfo] = []
-            for task in section.tasks {
-                let pos = resolved[task.name] ?? TaskPosition(start: 0, length: 1)
-                rows.append(RowInfo(task: task, y: y, start: pos.start, length: pos.length))
-                y += barHeight + rowSpacing
+            var markers: [RowInfo] = []
+            if isCompact {
+                var rowEnds: [Int] = []
+                for task in section.tasks {
+                    let pos = resolved[task.name] ?? TaskPosition(start: 0, length: 1)
+                    if task.status == .vert {
+                        markers.append(RowInfo(task: task, y: y, start: pos.start, length: pos.length))
+                        continue
+                    }
+                    let rowIndex = firstAvailableCompactRow(start: pos.start, rowEnds: rowEnds)
+                    if rowIndex == rowEnds.count {
+                        rowEnds.append(pos.start + pos.length)
+                    } else {
+                        rowEnds[rowIndex] = pos.start + pos.length
+                    }
+                    let rowY = y + CGFloat(rowIndex) * (barHeight + rowSpacing)
+                    rows.append(RowInfo(task: task, y: rowY, start: pos.start, length: pos.length))
+                }
+                y += CGFloat(max(rowEnds.count, rows.isEmpty ? 0 : 1)) * (barHeight + rowSpacing)
+            } else {
+                for task in section.tasks {
+                    let pos = resolved[task.name] ?? TaskPosition(start: 0, length: 1)
+                    if task.status == .vert {
+                        markers.append(RowInfo(task: task, y: y, start: pos.start, length: pos.length))
+                    } else {
+                        rows.append(RowInfo(task: task, y: y, start: pos.start, length: pos.length))
+                        y += barHeight + rowSpacing
+                    }
+                }
             }
-            sectionInfos.append(SectionInfo(name: section.name, headerY: headerY, rows: rows))
+            sectionInfos.append(SectionInfo(name: section.name, headerY: headerY, rows: rows, markers: markers))
         }
 
+        let bottomAxisY = y
+        y += axisHeight
         let totalHeight = y + leftMargin
 
         let size = CGSize(width: totalWidth, height: totalHeight)
@@ -120,26 +155,54 @@ enum MermaidGanttRenderer {
             }
 
             // Grid lines.
+            let gridTop = topAxisY ?? chartBodyTop
             ctx.saveGState()
             ctx.setStrokeColor(theme.comment.copy(alpha: 0.35) ?? theme.comment)
             ctx.setLineWidth(0.5)
             for unit in 0...timelineUnits {
                 let x = ox + chartLeft + CGFloat(unit) * pixelsPerUnit
-                ctx.move(to: CGPoint(x: x, y: oy + axisY))
-                ctx.addLine(to: CGPoint(x: x, y: oy + totalHeight - leftMargin))
+                ctx.move(to: CGPoint(x: x, y: oy + gridTop))
+                ctx.addLine(to: CGPoint(x: x, y: oy + bottomAxisY))
             }
             ctx.strokePath()
             ctx.restoreGState()
 
-            // Axis labels.
+            // Axis labels. Mermaid's `topAxis` adds a second axis at the top;
+            // the bottom axis remains available for scanability.
             let axisStep = max(1, timelineUnits / 10)
-            for unit in stride(from: 0, through: timelineUnits, by: axisStep) {
-                let x = ox + chartLeft + CGFloat(unit) * pixelsPerUnit
-                let label = "\(unit)"
-                let line = makeLine(label, font: smallFont, color: theme.foregroundDim)
+            func drawAxisLabels(at axisY: CGFloat) {
+                for unit in stride(from: 0, through: timelineUnits, by: axisStep) {
+                    let x = ox + chartLeft + CGFloat(unit) * pixelsPerUnit
+                    let label = "\(unit)"
+                    let line = makeLine(label, font: smallFont, color: theme.foregroundDim)
+                    drawCTLine(
+                        line,
+                        at: CGPoint(x: x, y: oy + axisY + 2),
+                        fontSize: fontSize * 0.85,
+                        in: ctx
+                    )
+                }
+            }
+            if let topAxisY {
+                drawAxisLabels(at: topAxisY)
+            }
+            drawAxisLabels(at: bottomAxisY)
+
+            // Vertical markers do not consume a row in Mermaid.
+            for marker in capturedSections.flatMap(\.markers) {
+                let markerX = ox + chartLeft + CGFloat(marker.start) * pixelsPerUnit
+                ctx.saveGState()
+                ctx.setStrokeColor(theme.accentOrange.copy(alpha: 0.85) ?? theme.accentOrange)
+                ctx.setLineWidth(1.5)
+                ctx.move(to: CGPoint(x: markerX, y: oy + chartBodyTop))
+                ctx.addLine(to: CGPoint(x: markerX, y: oy + bottomAxisY))
+                ctx.strokePath()
+                ctx.restoreGState()
+
+                let markerLine = makeLine(marker.task.name, font: smallFont, color: theme.accentOrange)
                 drawCTLine(
-                    line,
-                    at: CGPoint(x: x, y: oy + axisY + 2),
+                    markerLine,
+                    at: CGPoint(x: markerX + 4, y: oy + chartBodyTop + 2),
                     fontSize: fontSize * 0.85,
                     in: ctx
                 )
@@ -176,19 +239,22 @@ enum MermaidGanttRenderer {
                 for row in section.rows {
                     let task = row.task
 
-                    // Task label.
-                    let taskLine = makeLine(
-                        task.name, font: smallFont, color: theme.foregroundDim
-                    )
-                    drawCTLine(
-                        taskLine,
-                        at: CGPoint(
-                            x: ox + leftMargin + sectionLabelWidth,
-                            y: oy + row.y + 2
-                        ),
-                        fontSize: fontSize * 0.85,
-                        in: ctx
-                    )
+                    // Task label. Compact mode shares rows, so labels move to
+                    // the bars instead of the left task-label column.
+                    if !isCompact {
+                        let taskLine = makeLine(
+                            task.name, font: smallFont, color: theme.foregroundDim
+                        )
+                        drawCTLine(
+                            taskLine,
+                            at: CGPoint(
+                                x: ox + leftMargin + sectionLabelWidth,
+                                y: oy + row.y + 2
+                            ),
+                            fontSize: fontSize * 0.85,
+                            in: ctx
+                        )
+                    }
 
                     // Task bar or milestone.
                     let barX = ox + chartLeft + CGFloat(row.start) * pixelsPerUnit
@@ -230,6 +296,19 @@ enum MermaidGanttRenderer {
                         ctx.fillPath()
                         ctx.restoreGState()
                     }
+
+                    if isCompact {
+                        let labelX = task.status == .milestone
+                            ? barX + milestoneSize
+                            : barX + 4
+                        let taskLine = makeLine(task.name, font: smallFont, color: theme.foreground)
+                        drawCTLine(
+                            taskLine,
+                            at: CGPoint(x: labelX, y: oy + row.y + 3),
+                            fontSize: fontSize * 0.85,
+                            in: ctx
+                        )
+                    }
                 }
             }
         }
@@ -243,6 +322,10 @@ enum MermaidGanttRenderer {
             nodeShapes: [:],
             edgeLabels: [:],
             edgeStyles: [:],
+            edgeIds: [:],
+            edgeKeys: [],
+            edgeStyleDirectives: [:],
+            edgeEndpointSubgraphs: [:],
             classDefs: [:],
             styleDirectives: [:],
             fontSize: fontSize,
@@ -252,6 +335,10 @@ enum MermaidGanttRenderer {
             customDraw: customDraw,
             customSize: size
         )
+    }
+
+    private static func firstAvailableCompactRow(start: Int, rowEnds: [Int]) -> Int {
+        rowEnds.firstIndex { start >= $0 } ?? rowEnds.count
     }
 
     // MARK: - Task position resolution
@@ -282,14 +369,18 @@ enum MermaidGanttRenderer {
         var cursor = 0
 
         for task in tasks {
-            let length = parseDurationUnits(task.duration) ?? 3 // default 3 units
+            let length = task.status == .vert
+                ? 0
+                : parseDurationUnits(task.duration) ?? 3 // default 3 units
 
             var start = cursor
-            // Handle "after" dependency.
-            if let afterRef = task.afterId,
-               let dep = findPosition(afterRef, in: positions, tasks: tasks)
-            {
-                start = dep.start + dep.length
+            // Handle one or more `after` dependencies by starting after the latest resolved reference.
+            let dependencyEnds = task.afterIds.compactMap { ref -> Int? in
+                guard let dep = findPosition(ref, in: positions, tasks: tasks) else { return nil }
+                return dep.start + dep.length
+            }
+            if let maxDependencyEnd = dependencyEnds.max() {
+                start = maxDependencyEnd
             } else if let dateStr = task.startDate {
                 // Try to use start date to advance cursor if it looks later.
                 // Since we don't parse real dates, just keep cursor advancing.
@@ -302,7 +393,9 @@ enum MermaidGanttRenderer {
                 positions[id] = pos
             }
             positions[task.name] = pos
-            cursor = max(cursor, start + length)
+            if task.status != .vert {
+                cursor = max(cursor, start + length)
+            }
         }
 
         return positions
@@ -323,25 +416,29 @@ enum MermaidGanttRenderer {
         return nil
     }
 
-    /// Parse duration like `3d`, `1w`, `2h` to abstract units.
-    /// `d` = 1, `w` = 5, `h` = 0.125 (round up to 1), `m` = 1 (months treated as ~20d).
+    /// Parse Mermaid durations like `500ms`, `30s`, `4h`, `1.5d`, `2w`, `1M`, `1y` to abstract day units.
     private static func parseDurationUnits(_ duration: String?) -> Int? {
         guard let duration, !duration.isEmpty else { return nil }
-        let lower = duration.lowercased()
-
-        guard let numEnd = lower.lastIndex(where: \.isNumber) else { return nil }
-        let numStr = String(lower[lower.startIndex...numEnd])
-        let suffix = String(lower[lower.index(after: numEnd)...])
-
-        guard let num = Int(numStr) else { return nil }
-        switch suffix {
-        case "d": return max(num, 0)
-        case "w": return num * 5
-        case "h": return max(num / 8, 1)
-        case "m": return num * 20
-        case "s": return 1
-        default: return num
+        let trimmed = duration.trimmingCharacters(in: .whitespaces)
+        guard let suffixStart = trimmed.firstIndex(where: { !$0.isNumber && $0 != "." }) else {
+            return Int(trimmed)
         }
+
+        let numberText = String(trimmed[..<suffixStart])
+        let suffix = String(trimmed[suffixStart...])
+        guard let value = Double(numberText) else { return nil }
+
+        let units: Double
+        switch suffix {
+        case "ms", "s", "m": units = 1
+        case "h": units = max(value / 8, 1)
+        case "d": units = value
+        case "w": units = value * 5
+        case "M": units = value * 20
+        case "y": units = value * 240
+        default: return nil
+        }
+        return max(Int(ceil(units)), 0)
     }
 
     // MARK: - Colors

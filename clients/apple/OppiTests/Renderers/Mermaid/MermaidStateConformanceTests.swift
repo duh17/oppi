@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import Oppi
 
@@ -36,6 +37,39 @@ struct MermaidStateConformanceTests {
         #expect(diagram.transitions.count == 2)
     }
 
+    @Test func yamlFrontmatterBeforeHeaderIsSkipped() {
+        let result = parser.parse("""
+        ---
+        title: Simple sample
+        ---
+        stateDiagram-v2
+            [*] --> Still
+            Still --> [*]
+        """)
+        guard case .state(let diagram) = result else {
+            Issue.record("Expected state diagram")
+            return
+        }
+        #expect(diagram.transitions.count == 2)
+        #expect(diagram.states.contains { $0.id == "Still" })
+    }
+
+    @Test func accessibilityTitleAndDescriptionDirectives() {
+        let result = parser.parse("""
+        stateDiagram
+            accTitle: This is the accessible title
+            accDescr: This is an accessible description
+            [*] --> Still
+        """)
+        guard case .state(let diagram) = result else {
+            Issue.record("Expected state diagram")
+            return
+        }
+        #expect(diagram.accessibilityTitle == "This is the accessible title")
+        #expect(diagram.accessibilityDescription == "This is an accessible description")
+        #expect(!diagram.states.contains { $0.id == "accTitle" || $0.id == "accDescr" })
+    }
+
     @Test func stateDeclarationsAndDescriptions() {
         let result = parser.parse("""
         stateDiagram-v2
@@ -67,6 +101,24 @@ struct MermaidStateConformanceTests {
         #expect(diagram.transitions[0].to == .state("s1"))
         #expect(diagram.transitions[1].label == "A transition")
         #expect(diagram.transitions[2].to == .terminal)
+    }
+
+    @Test func stateLabelsTransitionLabelsAndNotesNormalizeMermaidText() {
+        let result = parser.parse("""
+        stateDiagram-v2
+            state "Quoted<br/>State #9829;" as s1
+            s2 : "`Markdown #infin; label`"
+            s1 --> s2: "Cross #35; bridge"
+            note right of s2 : "Note<br/>Line #9829;"
+        """)
+        guard case .state(let diagram) = result else {
+            Issue.record("Expected state diagram")
+            return
+        }
+        #expect(diagram.states.first { $0.id == "s1" }?.label == "Quoted\nState ♥")
+        #expect(diagram.states.first { $0.id == "s2" }?.label == "Markdown ∞ label")
+        #expect(diagram.transitions.first?.label == "Cross # bridge")
+        #expect(diagram.notes.first?.text == "Note\nLine ♥")
     }
 
     @Test func compositeStateAndNestedDirection() {
@@ -146,6 +198,68 @@ struct MermaidStateConformanceTests {
         #expect(diagram.classDefs["movement"]?["font-style"] == "italic")
         #expect(diagram.states.first { $0.id == "Moving" }?.classes == ["movement"])
         #expect(diagram.states.first { $0.id == "Crash" }?.classes == ["movement"])
+    }
+
+    @Test func inlineClassOperatorOnTransitionEndpoints() {
+        let result = parser.parse("""
+        stateDiagram
+            classDef notMoving fill:white
+            classDef movement font-style:italic;
+            [*] --> Still:::notMoving
+            Still --> Moving:::movement: started moving
+            Crash:::movement --> [*]
+        """)
+        guard case .state(let diagram) = result else {
+            Issue.record("Expected state diagram")
+            return
+        }
+        #expect(diagram.transitions[0].to == .state("Still"))
+        #expect(diagram.transitions[1].to == .state("Moving"))
+        #expect(diagram.transitions[1].label == "started moving")
+        #expect(diagram.transitions[2].from == .state("Crash"))
+        #expect(diagram.states.first { $0.id == "Still" }?.classes == ["notMoving"])
+        #expect(diagram.states.first { $0.id == "Moving" }?.classes == ["movement"])
+        #expect(diagram.states.first { $0.id == "Crash" }?.classes == ["movement"])
+    }
+
+    @Test func compositeStateRendersAsClusterWithoutDuplicateNode() {
+        let result = parser.parse("""
+        stateDiagram-v2
+            [*] --> First
+            state First {
+                [*] --> second
+                second --> [*]
+            }
+            First --> [*]
+        """)
+        guard case .state(let diagram) = result else {
+            Issue.record("Expected state diagram")
+            return
+        }
+        #expect(diagram.transitions.contains { $0.scopeId == "First" })
+
+        let renderer = MermaidFlowchartRenderer()
+        let layout = renderer.layout(result, configuration: .default())
+        let first = layout.flowchart.subgraphs.first { $0.id == "First" }
+        #expect(first != nil)
+        #expect(layout.graphResult.nodePositions["First"] == nil)
+        #expect(first?.nodeIds.contains("second") == true)
+        #expect(first?.nodeIds.contains { $0.hasPrefix("__state_start_") } == true)
+        #expect(first?.nodeIds.contains { $0.hasPrefix("__state_end_") } == true)
+        #expect(layout.edgeEndpointSubgraphs.values.contains { $0.to == "First" })
+        #expect(layout.edgeEndpointSubgraphs.values.contains { $0.from == "First" })
+
+        let box = renderer.boundingBox(layout)
+        let ctx = CGContext(
+            data: nil,
+            width: max(1, Int(box.width)),
+            height: max(1, Int(box.height)),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        renderer.draw(layout, in: ctx, at: .zero)
     }
 
     @Test func stateDiagramRendersAsDiagramNotUnsupportedPlaceholder() {

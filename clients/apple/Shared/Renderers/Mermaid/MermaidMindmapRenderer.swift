@@ -64,7 +64,7 @@ enum MermaidMindmapRenderer {
         let nodeSize: CGSize          // size of this node box (text + padding)
         let subtreeHeight: CGFloat    // total height of this subtree
         let subtreeWidth: CGFloat     // total width of this subtree (node + children)
-        let children: [MeasuredNode]
+        let children: [Self]
     }
 
     /// A positioned node ready for drawing.
@@ -74,7 +74,18 @@ enum MermaidMindmapRenderer {
         let rect: CGRect
         let branchIndex: Int          // which top-level branch (for coloring)
         let depth: Int                // 0 = root, 1 = branch, 2+ = leaf
-        let children: [PositionedNode]
+        let children: [Self]
+    }
+
+    private enum RenderLayout {
+        case horizontal
+        case tidyTree
+    }
+
+    private struct PreparedLayout {
+        let positioned: PositionedNode
+        let size: CGSize
+        let renderLayout: RenderLayout
     }
 
     // MARK: - Public entry point
@@ -86,29 +97,28 @@ enum MermaidMindmapRenderer {
         let constants = LayoutConstants(fontSize: configuration.fontSize)
         let theme = configuration.theme
 
-        // Measure all nodes recursively.
-        let measured = measure(diagram.root, constants: constants)
+        let layoutResult: PreparedLayout
+        switch diagram.layout {
+        case .default:
+            layoutResult = horizontalLayout(for: diagram.root, constants: constants)
+        case .tidyTree:
+            layoutResult = tidyTreeLayout(for: diagram.root, constants: constants)
+        }
 
-        // Position: root on the left, children to the right.
-        let totalWidth = measured.subtreeWidth + constants.margin * 2
-        let totalHeight = measured.subtreeHeight + constants.margin * 2
-        let rootX = constants.margin
-        let rootY = constants.margin + (measured.subtreeHeight - measured.nodeSize.height) / 2
-
-        let positioned = position(
-            measured,
-            x: rootX,
-            y: rootY,
-            subtreeTop: constants.margin,
-            branchIndex: -1, // root has no branch
-            depth: 0,
-            constants: constants
-        )
-
-        let size = CGSize(width: totalWidth, height: max(totalHeight, measured.nodeSize.height + constants.margin * 2))
+        let positioned = layoutResult.positioned
+        let size = layoutResult.size
+        let renderLayout = layoutResult.renderLayout
 
         let drawBlock: @Sendable (CGContext, CGPoint) -> Void = { ctx, origin in
-            drawTree(positioned, parent: nil, in: ctx, at: origin, constants: constants, theme: theme)
+            drawTree(
+                positioned,
+                parent: nil,
+                in: ctx,
+                at: origin,
+                constants: constants,
+                theme: theme,
+                layout: renderLayout
+            )
         }
 
         return MermaidFlowchartRenderer.FlowchartLayout(
@@ -118,6 +128,10 @@ enum MermaidMindmapRenderer {
             nodeShapes: [:],
             edgeLabels: [:],
             edgeStyles: [:],
+            edgeIds: [:],
+            edgeKeys: [],
+            edgeStyleDirectives: [:],
+            edgeEndpointSubgraphs: [:],
             classDefs: [:],
             styleDirectives: [:],
             fontSize: configuration.fontSize,
@@ -127,6 +141,53 @@ enum MermaidMindmapRenderer {
             customDraw: drawBlock,
             customSize: size
         )
+    }
+
+    // MARK: - Layout passes
+
+    private static func horizontalLayout(
+        for root: MindmapNode,
+        constants: LayoutConstants
+    ) -> PreparedLayout {
+        let measured = measure(root, constants: constants)
+        let totalWidth = measured.subtreeWidth + constants.margin * 2
+        let totalHeight = measured.subtreeHeight + constants.margin * 2
+        let rootX = constants.margin
+        let rootY = constants.margin + (measured.subtreeHeight - measured.nodeSize.height) / 2
+        let positioned = position(
+            measured,
+            x: rootX,
+            y: rootY,
+            subtreeTop: constants.margin,
+            branchIndex: -1,
+            depth: 0,
+            constants: constants
+        )
+        let size = CGSize(
+            width: totalWidth,
+            height: max(totalHeight, measured.nodeSize.height + constants.margin * 2)
+        )
+        return PreparedLayout(positioned: positioned, size: size, renderLayout: .horizontal)
+    }
+
+    private static func tidyTreeLayout(
+        for root: MindmapNode,
+        constants: LayoutConstants
+    ) -> PreparedLayout {
+        let measured = measureTidy(root, constants: constants)
+        let positioned = positionTidy(
+            measured,
+            subtreeLeft: constants.margin,
+            y: constants.margin,
+            branchIndex: -1,
+            depth: 0,
+            constants: constants
+        )
+        let size = CGSize(
+            width: measured.subtreeWidth + constants.margin * 2,
+            height: measured.subtreeHeight + constants.margin * 2
+        )
+        return PreparedLayout(positioned: positioned, size: size, renderLayout: .tidyTree)
     }
 
     // MARK: - Measure pass
@@ -147,8 +208,8 @@ enum MermaidMindmapRenderer {
             nodeHeight = diameter
         }
 
-        // Cloud (bang) shape has bumps that protrude beyond the rect — expand to fit.
-        if node.shape == .bang {
+        // Cloud shape has bumps that protrude beyond the rect — expand to fit.
+        if node.shape == .cloud {
             let bumpOverflow = min(nodeHeight * 0.22, 10.0) + 4
             nodeWidth += bumpOverflow * 2
             nodeHeight += bumpOverflow * 2
@@ -185,6 +246,50 @@ enum MermaidMindmapRenderer {
             nodeSize: nodeSize,
             subtreeHeight: subtreeHeight,
             subtreeWidth: subtreeWidth,
+            children: measuredChildren
+        )
+    }
+
+    private static func measureTidy(_ node: MindmapNode, constants: LayoutConstants) -> MeasuredNode {
+        let textSize = measureText(node.label, font: constants.font, fontSize: constants.fontSize)
+        var nodeWidth = textSize.width + constants.hPadding * 2
+        var nodeHeight = textSize.height + constants.vPadding * 2
+
+        if node.shape == .circle {
+            let diameter = max(nodeWidth, nodeHeight)
+            nodeWidth = diameter
+            nodeHeight = diameter
+        }
+
+        if node.shape == .cloud {
+            let bumpOverflow = min(nodeHeight * 0.22, 10.0) + 4
+            nodeWidth += bumpOverflow * 2
+            nodeHeight += bumpOverflow * 2
+        }
+
+        let nodeSize = CGSize(width: nodeWidth, height: nodeHeight)
+        let measuredChildren = node.children.map { measureTidy($0, constants: constants) }
+
+        if measuredChildren.isEmpty {
+            return MeasuredNode(
+                label: node.label,
+                shape: node.shape,
+                nodeSize: nodeSize,
+                subtreeHeight: nodeSize.height,
+                subtreeWidth: nodeSize.width,
+                children: []
+            )
+        }
+
+        let childrenTotalWidth = measuredChildren.reduce(CGFloat(0)) { $0 + $1.subtreeWidth }
+            + CGFloat(measuredChildren.count - 1) * constants.hSpacing
+        let maxChildHeight = measuredChildren.map(\.subtreeHeight).max() ?? 0
+        return MeasuredNode(
+            label: node.label,
+            shape: node.shape,
+            nodeSize: nodeSize,
+            subtreeHeight: nodeSize.height + constants.vSpacing * 2 + maxChildHeight,
+            subtreeWidth: max(nodeSize.width, childrenTotalWidth),
             children: measuredChildren
         )
     }
@@ -247,6 +352,52 @@ enum MermaidMindmapRenderer {
         )
     }
 
+    private static func positionTidy(
+        _ node: MeasuredNode,
+        subtreeLeft: CGFloat,
+        y: CGFloat,
+        branchIndex: Int,
+        depth: Int,
+        constants: LayoutConstants
+    ) -> PositionedNode {
+        let actualSize: CGSize
+        if depth == 0 {
+            actualSize = CGSize(
+                width: node.nodeSize.width + constants.rootExtraPad * 2,
+                height: node.nodeSize.height + constants.rootExtraPad
+            )
+        } else {
+            actualSize = node.nodeSize
+        }
+
+        let x = subtreeLeft + (node.subtreeWidth - actualSize.width) / 2
+        let rect = CGRect(origin: CGPoint(x: x, y: y), size: actualSize)
+        let childY = y + actualSize.height + constants.vSpacing * 2
+        var childLeft = subtreeLeft
+
+        let positionedChildren = node.children.enumerated().map { index, child in
+            let childBranch = depth == 0 ? index : branchIndex
+            defer { childLeft += child.subtreeWidth + constants.hSpacing }
+            return positionTidy(
+                child,
+                subtreeLeft: childLeft,
+                y: childY,
+                branchIndex: childBranch,
+                depth: depth + 1,
+                constants: constants
+            )
+        }
+
+        return PositionedNode(
+            label: node.label,
+            shape: node.shape,
+            rect: rect,
+            branchIndex: branchIndex,
+            depth: depth,
+            children: positionedChildren
+        )
+    }
+
     // MARK: - Draw pass
 
     private static func drawTree(
@@ -255,14 +406,22 @@ enum MermaidMindmapRenderer {
         in ctx: CGContext,
         at origin: CGPoint,
         constants: LayoutConstants,
-        theme: RenderTheme
+        theme: RenderTheme,
+        layout: RenderLayout
     ) {
         let nodeRect = node.rect.offsetBy(dx: origin.x, dy: origin.y)
 
         // Draw connecting line from parent to this node.
         if let parent {
             let parentRect = parent.rect.offsetBy(dx: origin.x, dy: origin.y)
-            drawConnection(from: parentRect, to: nodeRect, branchIndex: node.branchIndex, theme: theme, in: ctx)
+            drawConnection(
+                from: parentRect,
+                to: nodeRect,
+                branchIndex: node.branchIndex,
+                theme: theme,
+                layout: layout,
+                in: ctx
+            )
         }
 
         // Draw node shape.
@@ -273,7 +432,7 @@ enum MermaidMindmapRenderer {
 
         // Recurse into children.
         for child in node.children {
-            drawTree(child, parent: node, in: ctx, at: origin, constants: constants, theme: theme)
+            drawTree(child, parent: node, in: ctx, at: origin, constants: constants, theme: theme, layout: layout)
         }
     }
 
@@ -284,26 +443,40 @@ enum MermaidMindmapRenderer {
         to childRect: CGRect,
         branchIndex: Int,
         theme: RenderTheme,
+        layout: RenderLayout,
         in ctx: CGContext
     ) {
-        let startX = parentRect.maxX
-        let startY = parentRect.midY
-        let endX = childRect.minX
-        let endY = childRect.midY
-
-        let controlOffset = (endX - startX) * 0.5
-
         ctx.saveGState()
         ctx.setStrokeColor(branchColor(index: max(0, branchIndex), theme: theme, alpha: 0.6))
         ctx.setLineWidth(2.0)
         ctx.setLineCap(.round)
 
-        ctx.move(to: CGPoint(x: startX, y: startY))
-        ctx.addCurve(
-            to: CGPoint(x: endX, y: endY),
-            control1: CGPoint(x: startX + controlOffset, y: startY),
-            control2: CGPoint(x: endX - controlOffset, y: endY)
-        )
+        switch layout {
+        case .horizontal:
+            let startX = parentRect.maxX
+            let startY = parentRect.midY
+            let endX = childRect.minX
+            let endY = childRect.midY
+            let controlOffset = (endX - startX) * 0.5
+            ctx.move(to: CGPoint(x: startX, y: startY))
+            ctx.addCurve(
+                to: CGPoint(x: endX, y: endY),
+                control1: CGPoint(x: startX + controlOffset, y: startY),
+                control2: CGPoint(x: endX - controlOffset, y: endY)
+            )
+        case .tidyTree:
+            let startX = parentRect.midX
+            let startY = parentRect.maxY
+            let endX = childRect.midX
+            let endY = childRect.minY
+            let controlOffset = (endY - startY) * 0.5
+            ctx.move(to: CGPoint(x: startX, y: startY))
+            ctx.addCurve(
+                to: CGPoint(x: endX, y: endY),
+                control1: CGPoint(x: startX, y: startY + controlOffset),
+                control2: CGPoint(x: endX, y: endY - controlOffset)
+            )
+        }
         ctx.strokePath()
         ctx.restoreGState()
     }
@@ -359,6 +532,8 @@ enum MermaidMindmapRenderer {
             )
             path = CGPath(ellipseIn: circleRect, transform: nil)
         case .bang:
+            path = bangPath(rect)
+        case .cloud:
             path = cloudPath(rect)
         case .hexagon:
             path = hexagonPath(rect)
@@ -369,7 +544,24 @@ enum MermaidMindmapRenderer {
         ctx.restoreGState()
     }
 
-    /// Cloud/bang shape — rounded bumpy outline resembling a thought bubble.
+    /// Bang shape — compact jagged badge approximating Mermaid's bang marker.
+    private static func bangPath(_ rect: CGRect) -> CGPath {
+        let r = rect.insetBy(dx: 2, dy: 2)
+        let notch = min(r.width, r.height) * 0.18
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: r.minX + notch, y: r.minY))
+        path.addLine(to: CGPoint(x: r.midX, y: r.minY + notch * 0.7))
+        path.addLine(to: CGPoint(x: r.maxX - notch, y: r.minY))
+        path.addLine(to: CGPoint(x: r.maxX - notch * 0.7, y: r.midY))
+        path.addLine(to: CGPoint(x: r.maxX - notch, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.midX, y: r.maxY - notch * 0.7))
+        path.addLine(to: CGPoint(x: r.minX + notch, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.minX + notch * 0.7, y: r.midY))
+        path.closeSubpath()
+        return path
+    }
+
+    /// Cloud shape — rounded bumpy outline resembling a thought bubble.
     private static func cloudPath(_ rect: CGRect) -> CGPath {
         let path = CGMutablePath()
         let r = rect.insetBy(dx: 2, dy: 2)

@@ -21,7 +21,7 @@ enum MermaidTextUtils {
         return path
     }
 
-    // MARK: - HTML tag normalization
+    // MARK: - Text normalization
 
     /// Replace `<br>`, `<br/>`, `<br />` with `\n`.
     ///
@@ -36,6 +36,83 @@ enum MermaidTextUtils {
             options: [.regularExpression, .caseInsensitive]
         )
     }
+
+    /// Normalize Mermaid label text from parsed delimiters.
+    ///
+    /// Official flowchart and mindmap syntax uses quoted strings for labels
+    /// containing syntax characters, backtick-wrapped markdown strings, and
+    /// entity codes such as `#quot;` and `#9829;`.
+    static func normalizeLabel(_ text: String) -> String {
+        var result = normalizeBrTags(text)
+        result = stripWrappingDelimiter(result, delimiter: "\"")
+        result = stripWrappingDelimiter(result, delimiter: "`")
+        return decodeMermaidEntities(result)
+    }
+
+    private static func stripWrappingDelimiter(_ text: String, delimiter: Character) -> String {
+        guard text.count >= 2,
+              text.first == delimiter,
+              text.last == delimiter
+        else { return text }
+        return String(text.dropFirst().dropLast())
+    }
+
+    private static func decodeMermaidEntities(_ text: String) -> String {
+        var output = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let char = text[index]
+            if char == "#" || char == "&" {
+                let bodyStart = text.index(after: index)
+                if bodyStart < text.endIndex,
+                   let semicolon = text[bodyStart...].firstIndex(of: ";") {
+                    let body = String(text[bodyStart..<semicolon])
+                    if let decoded = decodedEntityBody(body) {
+                        output.append(decoded)
+                        index = text.index(after: semicolon)
+                        continue
+                    }
+                }
+            }
+
+            output.append(char)
+            index = text.index(after: index)
+        }
+
+        return output
+    }
+
+    private static func decodedEntityBody(_ body: String) -> String? {
+        if body.hasPrefix("#") {
+            return decodedEntityBody(String(body.dropFirst()))
+        }
+
+        let lower = body.lowercased()
+        if lower.hasPrefix("x") {
+            let hex = String(lower.dropFirst())
+            if let value = UInt32(hex, radix: 16), let scalar = UnicodeScalar(value) {
+                return String(scalar)
+            }
+            return nil
+        }
+
+        if let value = UInt32(body, radix: 10), let scalar = UnicodeScalar(value) {
+            return String(scalar)
+        }
+
+        return namedEntities[lower]
+    }
+
+    private static let namedEntities: [String: String] = [
+        "amp": "&",
+        "apos": "'",
+        "gt": ">",
+        "infin": "∞",
+        "lt": "<",
+        "nbsp": "\u{00A0}",
+        "quot": "\"",
+    ]
 
     // MARK: - Text measurement
 

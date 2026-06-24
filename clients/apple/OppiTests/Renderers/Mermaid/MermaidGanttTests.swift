@@ -477,4 +477,95 @@ struct MermaidGanttRendererTests {
         #expect(size.width > 0)
         #expect(size.height > 0)
     }
+
+    @Test func compactModePacksTasksIntoFewerRows() {
+        let parser = MermaidParser()
+        let renderer = MermaidFlowchartRenderer()
+        let normal = parser.parse("""
+            gantt
+                section Section
+                A task       :a1, 2014-01-01, 3d
+                Another task :a2, 2014-01-20, 3d
+                Third task   :a3, 2014-02-10, 3d
+            """)
+        let compact = parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                A task       :a1, 2014-01-01, 3d
+                Another task :a2, 2014-01-20, 3d
+                Third task   :a3, 2014-02-10, 3d
+            """)
+        let normalSize = renderer.boundingBox(renderer.layout(normal, configuration: config))
+        let compactLayout = renderer.layout(compact, configuration: config)
+        let compactSize = renderer.boundingBox(compactLayout)
+        #expect(compactSize.height < normalSize.height)
+        #expect(compactLayout.customDraw != nil)
+    }
+
+    @Test func topAxisAddsExtraAxisHeight() {
+        let parser = MermaidParser()
+        let renderer = MermaidFlowchartRenderer()
+        let normal = parser.parse("""
+            gantt
+                section Section
+                Task :1d
+            """)
+        let topAxis = parser.parse("""
+            ---
+            config:
+              gantt:
+                topAxis: true
+            ---
+            gantt
+                section Section
+                Task :1d
+            """)
+        let normalSize = renderer.boundingBox(renderer.layout(normal, configuration: config))
+        let topAxisSize = renderer.boundingBox(renderer.layout(topAxis, configuration: config))
+        #expect(topAxisSize.height > normalSize.height)
+    }
+
+    @Test func verticalMarkersRenderWithoutConsumingRows() {
+        let parser = MermaidParser()
+        let renderer = MermaidFlowchartRenderer()
+        let withMarker = parser.parse("""
+            gantt
+                section Section
+                Deadline :vert, v1, 2024-01-01, 1d
+                Task     :t1, 2024-01-02, 2d
+            """)
+        let twoRows = parser.parse("""
+            gantt
+                section Section
+                First :a1, 2024-01-01, 1d
+                Task  :t1, 2024-01-02, 2d
+            """)
+        let markerLayout = renderer.layout(withMarker, configuration: config)
+        let markerSize = renderer.boundingBox(markerLayout)
+        let twoRowsSize = renderer.boundingBox(renderer.layout(twoRows, configuration: config))
+        #expect(markerSize.height < twoRowsSize.height)
+        #expect(markerLayout.customDraw != nil)
+    }
+
+    @Test func verticalMarkersDoNotShiftTimelineCursor() {
+        let parser = MermaidParser()
+        let renderer = MermaidFlowchartRenderer()
+        let withMarker = parser.parse("""
+            gantt
+                section Section
+                Deadline :vert, v1, 2024-01-01, 10d
+                Task     :t1, 2024-01-02, 2d
+            """)
+        let withoutMarker = parser.parse("""
+            gantt
+                section Section
+                Task :t1, 2024-01-02, 2d
+            """)
+        let markerSize = renderer.boundingBox(renderer.layout(withMarker, configuration: config))
+        let baselineSize = renderer.boundingBox(renderer.layout(withoutMarker, configuration: config))
+        #expect(markerSize.width == baselineSize.width)
+    }
 }
