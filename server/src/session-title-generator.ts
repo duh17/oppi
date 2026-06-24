@@ -6,11 +6,11 @@
  * conversation history.
  */
 
-import { completeSimple } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 import { createLogger } from "./logger.js";
+import { completeSimpleWithPiModel } from "./pi-model-auth-service.js";
 
 // ─── Types ───
 
@@ -167,7 +167,7 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
       const timeout = setTimeout(() => abortController.abort(), GENERATION_TIMEOUT_MS);
 
       try {
-        const response = await completeSimple(
+        const response = await completeSimpleWithPiModel(
           model,
           {
             systemPrompt: TITLE_SYSTEM_PROMPT,

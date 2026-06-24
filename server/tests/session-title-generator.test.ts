@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCompleteSimple = vi.hoisted(() => vi.fn());
 
-vi.mock("@earendil-works/pi-ai", async () => {
-  const actual =
-    await vi.importActual<typeof import("@earendil-works/pi-ai")>("@earendil-works/pi-ai");
+vi.mock("../src/pi-model-auth-service.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/pi-model-auth-service.js")>(
+    "../src/pi-model-auth-service.js",
+  );
   return {
     ...actual,
-    completeSimple: mockCompleteSimple,
+    completeSimpleWithPiModel: mockCompleteSimple,
   };
 });
 
