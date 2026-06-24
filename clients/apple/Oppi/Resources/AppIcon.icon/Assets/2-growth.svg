@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <title>Oppi icon growth</title>
-  <desc>mid-depth cells that extend the pi rhythm, excluding the left jewel cells</desc>
+  <desc>mid-depth cells that extend the pi rhythm</desc>
   <g opacity="0.42">
     <rect x="712" y="129" width="86" height="86" rx="23" fill="#E7ECF7"/>
+    <rect x="129" y="226" width="86" height="86" rx="23" fill="#E7ECF7"/>
+    <rect x="129" y="323" width="86" height="86" rx="23" fill="#E7ECF7"/>
     <rect x="615" y="421" width="86" height="86" rx="23" fill="#E7ECF7"/>
     <rect x="810" y="712" width="86" height="86" rx="23" fill="#E7ECF7"/>
     <rect x="615" y="810" width="86" height="86" rx="23" fill="#E7ECF7"/>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Oppi icon sparks</title>
+  <desc>primary warm accent cells</desc>
+  <g opacity="0.96">
+    <rect x="226" y="226" width="86" height="86" rx="23" fill="#F5A02C"/>
+    <rect x="323" y="226" width="86" height="86" rx="23" fill="#F05A2D"/>
+  </g>
+</svg>

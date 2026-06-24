@@ -1,27 +1,138 @@
 {
-  "seed": 42,
-  "palette": "warm",
-  "grid": 8,
   "canvas": 1024,
-  "cells": {
-    "pi": 15,
-    "growth": 6,
-    "scatter": 5,
-    "sparks": [
-      "2,5"
+  "grid": {
+    "cell": 86,
+    "radius": 23,
+    "x": [
+      129,
+      226,
+      323,
+      421,
+      518,
+      615,
+      712,
+      810
+    ],
+    "y": [
+      129,
+      226,
+      323,
+      421,
+      518,
+      615,
+      712,
+      810
     ]
   },
+  "intent": "Same production composition, cleaner SVG layers for Icon Composer.",
+  "appleGuidance": [
+    "Keep layers unmasked; let the system apply the app icon mask.",
+    "Keep source artwork flat with clearly defined edges.",
+    "Use Icon Composer for background, glass, translucency, shadows, and appearance tuning.",
+    "Keep the mark recognizable at small sizes and in mono/tinted appearances."
+  ],
   "layers": [
-    "1-scatter.svg — faint debris (Icon Composer: low opacity, maybe blur)",
-    "2-growth.svg — medium cells bleeding from pi (translucency)",
-    "3-pi-mono.svg — main pi body, monochrome white/gray",
-    "4-sparks.svg — rare bright cells (keep vivid, maybe slight glow)"
+    {
+      "file": "1-scatter.svg",
+      "name": "scatter",
+      "description": "quiet outer cells",
+      "opacity": 0.18,
+      "cells": [
+        "1,0",
+        "2,0",
+        "0,4",
+        "1,7",
+        "7,7"
+      ]
+    },
+    {
+      "file": "2-growth.svg",
+      "name": "growth",
+      "description": "mid-depth cells that extend the pi rhythm",
+      "opacity": 0.42,
+      "cells": [
+        "6,0",
+        "0,1",
+        "0,2",
+        "5,3",
+        "7,6",
+        "5,7"
+      ]
+    },
+    {
+      "file": "3-pi-mono.svg",
+      "name": "pi-mono",
+      "description": "main neutral pi cells",
+      "opacity": 0.92,
+      "cells": [
+        "4,1",
+        "5,1",
+        "2,2",
+        "5,2",
+        "2,3",
+        "5,4",
+        "2,5",
+        "2,6",
+        "5,6",
+        "6,6"
+      ]
+    },
+    {
+      "file": "4-warm-detail.svg",
+      "name": "warm-detail",
+      "description": "warm secondary cells inside the mark",
+      "opacity": 0.9,
+      "cells": [
+        "3,1",
+        "6,1",
+        "2,4",
+        "5,5"
+      ]
+    },
+    {
+      "file": "5-sparks.svg",
+      "name": "sparks",
+      "description": "primary warm accent cells",
+      "opacity": 0.96,
+      "cells": [
+        "1,1",
+        "2,1"
+      ]
+    }
   ],
   "iconComposerNotes": [
-    "Background: use Icon Composer fill — gradient or solid dark (#111118)",
-    "Import layers 1-4 as separate layers in a group",
-    "Or: group scatter+growth in one group, pi+sparks in another",
-    "Adjust translucency per group in Icon Composer",
-    "The system adds specular highlights automatically"
-  ]
+    "Background is stored in icon.json, not in the layer SVGs.",
+    "Scatter and growth are intentionally faint support layers; main cells and accents stay crisp.",
+    "Tune Default, Dark, Mono, tinted, and clear variants in Icon Composer before release."
+  ],
+  "leftJewels": {
+    "file": "left-jewels.svg",
+    "intent": "Four left-side support cells use subtly different cool colors.",
+    "cells": [
+      {
+        "x": 129,
+        "y": 323,
+        "fill": "#A9BAB9",
+        "opacity": 0.82
+      },
+      {
+        "x": 129,
+        "y": 421,
+        "fill": "#7F8794",
+        "opacity": 0.76
+      },
+      {
+        "x": 129,
+        "y": 518,
+        "fill": "#42545A",
+        "opacity": 0.7
+      },
+      {
+        "x": 226,
+        "y": 810,
+        "fill": "#202B32",
+        "opacity": 0.66
+      }
+    ]
+  }
 }

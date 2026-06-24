@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Oppi icon warm-detail</title>
+  <desc>warm secondary cells inside the mark</desc>
+  <g opacity="0.9">
+    <rect x="421" y="226" width="86" height="86" rx="23" fill="#E5C8BA"/>
+    <rect x="712" y="226" width="86" height="86" rx="23" fill="#E5C8BA"/>
+    <rect x="323" y="518" width="86" height="86" rx="23" fill="#E5C8BA"/>
+    <rect x="615" y="615" width="86" height="86" rx="23" fill="#E5C8BA"/>
+  </g>
+</svg>
