@@ -177,7 +177,6 @@ const ROUTINE_HTTP_METRIC_PATTERNS = new Set([
   "/sessions/recent",
   "/workspaces/:workspaceId/attention",
   "/workspaces/:workspaceId/paths",
-  "/workspaces/:workspaceId/review/comments",
   "/models",
   "/telemetry/chat-metrics",
   "/telemetry/client-logs",

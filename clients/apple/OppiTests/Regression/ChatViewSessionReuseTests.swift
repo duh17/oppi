@@ -120,7 +120,7 @@ struct ChatViewSessionReuseTests {
 
     // MARK: - Review comment load key
 
-    /// Review comments are fetched with both workspaceId and sessionId.
+    /// Local review comments are scoped by both workspaceId and sessionId.
     /// If ChatView is reused for another session in the same workspace,
     /// the load task must restart; otherwise staged comments from session A
     /// can remain visible in session B.
@@ -128,7 +128,7 @@ struct ChatViewSessionReuseTests {
         let keyA = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-A")
         let keyB = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-B")
         #expect(keyA != keyB,
-                "Different sessions in the same workspace must reload session-scoped review comments")
+                "Different sessions in the same workspace must reload session-scoped local review comments")
     }
 
     @Test func reviewCommentLoadKeySameForIdenticalScope() {

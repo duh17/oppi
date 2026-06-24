@@ -30,7 +30,6 @@ const ROUTES = {
   wsGitStatus: /^\/workspaces\/([^/]+)\/git\/status$/,
   wsGitChanges: /^\/workspaces\/([^/]+)\/git\/changes$/,
   wsGitDiff: /^\/workspaces\/([^/]+)\/git\/diff$/,
-  wsReviewCommentsSent: /^\/workspaces\/([^/]+)\/review\/comments\/sent$/,
   wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
   wsQuickActionSession: /^\/workspaces\/([^/]+)\/quick-actions\/session$/,
@@ -168,12 +167,6 @@ describe("Workspace-scoped API routes", () => {
     expect("/workspaces/ws-1/git/status".match(ROUTES.wsGitStatus)?.[1]).toBe("ws-1");
     expect("/workspaces/ws-1/git/changes".match(ROUTES.wsGitChanges)?.[1]).toBe("ws-1");
     expect("/workspaces/ws-1/git/diff".match(ROUTES.wsGitDiff)?.[1]).toBe("ws-1");
-  });
-
-  it("matches POST /workspaces/:wid/review/comments/sent", () => {
-    const m = "/workspaces/ws-1/review/comments/sent".match(ROUTES.wsReviewCommentsSent);
-    expect(m).toBeTruthy();
-    expect(m![1]).toBe("ws-1");
   });
 
   it("matches GET /workspaces/:wid/quick-actions", () => {

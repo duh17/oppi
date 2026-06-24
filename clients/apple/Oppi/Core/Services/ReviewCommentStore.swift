@@ -1,10 +1,32 @@
 import Foundation
 import Observation
 
+enum ReviewCommentStoreError: LocalizedError {
+    case emptyBody
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyBody:
+            return "Review comment body is required."
+        }
+    }
+}
+
 @MainActor @Observable
 final class ReviewCommentStore {
+    private static let defaultKeyPrefix = "reviewComments.localDrafts.v1"
+
+    private let defaults: UserDefaults
+    private let keyPrefix: String
+    private var storageKey: String?
+
     private(set) var comments: [ReviewComment] = []
     var lastError: String?
+
+    init(defaults: UserDefaults = .standard, keyPrefix: String = ReviewCommentStore.defaultKeyPrefix) {
+        self.defaults = defaults
+        self.keyPrefix = keyPrefix
+    }
 
     var stagedComments: [ReviewComment] {
         comments(matching: { $0.status == .staged }) { $0.createdAt < $1.createdAt }
@@ -12,66 +34,72 @@ final class ReviewCommentStore {
 
     var stagedCount: Int { stagedComments.count }
 
-    func load(api: APIClient, workspaceId: String, sessionId: String? = nil) async {
-        do {
-            comments = try await api.listReviewComments(
-                workspaceId: workspaceId,
-                sessionId: sessionId,
-                status: nil
-            )
-            lastError = nil
-        } catch {
-            lastError = error.localizedDescription
-        }
+    func clearLoadedScope() {
+        storageKey = nil
+        comments = []
+        lastError = nil
+    }
+
+    func load(workspaceId: String, sessionId: String) {
+        let key = Self.makeStorageKey(prefix: keyPrefix, workspaceId: workspaceId, sessionId: sessionId)
+        storageKey = key
+        loadComments(forKey: key)
     }
 
     @discardableResult
     func create(
-        api: APIClient,
         workspaceId: String,
-        sessionId: String?,
+        sessionId: String,
         body: String,
         reference: ReviewCommentReference
-    ) async throws -> ReviewComment {
-        let comment = try await api.createReviewComment(
+    ) throws -> ReviewComment {
+        let normalizedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedBody.isEmpty else {
+            throw ReviewCommentStoreError.emptyBody
+        }
+
+        let key = Self.makeStorageKey(prefix: keyPrefix, workspaceId: workspaceId, sessionId: sessionId)
+        if storageKey != key {
+            storageKey = key
+            loadComments(forKey: key)
+        }
+
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let comment = ReviewComment(
+            id: UUID().uuidString,
             workspaceId: workspaceId,
             sessionId: sessionId,
-            body: body,
-            reference: reference
+            turnId: nil,
+            author: .human,
+            status: .staged,
+            severity: nil,
+            body: normalizedBody,
+            attachments: nil,
+            reference: reference,
+            createdAt: now,
+            updatedAt: now,
+            sentAt: nil
         )
         upsert(comment)
-        lastError = nil
+        if persist() {
+            lastError = nil
+        }
         return comment
     }
 
-    func delete(api: APIClient, workspaceId: String, commentId: String) async throws {
-        do {
-            try await api.deleteReviewComment(workspaceId: workspaceId, commentId: commentId)
-            removeLocalComment(id: commentId)
-            lastError = nil
-        } catch let APIError.server(status, _) where status == 404 {
-            removeLocalComment(id: commentId)
+    func delete(commentId: String) {
+        removeLocalComment(id: commentId)
+        if persist() {
             lastError = nil
         }
     }
 
-    @discardableResult
-    func markSent(api: APIClient, workspaceId: String, ids: [String], sessionId: String?) async -> Bool {
-        guard !ids.isEmpty else { return true }
-        do {
-            let updated = try await api.markReviewCommentsSent(
-                workspaceId: workspaceId,
-                ids: ids,
-                sessionId: sessionId
-            )
-            for comment in updated {
-                upsert(comment)
-            }
+    func clearSent(ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let idSet = Set(ids)
+        comments.removeAll { idSet.contains($0.id) }
+        if persist() {
             lastError = nil
-            return true
-        } catch {
-            lastError = error.localizedDescription
-            return false
         }
     }
 
@@ -93,6 +121,22 @@ final class ReviewCommentStore {
         comments.filter(predicate).sorted(by: areInIncreasingOrder)
     }
 
+    private func loadComments(forKey key: String) {
+        guard let data = defaults.data(forKey: key) else {
+            comments = []
+            lastError = nil
+            return
+        }
+
+        do {
+            comments = try JSONDecoder().decode([ReviewComment].self, from: data)
+            lastError = nil
+        } catch {
+            comments = []
+            lastError = "Failed to load local review comments: \(error.localizedDescription)"
+        }
+    }
+
     private func upsert(_ comment: ReviewComment) {
         if let index = comments.firstIndex(where: { $0.id == comment.id }) {
             comments[index] = comment
@@ -103,6 +147,22 @@ final class ReviewCommentStore {
 
     private func removeLocalComment(id: String) {
         comments.removeAll { $0.id == id }
+    }
+
+    private func persist() -> Bool {
+        guard let storageKey else { return true }
+        do {
+            let data = try JSONEncoder().encode(comments)
+            defaults.set(data, forKey: storageKey)
+            return true
+        } catch {
+            lastError = "Failed to save local review comments: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private static func makeStorageKey(prefix: String, workspaceId: String, sessionId: String) -> String {
+        "\(prefix).\(workspaceId).\(sessionId)"
     }
 
     static func reviewBlock(for comments: [ReviewComment]) -> String {

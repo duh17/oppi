@@ -186,9 +186,6 @@ struct WorkspaceNavigationServerScopeTests {
             if path.hasSuffix("/git/status") {
                 return makeResponse(request: request, body: gitStatusJSON)
             }
-            if path.hasSuffix("/review/comments") {
-                return makeResponse(request: request, body: #"{"comments":[]}"#)
-            }
             if path.hasSuffix("/paths") {
                 return makeResponse(request: request, body: #"{"workspaceId":"ws-b","paths":[]}"#)
             }

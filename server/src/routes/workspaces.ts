@@ -17,19 +17,15 @@ import {
 } from "../git-commits.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
-import { ReviewCommentStoreError } from "../storage/review-comment-dao.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { hostMountValidationError } from "../host.js";
 import type {
-  MarkReviewCommentsSentRequest,
-  CreateReviewCommentRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
   GitStatus,
   Session,
-  UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
   WorkspaceListSummary,
@@ -446,121 +442,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  async function handleListReviewComments(
-    wsId: string,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const comments = ctx.storage.listReviewComments(wsId, {
-      sessionId: url.searchParams.get("sessionId") ?? undefined,
-      status: url.searchParams.get("status") ?? undefined,
-      path: url.searchParams.get("path") ?? undefined,
-    });
-    helpers.json(res, { comments });
-  }
-
-  async function handleCreateReviewComment(
-    wsId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    try {
-      const body = await helpers.parseBody<CreateReviewCommentRequest>(req);
-      const comment = ctx.storage.createReviewComment(wsId, body);
-      helpers.json(res, { comment }, 201);
-    } catch (error) {
-      if (error instanceof ReviewCommentStoreError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
-      throw error;
-    }
-  }
-
-  async function handleUpdateReviewComment(
-    wsId: string,
-    commentId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    try {
-      const body = await helpers.parseBody<UpdateReviewCommentRequest>(req);
-      const comment = ctx.storage.updateReviewComment(wsId, commentId, body);
-      helpers.json(res, { comment });
-    } catch (error) {
-      if (error instanceof ReviewCommentStoreError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
-      throw error;
-    }
-  }
-
-  async function handleDeleteReviewComment(
-    wsId: string,
-    commentId: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    try {
-      ctx.storage.deleteReviewComment(wsId, commentId);
-      helpers.json(res, { ok: true });
-    } catch (error) {
-      if (error instanceof ReviewCommentStoreError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
-      throw error;
-    }
-  }
-
-  async function handleMarkReviewCommentsSent(
-    wsId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    try {
-      const body = await helpers.parseBody<MarkReviewCommentsSentRequest>(req);
-      const comments = ctx.storage.markReviewCommentsSent(wsId, body);
-      helpers.json(res, { comments });
-    } catch (error) {
-      if (error instanceof ReviewCommentStoreError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
-      throw error;
-    }
-  }
-
   async function parseWorkspaceQuickActionSelection(
     wsId: string,
     req: IncomingMessage,
@@ -805,36 +686,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         res,
       );
       return true;
-    }
-
-    const wsReviewCommentsMatch = path.match(/^\/workspaces\/([^/]+)\/review\/comments$/);
-    if (wsReviewCommentsMatch) {
-      if (method === "GET") {
-        await handleListReviewComments(wsReviewCommentsMatch[1], url, res);
-        return true;
-      }
-      if (method === "POST") {
-        await handleCreateReviewComment(wsReviewCommentsMatch[1], req, res);
-        return true;
-      }
-    }
-
-    const wsReviewCommentsSentMatch = path.match(/^\/workspaces\/([^/]+)\/review\/comments\/sent$/);
-    if (wsReviewCommentsSentMatch && method === "POST") {
-      await handleMarkReviewCommentsSent(wsReviewCommentsSentMatch[1], req, res);
-      return true;
-    }
-
-    const wsReviewCommentMatch = path.match(/^\/workspaces\/([^/]+)\/review\/comments\/([^/]+)$/);
-    if (wsReviewCommentMatch) {
-      if (method === "PATCH") {
-        await handleUpdateReviewComment(wsReviewCommentMatch[1], wsReviewCommentMatch[2], req, res);
-        return true;
-      }
-      if (method === "DELETE") {
-        await handleDeleteReviewComment(wsReviewCommentMatch[1], wsReviewCommentMatch[2], res);
-        return true;
-      }
     }
 
     const wsQuickActionsMatch = path.match(/^\/workspaces\/([^/]+)\/quick-actions$/);

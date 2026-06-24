@@ -367,7 +367,7 @@ struct ChatView: View {
                 }
             }
             .task(id: ReviewCommentLoadKey(workspaceId: session?.workspaceId, sessionId: sessionId)) {
-                await loadReviewCommentsIfPossible()
+                loadReviewCommentsIfPossible()
             }
             .onChange(of: session?.displayTitle) { _, _ in
                 audioPlayer.setSessionContext(session)
@@ -820,7 +820,7 @@ struct ChatView: View {
                 handleReviewCommentSelection(request, presentingViewController: presentingViewController)
             },
             inlineSave: { body, request in
-                await saveReviewComment(body: body, request: request)
+                saveReviewComment(body: body, request: request)
             },
             inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
@@ -914,14 +914,12 @@ struct ChatView: View {
         guard let request = activeReviewCommentRequest else { return }
         let body = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
-        Task { @MainActor in
-            let didSave = await saveReviewComment(body: body, request: request)
-            if didSave {
-                activeReviewCommentRequest = nil
-                inputText = ""
-                composerTextBeforeRecording = nil
-                await loadReviewCommentsIfPossible()
-            }
+        let didSave = saveReviewComment(body: body, request: request)
+        if didSave {
+            activeReviewCommentRequest = nil
+            inputText = ""
+            composerTextBeforeRecording = nil
+            loadReviewCommentsIfPossible()
         }
     }
 
@@ -963,16 +961,15 @@ struct ChatView: View {
         }
     }
 
-    private func loadReviewCommentsIfPossible() async {
-        await reviewComments.load(api: connection.apiClient, workspaceId: session?.workspaceId, sessionId: sessionId)
+    private func loadReviewCommentsIfPossible() {
+        reviewComments.load(workspaceId: session?.workspaceId, sessionId: sessionId)
     }
 
     @discardableResult
-    private func saveReviewComment(body: String, request: ReviewCommentSelectionRequest) async -> Bool {
-        if let error = await reviewComments.save(
+    private func saveReviewComment(body: String, request: ReviewCommentSelectionRequest) -> Bool {
+        if let error = reviewComments.save(
             body: body,
             request: request,
-            api: connection.apiClient,
             workspaceId: session?.workspaceId,
             sessionId: sessionId
         ) {
@@ -982,23 +979,12 @@ struct ChatView: View {
         return true
     }
 
-    private func deleteReviewComment(_ comment: ReviewComment) async {
-        if let error = await reviewComments.delete(comment, api: connection.apiClient) {
-            connection.extensionToast = error
-        }
+    private func deleteReviewComment(_ comment: ReviewComment) {
+        reviewComments.delete(comment)
     }
 
-    private func markReviewCommentsSentIfPossible(ids: [String]) {
-        Task {
-            if let error = await reviewComments.markSent(
-                ids: ids,
-                api: connection.apiClient,
-                workspaceId: session?.workspaceId,
-                sessionId: sessionId
-            ) {
-                connection.extensionToast = error
-            }
-        }
+    private func clearSentReviewComments(ids: [String]) {
+        reviewComments.clearSent(ids: ids)
     }
 
     @MainActor
@@ -1375,7 +1361,7 @@ struct ChatView: View {
                         scrollRef.requestScrollToBottom()
                     },
                     onSendSucceeded: {
-                        markReviewCommentsSentIfPossible(ids: stagedReviewCommentIds)
+                        clearSentReviewComments(ids: stagedReviewCommentIds)
                     },
                     onAsyncFailure: { _, failedAttachments in
                         inputText = originalInputText
@@ -1552,7 +1538,7 @@ struct ChatView: View {
             comments: reviewComments.stagedComments,
             focusedCommentId: focusedReviewCommentId,
             onDelete: { comment in
-                Task { await deleteReviewComment(comment) }
+                deleteReviewComment(comment)
             },
             onClose: {
                 showReviewCommentStash = false
