@@ -18,23 +18,55 @@ import Foundation
 /// attaching the node to the nearest ancestor with less indent.
 enum MermaidMindmapParser {
 
+    struct Options: Equatable, Sendable {
+        var layout: MindmapLayout = .default
+    }
+
+    private struct MindmapEntry {
+        let indent: Int
+        let label: String
+        let shape: MindmapNodeShape
+        var icon: String?
+        var classes: [String]
+    }
+
     // MARK: - Public
 
-    nonisolated static func parse(lines: [String]) -> MindmapDiagram {
+    nonisolated static func parse(lines: [String], options: Options = Options()) -> MindmapDiagram {
         // Join multi-line markdown strings: lines containing unclosed "`...
         // are joined with following lines until `"` is found.
         let joined = joinMultilineStrings(lines)
 
         // Filter to non-empty lines, preserving original indentation.
-        let entries: [(indent: Int, label: String, shape: MindmapNodeShape)] = joined.compactMap { line in
+        var entries: [MindmapEntry] = []
+        for line in joined {
             let stripped = line.drop(while: { $0 == " " || $0 == "\t" })
-            guard !stripped.isEmpty else { return nil }
-            // Skip icon annotations: ::icon(...)
+            guard !stripped.isEmpty else { continue }
             let strippedStr = String(stripped)
-            if strippedStr.hasPrefix("::icon(") { return nil }
+
+            if let icon = parseIconAnnotation(strippedStr) {
+                if !entries.isEmpty {
+                    entries[entries.count - 1].icon = icon
+                }
+                continue
+            }
+
+            if let classes = parseClassAnnotation(strippedStr) {
+                if !entries.isEmpty {
+                    entries[entries.count - 1].classes.append(contentsOf: classes)
+                }
+                continue
+            }
+
             let indent = line.count - stripped.count
             let (label, shape) = parseNodeText(strippedStr)
-            return (indent, label, shape)
+            entries.append(MindmapEntry(
+                indent: indent,
+                label: label,
+                shape: shape,
+                icon: nil,
+                classes: []
+            ))
         }
 
         guard let first = entries.first else {
@@ -43,8 +75,14 @@ enum MermaidMindmapParser {
 
         // Build tree using a stack of (indent, accumulated node).
         let rootChildren = buildChildren(from: entries, startIndex: 1, parentIndent: first.indent)
-        let root = MindmapNode(label: first.label, shape: first.shape, children: rootChildren)
-        return MindmapDiagram(root: root)
+        let root = MindmapNode(
+            label: first.label,
+            shape: first.shape,
+            children: rootChildren,
+            icon: first.icon,
+            classes: first.classes
+        )
+        return MindmapDiagram(root: root, layout: options.layout)
     }
 
     // MARK: - Tree building
@@ -54,7 +92,7 @@ enum MermaidMindmapParser {
     /// Scans `entries[startIndex...]` and groups consecutive lines that are deeper
     /// than `parentIndent` into child subtrees.
     private static func buildChildren(
-        from entries: [(indent: Int, label: String, shape: MindmapNodeShape)],
+        from entries: [MindmapEntry],
         startIndex: Int,
         parentIndent: Int
     ) -> [MindmapNode] {
@@ -70,7 +108,13 @@ enum MermaidMindmapParser {
             // This entry is a direct child. Collect its own children recursively.
             let childIndent = entry.indent
             let subChildren = buildChildren(from: entries, startIndex: i + 1, parentIndent: childIndent)
-            children.append(MindmapNode(label: entry.label, shape: entry.shape, children: subChildren))
+            children.append(MindmapNode(
+                label: entry.label,
+                shape: entry.shape,
+                children: subChildren,
+                icon: entry.icon,
+                classes: entry.classes
+            ))
 
             // Skip past all lines consumed by this child's subtree.
             i += 1 + countDescendants(from: entries, startIndex: i + 1, parentIndent: childIndent)
@@ -81,7 +125,7 @@ enum MermaidMindmapParser {
 
     /// Count how many consecutive entries starting at `startIndex` are deeper than `parentIndent`.
     private static func countDescendants(
-        from entries: [(indent: Int, label: String, shape: MindmapNodeShape)],
+        from entries: [MindmapEntry],
         startIndex: Int,
         parentIndent: Int
     ) -> Int {
@@ -92,6 +136,27 @@ enum MermaidMindmapParser {
             i += 1
         }
         return count
+    }
+
+    // MARK: - Icon and class annotations
+
+    private static func parseIconAnnotation(_ text: String) -> String? {
+        guard text.hasPrefix("::icon("), text.hasSuffix(")") else { return nil }
+        let icon = text
+            .dropFirst("::icon(".count)
+            .dropLast()
+            .trimmingCharacters(in: .whitespaces)
+        return icon.isEmpty ? nil : icon
+    }
+
+    private static func parseClassAnnotation(_ text: String) -> [String]? {
+        guard text.hasPrefix(":::") else { return nil }
+        let classes = text
+            .dropFirst(3)
+            .split { $0.isWhitespace }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return classes.isEmpty ? nil : classes
     }
 
     // MARK: - Shape parsing
@@ -134,24 +199,27 @@ enum MermaidMindmapParser {
             return (inner, .circle)
         }
 
-        // `))...((` — bang/cloud
-        if text.hasPrefix("))") && text.hasSuffix("((") && text.count > 4 {
-            let inner = normalize(String(text.dropFirst(2).dropLast(2)))
+        // `id))...((` — bang
+        if let range = text.range(of: "))"), text.hasSuffix("((") {
+            let inner = normalize(String(text[range.upperBound...].dropLast(2)))
             return (inner, .bang)
         }
 
-        // `)...(` — hexagon
-        if text.hasPrefix(")") && text.hasSuffix("(") && text.count > 2
-            && !text.hasPrefix("))") && !text.hasSuffix("((")
-        {
-            let inner = normalize(String(text.dropFirst(1).dropLast(1)))
+        // `id)...(` — cloud
+        if let range = text.range(of: ")"), text.hasSuffix("(") {
+            let inner = normalize(String(text[range.upperBound...].dropLast(1)))
+            return (inner, .cloud)
+        }
+
+        // `id{{...}}` — hexagon
+        if let range = text.range(of: "{{"), text.hasSuffix("}}") {
+            let inner = normalize(String(text[range.upperBound...].dropLast(2)))
             return (inner, .hexagon)
         }
 
         // `(...)` — rounded (but not `((...))` which was already caught)
         if text.hasPrefix("(") && text.hasSuffix(")") && text.count > 2
-            && !text.hasPrefix("((") && !text.hasSuffix("))")
-        {
+            && !text.hasPrefix("((") && !text.hasSuffix("))") {
             let inner = normalize(String(text.dropFirst(1).dropLast(1)))
             return (inner, .rounded)
         }
@@ -210,6 +278,6 @@ enum MermaidMindmapParser {
     }
 
     private static func normalize(_ text: String) -> String {
-        MermaidTextUtils.normalizeBrTags(text)
+        MermaidTextUtils.normalizeLabel(text)
     }
 }

@@ -6,14 +6,22 @@ import Foundation
 /// with status markers (active, done, crit, milestone), dates, durations,
 /// and `after` dependencies.
 enum MermaidGanttParser {
-    nonisolated static func parse(lines: [String]) -> GanttDiagram {
+    struct Options: Equatable, Sendable {
+        var displayMode: GanttDisplayMode = .standard
+        var topAxis = false
+    }
+
+    nonisolated static func parse(lines: [String], options: Options = Options()) -> GanttDiagram {
         var title: String?
         var dateFormat = "YYYY-MM-DD"
         var axisFormat: String?
         var tickInterval: String?
         var weekend: String?
+        var weekday: String?
+        var todayMarker: String?
         var excludes: [String] = []
         var sections: [GanttSection] = []
+        var clicks: [GanttClick] = []
 
         // Accumulate tasks for the current section.
         var currentSectionName: String?
@@ -25,7 +33,7 @@ enum MermaidGanttParser {
 
             // Directives
             if let value = line.strippingPrefix("title ") {
-                title = value
+                title = MermaidTextUtils.normalizeLabel(value)
                 continue
             }
             if let value = line.strippingPrefix("dateFormat ") {
@@ -37,9 +45,7 @@ enum MermaidGanttParser {
                 continue
             }
             if let value = line.strippingPrefix("excludes ") {
-                excludes.append(contentsOf: value.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespaces)
-                })
+                excludes.append(contentsOf: splitExcludes(value))
                 continue
             }
             if let value = line.strippingPrefix("tickInterval ") {
@@ -48,6 +54,18 @@ enum MermaidGanttParser {
             }
             if let value = line.strippingPrefix("weekend ") {
                 weekend = value
+                continue
+            }
+            if let value = line.strippingPrefix("weekday ") {
+                weekday = value
+                continue
+            }
+            if let value = line.strippingPrefix("todayMarker ") {
+                todayMarker = value
+                continue
+            }
+            if let click = parseClick(line) {
+                clicks.append(click)
                 continue
             }
 
@@ -59,7 +77,7 @@ enum MermaidGanttParser {
                     tasks: &currentTasks,
                     into: &sections
                 )
-                currentSectionName = value
+                currentSectionName = MermaidTextUtils.normalizeLabel(value)
                 continue
             }
 
@@ -79,8 +97,62 @@ enum MermaidGanttParser {
             axisFormat: axisFormat,
             excludes: excludes,
             tickInterval: tickInterval,
-            weekend: weekend
+            weekend: weekend,
+            weekday: weekday,
+            todayMarker: todayMarker,
+            displayMode: options.displayMode,
+            topAxis: options.topAxis,
+            clicks: clicks
         )
+    }
+
+    private static func parseClick(_ line: String) -> GanttClick? {
+        guard let rest = line.strippingPrefix("click ") else { return nil }
+        let pieces = rest.split(
+            maxSplits: 2,
+            omittingEmptySubsequences: true,
+            whereSeparator: { $0.isWhitespace }
+        ).map(String.init)
+        guard pieces.count == 3 else { return nil }
+
+        let taskId = pieces[0].trimmingCharacters(in: .whitespaces)
+        let action = pieces[1].lowercased()
+        let payload = unquote(pieces[2].trimmingCharacters(in: .whitespaces))
+        guard !taskId.isEmpty, !payload.isEmpty else { return nil }
+
+        switch action {
+        case "href":
+            return GanttClick(taskId: taskId, action: .href(payload))
+        case "call":
+            return GanttClick(taskId: taskId, action: .call(payload))
+        default:
+            return nil
+        }
+    }
+
+    private static func unquote(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 2,
+              trimmed.first == "\"",
+              trimmed.last == "\""
+        else { return trimmed }
+        return String(trimmed.dropFirst().dropLast())
+    }
+
+    private static func splitExcludes(_ value: String) -> [String] {
+        value.split { char in
+            char == "," || char.isWhitespace
+        }
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    }
+
+    private static func splitDependencyRefs(_ value: String) -> [String] {
+        value.split { char in
+            char == "," || char.isWhitespace
+        }
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
     }
 
     // MARK: - Section flushing
@@ -115,8 +187,7 @@ enum MermaidGanttParser {
         let lowerName = name.lowercased()
         if lowerName == "title" || lowerName == "dateformat"
             || lowerName == "axisformat" || lowerName == "excludes"
-            || lowerName.hasPrefix("section")
-        {
+            || lowerName.hasPrefix("section") {
             return nil
         }
 
@@ -133,6 +204,8 @@ enum MermaidGanttParser {
         var endDate: String?
         var duration: String?
         var afterId: String?
+        var afterIds: [String] = []
+        var untilIds: [String] = []
 
         // Classify each part.
         var remaining: [String] = []
@@ -165,23 +238,23 @@ enum MermaidGanttParser {
             status = .critical
         }
 
-        // Remaining parts: [id?, start, end_or_duration]
-        // "after xxx" can be a start specifier.
-        var idx = 0
-
-        // Check for "after xxx" — can appear as a single part or split across parts.
-        while idx < remaining.count {
-            let part = remaining[idx]
-            if part.lowercased().hasPrefix("after ") {
-                let ref = String(part.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                afterId = ref
-                idx += 1
-                continue
+        // Remaining parts: [id?, start, end_or_duration].
+        // `after b a` and `until b c` can appear where start/end specifiers do.
+        var timelineParts: [String] = []
+        for part in remaining {
+            let lower = part.lowercased()
+            if lower.hasPrefix("after ") {
+                let refs = splitDependencyRefs(String(part.dropFirst(6)))
+                afterIds.append(contentsOf: refs)
+                afterId = afterId ?? refs.first
+            } else if lower.hasPrefix("until ") {
+                untilIds.append(contentsOf: splitDependencyRefs(String(part.dropFirst(6))))
+            } else {
+                timelineParts.append(part)
             }
-            break
         }
 
-        // If no "after" found yet, classify remaining parts.
+        // Classify non-dependency parts.
         // Patterns:
         //   [id, start, end]    — 3 parts
         //   [id, after X, dur]  — already handled after above
@@ -189,15 +262,17 @@ enum MermaidGanttParser {
         //   [id, start_or_dur]  — ambiguous: id if not date-like or duration-like
         //   [dur]               — 1 part, just duration
         //   [start]             — 1 part, just start date
-        let rest = Array(remaining[idx...])
+        let rest = timelineParts
 
         switch rest.count {
         case 0:
             break
         case 1:
-            // Single value: duration or date.
+            // Single value: duration/date, or an id when dependency timing is supplied separately.
             let val = rest[0]
-            if isDuration(val) {
+            if afterId != nil || !untilIds.isEmpty, !isDuration(val), !isDateLike(val) {
+                id = val
+            } else if isDuration(val) {
                 duration = val
             } else {
                 startDate = val
@@ -218,13 +293,6 @@ enum MermaidGanttParser {
             } else if isDateLike(first) {
                 // Both are date/duration: start + end/duration.
                 startDate = first
-                if isDuration(second) {
-                    duration = second
-                } else {
-                    endDate = second
-                }
-            } else if first.lowercased().hasPrefix("after ") {
-                afterId = String(first.dropFirst(6)).trimmingCharacters(in: .whitespaces)
                 if isDuration(second) {
                     duration = second
                 } else {
@@ -251,49 +319,36 @@ enum MermaidGanttParser {
                     endDate = last
                 }
             } else {
-                // Check if second element is "after X".
-                let second = rest[1]
-                if second.lowercased().hasPrefix("after ") {
-                    id = rest[0]
-                    afterId = String(second.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                    if rest.count > 2 {
-                        let last = rest[rest.count - 1]
-                        if isDuration(last) {
-                            duration = last
-                        } else {
-                            endDate = last
-                        }
-                    }
+                // [id, start, end_or_duration]
+                id = rest[0]
+                startDate = rest[1]
+                let last = rest[rest.count - 1]
+                if isDuration(last) {
+                    duration = last
                 } else {
-                    // [id, start, end_or_duration]
-                    id = rest[0]
-                    startDate = rest[1]
-                    let last = rest[rest.count - 1]
-                    if isDuration(last) {
-                        duration = last
-                    } else {
-                        endDate = last
-                    }
+                    endDate = last
                 }
             }
         }
 
         return GanttTask(
-            name: MermaidTextUtils.normalizeBrTags(name),
+            name: MermaidTextUtils.normalizeLabel(name),
             id: id,
             status: status,
             startDate: startDate,
             endDate: endDate,
             duration: duration,
-            afterId: afterId
+            afterId: afterId,
+            afterIds: afterIds,
+            untilIds: untilIds
         )
     }
 
     // MARK: - Classification helpers
 
-    /// Check if a string looks like a duration: `3d`, `1w`, `2h`, `30m`, `5s`.
+    /// Check if a string looks like a Mermaid duration: `500ms`, `30s`, `1.5d`, `2w`, `1M`, `1y`.
     private static func isDuration(_ value: String) -> Bool {
-        let pattern = #"^\d+[dwmhs]$"#
+        let pattern = #"^\d+(?:\.\d+)?(?:ms|s|m|h|d|w|M|y)$"#
         return value.range(of: pattern, options: .regularExpression) != nil
     }
 

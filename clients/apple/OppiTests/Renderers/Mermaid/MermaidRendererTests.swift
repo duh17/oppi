@@ -101,6 +101,20 @@ struct MermaidRendererTests {
         #expect(a.height > 0)
     }
 
+    @Test func subgraphBoundingBoxIncludesContainerMargins() {
+        let diagram = parser.parse("""
+            flowchart TD
+                subgraph group [Group]
+                    A[Alpha] --> B[Beta]
+                end
+            """)
+        let layout = renderer.layout(diagram, configuration: config)
+        let box = renderer.boundingBox(layout)
+
+        #expect(box.width > layout.graphResult.totalSize.width + 70)
+        #expect(box.height > layout.graphResult.totalSize.height + 70)
+    }
+
     // MARK: - Render output
 
     @Test func renderProducesNonZeroSize() {

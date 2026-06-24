@@ -22,7 +22,9 @@ enum MermaidStateParser {
         var composites: [StateComposite] = []
         var classDefs: [String: [String: String]] = [:]
         var classApplications: [String: [String]] = [:]
-        var currentNote: (position: StateNotePosition, stateId: String, lines: [String])?
+        var accessibilityTitle: String?
+        var accessibilityDescription: String?
+        var currentNote: ActiveStateNote?
         var compositeStack: [StateCompositeBuilder] = []
         var regionIndex = 0
 
@@ -44,7 +46,12 @@ enum MermaidStateParser {
         }
 
         func addTransition(from: StateEndpoint, to: StateEndpoint, label: String?) {
-            transitions.append(StateTransition(from: from, to: to, label: label))
+            transitions.append(StateTransition(
+                from: from,
+                to: to,
+                label: label,
+                scopeId: compositeStack.last?.id
+            ))
             if case .state(let id) = from { upsertState(id: id) }
             if case .state(let id) = to { upsertState(id: id) }
         }
@@ -59,13 +66,22 @@ enum MermaidStateParser {
                     notes.append(StateDiagramNote(
                         stateId: note.stateId,
                         position: note.position,
-                        text: MermaidTextUtils.normalizeBrTags(note.lines.joined(separator: "\n"))
+                        text: MermaidTextUtils.normalizeLabel(note.lines.joined(separator: "\n"))
                     ))
                     currentNote = nil
                 } else {
                     note.lines.append(line)
                     currentNote = note
                 }
+                continue
+            }
+
+            if let value = parseAccessibilityDirective(line, keyword: "accTitle") {
+                accessibilityTitle = value
+                continue
+            }
+            if let value = parseAccessibilityDirective(line, keyword: "accDescr") {
+                accessibilityDescription = value
                 continue
             }
 
@@ -124,12 +140,20 @@ enum MermaidStateParser {
             }
             if let noteStart = parseNoteStart(line) {
                 upsertState(id: noteStart.stateId)
-                currentNote = (noteStart.position, noteStart.stateId, [])
+                currentNote = ActiveStateNote(
+                    position: noteStart.position,
+                    stateId: noteStart.stateId,
+                    lines: []
+                )
                 continue
             }
 
             if let transition = parseTransition(line) {
                 addTransition(from: transition.from, to: transition.to, label: transition.label)
+                for application in transition.classApplications {
+                    classApplications[application.id, default: []].append(application.className)
+                    upsertState(id: application.id)
+                }
                 continue
             }
 
@@ -154,8 +178,21 @@ enum MermaidStateParser {
             transitions: transitions,
             notes: notes,
             composites: composites,
-            classDefs: classDefs
+            classDefs: classDefs,
+            accessibilityTitle: accessibilityTitle,
+            accessibilityDescription: accessibilityDescription
         )
+    }
+
+    private static func parseAccessibilityDirective(_ line: String, keyword: String) -> String? {
+        let colonPrefix = "\(keyword):"
+        if let value = line.strippingPrefix(colonPrefix) {
+            return MermaidTextUtils.normalizeLabel(value)
+        }
+        if let value = line.strippingPrefix("\(keyword) ") {
+            return MermaidTextUtils.normalizeLabel(value)
+        }
+        return nil
     }
 
     private final class StateCompositeBuilder {
@@ -190,11 +227,67 @@ enum MermaidStateParser {
                 result.append(line)
                 continue
             }
-            for part in line.split(separator: ";", omittingEmptySubsequences: false) {
-                result.append(String(part))
-            }
+            result.append(contentsOf: splitStatements(in: line))
         }
         return result
+    }
+
+    private static func splitStatements(in line: String) -> [String] {
+        var statements: [String] = []
+        var current = ""
+        var inDoubleQuote = false
+        var index = line.startIndex
+
+        while index < line.endIndex {
+            let char = line[index]
+            if char == "\"" {
+                inDoubleQuote.toggle()
+                current.append(char)
+                index = line.index(after: index)
+                continue
+            }
+
+            if char == ";", !inDoubleQuote, !isEntitySemicolon(in: line, at: index) {
+                statements.append(current)
+                current = ""
+            } else {
+                current.append(char)
+            }
+            index = line.index(after: index)
+        }
+
+        statements.append(current)
+        return statements
+    }
+
+    private static func isEntitySemicolon(in line: String, at semicolon: String.Index) -> Bool {
+        guard semicolon > line.startIndex else { return false }
+        var index = line.index(before: semicolon)
+        while true {
+            let char = line[index]
+            if char == "#" || char == "&" {
+                return true
+            }
+            if !char.isLetter && !char.isNumber {
+                return false
+            }
+            if index == line.startIndex {
+                return false
+            }
+            index = line.index(before: index)
+        }
+    }
+
+    private struct ActiveStateNote {
+        let position: StateNotePosition
+        let stateId: String
+        var lines: [String]
+    }
+
+    private struct StateDeclaration {
+        let id: String
+        let label: String?
+        let kind: StateNodeKind
     }
 
     private static func parseCompositeStart(_ line: String) -> (id: String, label: String?)? {
@@ -207,16 +300,31 @@ enum MermaidStateParser {
         return (rest, nil)
     }
 
-    private static func parseStateDeclaration(_ line: String) -> (id: String, label: String?, kind: StateNodeKind)? {
+    private static func parseStateDeclaration(_ line: String) -> StateDeclaration? {
         if let rest = line.strippingPrefix("state ") {
             if rest.contains("<<choice>>") {
-                return (rest.replacingOccurrences(of: "<<choice>>", with: "").trimmingCharacters(in: .whitespaces), nil, .choice)
+                return StateDeclaration(
+                    id: rest.replacingOccurrences(of: "<<choice>>", with: "")
+                        .trimmingCharacters(in: .whitespaces),
+                    label: nil,
+                    kind: .choice
+                )
             }
             if rest.contains("<<fork>>") {
-                return (rest.replacingOccurrences(of: "<<fork>>", with: "").trimmingCharacters(in: .whitespaces), nil, .fork)
+                return StateDeclaration(
+                    id: rest.replacingOccurrences(of: "<<fork>>", with: "")
+                        .trimmingCharacters(in: .whitespaces),
+                    label: nil,
+                    kind: .fork
+                )
             }
             if rest.contains("<<join>>") {
-                return (rest.replacingOccurrences(of: "<<join>>", with: "").trimmingCharacters(in: .whitespaces), nil, .join)
+                return StateDeclaration(
+                    id: rest.replacingOccurrences(of: "<<join>>", with: "")
+                        .trimmingCharacters(in: .whitespaces),
+                    label: nil,
+                    kind: .join
+                )
             }
             if rest.hasPrefix("\"") {
                 let afterOpeningQuote = rest.index(after: rest.startIndex)
@@ -224,41 +332,104 @@ enum MermaidStateParser {
                     let label = String(rest[afterOpeningQuote..<closingQuote])
                     let suffix = rest[rest.index(after: closingQuote)...].trimmingCharacters(in: .whitespaces)
                     if let id = suffix.strippingPrefix("as ")?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
-                        return (id, MermaidTextUtils.normalizeBrTags(label), .normal)
+                        return StateDeclaration(
+                            id: id,
+                            label: MermaidTextUtils.normalizeLabel(label),
+                            kind: .normal
+                        )
                     }
                 }
             }
-            return (rest, nil, .normal)
+            return StateDeclaration(id: rest, label: nil, kind: .normal)
         }
 
         if let colon = line.firstIndex(of: ":") {
             let id = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
             let label = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
             if !id.isEmpty, !label.isEmpty {
-                return (id, MermaidTextUtils.normalizeBrTags(label), .normal)
+                return StateDeclaration(
+                    id: id,
+                    label: MermaidTextUtils.normalizeLabel(label),
+                    kind: .normal
+                )
             }
         }
 
         if !line.contains(" "), !line.contains("-->") {
-            return (line, nil, .normal)
+            return StateDeclaration(id: line, label: nil, kind: .normal)
         }
         return nil
     }
 
-    private static func parseTransition(_ line: String) -> (from: StateEndpoint, to: StateEndpoint, label: String?)? {
+    private struct ParsedEndpoint {
+        let endpoint: StateEndpoint
+        let classApplication: (id: String, className: String)?
+    }
+
+    private struct ParsedTransition {
+        let from: StateEndpoint
+        let to: StateEndpoint
+        let label: String?
+        let classApplications: [(id: String, className: String)]
+    }
+
+    private static func parseTransition(_ line: String) -> ParsedTransition? {
         guard let arrowRange = line.range(of: "-->") else { return nil }
         let left = String(line[..<arrowRange.lowerBound]).trimmingCharacters(in: .whitespaces)
         let rightAndLabel = String(line[arrowRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-        let parts = rightAndLabel.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard let right = parts.first?.trimmingCharacters(in: .whitespaces), !left.isEmpty, !right.isEmpty else { return nil }
-        let label = parts.count > 1 ? MermaidTextUtils.normalizeBrTags(parts[1].trimmingCharacters(in: .whitespaces)) : nil
-        return (parseEndpoint(left), parseEndpoint(right), label?.isEmpty == true ? nil : label)
+        let split = splitTransitionTargetAndLabel(rightAndLabel)
+        let right = split.target
+        guard !left.isEmpty, !right.isEmpty else { return nil }
+        let label = split.label.map { MermaidTextUtils.normalizeLabel($0.trimmingCharacters(in: .whitespaces)) }
+        let from = parseEndpoint(left)
+        let to = parseEndpoint(right)
+        let classApplications = [from.classApplication, to.classApplication].compactMap { $0 }
+        return ParsedTransition(
+            from: from.endpoint,
+            to: to.endpoint,
+            label: label?.isEmpty == true ? nil : label,
+            classApplications: classApplications
+        )
     }
 
-    private static func parseEndpoint(_ raw: String) -> StateEndpoint {
-        let withoutClass = raw.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false).first.map(String.init) ?? raw
-        if withoutClass == "[*]" { return .terminal }
-        return .state(withoutClass.trimmingCharacters(in: .whitespaces))
+    private static func splitTransitionTargetAndLabel(_ text: String) -> (target: String, label: String?) {
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index] == ":" {
+                let prevIsColon = index > text.startIndex && text[text.index(before: index)] == ":"
+                let nextIndex = text.index(after: index)
+                let nextIsColon = nextIndex < text.endIndex && text[nextIndex] == ":"
+                if !prevIsColon, !nextIsColon {
+                    let target = String(text[..<index]).trimmingCharacters(in: .whitespaces)
+                    let label = String(text[nextIndex...]).trimmingCharacters(in: .whitespaces)
+                    return (target, label)
+                }
+            }
+            index = text.index(after: index)
+        }
+        return (text.trimmingCharacters(in: .whitespaces), nil)
+    }
+
+    private static func parseEndpoint(_ raw: String) -> ParsedEndpoint {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        let stateId: String
+        let className: String?
+        if let classRange = trimmed.range(of: ":::") {
+            stateId = String(trimmed[..<classRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let classStart = classRange.upperBound
+            className = String(trimmed[classStart...]).trimmingCharacters(in: .whitespaces)
+        } else {
+            stateId = trimmed
+            className = nil
+        }
+
+        if stateId == "[*]" {
+            return ParsedEndpoint(endpoint: .terminal, classApplication: nil)
+        }
+        let application = className.flatMap { name -> (id: String, className: String)? in
+            name.isEmpty ? nil : (stateId, name)
+        }
+        return ParsedEndpoint(endpoint: .state(stateId), classApplication: application)
     }
 
     private static func parseNoteStart(_ line: String) -> (position: StateNotePosition, stateId: String)? {
@@ -277,7 +448,7 @@ enum MermaidStateParser {
         let prefix = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
         guard let note = parseNoteStart(prefix) else { return nil }
         let text = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-        return StateDiagramNote(stateId: note.stateId, position: note.position, text: MermaidTextUtils.normalizeBrTags(text))
+        return StateDiagramNote(stateId: note.stateId, position: note.position, text: MermaidTextUtils.normalizeLabel(text))
     }
 
     private static func parseClassDef(_ line: String) -> (String, [String: String])? {

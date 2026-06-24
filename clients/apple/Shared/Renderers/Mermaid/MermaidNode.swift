@@ -21,6 +21,28 @@ struct StateDiagram: Equatable, Sendable {
     let notes: [StateDiagramNote]
     let composites: [StateComposite]
     let classDefs: [String: [String: String]]
+    let accessibilityTitle: String?
+    let accessibilityDescription: String?
+
+    init(
+        direction: FlowDirection,
+        states: [StateNode],
+        transitions: [StateTransition],
+        notes: [StateDiagramNote],
+        composites: [StateComposite],
+        classDefs: [String: [String: String]],
+        accessibilityTitle: String? = nil,
+        accessibilityDescription: String? = nil
+    ) {
+        self.direction = direction
+        self.states = states
+        self.transitions = transitions
+        self.notes = notes
+        self.composites = composites
+        self.classDefs = classDefs
+        self.accessibilityTitle = accessibilityTitle
+        self.accessibilityDescription = accessibilityDescription
+    }
 
     static let empty = Self(
         direction: .TB,
@@ -50,6 +72,14 @@ struct StateTransition: Equatable, Sendable {
     let from: StateEndpoint
     let to: StateEndpoint
     let label: String?
+    let scopeId: String?
+
+    init(from: StateEndpoint, to: StateEndpoint, label: String?, scopeId: String? = nil) {
+        self.from = from
+        self.to = to
+        self.label = label
+        self.scopeId = scopeId
+    }
 }
 
 enum StateEndpoint: Equatable, Sendable {
@@ -74,7 +104,7 @@ struct StateComposite: Equatable, Sendable {
     let direction: FlowDirection?
     let stateIds: [String]
     let regions: [Int]
-    let children: [StateComposite]
+    let children: [Self]
 }
 
 // MARK: - Gantt chart types
@@ -87,6 +117,55 @@ struct GanttDiagram: Equatable, Sendable {
     let excludes: [String]
     let tickInterval: String?
     let weekend: String?
+    let weekday: String?
+    let todayMarker: String?
+    let displayMode: GanttDisplayMode
+    let topAxis: Bool
+    let clicks: [GanttClick]
+
+    init(
+        title: String?,
+        dateFormat: String,
+        sections: [GanttSection],
+        axisFormat: String?,
+        excludes: [String],
+        tickInterval: String?,
+        weekend: String?,
+        weekday: String? = nil,
+        todayMarker: String? = nil,
+        displayMode: GanttDisplayMode = .standard,
+        topAxis: Bool = false,
+        clicks: [GanttClick] = []
+    ) {
+        self.title = title
+        self.dateFormat = dateFormat
+        self.sections = sections
+        self.axisFormat = axisFormat
+        self.excludes = excludes
+        self.tickInterval = tickInterval
+        self.weekend = weekend
+        self.weekday = weekday
+        self.todayMarker = todayMarker
+        self.displayMode = displayMode
+        self.topAxis = topAxis
+        self.clicks = clicks
+    }
+}
+
+/// Mermaid Gantt `displayMode` frontmatter/config option.
+enum GanttDisplayMode: Equatable, Sendable {
+    case standard
+    case compact
+}
+
+struct GanttClick: Equatable, Sendable {
+    let taskId: String
+    let action: GanttClickAction
+}
+
+enum GanttClickAction: Equatable, Sendable {
+    case href(String)
+    case call(String)
 }
 
 struct GanttSection: Equatable, Sendable {
@@ -102,6 +181,36 @@ struct GanttTask: Equatable, Sendable {
     let endDate: String?
     let duration: String?
     let afterId: String?
+    let afterIds: [String]
+    let untilIds: [String]
+
+    init(
+        name: String,
+        id: String?,
+        status: GanttTaskStatus,
+        startDate: String?,
+        endDate: String?,
+        duration: String?,
+        afterId: String?,
+        afterIds: [String] = [],
+        untilIds: [String] = []
+    ) {
+        self.name = name
+        self.id = id
+        self.status = status
+        self.startDate = startDate
+        self.endDate = endDate
+        self.duration = duration
+        self.afterId = afterId
+        if !afterIds.isEmpty {
+            self.afterIds = afterIds
+        } else if let afterId {
+            self.afterIds = [afterId]
+        } else {
+            self.afterIds = []
+        }
+        self.untilIds = untilIds
+    }
 }
 
 enum GanttTaskStatus: Equatable, Sendable {
@@ -117,14 +226,41 @@ enum GanttTaskStatus: Equatable, Sendable {
 
 struct MindmapDiagram: Equatable, Sendable {
     let root: MindmapNode
+    let layout: MindmapLayout
+
+    init(root: MindmapNode, layout: MindmapLayout = .default) {
+        self.root = root
+        self.layout = layout
+    }
 
     static let empty = Self(root: MindmapNode(label: "", shape: .default, children: []))
+}
+
+enum MindmapLayout: Equatable, Sendable {
+    case `default`
+    case tidyTree
 }
 
 struct MindmapNode: Equatable, Sendable {
     let label: String
     let shape: MindmapNodeShape
-    let children: [MindmapNode]
+    let icon: String?
+    let classes: [String]
+    let children: [Self]
+
+    init(
+        label: String,
+        shape: MindmapNodeShape,
+        children: [Self],
+        icon: String? = nil,
+        classes: [String] = []
+    ) {
+        self.label = label
+        self.shape = shape
+        self.icon = icon
+        self.classes = classes
+        self.children = children
+    }
 }
 
 enum MindmapNodeShape: Equatable, Sendable {
@@ -136,9 +272,11 @@ enum MindmapNodeShape: Equatable, Sendable {
     case rounded
     /// `((text))` — circle
     case circle
-    /// `))text((` — bang (cloud)
+    /// `))text((` — bang
     case bang
-    /// `)text(` — hexagon
+    /// `)text(` — cloud
+    case cloud
+    /// `{{text}}` — hexagon
     case hexagon
 }
 
@@ -151,6 +289,7 @@ struct FlowchartDiagram: Equatable, Sendable {
     let subgraphs: [FlowSubgraph]
     let classDefs: [String: [String: String]]
     let styleDirectives: [FlowStyleDirective]
+    let classApplications: [String: [String]]
 
     static let empty = Self(
         direction: .TD,
@@ -158,7 +297,8 @@ struct FlowchartDiagram: Equatable, Sendable {
         edges: [],
         subgraphs: [],
         classDefs: [:],
-        styleDirectives: []
+        styleDirectives: [],
+        classApplications: [:]
     )
 }
 
@@ -166,6 +306,14 @@ struct FlowNode: Equatable, Sendable {
     let id: String
     let label: String
     let shape: FlowNodeShape
+    let classes: [String]
+
+    init(id: String, label: String, shape: FlowNodeShape, classes: [String] = []) {
+        self.id = id
+        self.label = label
+        self.shape = shape
+        self.classes = classes
+    }
 }
 
 struct FlowEdge: Equatable, Sendable {
@@ -173,6 +321,15 @@ struct FlowEdge: Equatable, Sendable {
     let to: String
     let label: String?
     let style: FlowEdgeStyle
+    let id: String?
+
+    init(from: String, to: String, label: String?, style: FlowEdgeStyle, id: String? = nil) {
+        self.from = from
+        self.to = to
+        self.label = label
+        self.style = style
+        self.id = id
+    }
 }
 
 enum FlowDirection: String, Sendable, CaseIterable {
@@ -208,6 +365,70 @@ enum FlowNodeShape: Equatable, Sendable {
     case trapezoidAlt
     /// `A(((text)))`
     case doubleCircle
+    /// v11.3+ `@{ shape: bang }`.
+    case bang
+    /// v11.3+ notched rectangle / card.
+    case notchedRectangle
+    /// v11.3+ cloud.
+    case cloud
+    /// v11.3+ hourglass / collate.
+    case hourglass
+    /// v11.3+ lightning bolt.
+    case bolt
+    /// v11.3+ left brace comment.
+    case brace
+    /// v11.3+ right brace comment.
+    case braceRight
+    /// v11.3+ braces on both sides.
+    case braces
+    /// v11.3+ datastore.
+    case datastore
+    /// v11.3+ horizontal cylinder.
+    case horizontalCylinder
+    /// v11.3+ lined cylinder.
+    case linedCylinder
+    /// v11.3+ curved trapezoid.
+    case curvedTrapezoid
+    /// v11.3+ divided rectangle.
+    case dividedRectangle
+    /// v11.3+ document.
+    case document
+    /// v11.3+ delay.
+    case delay
+    /// v11.3+ triangle.
+    case triangle
+    /// v11.3+ fork/join.
+    case forkJoin
+    /// v11.3+ window pane.
+    case windowPane
+    /// v11.3+ filled circle.
+    case filledCircle
+    /// v11.3+ lined document.
+    case linedDocument
+    /// v11.3+ notched pentagon.
+    case notchedPentagon
+    /// v11.3+ flipped triangle.
+    case flippedTriangle
+    /// v11.3+ sloped rectangle.
+    case slopedRectangle
+    /// v11.3+ stacked document.
+    case stackedDocument
+    /// v11.3+ stacked rectangle.
+    case stackedRectangle
+    /// v11.3+ flag / paper tape.
+    case flag
+    /// v11.3+ bow tie rectangle.
+    case bowTieRectangle
+    /// v11.3+ crossed circle.
+    case crossedCircle
+    /// v11.3+ tagged document.
+    case taggedDocument
+    /// v11.3+ tagged process.
+    case taggedRectangle
+    /// v11.3+ text block.
+    case textBlock
+    /// v11.3+ odd shape.
+    case odd
     /// Bare ID with no shape delimiters — uses ID as label.
     case `default`
 }
@@ -256,7 +477,23 @@ struct SequenceDiagram: Equatable, Sendable {
     let messages: [SequenceMessage]
     let notes: [SequenceNote]
     let blocks: [SequenceBlock]
+    let boxes: [SequenceBox]
+    let links: [SequenceLink]
     let autonumber: Bool
+    let autonumberStart: Double
+    let autonumberIncrement: Double
+}
+
+struct SequenceBox: Equatable, Sendable {
+    let label: String?
+    let color: String?
+    let participantIds: [String]
+}
+
+struct SequenceLink: Equatable, Sendable {
+    let actorId: String
+    let label: String
+    let url: String
 }
 
 /// A note annotation in a sequence diagram.
@@ -277,6 +514,22 @@ struct SequenceBlock: Equatable, Sendable {
     let kind: SequenceBlockKind
     let label: String
     let elseBlocks: [SequenceElseBlock]?
+    let startMessageIndex: Int?
+    let endMessageIndex: Int?
+
+    init(
+        kind: SequenceBlockKind,
+        label: String,
+        elseBlocks: [SequenceElseBlock]?,
+        startMessageIndex: Int? = nil,
+        endMessageIndex: Int? = nil
+    ) {
+        self.kind = kind
+        self.label = label
+        self.elseBlocks = elseBlocks
+        self.startMessageIndex = startMessageIndex
+        self.endMessageIndex = endMessageIndex
+    }
 }
 
 struct SequenceElseBlock: Equatable, Sendable {
@@ -303,6 +556,31 @@ struct SequenceParticipant: Equatable, Sendable {
     let id: String
     let label: String
     let isActor: Bool
+    let kind: SequenceParticipantKind
+
+    init(
+        id: String,
+        label: String,
+        isActor: Bool,
+        kind: SequenceParticipantKind? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.isActor = isActor
+        self.kind = kind ?? (isActor ? .actor : .participant)
+    }
+}
+
+/// Official sequence participant stereotype metadata from `participant A@{ "type": "..." }`.
+enum SequenceParticipantKind: String, Equatable, Sendable {
+    case participant
+    case actor
+    case boundary
+    case control
+    case entity
+    case database
+    case collections
+    case queue
 }
 
 enum SequenceArrowStyle: Equatable, Sendable {
@@ -322,6 +600,38 @@ enum SequenceArrowStyle: Equatable, Sendable {
     case solidAsync
     /// `--)` dashed with open async arrow
     case dashedAsync
+    /// `<<->>` solid with bidirectional arrowheads
+    case solidBidirectional
+    /// `<<-->>` dotted with bidirectional arrowheads
+    case dashedBidirectional
+    /// `-\|\` solid top half arrowhead
+    case solidTopHalfArrow
+    /// `--\|\` dashed top half arrowhead
+    case dashedTopHalfArrow
+    /// `-\|/` solid bottom half arrowhead
+    case solidBottomHalfArrow
+    /// `--\|/` dashed bottom half arrowhead
+    case dashedBottomHalfArrow
+    /// `/\|-` solid reverse top half arrowhead
+    case solidReverseTopHalfArrow
+    /// `/\|--` dashed reverse top half arrowhead
+    case dashedReverseTopHalfArrow
+    /// `\\-` solid reverse bottom half arrowhead
+    case solidReverseBottomHalfArrow
+    /// `\\--` dashed reverse bottom half arrowhead
+    case dashedReverseBottomHalfArrow
+    /// `-\\` solid top stick half arrowhead
+    case solidTopStickHalfArrow
+    /// `--\\` dashed top stick half arrowhead
+    case dashedTopStickHalfArrow
+    /// `-//` solid bottom stick half arrowhead
+    case solidBottomStickHalfArrow
+    /// `--//` dashed bottom stick half arrowhead
+    case dashedBottomStickHalfArrow
+    /// `//-` solid reverse top stick half arrowhead
+    case solidReverseTopStickHalfArrow
+    /// `//--` dashed reverse top stick half arrowhead
+    case dashedReverseTopStickHalfArrow
 }
 
 struct SequenceMessage: Equatable, Sendable {
@@ -330,12 +640,24 @@ struct SequenceMessage: Equatable, Sendable {
     let text: String
     let arrowStyle: SequenceArrowStyle
     let activationModifier: ActivationModifier?
+    let fromCentral: Bool
+    let toCentral: Bool
 
-    init(from: String, to: String, text: String, arrowStyle: SequenceArrowStyle, activationModifier: ActivationModifier? = nil) {
+    init(
+        from: String,
+        to: String,
+        text: String,
+        arrowStyle: SequenceArrowStyle,
+        activationModifier: ActivationModifier? = nil,
+        fromCentral: Bool = false,
+        toCentral: Bool = false
+    ) {
         self.from = from
         self.to = to
         self.text = text
         self.arrowStyle = arrowStyle
         self.activationModifier = activationModifier
+        self.fromCentral = fromCentral
+        self.toCentral = toCentral
     }
 }
