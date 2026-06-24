@@ -158,6 +158,130 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags Pi AI compat imports outside the Pi model/auth boundary", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-ai-compat-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/random-title-helper.ts"),
+        'import { completeSimple } from "@earendil-works/pi-ai/compat";\nexport { completeSimple };\n',
+      );
+      write(
+        join(repoRoot, "server/src/pi-model-auth-service.ts"),
+        'import { getModel } from "@earendil-works/pi-ai/compat";\nexport { getModel };\n',
+      );
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "pi-ai-compat-boundary",
+            file: "server/src/random-title-helper.ts",
+            target: "@earendil-works/pi-ai/compat",
+          }),
+        ]),
+      );
+      expect(violations).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "pi-ai-compat-boundary",
+            file: "server/src/pi-model-auth-service.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("flags mirror resume imports outside lifecycle/open policy modules", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mirror-resume-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/random-open-helper.ts"),
+        'import { canPromoteMirrorSession } from "./mirror-session-resume.js";\nexport { canPromoteMirrorSession };\n',
+      );
+      write(
+        join(repoRoot, "server/src/session-lifecycle-service.ts"),
+        'import { canPromoteMirrorSession } from "./mirror-session-resume.js";\nexport { canPromoteMirrorSession };\n',
+      );
+      write(
+        join(repoRoot, "server/src/mirror-session-resume.ts"),
+        "export function canPromoteMirrorSession(): boolean { return true; }\n",
+      );
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "mirror-resume-boundary",
+            file: "server/src/random-open-helper.ts",
+            target: "server/src/mirror-session-resume.ts",
+          }),
+        ]),
+      );
+      expect(violations).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "mirror-resume-boundary",
+            file: "server/src/session-lifecycle-service.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("flags Pi TUI runtime ownership checks outside approved modules", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-tui-check-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/random-session-helper.ts"),
+        'export function isMirror(session: { runtime?: string }): boolean { return session.runtime === "pi-tui"; }\n',
+      );
+      write(
+        join(repoRoot, "server/src/random-session-mutator.ts"),
+        'export function markMirror(session: { runtime?: string }): void { session.runtime = "pi-tui"; }\n',
+      );
+      write(
+        join(repoRoot, "server/src/session-lifecycle-service.ts"),
+        'export function isMirror(session: { runtime?: string }): boolean { return session.runtime === "pi-tui"; }\n',
+      );
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "pi-tui-runtime-ownership-boundary",
+            file: "server/src/random-session-helper.ts",
+            target: 'runtime == "pi-tui" or runtime = "pi-tui"',
+          }),
+          expect.objectContaining({
+            rule: "pi-tui-runtime-ownership-boundary",
+            file: "server/src/random-session-mutator.ts",
+            target: 'runtime == "pi-tui" or runtime = "pi-tui"',
+          }),
+        ]),
+      );
+      expect(violations).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "pi-tui-runtime-ownership-boundary",
+            file: "server/src/session-lifecycle-service.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags concrete identity branches in generic extension-surface server files", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-extension-server-"));
 
@@ -289,10 +413,10 @@ describe("architecture layer rule helpers", () => {
         [
           "import SwiftUI",
           "func route(statusKey: String, widgetKey: String) -> String {",
-          "  if statusKey == \"local-only\" { return \"bad\" }",
+          '  if statusKey == "local-only" { return "bad" }',
           "  switch widgetKey {",
-          "  case \"summary\": return \"bad\"",
-          "  default: return \"ok\"",
+          '  case "summary": return "bad"',
+          '  default: return "ok"',
           "  }",
           "}",
         ].join("\n"),

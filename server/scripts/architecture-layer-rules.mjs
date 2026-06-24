@@ -3,14 +3,34 @@ import path from "node:path";
 
 import ts from "typescript";
 
-export const SERVER_ARCHITECTURE_GUIDE = "ARCHITECTURE.md#dependency-direction-rules-current-code";
-export const IOS_ARCHITECTURE_GUIDE = "ARCHITECTURE.md#ios-layers";
+export const SERVER_ARCHITECTURE_GUIDE =
+  "docs/architecture-server.md#server-boundary-rules-current-code";
+export const IOS_ARCHITECTURE_GUIDE =
+  "docs/architecture-client.md#client-boundary-rules-current-code";
 
 const SERVER_COMPOSITION_ROOT = "server/src/server.ts";
 const SERVER_ENTRY_FILE = "server/src/cli.ts";
 const SERVER_TYPES_CONTRACT_FILE = "server/src/types.ts";
 const SERVER_TYPES_CONTRACT_BARREL_PREFIX = "./types/";
 const SERVER_SESSION_FACADE_FILE = "server/src/sessions.ts";
+const SERVER_MIRROR_SESSION_RESUME_FILE = "server/src/mirror-session-resume.ts";
+
+const SERVER_PI_AI_COMPAT_ALLOWED_FILES = new Set(["server/src/pi-model-auth-service.ts"]);
+
+const SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES = new Set([
+  "server/src/session-lifecycle-service.ts",
+]);
+
+const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
+  "server/src/session-lifecycle-service.ts",
+  "server/src/runtime-router.ts",
+  "server/src/pi-tui-mirror-runtime.ts",
+  "server/src/pi-tui-session-classification.ts",
+  "server/src/mirror-session-resume.ts",
+  // Current leaks. Remove these as lifecycle/input policy moves behind services.
+  "server/src/session-input.ts",
+  "server/src/ws-message-handler.ts",
+]);
 
 const IOS_RUNTIME_UI_FREE_FILES = [
   "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift",
@@ -269,6 +289,25 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
       continue;
     }
 
+    const rawSource = readFileSync(absolutePath, "utf8");
+    const strippedSource = stripCommentsPreservingStrings(rawSource);
+    const runtimeCheck = findFirstPiTuiRuntimeOwnershipCheck(strippedSource);
+    if (runtimeCheck && !SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES.has(importer)) {
+      const location = lineAndColumnForIndex(strippedSource, runtimeCheck.index);
+      violations.push(
+        makeServerViolation({
+          rule: "pi-tui-runtime-ownership-boundary",
+          importer,
+          target: 'runtime == "pi-tui" or runtime = "pi-tui"',
+          line: location.line,
+          column: location.column,
+          reason: "Pi TUI ownership checks must stay inside runtime or session lifecycle modules.",
+          remediation:
+            "Return semantic capabilities or typed results from SessionLifecycleService instead of branching on session.runtime in this module.",
+        }),
+      );
+    }
+
     const importEntries = readImportEntriesFromFile(absolutePath);
 
     if (importer === SERVER_TYPES_CONTRACT_FILE) {
@@ -293,9 +332,46 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
     }
 
     for (const entry of importEntries) {
+      if (
+        entry.specifier === "@earendil-works/pi-ai/compat" &&
+        !SERVER_PI_AI_COMPAT_ALLOWED_FILES.has(importer)
+      ) {
+        violations.push(
+          makeServerViolation({
+            rule: "pi-ai-compat-boundary",
+            importer,
+            target: entry.specifier,
+            line: entry.line,
+            column: entry.column,
+            reason: "Pi 0.80 compat imports must stay behind the Pi model/auth service.",
+            remediation:
+              "Inject title generation, token cost lookup, or catalog behavior through pi-model-auth-service.ts instead of importing pi-ai compat here.",
+          }),
+        );
+      }
+
       const target = resolveRelativeModule(repoRoot, importer, entry.specifier);
       if (target === null) {
         continue;
+      }
+
+      if (
+        target === SERVER_MIRROR_SESSION_RESUME_FILE &&
+        !SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES.has(importer)
+      ) {
+        violations.push(
+          makeServerViolation({
+            rule: "mirror-resume-boundary",
+            importer,
+            target,
+            line: entry.line,
+            column: entry.column,
+            reason:
+              "Mirror resume/promotion policy must be owned by the session lifecycle service.",
+            remediation:
+              "Call SessionLifecycleService open/resume methods instead of importing mirror-session-resume directly.",
+          }),
+        );
       }
 
       if (
@@ -371,7 +447,6 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
           );
         }
       }
-
     }
   }
 
@@ -379,12 +454,15 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
     ? files.map(normalizeRepoPath)
     : genericExtensionSurfaceIdentityBranchFiles({ swift: false });
   violations.push(
-    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, genericExtensionFiles, (violation) =>
-      makeServerViolation({
-        ...violation,
-        importer: violation.file,
-        target: "extension identity literal",
-      }),
+    ...findGenericExtensionSurfaceIdentityBranchViolations(
+      repoRoot,
+      genericExtensionFiles,
+      (violation) =>
+        makeServerViolation({
+          ...violation,
+          importer: violation.file,
+          target: "extension identity literal",
+        }),
     ),
   );
 
@@ -488,7 +566,7 @@ function stripCommentsPreservingStrings(source) {
       continue;
     }
 
-    if (char === "\"" || char === "'" || char === "`") {
+    if (char === '"' || char === "'" || char === "`") {
       output += char;
       index += 1;
       quote = char;
@@ -506,6 +584,29 @@ function stripCommentsPreservingStrings(source) {
 const IDENTITY_BRANCH_EXPRESSION = String.raw`(?:\b(?:\w+\.)*(?:tool|toolName|statusKey|widgetKey|extensionScopeId|extensionDisplayName)\b)`;
 const KEY_ALIAS_BRANCH_EXPRESSION = String.raw`(?:\bkey\b)`;
 const STRING_LITERAL_EXPRESSION = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
+
+const PI_TUI_RUNTIME_OWNERSHIP_PATTERNS = [
+  /(?:\b[\w$.)\]]+\s*(?:\?\.|\.)\s*)?\bruntime\s*(?:={2,3}|!={1,2})\s*["']pi-tui["']/g,
+  /["']pi-tui["']\s*(?:={2,3}|!={1,2})\s*(?:\b[\w$.)\]]+\s*(?:\?\.|\.)\s*)?\bruntime\b/g,
+  /(?:\b[\w$.)\]]+\s*(?:\?\.|\.)\s*)?\bruntime\s*=\s*["']pi-tui["']/g,
+];
+
+function findFirstPiTuiRuntimeOwnershipCheck(source) {
+  let firstMatch = null;
+  for (const pattern of PI_TUI_RUNTIME_OWNERSHIP_PATTERNS) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(source);
+    if (!match) {
+      continue;
+    }
+
+    if (!firstMatch || match.index < firstMatch.index) {
+      firstMatch = { text: match[0], index: match.index };
+    }
+  }
+
+  return firstMatch;
+}
 
 const GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS = [
   new RegExp(
@@ -532,10 +633,7 @@ const GENERIC_EXTENSION_IDENTITY_BRANCH_PATTERNS = [
     String.raw`switch\s+(?:\([^)]*${KEY_ALIAS_BRANCH_EXPRESSION}[^)]*\)|${KEY_ALIAS_BRANCH_EXPRESSION})[\s\S]{0,800}?\bcase\s+${STRING_LITERAL_EXPRESSION}`,
     "g",
   ),
-  new RegExp(
-    String.raw`\.(?:has|includes|contains)\(\s*${IDENTITY_BRANCH_EXPRESSION}\s*\)`,
-    "g",
-  ),
+  new RegExp(String.raw`\.(?:has|includes|contains)\(\s*${IDENTITY_BRANCH_EXPRESSION}\s*\)`, "g"),
 ];
 
 function genericExtensionSurfaceIdentityBranchFiles({ swift }) {
@@ -592,7 +690,10 @@ function findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, files, ma
 
     const rawSource = readFileSync(absolutePath, "utf8");
     const strippedSource = stripCommentsPreservingStrings(rawSource);
-    const sourceRanges = sourceRangesForGenericExtensionSurfaceIdentityBranches(strippedSource, file);
+    const sourceRanges = sourceRangesForGenericExtensionSurfaceIdentityBranches(
+      strippedSource,
+      file,
+    );
 
     for (const range of sourceRanges) {
       let found = false;
@@ -930,7 +1031,11 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
     ? files.map(normalizeRepoPath)
     : genericExtensionSurfaceIdentityBranchFiles({ swift: true });
   violations.push(
-    ...findGenericExtensionSurfaceIdentityBranchViolations(repoRoot, genericExtensionFiles, makeIosViolation),
+    ...findGenericExtensionSurfaceIdentityBranchViolations(
+      repoRoot,
+      genericExtensionFiles,
+      makeIosViolation,
+    ),
   );
 
   return sortArchitectureViolations(violations);
