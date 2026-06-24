@@ -1,3 +1,4 @@
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createGoalExtension } from "./goal.js";
@@ -302,6 +303,58 @@ describe("goal extension", () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(tui.renderRequested).toBe(true);
+  });
+
+  it("keeps text widget lines within the terminal width", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-18T00:25:02.000Z"));
+    const pi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 1 })(pi as never);
+    const ctx = createMockContext({
+      branch: [
+        customGoalEntry(
+          activeGoal({
+            continuationCount: 5,
+            maxContinuations: 25,
+            summary:
+              "Investigated the malformed bash tool-call incident and verified research artifacts.",
+            tasks: [
+              {
+                id: "task-1",
+                title:
+                  "Define research scope, evidence criteria, outline, and report workspace",
+                status: "completed",
+              },
+              {
+                id: "task-2",
+                title:
+                  "Collect source-backed architecture notes on popular agentic memory systems",
+                status: "in_progress",
+                startedAt: "2026-06-18T00:00:00.000Z",
+              },
+              {
+                id: "task-3",
+                title:
+                  "Audit current local Pi/Oppi/dotfiles memory system and prior session evidence",
+                status: "in_progress",
+                startedAt: "2026-06-18T00:00:00.000Z",
+              },
+            ],
+          }),
+        ),
+      ],
+    });
+
+    await startSession(pi, ctx);
+
+    const widgetFactory = ctx.ui.setWidget.mock.calls[0][1] as (
+      tui: unknown,
+    ) => { render: (width: number) => string[] };
+    const lines = widgetFactory({ requestRender() {} }).render(94);
+
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(94);
+    }
   });
 
   it("waits for compaction instead of blocking when context usage is high", async () => {

@@ -4,6 +4,7 @@ import type {
   ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { randomUUID } from "node:crypto";
 
 const CUSTOM_TYPE = "oppi-goal";
@@ -342,8 +343,12 @@ function taskState(
 }
 
 function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+  return truncateToWidth(value, Math.max(0, Math.floor(maxLength)), "…");
+}
+
+function fitLineToWidth(line: string, width: number): string {
+  const maxWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 80;
+  return truncateToWidth(line, maxWidth, "…");
 }
 
 function elapsedMsBetween(
@@ -667,7 +672,7 @@ function createGoalWidget(getGoal: () => SessionGoal | undefined): {
       }
       if (goal.tasks.length > 4)
         lines.push(`  … ${goal.tasks.length - 4} more tasks`);
-      return lines;
+      return lines.map((line) => fitLineToWidth(line, width));
     },
     renderNative() {
       const goal = getGoal();

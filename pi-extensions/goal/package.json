@@ -24,6 +24,7 @@
     "package.json"
   ],
   "dependencies": {
+    "@earendil-works/pi-tui": "0.79.8",
     "typebox": "1.1.28"
   },
   "peerDependencies": {
