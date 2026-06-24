@@ -431,8 +431,9 @@ enum FlatSegment: Sendable {
                     guard !rendered.characters.isEmpty else { return }
 
                     let prefix = itemHasPrefix ? continuationForItem(itemIndex) : markerForItem(itemIndex)
+                    let continuation = continuationForItem(itemIndex)
                     var line = prefix
-                    line.append(rendered)
+                    line.append(Self.prefixLines(afterFirstIn: rendered, with: continuation))
                     textLines.append(line)
                     itemHasPrefix = true
                     emittedAnyRenderable = true
@@ -575,6 +576,35 @@ enum FlatSegment: Sendable {
 
         flushPendingText()
         return BuildResult(segments: result, sourceLineRanges: resultLineRanges)
+    }
+
+    private static func prefixLines(
+        afterFirstIn attributed: AttributedString,
+        with prefix: AttributedString
+    ) -> AttributedString {
+        guard !prefix.characters.isEmpty, attributed.characters.contains("\n") else { return attributed }
+
+        var result = AttributedString()
+        var segmentStart = attributed.startIndex
+        var cursor = attributed.startIndex
+
+        while cursor < attributed.endIndex {
+            let character = attributed.characters[cursor]
+            let next = attributed.characters.index(after: cursor)
+            if character == "\n" {
+                result.append(AttributedString(attributed[segmentStart ..< next]))
+                if next < attributed.endIndex {
+                    result.append(prefix)
+                }
+                segmentStart = next
+            }
+            cursor = next
+        }
+
+        if segmentStart < attributed.endIndex {
+            result.append(AttributedString(attributed[segmentStart ..< attributed.endIndex]))
+        }
+        return result
     }
 
     // MARK: - Display Math Paragraph Detection
