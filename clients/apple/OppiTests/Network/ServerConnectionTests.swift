@@ -334,6 +334,47 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"]?.text == "running")
     }
 
+    @Test func routeExtensionSetStatusClearsEmptyText() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setStatus",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: "working-words",
+                    statusText: "shuffled · 18 phrases",
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setStatus",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: "working-words",
+                    statusText: " ",
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["working-words"] == nil)
+    }
+
     @Test func routeExtensionWorkingNotificationsStoreTimelineState() {
         let (conn, pipe) = makeTestConnection()
 

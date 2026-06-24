@@ -40,6 +40,27 @@ struct WorkingIndicatorTimelineRowContentTests {
         #expect(texts.contains("Working..."))
     }
 
+    @Test func reduceMotionChangeReappliesCustomIndicatorState() {
+        let view = makeView(
+            workingState: ExtensionWorkingState(
+                message: "Running checks",
+                indicator: ExtensionUIWorkingIndicator(frames: ["A", "B"], intervalMs: 120)
+            )
+        )
+        guard let indicatorLabel = firstVisibleLabel(withText: "A", in: view) else {
+            Issue.record("expected custom indicator label")
+            return
+        }
+
+        indicatorLabel.text = "B"
+        NotificationCenter.default.post(
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil
+        )
+
+        #expect(indicatorLabel.text == "A")
+    }
+
     private func makeView(workingState: ExtensionWorkingState?) -> UIView {
         let configuration = WorkingIndicatorTimelineRowConfiguration(
             modelId: nil,
@@ -58,5 +79,11 @@ struct WorkingIndicatorTimelineRowContentTests {
             .filter(timelineViewIsVisible)
             .map(timelineRenderedText)
             .filter { !$0.isEmpty }
+    }
+
+    private func firstVisibleLabel(withText text: String, in view: UIView) -> UILabel? {
+        timelineAllLabels(in: view)
+            .filter(timelineViewIsVisible)
+            .first { $0.text == text }
     }
 }

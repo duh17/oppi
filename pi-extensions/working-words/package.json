@@ -1,0 +1,30 @@
+{
+  "name": "oppi-working-words",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi extension fixture that projects randomized working phrases to terminal Pi and Oppi.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi"
+  ],
+  "files": [
+    "index.ts",
+    "README.md",
+    "package.json"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

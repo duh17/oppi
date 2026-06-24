@@ -444,6 +444,28 @@ If a future feature needs true per-client rendering, it must add an explicit cli
 | `renderCall` / `renderResult`      | timeline renderer output       | current mobile renderer / raw text         | current mobile renderer / raw text |
 | `registerMessageRenderer()`        | custom message text            | current mobile renderer / raw text         | raw custom message text            |
 
+### Working indicator and status rules
+
+`setWorkingIndicator`, `setWorkingMessage`, and `setStatus` are semantic extension UI state. Oppi projects them automatically and cheaply because the payload is data, not terminal frames.
+
+Example fixture shape:
+
+```ts
+ctx.ui.setWorkingIndicator({ frames: ["·", "•", "●", "•"], intervalMs: 120 });
+ctx.ui.setWorkingMessage("Checking files…");
+ctx.ui.setStatus("working-words", "shuffled · 18 phrases");
+```
+
+Rules:
+
+- iOS animates custom working frames locally from `frames + intervalMs`.
+- `frames: []` hides the working glyph; `undefined` restores the native spinner.
+- `setWorkingMessage()` updates the timeline working row while the session is busy.
+- `setStatus(key, text)` updates keyed composer-adjacent session chrome and persists until cleared.
+- Hosts strip terminal control sequences, cap frame/message/status sizes, coalesce duplicate payloads, and throttle high-frequency text updates.
+- iOS owns Dynamic Type, VoiceOver labels, Reduce Motion, color, spacing, and fallback.
+- Terminal-only fonts or private-use glyphs can fall back to the native spinner or plain text on iOS. Extensions that want exact terminal glyphs can branch on `ctx.mode === "tui"` and provide portable Unicode/text frames elsewhere.
+
 ## Mapping from Pi TUI components
 
 | Pi TUI component or pattern                       | Native block           | Apple design                                                           |

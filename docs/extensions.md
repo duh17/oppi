@@ -121,6 +121,26 @@ Build the extension as a normal Pi extension first. Then make the user-facing pa
 
 Terminal-first APIs such as `ctx.ui.custom()`, `setFooter`, `setHeader`, `setEditorComponent`, and raw terminal input remain terminal-owned unless the extension also provides a semantic native surface or a standard blocking prompt. Do not use those APIs for a decision the user must answer from the phone.
 
+### Working row and status projection
+
+Use `ctx.ui.setWorkingIndicator()`, `ctx.ui.setWorkingMessage()`, and `ctx.ui.setStatus()` for lightweight extension state that should work in terminal Pi and Oppi.
+
+```typescript
+ctx.ui.setWorkingIndicator({ frames: ["·", "•", "●", "•"], intervalMs: 120 });
+ctx.ui.setWorkingMessage("Checking files…");
+ctx.ui.setStatus("working-words", "shuffled · 18 phrases");
+```
+
+Oppi treats these calls as bounded data rendered by the app:
+
+- working indicators are `frames + intervalMs`; the iOS client animates frames locally
+- working messages appear in the timeline working row while the session is busy
+- status entries are keyed session state near the composer and persist until cleared
+- ANSI/control sequences are stripped and long frame/message/status text is capped
+- iOS owns layout, color, Dynamic Type, VoiceOver labels, and Reduce Motion behavior
+
+If an extension uses terminal-only glyphs, colors, or fonts, branch on `ctx.mode === "tui"` and provide plain Unicode or text frames for other modes. Arbitrary `ctx.ui.custom()` animation is terminal-owned and does not project to iPhone.
+
 ### Tool output that renders well
 
 Oppi reads the normal Pi tool result, then looks for structured `details` fields before falling back to generic text parsing.

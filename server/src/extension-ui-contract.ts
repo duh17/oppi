@@ -39,6 +39,12 @@ export const EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES = 32 * 1024;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS = 320;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES = 160;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_ACTIVITY_ROWS = 160;
+export const EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES = 24;
+export const EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS = 16;
+export const EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS = 80;
+export const EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS = 60_000;
+export const EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS = 160;
+export const EXTENSION_UI_STATUS_TEXT_MAX_CHARS = 160;
 export const EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY = "extension-native-ui:v1:text-fallback";
 export const EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY = "extension-native-ui:v1:prompt-native";
 export const EXTENSION_NATIVE_UI_SURFACE_NATIVE_CAPABILITY =
@@ -484,12 +490,24 @@ function invalidAskResponse(message: string): Error {
   return new Error(`Malformed ask response: ${message}`);
 }
 
+function limitDisplayText(value: string, maxChars: number | undefined): string {
+  if (maxChars === undefined) return value;
+  const chars = Array.from(value);
+  if (chars.length <= maxChars) return value;
+  return `${chars.slice(0, Math.max(0, maxChars - 1)).join("")}…`;
+}
+
 function sanitizeExtensionUIWidgetLines(value: string[] | undefined): string[] | undefined {
   return value?.map((line) => terminalLineVisibleText(line));
 }
 
-function sanitizeExtensionUIDisplayText(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : terminalLineVisibleText(value);
+function sanitizeExtensionUIDisplayText(
+  value: string | undefined,
+  maxChars?: number,
+): string | undefined {
+  return value === undefined
+    ? undefined
+    : limitDisplayText(terminalLineVisibleText(value), maxChars);
 }
 
 function sanitizeExtensionUIAskQuestions(
@@ -517,14 +535,23 @@ function normalizeExtensionUIWorkingIndicator(
     if (!Array.isArray(value.frames)) return undefined;
     indicator.frames = value.frames
       .filter((frame): frame is string => typeof frame === "string")
-      .map((frame) => terminalLineVisibleText(frame));
+      .slice(0, EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES)
+      .map((frame) =>
+        limitDisplayText(
+          terminalLineVisibleText(frame),
+          EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS,
+        ),
+      );
   }
 
   if (value.intervalMs !== undefined) {
     if (typeof value.intervalMs !== "number" || !Number.isFinite(value.intervalMs)) {
       return undefined;
     }
-    indicator.intervalMs = Math.max(0, Math.min(60_000, Math.round(value.intervalMs)));
+    indicator.intervalMs = Math.max(
+      EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS,
+      Math.min(EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS, Math.round(value.intervalMs)),
+    );
   }
 
   return indicator.frames === undefined ? undefined : indicator;
@@ -645,11 +672,15 @@ export function buildExtensionUINotificationMessage(
   const message: ServerMessage = {
     type: "extension_ui_notification",
     method: req.method,
-    message: sanitizeExtensionUIDisplayText(req.message),
+    message: sanitizeExtensionUIDisplayText(
+      req.message,
+      req.method === "setWorkingMessage" ? EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS : undefined,
+    ),
     notifyType: normalizeExtensionUINotifyType(req.notifyType),
     statusKey: req.statusKey,
     statusText: sanitizeExtensionUIDisplayText(
       Object.hasOwn(overrides, "statusText") ? overrides.statusText : req.statusText,
+      req.method === "setStatus" ? EXTENSION_UI_STATUS_TEXT_MAX_CHARS : undefined,
     ),
     title: sanitizeExtensionUIDisplayText(req.title),
     hiddenThinkingLabel: sanitizeExtensionUIDisplayText(req.hiddenThinkingLabel),
