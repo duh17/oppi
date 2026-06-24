@@ -178,7 +178,7 @@ targets:
           mkdir -p "$DERIVED_FILE_DIR"
           STAMP_FILE="$DERIVED_FILE_DIR/architecture-boundaries.stamp"
           CHECK_SCRIPT="$SRCROOT/../../server/scripts/check-architecture-boundaries.ts"
-          ARCH_RULES="$SRCROOT/../../.internal/ARCHITECTURE.md"
+          ARCH_RULES="$SRCROOT/../../docs/architecture-client.md"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
             "$SRCROOT/Shared"
@@ -212,7 +212,7 @@ targets:
             bun "$CHECK_SCRIPT" --scope ios --format xcode
             touch "$STAMP_FILE"
           else
-            echo "error: Node.js is required for architecture boundary checks (.internal/ARCHITECTURE.md#ios-layers)"
+            echo "error: Node.js is required for architecture boundary checks (docs/architecture-client.md#client-boundary-rules-current-code)"
             exit 1
           fi
         name: ArchitectureBoundaries
