@@ -11,10 +11,7 @@ import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
-import {
-  canResumeStoppedMirrorAsOppi,
-  promoteStoppedMirrorToOppi,
-} from "./mirror-session-resume.js";
+import { SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
@@ -173,8 +170,16 @@ export function startServerPing(
 export class BoundSessionStreamMux {
   private connectionSeq = 0;
   private liveSessionConnections = new Map<string, Set<(msg: ServerMessage) => void>>();
+  private readonly lifecycle: SessionLifecycleService;
 
-  constructor(private ctx: StreamContext) {}
+  constructor(private ctx: StreamContext) {
+    this.lifecycle = new SessionLifecycleService({
+      storage: ctx.storage,
+      sessions: ctx.sessions,
+      sessionRuntimes: ctx.sessionRuntimes,
+      ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+    });
+  }
 
   private nextConnId(): string {
     this.connectionSeq += 1;
@@ -326,30 +331,12 @@ export class BoundSessionStreamMux {
     send(streamConnectedMessage(this.ctx, owner));
 
     try {
-      const isStoredMirrorSession = session.runtime === "pi-tui";
-      const mirrorConnected = isStoredMirrorSession
-        ? this.ctx.sessionRuntimes.isSessionConnected(sessionId)
-        : false;
-      const shouldResumeMirrorAsOppi = canResumeStoppedMirrorAsOppi(session, mirrorConnected);
-      if (shouldResumeMirrorAsOppi) {
-        promoteStoppedMirrorToOppi(session);
-        this.ctx.storage.saveSession(session);
-      }
-      const isMirrorSession = isStoredMirrorSession && !shouldResumeMirrorAsOppi;
-
-      let hydratedSession = this.ctx.ensureSessionContextWindow(session);
-      const hadActiveSession = this.ctx.sessionRuntimes.isSessionLive(sessionId);
-
-      if (isMirrorSession) {
-        hydratedSession = this.ctx.ensureSessionContextWindow(
-          this.ctx.sessionRuntimes.getSessionSnapshot(sessionId) ?? session,
-        );
-      } else {
-        const workspace = this.ctx.resolveWorkspaceForSession(session);
-        const started = await this.ctx.sessions.startSession(sessionId, workspace);
-        if (connectionClosed || ws.readyState !== WebSocket.OPEN) return;
-        hydratedSession = this.ctx.ensureSessionContextWindow(started);
-      }
+      const openResult = await this.lifecycle.openFocusedSession({
+        session,
+        workspace: this.ctx.resolveWorkspaceForSession(session),
+      });
+      if (connectionClosed || ws.readyState !== WebSocket.OPEN) return;
+      const hydratedSession = openResult.session;
 
       sendForSession({
         type: "connected",
@@ -390,7 +377,7 @@ export class BoundSessionStreamMux {
         path: "bound_session_stream",
         catchup_requested: "false",
         catchup_complete: "true",
-        started_session: isMirrorSession ? "false" : hadActiveSession ? "false" : "true",
+        started_session: openResult.startedSession ? "true" : "false",
         pending_permissions: countBucketForTag(0),
         pending_ui_requests: countBucketForTag(pendingUIDialogCount),
       });
