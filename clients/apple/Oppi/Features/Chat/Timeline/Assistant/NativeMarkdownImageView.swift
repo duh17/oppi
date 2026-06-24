@@ -36,7 +36,6 @@ final class NativeMarkdownImageView: UIView {
     /// raster-image-only messages.
     private var svgWebView: ReviewCommentWKWebView?
     private var svgTapOverlay: UIView?
-    private let svgNavigationBlocker = ImagePreviewNavigationBlocker()
     private let svgHTMLTracker = HTMLContentTracker()
     private var svgPreviewData: Data?
 
@@ -194,6 +193,8 @@ final class NativeMarkdownImageView: UIView {
     ) {
         guard url != currentURL else { return }
         currentURL = url
+        svgPreviewData = nil
+        svgHTMLTracker.resetLoadedContent()
 
         loadTask?.cancel()
 
@@ -479,11 +480,7 @@ final class NativeMarkdownImageView: UIView {
     /// Render SVG data in a WKWebView. Called when `UIImage(data:)` fails
     /// but the content is detected as SVG.
     private func showSVGLoadedState(data: Data) {
-        spinner.stopAnimating()
-        altLabel.isHidden = true
-        errorLabel.isHidden = true
-        hideRemotePrompt()
-        imageView.isHidden = true
+        showSVGLoadingWebState()
 
         let aspectRatio = MediaMimeType.extractSVGViewBoxAspectRatio(data)
         let displayWidth = bounds.width > 0
@@ -505,13 +502,10 @@ final class NativeMarkdownImageView: UIView {
 
         svgPreviewData = data
         let webView = ensureSVGWebView()
-        webView.isHidden = false
-        ensureSVGTapOverlay().isHidden = false
-        if let html = svgHTMLTracker.setContent(makeSVGHTML(data: data)) {
-            webView.loadHTMLString(html, baseURL: nil)
-        }
+        webView.isHidden = true
+        ensureSVGTapOverlay().isHidden = true
+        queueSVGHTML(makeSVGHTML(data: data), in: webView)
 
-        backgroundColor = .clear
         invalidateIntrinsicContentSize()
         superview?.setNeedsLayout()
         invalidateTimelineLayout()
@@ -557,11 +551,36 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func flushSVGIfReady() {
-        guard window != nil, bounds.width > 0, bounds.height > 0,
-              let webView = svgWebView else { return }
+        guard let webView = svgWebView else { return }
+        guard canLoadSVGHTML(in: webView) else {
+            svgHTMLTracker.markNotReady()
+            return
+        }
         if let html = svgHTMLTracker.markReady() {
             webView.loadHTMLString(html, baseURL: nil)
         }
+    }
+
+    private func queueSVGHTML(_ html: String, in webView: ReviewCommentWKWebView) {
+        let canLoad = canLoadSVGHTML(in: webView)
+        if !canLoad {
+            svgHTMLTracker.markNotReady()
+        }
+        if let html = svgHTMLTracker.setContent(html) {
+            webView.loadHTMLString(html, baseURL: nil)
+            return
+        }
+        if canLoad, let html = svgHTMLTracker.markReady() {
+            webView.loadHTMLString(html, baseURL: nil)
+        }
+    }
+
+    private func canLoadSVGHTML(in webView: ReviewCommentWKWebView) -> Bool {
+        window != nil
+            && bounds.width > 0
+            && bounds.height > 0
+            && webView.bounds.width > 0
+            && webView.bounds.height > 0
     }
 
     private func ensureSVGTapOverlay() -> UIView {
@@ -601,7 +620,7 @@ final class NativeMarkdownImageView: UIView {
         webView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.backgroundColor = .clear
-        webView.navigationDelegate = svgNavigationBlocker
+        webView.navigationDelegate = self
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleSVGTap))
         tapGesture.cancelsTouchesInView = false
         webView.addGestureRecognizer(tapGesture)
@@ -620,6 +639,43 @@ final class NativeMarkdownImageView: UIView {
 
         svgWebView = webView
         return webView
+    }
+
+    private func showSVGLoadingWebState() {
+        let palette = ThemeRuntimeState.currentPalette()
+        backgroundColor = UIColor(palette.bgHighlight)
+        spinner.color = UIColor(palette.comment)
+        spinner.startAnimating()
+        altLabel.isHidden = true
+        errorLabel.isHidden = true
+        imageView.isHidden = true
+        hideRemotePrompt()
+        svgWebView?.isHidden = true
+        svgTapOverlay?.isHidden = true
+        isHidden = false
+    }
+
+    private func finishSVGWebLoad() {
+        guard svgPreviewData != nil else { return }
+        spinner.stopAnimating()
+        altLabel.isHidden = true
+        errorLabel.isHidden = true
+        hideRemotePrompt()
+        imageView.isHidden = true
+        svgWebView?.isHidden = false
+        svgTapOverlay?.isHidden = false
+        backgroundColor = .clear
+
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
+        invalidateTimelineLayout()
+    }
+
+    private func recoverSVGWebLoad() {
+        guard svgPreviewData != nil else { return }
+        showSVGLoadingWebState()
+        svgHTMLTracker.markProcessTerminated()
+        flushSVGIfReady()
     }
 
     private func showErrorState(alt: String) {
@@ -682,6 +738,35 @@ final class NativeMarkdownImageView: UIView {
             responder = current.next
         }
         return nil
+    }
+}
+
+extension NativeMarkdownImageView: WKNavigationDelegate {
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finishSVGWebLoad()
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        recoverSVGWebLoad()
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        recoverSVGWebLoad()
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        recoverSVGWebLoad()
     }
 }
 
