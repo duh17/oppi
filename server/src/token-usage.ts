@@ -1,5 +1,6 @@
-import { calculateCost, getModel, type KnownProvider, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, type KnownProvider, type Usage } from "@earendil-works/pi-ai";
 import type { PiMessageUsage } from "./pi-events.js";
+import { getBuiltinCostModel } from "./pi-model-auth-service.js";
 
 export interface NormalizedUsage {
   input: number;
@@ -131,7 +132,7 @@ export function estimateUsageCostFromModel(
   const candidateProviders = [provider, ...(COST_PROVIDER_FALLBACKS[provider] ?? [])];
 
   for (const candidateProvider of candidateProviders) {
-    const candidate = getModel(candidateProvider, rawModelId as never);
+    const candidate = getBuiltinCostModel(candidateProvider, rawModelId);
     if (!candidate) {
       continue;
     }
