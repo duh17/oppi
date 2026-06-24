@@ -11,6 +11,12 @@ import {
   EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES,
   EXTENSION_NATIVE_UI_SERVER_CAPABILITIES,
   EXTENSION_UI_FIRE_AND_FORGET_METHODS,
+  EXTENSION_UI_STATUS_TEXT_MAX_CHARS,
+  EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES,
+  EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS,
+  EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS,
+  EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS,
+  EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS,
   extensionUIActivityListBlock,
   extensionUINativeSurface,
   extensionUITextBlock,
@@ -582,6 +588,73 @@ describe("extension UI contract", () => {
       method: "setToolsExpanded",
       toolsExpanded: true,
     });
+  });
+
+  it("bounds working-row and status payloads before native rendering", () => {
+    const longFrame = "x".repeat(EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS + 8);
+    const frames = Array.from(
+      { length: EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES + 8 },
+      (_, index) => `${longFrame}${index}`,
+    );
+
+    const boundedLow = buildExtensionUINotificationMessage({
+      id: "working-indicator-bounds-1",
+      method: "setWorkingIndicator",
+      workingIndicator: {
+        frames,
+        intervalMs: 1,
+      },
+    });
+    expect(boundedLow).toMatchObject({
+      workingIndicator: {
+        frames: expect.arrayContaining([
+          `${"x".repeat(EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS - 1)}…`,
+        ]),
+        intervalMs: EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS,
+      },
+    });
+    if (boundedLow.type !== "extension_ui_notification") {
+      throw new Error("expected extension UI notification");
+    }
+    expect(boundedLow.workingIndicator?.frames).toHaveLength(
+      EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES,
+    );
+
+    expect(
+      buildExtensionUINotificationMessage({
+        id: "working-indicator-bounds-3",
+        method: "setWorkingIndicator",
+        workingIndicator: {
+          frames: ["●"],
+          intervalMs: EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS + 10_000,
+        },
+      }),
+    ).toMatchObject({
+      workingIndicator: {
+        intervalMs: EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS,
+      },
+    });
+
+    const boundedWorkingMessage = buildExtensionUINotificationMessage({
+      id: "working-message-bounds-1",
+      method: "setWorkingMessage",
+      message: "w".repeat(EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS + 20),
+    });
+    if (boundedWorkingMessage.type !== "extension_ui_notification") {
+      throw new Error("expected extension UI notification");
+    }
+    expect(boundedWorkingMessage.message).toHaveLength(EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS);
+
+    const boundedStatus = buildExtensionUINotificationMessage({
+      id: "status-bounds-1",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "s".repeat(EXTENSION_UI_STATUS_TEXT_MAX_CHARS + 20),
+    });
+    if (boundedStatus.type !== "extension_ui_notification") {
+      throw new Error("expected extension UI notification");
+    }
+    expect(boundedStatus.statusText).toHaveLength(EXTENSION_UI_STATUS_TEXT_MAX_CHARS);
   });
 
   it("normalizes notification metadata to Pi-shaped values", () => {

@@ -7,6 +7,12 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import {
+  EXTENSION_UI_STATUS_TEXT_MAX_CHARS,
+  EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS,
+  EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES,
+  EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS,
+} from "../src/extension-ui-contract.js";
 import { EventRing } from "../src/event-ring.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
@@ -518,6 +524,353 @@ describe("SessionManager extension UI", () => {
         statusText: "connected",
       }),
     ]);
+  });
+
+  it("throttles high-frequency working messages while retaining the latest replay state", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-1",
+      method: "setWorkingMessage",
+      message: "Indexing files",
+    });
+    vi.setSystemTime(1_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-2",
+      method: "setWorkingMessage",
+      message: "Checking tests",
+    });
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" && event.method === "setWorkingMessage",
+      ),
+    ).toHaveLength(1);
+    expect(manager.getPendingUIRequestMessages("s1")).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWorkingMessage",
+        message: "Checking tests",
+      }),
+    );
+
+    vi.setSystemTime(1_251);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-3",
+      method: "setWorkingMessage",
+      message: "Reading diffs",
+    });
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" && event.method === "setWorkingMessage",
+      ),
+    ).toHaveLength(2);
+
+    vi.setSystemTime(1_300);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-clear",
+      method: "setWorkingMessage",
+      message: " ",
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWorkingMessage",
+      message: " ",
+    });
+  });
+
+  it("throttles high-frequency working messages and flushes the latest value", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-1",
+      method: "setWorkingMessage",
+      message: "Indexing files",
+    });
+    vi.setSystemTime(1_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-2",
+      method: "setWorkingMessage",
+      message: "Checking tests",
+    });
+
+    const workingMessageEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" && event.method === "setWorkingMessage",
+      );
+
+    expect(workingMessageEvents()).toHaveLength(1);
+    vi.advanceTimersByTime(150);
+    expect(workingMessageEvents()).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWorkingMessage",
+      message: "Checking tests",
+    });
+  });
+
+  it("throttles high-frequency status updates by key and flushes the latest value", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 1",
+    });
+    vi.setSystemTime(2_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 2",
+    });
+
+    const statusEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" &&
+          event.method === "setStatus" &&
+          event.statusKey === "working-words",
+      );
+
+    expect(statusEvents()).toHaveLength(1);
+    expect(manager.getPendingUIRequestMessages("s1")).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "working-words",
+        statusText: "phrase 2",
+      }),
+    );
+
+    vi.advanceTimersByTime(149);
+    expect(statusEvents()).toHaveLength(1);
+
+    vi.advanceTimersByTime(1);
+    expect(statusEvents()).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 2",
+    });
+  });
+
+  it("cancels a throttled status update when the value returns to the last emitted state", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 1",
+    });
+    vi.setSystemTime(2_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 2",
+    });
+    vi.setSystemTime(2_150);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-3",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 1",
+    });
+
+    const statusEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" &&
+          event.method === "setStatus" &&
+          event.statusKey === "working-words",
+      );
+
+    expect(statusEvents()).toHaveLength(1);
+    vi.advanceTimersByTime(250);
+    expect(statusEvents()).toHaveLength(1);
+    expect(manager.getPendingUIRequestMessages("s1")).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setStatus",
+        statusKey: "working-words",
+        statusText: "phrase 1",
+      }),
+    );
+  });
+
+  it("does not replay a throttled status update after a clear", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 1",
+    });
+    vi.setSystemTime(2_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "phrase 2",
+    });
+    vi.setSystemTime(2_150);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-clear",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: " ",
+    });
+
+    const statusEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" &&
+          event.method === "setStatus" &&
+          event.statusKey === "working-words",
+      );
+
+    expect(statusEvents()).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: " ",
+    });
+
+    vi.advanceTimersByTime(250);
+    expect(statusEvents()).toHaveLength(2);
+  });
+
+  it("stores bounded persistent extension UI payloads", () => {
+    const { manager, active } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-message-large",
+      method: "setWorkingMessage",
+      message: "w".repeat(EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS + 20),
+    });
+
+    expect(active.persistentExtensionUINotifications.get("working:message")?.message).toHaveLength(
+      EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS,
+    );
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "status-large",
+      method: "setStatus",
+      statusKey: "working-words",
+      statusText: "s".repeat(EXTENSION_UI_STATUS_TEXT_MAX_CHARS + 20),
+    });
+
+    expect(
+      active.persistentExtensionUINotifications.get("status:working-words")?.statusText,
+    ).toHaveLength(EXTENSION_UI_STATUS_TEXT_MAX_CHARS);
+
+    const longFrame = "x".repeat(EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS + 20);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-indicator-large",
+      method: "setWorkingIndicator",
+      workingIndicator: {
+        frames: Array.from(
+          { length: EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES + 10 },
+          (_, index) => `${longFrame}${index}`,
+        ),
+        intervalMs: 1,
+      },
+    });
+
+    const storedIndicator = active.persistentExtensionUINotifications.get("working:indicator")
+      ?.workingIndicator as { frames?: string[] } | undefined;
+    expect(storedIndicator?.frames).toHaveLength(EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES);
+    expect(storedIndicator?.frames?.[0]).toHaveLength(
+      EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS,
+    );
+  });
+
+  it("throttles high-frequency working indicators without dropping hidden state", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(3_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-indicator-1",
+      method: "setWorkingIndicator",
+      workingIndicator: { frames: ["·", "•"], intervalMs: 120 },
+    });
+    vi.setSystemTime(3_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-indicator-2",
+      method: "setWorkingIndicator",
+      workingIndicator: { frames: ["◐", "◓"], intervalMs: 90 },
+    });
+
+    const indicatorEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" && event.method === "setWorkingIndicator",
+      );
+
+    expect(indicatorEvents()).toHaveLength(1);
+    expect(manager.getPendingUIRequestMessages("s1")).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWorkingIndicator",
+        workingIndicator: { frames: ["◐", "◓"], intervalMs: 90 },
+      }),
+    );
+
+    vi.setSystemTime(3_150);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "working-indicator-hidden",
+      method: "setWorkingIndicator",
+      workingIndicator: { frames: [], intervalMs: 120 },
+    });
+
+    expect(indicatorEvents()).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWorkingIndicator",
+      workingIndicator: { frames: [], intervalMs: 120 },
+    });
   });
 
   it("tracks dialog methods as pending UI requests", () => {

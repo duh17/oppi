@@ -20,11 +20,25 @@ export interface PendingAskState {
   initiatedAt: number;
 }
 
+interface PendingExtensionUINotificationBroadcast {
+  fingerprint: string;
+  message: ServerMessage;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface ExtensionUINotificationBroadcastState {
+  emittedAt: number;
+  fingerprint: string;
+  pending?: PendingExtensionUINotificationBroadcast;
+}
+
 export interface ExtensionUIState {
   session: Pick<Session, "id">;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
   /** Last persistent extension UI surfaces/status/title, replayed to late focused clients. */
   persistentExtensionUINotifications?: Map<string, ExtensionUIRequest>;
+  /** Last high-frequency extension UI notification delivered to focused clients. */
+  extensionUINotificationBroadcasts?: Map<string, ExtensionUINotificationBroadcastState>;
   /** Pending first-class ask request awaiting a user response. */
   pendingAsk?: PendingAskState;
 }
@@ -117,6 +131,8 @@ function notificationReplayKey(req: ExtensionUIRequest): string | undefined {
       return undefined;
   }
 }
+
+const HIGH_FREQUENCY_EXTENSION_UI_NOTIFICATION_THROTTLE_MS = 250;
 
 function widgetLinesHaveContent(lines: string[] | undefined): boolean {
   return lines?.some((line) => line.replace(/[\r\n]/g, "").length > 0) ?? false;
@@ -251,6 +267,140 @@ export function drainPersistentExtensionUIClearMessages(
   return messages;
 }
 
+function notificationBroadcastThrottleKey(req: ExtensionUIRequest): string | undefined {
+  switch (req.method) {
+    case "setStatus":
+      return req.statusKey ? `status:${req.statusKey}` : undefined;
+    case "setWorkingIndicator":
+      return "working:indicator";
+    case "setWorkingMessage":
+      return "working:message";
+    default:
+      return undefined;
+  }
+}
+
+function stableNotificationFingerprint(message: ServerMessage): string {
+  return JSON.stringify(message);
+}
+
+function cancelPendingExtensionUINotificationBroadcast(
+  state: ExtensionUINotificationBroadcastState | undefined,
+): void {
+  if (!state?.pending) return;
+  clearTimeout(state.pending.timer);
+  state.pending = undefined;
+}
+
+function clearExtensionUINotificationBroadcasts(
+  store: Map<string, ExtensionUINotificationBroadcastState> | undefined,
+): void {
+  for (const state of store?.values() ?? []) {
+    cancelPendingExtensionUINotificationBroadcast(state);
+  }
+  store?.clear();
+}
+
+function normalizedNotificationRequestFromMessage(
+  req: ExtensionUIRequest,
+  message: ServerMessage,
+): ExtensionUIRequest {
+  if (message.type !== "extension_ui_notification") return req;
+  return {
+    type: "extension_ui_request",
+    id: req.id,
+    method: message.method,
+    message: message.message,
+    notifyType: message.notifyType,
+    statusKey: message.statusKey,
+    statusText: message.statusText,
+    title: message.title,
+    text: message.text,
+    widgetKey: message.widgetKey,
+    widgetLines: message.widgetLines,
+    widgetPlacement: message.widgetPlacement,
+    extensionScopeId: message.extensionScopeId,
+    extensionDisplayName: message.extensionDisplayName,
+    workingIndicator: message.workingIndicator,
+    workingVisible: message.workingVisible,
+    hiddenThinkingLabel: message.hiddenThinkingLabel,
+    toolsExpanded: message.toolsExpanded,
+    nativeSurface: message.nativeSurface,
+  };
+}
+
+function isImmediateExtensionUINotification(req: ExtensionUIRequest): boolean {
+  if (req.method !== "setWorkingIndicator") return false;
+  const indicator = req.workingIndicator;
+  if (typeof indicator !== "object" || indicator === null || Array.isArray(indicator)) return false;
+  const frames = (indicator as Record<string, unknown>).frames;
+  return Array.isArray(frames) && frames.length === 0;
+}
+
+function broadcastExtensionUINotification(
+  active: ExtensionUIState,
+  req: ExtensionUIRequest,
+  message: ServerMessage,
+  deps: {
+    broadcast: (message: ServerMessage) => void;
+    now?: () => number;
+  },
+): void {
+  const key = notificationBroadcastThrottleKey(req);
+  if (!key) {
+    deps.broadcast(message);
+    return;
+  }
+
+  const store = (active.extensionUINotificationBroadcasts ??= new Map());
+  const previous = store.get(key);
+  if (!hasPersistentNotificationContent(req)) {
+    cancelPendingExtensionUINotificationBroadcast(previous);
+    store.delete(key);
+    deps.broadcast(message);
+    return;
+  }
+
+  const now = deps.now?.() ?? Date.now();
+  const fingerprint = stableNotificationFingerprint(message);
+  if (previous?.fingerprint === fingerprint) {
+    cancelPendingExtensionUINotificationBroadcast(previous);
+    return;
+  }
+  if (previous?.pending?.fingerprint === fingerprint) {
+    return;
+  }
+
+  if (
+    !isImmediateExtensionUINotification(req) &&
+    previous &&
+    now - previous.emittedAt < HIGH_FREQUENCY_EXTENSION_UI_NOTIFICATION_THROTTLE_MS
+  ) {
+    const delayMs = Math.max(
+      0,
+      HIGH_FREQUENCY_EXTENSION_UI_NOTIFICATION_THROTTLE_MS - (now - previous.emittedAt),
+    );
+    cancelPendingExtensionUINotificationBroadcast(previous);
+    previous.pending = {
+      fingerprint,
+      message,
+      timer: setTimeout(() => {
+        const pending = previous.pending;
+        if (!pending) return;
+        previous.pending = undefined;
+        previous.emittedAt = deps.now?.() ?? Date.now();
+        previous.fingerprint = pending.fingerprint;
+        deps.broadcast(pending.message);
+      }, delayMs),
+    };
+    return;
+  }
+
+  cancelPendingExtensionUINotificationBroadcast(previous);
+  store.set(key, { emittedAt: now, fingerprint });
+  deps.broadcast(message);
+}
+
 export function handleExtensionUIRequest(
   active: ExtensionUIState,
   req: ExtensionUIRequest,
@@ -260,8 +410,10 @@ export function handleExtensionUIRequest(
   },
 ): void {
   if (isExtensionUIFireAndForgetMethod(req.method)) {
-    updatePersistentExtensionUINotifications(active, req);
-    deps.broadcast(buildExtensionUINotificationMessage(req));
+    const message = buildExtensionUINotificationMessage(req);
+    const normalizedReq = normalizedNotificationRequestFromMessage(req, message);
+    updatePersistentExtensionUINotifications(active, normalizedReq);
+    broadcastExtensionUINotification(active, normalizedReq, message, deps);
     return;
   }
 
@@ -353,11 +505,15 @@ export function settleAllExtensionUIRequests(
 export function clearExtensionUIState(
   active: Pick<
     ExtensionUIState,
-    "pendingUIRequests" | "persistentExtensionUINotifications" | "pendingAsk"
+    | "pendingUIRequests"
+    | "persistentExtensionUINotifications"
+    | "extensionUINotificationBroadcasts"
+    | "pendingAsk"
   >,
 ): void {
   active.pendingUIRequests.clear();
   active.persistentExtensionUINotifications?.clear();
+  clearExtensionUINotificationBroadcasts(active.extensionUINotificationBroadcasts);
   active.pendingAsk = undefined;
 }
 
@@ -375,6 +531,7 @@ export function drainExtensionUITeardownMessages(
     broadcastSettled: (message) => messages.push(message),
   });
   messages.push(...drainPersistentExtensionUIClearMessages(active));
+  clearExtensionUINotificationBroadcasts(active.extensionUINotificationBroadcasts);
   return messages;
 }
 

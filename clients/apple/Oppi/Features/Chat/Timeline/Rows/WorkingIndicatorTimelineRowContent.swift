@@ -17,6 +17,8 @@ struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
 /// Supports braille dots and Game of Life spinner styles via Settings.
 final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private static let defaultCustomInterval: TimeInterval = 0.08
+    private static let minCustomInterval: TimeInterval = 0.08
+    private static let maxCustomInterval: TimeInterval = 60
 
     private let stackView = UIStackView()
     private let indicatorContainer = UIView()
@@ -34,6 +36,12 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     init(configuration: WorkingIndicatorTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         super.init(frame: .zero)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(reduceMotionStatusDidChange),
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil
+        )
         setupViews()
         apply(configuration: configuration)
     }
@@ -44,6 +52,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         stopCustomAnimation()
     }
 
@@ -128,8 +137,9 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
 
         let palette = ThemeRuntimeState.currentPalette()
         let providerColor = UIColor(ProviderColor.color(for: configuration.modelId, palette: palette))
-        let customFrames = configuration.workingState?.indicator?.frames
-        let hidesIndicator = customFrames?.isEmpty == true
+        let rawCustomFrames = configuration.workingState?.indicator?.frames
+        let customFrames = Self.displayableCustomFrames(rawCustomFrames)
+        let hidesIndicator = rawCustomFrames?.isEmpty == true
         let showsCustomIndicator = customFrames?.isEmpty == false
 
         let style = SpinnerStyle.current
@@ -168,7 +178,38 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         startCustomAnimationIfNeeded()
     }
 
+    private static func displayableCustomFrames(_ frames: [String]?) -> [String]? {
+        guard let frames else { return nil }
+        guard !frames.isEmpty else { return [] }
+        if frames.allSatisfy(containsOnlyPrivateUseScalarsOrWhitespace) {
+            return nil
+        }
+        return frames
+    }
+
+    private static func containsOnlyPrivateUseScalarsOrWhitespace(_ frame: String) -> Bool {
+        let scalars = frame.unicodeScalars.filter {
+            !CharacterSet.whitespacesAndNewlines.contains($0)
+        }
+        guard !scalars.isEmpty else { return false }
+        return scalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 0xE000...0xF8FF,
+                 0xF0000...0xFFFFD,
+                 0x100000...0x10FFFD:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    @objc private func reduceMotionStatusDidChange() {
+        apply(configuration: currentConfiguration)
+    }
+
     private func startCustomAnimationIfNeeded() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
         guard window != nil, customTimer == nil, customFrames.count > 1 else { return }
         customTimer = Timer.scheduledTimer(withTimeInterval: customInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -184,6 +225,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
 
     private static func interval(from intervalMs: Int?) -> TimeInterval {
         guard let intervalMs, intervalMs > 0 else { return defaultCustomInterval }
-        return TimeInterval(intervalMs) / 1_000
+        let seconds = TimeInterval(intervalMs) / 1_000
+        return min(max(seconds, minCustomInterval), maxCustomInterval)
     }
 }

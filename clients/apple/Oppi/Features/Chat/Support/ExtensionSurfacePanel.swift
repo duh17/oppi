@@ -1443,11 +1443,54 @@ private struct ExtensionSurfaceMetadataCard: View {
     let title: String?
     let statuses: [(id: String, key: String, text: String)]
 
+    private var trimmedTitle: String? {
+        title?.trimmingCharacters(in: .whitespacesAndNewlines).trimmedNonEmpty
+    }
+
+    private var usesCompactStatusStrip: Bool {
+        trimmedTitle == nil && statuses.count <= 3
+    }
+
     var body: some View {
+        Group {
+            if usesCompactStatusStrip {
+                compactStatusStrip
+            } else {
+                expandedMetadataRows
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .extensionGlassPanel(cornerRadius: 18)
+    }
+
+    private var compactStatusStrip: some View {
+        HStack(spacing: 8) {
+            ForEach(statuses, id: \.id) { status in
+                HStack(spacing: 5) {
+                    Text(status.key)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                    Text(status.text)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .extensionSubtleInset(cornerRadius: 11)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(status.key), \(status.text)")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var expandedMetadataRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let title,
-               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(title)
+            if let trimmedTitle {
+                Text(trimmedTitle)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeComment)
             }
@@ -1462,11 +1505,10 @@ private struct ExtensionSurfaceMetadataCard: View {
                         .foregroundStyle(.themeFg)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(status.key), \(status.text)")
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .extensionGlassPanel(cornerRadius: 18)
     }
 }
 
