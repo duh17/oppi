@@ -1,72 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, realpathSync } from "node:fs";
-import { access, readFile, realpath, rm, stat, unlink } from "node:fs/promises";
-import { resolve } from "node:path";
-import { homedir } from "node:os";
-
-import { isPathWithinRoot } from "../git-utils.js";
-import {
-  readSessionTrace,
-  readSessionTraceByUuid,
-  readSessionTraceFromFile,
-  readSessionTraceFromFiles,
-  findToolOutput,
-  type TraceViewMode,
-} from "../trace.js";
-import {
-  collectFileMutations,
-  reconstructBaselineFromCurrent,
-  computeDiffLines,
-  computeLineDiffStatsFromLines,
-} from "../diff-core.js";
-import { buildDiffHunks } from "../workspace-review-diff.js";
-import {
-  deleteCatalogedLocalSessionPaths,
-  discoverLocalSessions,
-  invalidateLocalSessionsCache,
-  listCatalogedLocalSessions,
-  validateLocalSessionPath,
-  validateCwdAlignment,
-  type LocalSessionCatalogSnapshot,
-} from "../local-sessions.js";
-import {
-  promoteStoppedMirrorToOppi,
-  canResumeStoppedMirrorAsOppi,
-} from "../mirror-session-resume.js";
+import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
+import { SessionListService, type SessionStatusFilter } from "../session-list-service.js";
+import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
 import {
   type ChatAttachmentRef,
   type ClientMessage,
-  type LocalSession,
   type ServerMessage,
   type Session,
-  type SessionSummary,
-  type Workspace,
 } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
-import { resolveSdkSessionCwd } from "../sdk-backend.js";
-import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
-import { resolveInitialChatModel } from "../session-model-selection.js";
-import { buildSessionSummary } from "../session-summary.js";
-import {
-  deleteSessionAttachments,
-  getSessionAttachment,
-  streamSessionAttachment,
-} from "../session-attachments.js";
+import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
 import { createSessionFileHandlers } from "./session-files.js";
 import { decodeWorkspaceRoutePath } from "./workspace-files.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import type { WorkspaceStoppedTimeBucketSnapshot } from "../storage/session-dao.js";
-import {
-  pendingAskSnapshots as collectPendingAskSnapshots,
-  pendingBlockingUIRequestCount,
-  type PendingUIRequestProvider,
-} from "../session-attention.js";
+import { pendingAskSnapshots as collectPendingAskSnapshots } from "../session-attention.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 
-const LOCAL_SESSION_META_READ_BYTES = 16_384;
-const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
-const LOCAL_SESSION_CATALOG_MAX_AGE_MS = 60_000;
 const CREATE_SESSION_THINKING_LEVELS = new Set([
   "off",
   "minimal",
@@ -78,37 +28,25 @@ const CREATE_SESSION_THINKING_LEVELS = new Set([
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
-function compareWorkspaceListSessions(a: Session, b: Session): number {
-  if (b.lastActivity !== a.lastActivity) {
-    return b.lastActivity - a.lastActivity;
-  }
-  return a.id.localeCompare(b.id);
-}
-
-function sessionMatchesWorkspaceListFilters(
-  session: Session,
-  filters: {
-    cutoffMs?: number;
-    untilMs?: number;
-  },
-): boolean {
-  if (filters.cutoffMs !== undefined && session.status === "stopped") {
-    if (session.lastActivity < filters.cutoffMs) {
-      return false;
-    }
-  }
-
-  if (filters.untilMs !== undefined && session.status === "stopped") {
-    if (session.lastActivity >= filters.untilMs) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  const sessionFileHandlers = createSessionFileHandlers(ctx, helpers);
+  const lifecycle = new SessionLifecycleService({
+    storage: ctx.storage,
+    sessions: ctx.sessions,
+    sessionRuntimes: ctx.sessionRuntimes,
+    ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+    deleteSearchIndexSession: (sessionId) => ctx.searchIndex?.deleteSession(sessionId),
+  });
+  const listService = new SessionListService({
+    storage: ctx.storage,
+    sessionRuntimes: ctx.sessionRuntimes,
+    ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+  });
+  const traceService = new SessionTraceService({
+    storage: ctx.storage,
+    sessionRuntimes: ctx.sessionRuntimes,
+    ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+  });
+  const sessionFileHandlers = createSessionFileHandlers(ctx, helpers, traceService);
   const commandHandler = new WsMessageHandler({
     sessions: ctx.sessionRuntimes,
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
@@ -147,109 +85,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
-  function mergeActiveWorkspaceSessions(
-    projectedSessions: Session[],
-    workspaceId: string,
-    filters: {
-      cutoffMs?: number;
-      untilMs?: number;
-    },
-  ): Session[] {
-    const byId = new Map(projectedSessions.map((session) => [session.id, session]));
-    for (const activeSessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
-      const active = ctx.sessionRuntimes.getActiveSession(activeSessionId);
-      if (!active || active.workspaceId !== workspaceId) {
-        continue;
-      }
-      if (!sessionMatchesWorkspaceListFilters(active, filters)) {
-        continue;
-      }
-      byId.set(active.id, active);
-    }
-    return Array.from(byId.values()).sort(compareWorkspaceListSessions);
-  }
-
-  function mergeActiveSessionsAcrossWorkspaces(
-    projectedSessions: Session[],
-    filters: {
-      cutoffMs?: number;
-      untilMs?: number;
-    },
-  ): Session[] {
-    const byId = new Map(projectedSessions.map((session) => [session.id, session]));
-    for (const activeSessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
-      const active = ctx.sessionRuntimes.getActiveSession(activeSessionId);
-      if (!active?.workspaceId) {
-        continue;
-      }
-      if (!sessionMatchesWorkspaceListFilters(active, filters)) {
-        continue;
-      }
-      byId.set(active.id, active);
-    }
-    return Array.from(byId.values()).sort(compareWorkspaceListSessions);
-  }
-
-  function pendingUIRequestProvider(): PendingUIRequestProvider {
-    return ctx.sessionRuntimes;
-  }
-
   function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {
-    return collectPendingAskSnapshots(pendingUIRequestProvider(), workspaceId);
-  }
-
-  function canonicalSessionFilePath(path: string): string {
-    const resolved = resolve(path);
-    if (!existsSync(resolved)) return resolved;
-    try {
-      return realpathSync(resolved);
-    } catch {
-      return resolved;
-    }
-  }
-
-  function collectKnownPiSessionIdentities(): { files: Set<string>; piSessionIds: Set<string> } {
-    const files = new Set<string>();
-    const piSessionIds = new Set<string>();
-    for (const session of ctx.storage.listSessions()) {
-      if (session.piSessionId) {
-        piSessionIds.add(session.piSessionId);
-      }
-      if (session.piSessionFile) {
-        files.add(canonicalSessionFilePath(session.piSessionFile));
-      }
-      for (const file of session.piSessionFiles ?? []) {
-        files.add(canonicalSessionFilePath(file));
-      }
-    }
-    return { files, piSessionIds };
-  }
-
-  function sessionMatchesPiIdentity(
-    session: Session,
-    identity: { path: string; piSessionId?: string },
-  ): boolean {
-    if (identity.piSessionId && session.piSessionId === identity.piSessionId) {
-      return true;
-    }
-    if (
-      session.piSessionFile &&
-      canonicalSessionFilePath(session.piSessionFile) === identity.path
-    ) {
-      return true;
-    }
-    return (session.piSessionFiles ?? []).some(
-      (file) => canonicalSessionFilePath(file) === identity.path,
-    );
-  }
-
-  function findSessionByPiIdentity(identity: {
-    path: string;
-    piSessionId?: string;
-  }): Session | undefined {
-    return ctx.storage
-      .listSessions()
-      .find((session) => sessionMatchesPiIdentity(session, identity));
+    return collectPendingAskSnapshots(ctx.sessionRuntimes, workspaceId);
   }
 
   function workspaceAttentionSnapshot(workspaceId: string): {
@@ -259,87 +96,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       asks: pendingAskSnapshots(workspaceId),
     };
   }
-
-  function listWorkspaceImportableSessions(workspace: {
-    hostMount?: string;
-  }): LocalSessionCatalogSnapshot {
-    const knownPiSessionIdentities = collectKnownPiSessionIdentities();
-    const snapshot = listCatalogedLocalSessions(knownPiSessionIdentities, {
-      dataDir: ctx.storage.getDataDir(),
-    });
-    if (!workspace.hostMount) {
-      return snapshot;
-    }
-
-    return {
-      ...snapshot,
-      sessions: snapshot.sessions.filter((session) =>
-        validateCwdAlignment(session.cwd, workspace.hostMount ?? ""),
-      ),
-    };
-  }
-
-  function refreshLocalSessionCatalogIfStale(lastScannedAt: number | undefined): void {
-    if (
-      lastScannedAt !== undefined &&
-      Date.now() - lastScannedAt < LOCAL_SESSION_CATALOG_MAX_AGE_MS
-    ) {
-      return;
-    }
-
-    const knownPiSessionIdentities = collectKnownPiSessionIdentities();
-    void discoverLocalSessions(knownPiSessionIdentities, {
-      dataDir: ctx.storage.getDataDir(),
-    }).catch((error: unknown) => {
-      log.warn("local_session_catalog.refresh_failed", {
-        error: safeErrorMessage(error),
-      });
-    });
-  }
-
-  type SessionListArchiveBucket = {
-    bucketId: string;
-    bucketKind: "day" | "month";
-    startMs: number;
-    endMs: number;
-    itemCount: number;
-    managedStoppedCount: number;
-    importableLocalCount: number;
-    latestActivity?: number;
-  };
-
-  type SessionStatusFilter = "active" | "stopped";
-
-  type PendingAttentionCounts = {
-    asks: Map<string, number>;
-  };
-
-  type ManagedSessionListRow = SessionSummary & {
-    pendingAskCount: number;
-  };
-
-  type TuiSessionListRow = {
-    id: string;
-    source: "tui";
-    status: "stopped";
-    workspaceId: string;
-    workspaceName?: string;
-    name?: string;
-    createdAt: number;
-    lastActivity: number;
-    lastModified: number;
-    model?: string;
-    messageCount: number;
-    tokens: Session["tokens"];
-    cost: number;
-    firstMessage?: string;
-    piSessionId: string;
-    path: string;
-    cwd: string;
-    pendingAskCount: 0;
-  };
-
-  type SessionListRow = ManagedSessionListRow | TuiSessionListRow;
 
   function parseRequiredTimeRange(url: URL): { sinceMs: number; untilMs: number } | undefined {
     const sinceMs = Number.parseInt(url.searchParams.get("sinceMs") ?? "", 10);
@@ -396,117 +152,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return { statuses };
   }
 
-  function localBucketForTimestamp(
-    timestampMs: number,
-    nowMs: number,
-  ): {
-    bucketId: string;
-    bucketKind: "day" | "month";
-    startMs: number;
-    endMs: number;
-  } {
-    const date = new Date(timestampMs);
-    const recentDayCutoffMs = nowMs - 30 * 86_400_000;
-    if (timestampMs >= recentDayCutoffMs) {
-      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, "0");
-      const d = String(date.getDate()).padStart(2, "0");
-      return {
-        bucketId: `day:${y}-${m}-${d}`,
-        bucketKind: "day",
-        startMs: start,
-        endMs: start + 86_400_000,
-      };
-    }
-
-    const start = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
-    const end = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    return {
-      bucketId: `month:${y}-${m}`,
-      bucketKind: "month",
-      startMs: start,
-      endMs: end,
-    };
-  }
-
-  function mergeWorkspaceArchiveBuckets(
-    managedBuckets: WorkspaceStoppedTimeBucketSnapshot[],
-    olderImportableSessions: LocalSession[],
-    nowMs: number,
-  ): SessionListArchiveBucket[] {
-    const merged = new Map<string, SessionListArchiveBucket>();
-
-    for (const bucket of managedBuckets) {
-      merged.set(bucket.bucketId, {
-        bucketId: bucket.bucketId,
-        bucketKind: bucket.bucketKind,
-        startMs: bucket.startMs,
-        endMs: bucket.endMs,
-        itemCount: bucket.itemCount,
-        managedStoppedCount: bucket.itemCount,
-        importableLocalCount: 0,
-        ...(bucket.latestActivity !== undefined ? { latestActivity: bucket.latestActivity } : {}),
-      });
-    }
-
-    for (const session of olderImportableSessions) {
-      const bucket = localBucketForTimestamp(session.lastModified, nowMs);
-      const existing = merged.get(bucket.bucketId);
-      if (existing) {
-        existing.itemCount += 1;
-        existing.importableLocalCount += 1;
-        if (
-          existing.latestActivity === undefined ||
-          session.lastModified > existing.latestActivity
-        ) {
-          existing.latestActivity = session.lastModified;
-        }
-        continue;
-      }
-
-      merged.set(bucket.bucketId, {
-        ...bucket,
-        itemCount: 1,
-        managedStoppedCount: 0,
-        importableLocalCount: 1,
-        latestActivity: session.lastModified,
-      });
-    }
-
-    return Array.from(merged.values()).sort((lhs, rhs) => {
-      const lhsLatest = lhs.latestActivity ?? lhs.startMs;
-      const rhsLatest = rhs.latestActivity ?? rhs.startMs;
-      if (lhsLatest !== rhsLatest) {
-        return rhsLatest - lhsLatest;
-      }
-      return lhs.bucketId.localeCompare(rhs.bucketId);
-    });
-  }
-
-  function splitImportableSessionsByRange(
-    sessions: LocalSession[],
-    sinceMs: number,
-    untilMs: number,
-  ): { visibleSessions: LocalSession[]; olderSessions: LocalSession[] } {
-    const visibleSessions: LocalSession[] = [];
-    const olderSessions: LocalSession[] = [];
-
-    for (const session of sessions) {
-      if (session.lastModified >= sinceMs && session.lastModified < untilMs) {
-        visibleSessions.push(session);
-      } else if (session.lastModified < sinceMs) {
-        olderSessions.push(session);
-      }
-    }
-
-    visibleSessions.sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
-    olderSessions.sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
-    return { visibleSessions, olderSessions };
-  }
-
   function handleWorkspaceAttention(workspaceId: string, res: ServerResponse): void {
     const workspace = ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
@@ -522,149 +167,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
-  function isActiveListSession(session: Session): boolean {
-    return session.status !== "stopped";
-  }
-
-  function isOpenableManagedListSession(session: Session): boolean {
-    return !isPiTuiTaskRecordSession(session);
-  }
-
-  function addCount(map: Map<string, number>, key: string, count: number): void {
-    if (count <= 0) return;
-    map.set(key, (map.get(key) ?? 0) + count);
-  }
-
-  function collectPendingAttentionCounts(): PendingAttentionCounts {
-    const asks = new Map<string, number>();
-    const provider = pendingUIRequestProvider();
-    for (const sessionId of provider.getActiveSessionIds()) {
-      addCount(asks, sessionId, pendingBlockingUIRequestCount(provider, sessionId));
-    }
-
-    return { asks };
-  }
-
-  function buildManagedSessionListRows(
-    sessions: Session[],
-    attention: PendingAttentionCounts,
-  ): ManagedSessionListRow[] {
-    return sessions.map((session) => {
-      const summary = buildSessionSummary(ctx.ensureSessionContextWindow(session));
-      return {
-        ...summary,
-        pendingAskCount: attention.asks.get(summary.id) ?? 0,
-      };
-    });
-  }
-
-  function buildTuiSessionListRows(
-    workspace: Workspace,
-    sessions: LocalSession[],
-  ): TuiSessionListRow[] {
-    return sessions.map((session) => ({
-      id: session.path,
-      source: "tui",
-      status: "stopped",
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      name: session.name,
-      createdAt: session.createdAt,
-      lastActivity: session.lastModified,
-      lastModified: session.lastModified,
-      model: session.model,
-      messageCount: session.messageCount,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      cost: 0,
-      firstMessage: session.firstMessage,
-      piSessionId: session.piSessionId,
-      path: session.path,
-      cwd: session.cwd,
-      pendingAskCount: 0,
-    }));
-  }
-
-  function sessionListUrgencyScore(session: SessionListRow): number {
-    if (session.pendingAskCount > 0) return 20;
-    switch (session.status) {
-      case "error":
-        return 15;
-      case "busy":
-      case "starting":
-      case "stopping":
-        return 10;
-      case "ready":
-        return 5;
-      case "stopped":
-        return 0;
-    }
-  }
-
-  function compareActiveSessionListRows(a: SessionListRow, b: SessionListRow): number {
-    const urgency = sessionListUrgencyScore(b) - sessionListUrgencyScore(a);
-    if (urgency !== 0) {
-      return urgency;
-    }
-    if (b.lastActivity !== a.lastActivity) {
-      return b.lastActivity - a.lastActivity;
-    }
-    return a.id.localeCompare(b.id);
-  }
-
-  function compareStoppedSessionListRows(a: SessionListRow, b: SessionListRow): number {
-    if (b.lastActivity !== a.lastActivity) {
-      return b.lastActivity - a.lastActivity;
-    }
-    return a.id.localeCompare(b.id);
-  }
-
-  function listWorkspaceActiveSessionRows(
-    workspaceId: string,
-    attention: PendingAttentionCounts,
-  ): ManagedSessionListRow[] {
-    const sessions = mergeActiveWorkspaceSessions(
-      ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId),
-      workspaceId,
-      {},
-    )
-      .filter(isOpenableManagedListSession)
-      .filter(isActiveListSession);
-    return buildManagedSessionListRows(sessions, attention).sort(compareActiveSessionListRows);
-  }
-
-  function listWorkspaceStoppedSessionRows(
-    workspace: Workspace,
-    timeRange: { sinceMs: number; untilMs: number },
-    attention: PendingAttentionCounts,
-  ): SessionListRow[] {
-    const managed = ctx.storage
-      .listStoppedWorkspaceTimeRangeSessionSnapshots(
-        workspace.id,
-        timeRange.sinceMs,
-        timeRange.untilMs,
-      )
-      .filter(isOpenableManagedListSession)
-      .filter(
-        (session) =>
-          session.status === "stopped" &&
-          session.lastActivity >= timeRange.sinceMs &&
-          session.lastActivity < timeRange.untilMs,
-      );
-    const managedRows = buildManagedSessionListRows(managed, attention);
-
-    const importableSnapshot = listWorkspaceImportableSessions(workspace);
-    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
-    const importableSplit = splitImportableSessionsByRange(
-      importableSnapshot.sessions,
-      timeRange.sinceMs,
-      timeRange.untilMs,
-    );
-    return [
-      ...managedRows,
-      ...buildTuiSessionListRows(workspace, importableSplit.visibleSessions),
-    ].sort(compareStoppedSessionListRows);
-  }
-
   function handleListRecentWorkspaceSessionSummaries(
     req: IncomingMessage,
     res: ServerResponse,
@@ -676,27 +178,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const piSessionIdFilter = url.searchParams.get("piSessionId")?.trim();
     const serverNow = Date.now();
 
-    const projectedSessions = ctx.storage
-      .listWorkspaces()
-      .flatMap((workspace) =>
-        (recentDays > 0
-          ? ctx.storage.listRecentWorkspaceSessionSnapshots(workspace.id, recentDays, serverNow)
-          : ctx.storage.listAllWorkspaceSessionSnapshots(workspace.id)
-        ).filter(isOpenableManagedListSession),
-      );
-    const attention = collectPendingAttentionCounts();
-    let sessions = buildManagedSessionListRows(
-      mergeActiveSessionsAcrossWorkspaces(
-        projectedSessions,
-        recentDays > 0 ? { cutoffMs: serverNow - recentDays * 86_400_000 } : {},
-      ),
-      attention,
+    helpers.compressedJson(
+      req,
+      res,
+      listService.listRecentWorkspaceSessionSummaries({
+        recentDays,
+        ...(piSessionIdFilter ? { piSessionId: piSessionIdFilter } : {}),
+        nowMs: serverNow,
+      }),
     );
-    if (piSessionIdFilter) {
-      sessions = sessions.filter((session) => session.piSessionId === piSessionIdFilter);
-    }
-
-    helpers.compressedJson(req, res, { sessions });
   }
 
   function handleWorkspaceSessionBuckets(
@@ -722,25 +212,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const serverNow = Date.now();
-    const importableSnapshot = listWorkspaceImportableSessions(workspace);
-    refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt);
-    const olderImportableSessions = importableSnapshot.sessions
-      .filter((session) => session.lastModified < beforeMs)
-      .sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
-    const buckets = mergeWorkspaceArchiveBuckets(
-      ctx.storage.listWorkspaceStoppedTimeBuckets(workspaceId, beforeMs, serverNow),
-      olderImportableSessions,
-      serverNow,
+    helpers.compressedJson(
+      req,
+      res,
+      listService.listWorkspaceStoppedSessionBuckets({
+        workspace,
+        beforeMs,
+        nowMs: Date.now(),
+      }),
     );
-
-    helpers.compressedJson(req, res, {
-      workspaceId,
-      status: "stopped",
-      beforeMs,
-      serverNow,
-      buckets,
-    });
   }
 
   async function handleWorkspaceSessionCollection(
@@ -772,38 +252,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const serverNow = Date.now();
-    const attention = collectPendingAttentionCounts();
-    const response: {
-      workspaceId: string;
-      sinceMs?: number;
-      untilMs?: number;
-      serverNow: number;
-      active?: SessionListRow[];
-      stopped?: SessionListRow[];
-    } = {
-      workspaceId,
-      serverNow,
-    };
-
-    if (parsedTimeRange.timeRange) {
-      response.sinceMs = parsedTimeRange.timeRange.sinceMs;
-      response.untilMs = parsedTimeRange.timeRange.untilMs;
-    }
-
-    if (parsedStatus.statuses.has("active")) {
-      response.active = listWorkspaceActiveSessionRows(workspaceId, attention);
-    }
-
-    if (parsedStatus.statuses.has("stopped") && parsedTimeRange.timeRange) {
-      response.stopped = listWorkspaceStoppedSessionRows(
+    helpers.compressedJson(
+      req,
+      res,
+      listService.listWorkspaceSessionRows({
         workspace,
-        parsedTimeRange.timeRange,
-        attention,
-      );
-    }
-
-    helpers.compressedJson(req, res, response);
+        statuses: parsedStatus.statuses,
+        ...(parsedTimeRange.timeRange ? { timeRange: parsedTimeRange.timeRange } : {}),
+        nowMs: Date.now(),
+      }),
+    );
   }
 
   function requireWorkspaceSession(
@@ -868,207 +326,53 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
-      const validation = validateLocalSessionPath(body.piSessionFile);
-      if ("error" in validation) {
-        helpers.error(res, 400, `Invalid session file: ${validation.error}`);
-        return;
-      }
-
-      // Read identity and CWD from the JSONL header for alignment/coalescing.
-      const localHeader = await readLocalSessionHeader(validation.path);
-      if (!localHeader?.cwd) {
-        helpers.error(res, 400, "Cannot read session CWD from file");
-        return;
-      }
-
-      if (!workspace.hostMount) {
-        helpers.error(res, 400, "Workspace has no hostMount configured");
-        return;
-      }
-
-      if (!validateCwdAlignment(localHeader.cwd, workspace.hostMount)) {
-        helpers.error(
-          res,
-          400,
-          `Session CWD (${localHeader.cwd}) is not within workspace path (${workspace.hostMount})`,
-        );
-        return;
-      }
-
-      // Extract name and first message from the local session JSONL.
-      const localMeta = await readLocalSessionMeta(validation.path);
-      const existingSession = findSessionByPiIdentity({
-        path: validation.path,
-        piSessionId: localHeader.piSessionId,
-      });
-      if (existingSession) {
-        existingSession.workspaceId = workspace.id;
-        existingSession.workspaceName = workspace.name;
-        existingSession.piSessionFile = validation.path;
-        existingSession.piSessionFiles = Array.from(
-          new Set([...(existingSession.piSessionFiles ?? []), validation.path]),
-        );
-        if (localHeader.piSessionId) existingSession.piSessionId = localHeader.piSessionId;
-        if (!existingSession.firstMessage && localMeta?.firstMessage) {
-          existingSession.firstMessage = localMeta.firstMessage.slice(0, 200);
-        }
-        if (!existingSession.name && body.name) {
-          existingSession.name = body.name;
-        }
-        ctx.storage.saveSession(existingSession);
-        invalidateLocalSessionsCache();
-        const hydratedExisting = ctx.ensureSessionContextWindow(existingSession);
-        ctx.appEvents?.emitSessionImported(hydratedExisting);
-        helpers.json(res, { session: hydratedExisting });
-        return;
-      }
-
-      let sessionName = body.name;
-      if (!sessionName) {
-        sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
-      }
-
-      const modelSelection = resolveInitialChatModel({
-        requestModel: requestedModel,
-        // Imports should preserve the source trace model when the client does not
-        // explicitly override it. Leaving the model undefined lets Pi restore it
-        // from the imported JSONL/session state.
-        includeWorkspaceDefault: false,
-      });
-      const session = ctx.storage.createSession(sessionName, modelSelection.model);
-
-      session.workspaceId = workspace.id;
-      session.workspaceName = workspace.name;
-      if (localMeta?.firstMessage) {
-        session.firstMessage = localMeta.firstMessage.slice(0, 200);
-      }
-      session.piSessionFile = validation.path;
-      session.piSessionFiles = [validation.path];
-      if (localHeader.piSessionId) session.piSessionId = localHeader.piSessionId;
-      session.runtime = "pi-tui";
-      session.status = "stopped";
-      session.mirror = { status: "disconnected" };
-      ctx.storage.saveSession(session);
-      invalidateLocalSessionsCache();
-
-      const hydrated = ctx.ensureSessionContextWindow(session);
-      ctx.appEvents?.emitSessionImported(hydrated);
-      helpers.json(res, { session: hydrated }, 201);
-      return;
-    }
-
-    // ── Standard new session ──
-    const modelSelection = resolveInitialChatModel({
-      requestModel: requestedModel,
-      workspace,
-    });
-    const session = ctx.storage.createSession(body.name, modelSelection.model);
-
-    session.workspaceId = workspace.id;
-    session.workspaceName = workspace.name;
-    if (body.ephemeral === true) {
-      session.ephemeral = true;
-    }
-    if (body.thinking) {
-      session.thinkingLevel = body.thinking;
-    }
-    ctx.storage.saveSession(session);
-    ctx.appEvents?.emitSessionCreated(ctx.ensureSessionContextWindow(session));
-
-    // ── Optional prompt: auto-resume + send first message ──
-    const prompt = body.prompt?.trim();
-    if (prompt) {
       try {
-        // `session.thinkingLevel` is written before startSession so the SDK
-        // receives it as an initial session option, matching Pi CLI startup
-        // semantics instead of replaying a toolbar-level set_thinking command.
-        await ctx.sessions.startSession(session.id, workspace);
-        await ctx.sessions.sendPrompt(session.id, prompt, {
-          ...(body.attachments ? { attachments: body.attachments } : {}),
+        const result = await lifecycle.importLocalSession({
+          workspace,
+          piSessionFile: body.piSessionFile,
+          name: body.name,
+          model: requestedModel,
         });
-        session.firstMessage = prompt.slice(0, 200);
-        ctx.storage.saveSession(session);
-        ctx.appEvents?.emitSessionSummary(ctx.ensureSessionContextWindow(session));
-      } catch (_err: unknown) {
-        // Session was created but prompt delivery failed — return it
-        // with prompted: false so the client knows to retry or send manually.
-        const started = ctx.ensureSessionContextWindow(session);
-        helpers.json(res, { session: started, prompted: false }, 201);
-        return;
+        ctx.appEvents?.emitSessionImported(result.session);
+        helpers.json(res, { session: result.session }, result.created ? 201 : 200);
+      } catch (error: unknown) {
+        if (error instanceof SessionLifecycleError) {
+          helpers.error(res, error.statusCode, error.message);
+          return;
+        }
+        helpers.error(res, 500, safeErrorMessage(error));
       }
-
-      const started = ctx.ensureSessionContextWindow(session);
-      helpers.json(res, { session: started, prompted: true }, 201);
       return;
     }
 
-    const hydrated = ctx.ensureSessionContextWindow(session);
-    helpers.json(res, { session: hydrated }, 201);
-  }
-
-  /** Read identity fields from a pi session JSONL header (first line). */
-  async function readLocalSessionHeader(
-    filePath: string,
-  ): Promise<{ cwd: string; piSessionId?: string } | null> {
     try {
-      const content = await readFile(filePath, "utf8");
-      const firstLine = content.split("\n")[0];
-      if (!firstLine) return null;
-      const header = JSON.parse(firstLine) as Record<string, unknown>;
-      const cwd = typeof header.cwd === "string" ? header.cwd : "";
-      if (!cwd) return null;
-      return {
-        cwd,
-        ...(typeof header.id === "string" ? { piSessionId: header.id } : {}),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /** Read name and first message from a local JSONL session (first 16KB only). */
-  async function readLocalSessionMeta(
-    filePath: string,
-  ): Promise<{ name?: string; firstMessage?: string } | null> {
-    try {
-      const content = (await readFile(filePath, "utf8")).slice(0, LOCAL_SESSION_META_READ_BYTES);
-      const lines = content.split("\n");
-      let name: string | undefined;
-      let firstMessage: string | undefined;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (entry.type === "session_info") {
-          const n = entry.name;
-          if (typeof n === "string" && n.trim()) name = n.trim();
-        }
-        if (!firstMessage && entry.type === "message") {
-          const msg = entry.message as Record<string, unknown> | undefined;
-          if (msg?.role === "user") {
-            const c = msg.content;
-            if (typeof c === "string") firstMessage = c;
-            else if (Array.isArray(c)) {
-              const t = c.find(
-                (x: unknown) =>
-                  typeof x === "object" &&
-                  x !== null &&
-                  (x as Record<string, unknown>).type === "text",
-              ) as { text?: string } | undefined;
-              if (t?.text) firstMessage = t.text;
-            }
-          }
-        }
-        if (name && firstMessage) break;
+      const result = await lifecycle.createWorkspaceSession({
+        workspace,
+        name: body.name,
+        model: requestedModel,
+        prompt: body.prompt,
+        thinking: body.thinking,
+        ephemeral: body.ephemeral,
+        attachments: body.attachments,
+      });
+      ctx.appEvents?.emitSessionCreated(result.createdSession);
+      if (result.summarySession) {
+        ctx.appEvents?.emitSessionSummary(result.summarySession);
       }
-      return { name, firstMessage };
-    } catch {
-      return null;
+      helpers.json(
+        res,
+        {
+          session: result.session,
+          ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
+        },
+        201,
+      );
+    } catch (error: unknown) {
+      if (error instanceof SessionLifecycleError) {
+        helpers.error(res, error.statusCode, error.message);
+        return;
+      }
+      helpers.error(res, 500, safeErrorMessage(error));
     }
   }
 
@@ -1135,29 +439,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    if (session.runtime === "pi-tui") {
-      const mirrorConnected = ctx.sessionRuntimes.isSessionConnected(sessionId);
-      if (!canResumeStoppedMirrorAsOppi(session, mirrorConnected)) {
-        const active = ctx.sessionRuntimes.getSessionSnapshot(sessionId) ?? session;
-        helpers.json(res, { session: ctx.ensureSessionContextWindow(active) });
-        return;
-      }
-
-      promoteStoppedMirrorToOppi(session);
-      ctx.storage.saveSession(session);
-    }
-
-    if (ctx.sessionRuntimes.isSessionLive(sessionId)) {
-      const active = ctx.sessionRuntimes.getActiveSession(sessionId);
-      const hydrated = active ? ctx.ensureSessionContextWindow(active) : session;
-      helpers.json(res, { session: hydrated });
-      return;
-    }
-
     try {
-      const started = await ctx.sessions.startSession(sessionId, workspace);
-      const hydrated = ctx.ensureSessionContextWindow(started);
-      helpers.json(res, { session: hydrated });
+      const result = await lifecycle.resumeWorkspaceSession({ session, workspace });
+      helpers.json(res, { session: result.session });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
       log.error("sessions.resume.failed", {
@@ -1199,67 +483,30 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    await ctx.sessionRuntimes.refreshSessionState(sourceSessionId);
-
-    const latestSource = ctx.storage.getSession(sourceSessionId) || sourceSession;
-    const sourceSessionFile =
-      latestSource.piSessionFile ||
-      latestSource.piSessionFiles?.[latestSource.piSessionFiles.length - 1];
-
-    if (!sourceSessionFile) {
-      helpers.error(res, 409, "Source session has no trace file to fork from");
-      return;
-    }
-
-    const sourceName = latestSource.name?.trim() || `Session ${latestSource.id.slice(0, 8)}`;
-    const requestedName = body.name?.trim();
-    const forkName = (
-      requestedName && requestedName.length > 0 ? requestedName : `Fork: ${sourceName}`
-    ).slice(0, 160);
-
-    const forkModelSelection = resolveInitialChatModel({
-      sourceSessionModel: latestSource.model,
-      workspace,
-    });
-    const forkSession = ctx.storage.createSession(forkName, forkModelSelection.model);
-
-    // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
-    // Timeline forks stay independent root sessions in the workspace list.
-    forkSession.workspaceId = workspace.id;
-    forkSession.workspaceName = workspace.name;
-    forkSession.piSessionFile = sourceSessionFile;
-    forkSession.piSessionFiles = Array.from(
-      new Set([...(latestSource.piSessionFiles || []), sourceSessionFile]),
-    );
-
-    if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
-    if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
-
-    ctx.storage.saveSession(forkSession);
-
     try {
-      await ctx.sessions.startSession(forkSession.id, workspace);
-      await ctx.sessions.runCommand(forkSession.id, { type: "fork", entryId });
-      await ctx.sessionRuntimes.refreshSessionState(forkSession.id);
+      const result = await lifecycle.forkSession({
+        workspace,
+        sourceSession,
+        entryId,
+        name: body.name,
+      });
+      ctx.appEvents?.emitSessionCreated(result.session);
+      helpers.json(res, { session: result.session }, 201);
     } catch (err: unknown) {
-      await ctx.sessions.stopSession(forkSession.id).catch(() => {});
-      ctx.storage.deleteSession(forkSession.id);
       const message = err instanceof Error ? err.message : "Fork failed";
+      if (err instanceof SessionLifecycleError) {
+        helpers.error(res, err.statusCode, message);
+        return;
+      }
+
       log.error("sessions.fork.failed", {
         workspaceId,
         sourceSessionId,
-        forkSessionId: forkSession.id,
         entryId,
         error: safeErrorMessage(err),
       });
       helpers.error(res, 500, message);
-      return;
     }
-
-    const created = ctx.storage.getSession(forkSession.id) || forkSession;
-    const hydratedCreated = ctx.ensureSessionContextWindow(created);
-    ctx.appEvents?.emitSessionCreated(hydratedCreated);
-    helpers.json(res, { session: hydratedCreated }, 201);
   }
 
   async function handleStopSession(
@@ -1270,61 +517,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
 
-    const hydratedSession = ctx.ensureSessionContextWindow(session);
-    let storedStopOnly = false;
-    const markStoredSessionStopped = (reason?: string): void => {
-      storedStopOnly = true;
-      const stoppedAt = Date.now();
-      hydratedSession.status = "stopped";
-      hydratedSession.currentTurnStartedAt = undefined;
-      hydratedSession.lastActivity = stoppedAt;
-      if (hydratedSession.runtime === "pi-tui") {
-        hydratedSession.mirror = {
-          ...(hydratedSession.mirror ?? { status: "disconnected" }),
-          status: "disconnected",
-          terminal: {
-            ...(hydratedSession.mirror?.terminal ?? {}),
-            disconnectedAt: hydratedSession.mirror?.terminal?.disconnectedAt ?? stoppedAt,
-            disconnectReason: hydratedSession.mirror?.terminal?.disconnectReason ?? reason,
-          },
-        };
-      }
-      ctx.storage.saveSession(hydratedSession);
-    };
-
     try {
-      if (session.runtime === "pi-tui") {
-        if (ctx.sessionRuntimes.isSessionConnected(sessionId)) {
-          await ctx.sessionRuntimes.stopSession(sessionId);
-        } else {
-          markStoredSessionStopped("oppi_stop_disconnected_terminal");
-        }
-      } else if (ctx.sessionRuntimes.isSessionLive(sessionId)) {
-        await ctx.sessionRuntimes.stopSession(sessionId);
-      } else {
-        markStoredSessionStopped();
+      const result = await lifecycle.stopSession(session);
+      if (result.storedStopOnly && result.session) {
+        ctx.appEvents?.emitStopConfirmed(result.session, "user");
       }
+      helpers.json(res, { ok: true, session: result.session });
     } catch (error: unknown) {
-      const message = safeErrorMessage(error);
-      if (
-        session.runtime === "pi-tui" &&
-        (message.includes("not connected") || message.includes("disconnected"))
-      ) {
-        markStoredSessionStopped("oppi_stop_disconnected_terminal");
-      } else {
-        helpers.error(res, 500, message);
-        return;
-      }
+      helpers.error(res, 500, safeErrorMessage(error));
     }
-
-    const updatedSession = ctx.storage.getSession(sessionId);
-    const hydratedUpdated = updatedSession
-      ? ctx.ensureSessionContextWindow(updatedSession)
-      : updatedSession;
-    if (storedStopOnly && hydratedUpdated) {
-      ctx.appEvents?.emitStopConfirmed(hydratedUpdated, "user");
-    }
-    helpers.json(res, { ok: true, session: hydratedUpdated });
   }
 
   // ─── Tool Output by ID ───
@@ -1338,18 +539,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   ): Promise<void> {
     if (!requireWorkspaceSession(workspaceId, sessionId, res)) return;
 
-    const fullOutputPath = ctx.sessionRuntimes.getToolFullOutputPath(sessionId, toolCallId);
-    if (!fullOutputPath) {
+    const output = await traceService.getFullToolOutput(sessionId, toolCallId);
+    if (!output) {
       helpers.error(res, 404, "Full tool output not found");
       return;
     }
 
-    try {
-      const output = await readFile(fullOutputPath, "utf8");
-      helpers.compressedJson(req, res, { toolCallId, output });
-    } catch {
-      helpers.error(res, 404, "Full tool output not found");
-    }
+    helpers.compressedJson(req, res, output);
   }
 
   async function handleGetSessionAttachment(
@@ -1393,73 +589,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
 
-    const jsonlPaths = await collectExistingSessionJsonlPaths(session);
-
-    for (const jsonlPath of jsonlPaths) {
-      const output = findToolOutput(jsonlPath, toolCallId);
-      if (output !== null) {
-        helpers.compressedJson(req, res, {
-          toolCallId,
-          output: output.text,
-          isError: output.isError,
-        });
-        return;
-      }
+    const output = await traceService.getToolOutput(session, toolCallId);
+    if (!output) {
+      helpers.error(res, 404, "Tool output not found");
+      return;
     }
 
-    helpers.error(res, 404, "Tool output not found");
-  }
-
-  async function collectExistingSessionJsonlPaths(session: Session): Promise<string[]> {
-    const candidates = [...(session.piSessionFiles ?? [])];
-    if (session.piSessionFile) {
-      candidates.push(session.piSessionFile);
-    }
-
-    const uniquePaths = Array.from(new Set(candidates));
-    const existing = await Promise.all(
-      uniquePaths.map(async (candidate) => ({
-        candidate,
-        exists: await pathExists(candidate),
-      })),
-    );
-
-    return existing.filter((entry) => entry.exists).map((entry) => entry.candidate);
-  }
-
-  async function deleteReferencedLocalPiSessionJsonlFiles(session: Session): Promise<string[]> {
-    const existingPaths = await collectExistingSessionJsonlPaths(session);
-    const deleteTargets = new Set<string>();
-
-    for (const candidate of existingPaths) {
-      const validation = validateLocalSessionPath(candidate);
-      if ("error" in validation) {
-        // Only local pi session files can reappear in local-session discovery.
-        // Never unlink arbitrary paths from session metadata.
-        log.debug("sessions.delete.skip_non_local_pi_trace", {
-          sessionId: session.id,
-          path: candidate,
-          reason: validation.error,
-        });
-        continue;
-      }
-      deleteTargets.add(validation.path);
-    }
-
-    const deletedPaths = Array.from(deleteTargets);
-    if (deletedPaths.length > 0) {
-      deleteCatalogedLocalSessionPaths(deletedPaths, { dataDir: ctx.storage.getDataDir() });
-    }
-
-    for (const target of deletedPaths) {
-      await unlink(target);
-    }
-
-    if (deletedPaths.length > 0) {
-      invalidateLocalSessionsCache();
-    }
-
-    return deletedPaths;
+    helpers.compressedJson(req, res, output);
   }
 
   async function handleGetSessionOverallDiff(
@@ -1477,127 +613,18 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const trace = loadSessionTrace(session);
-    if (!trace || trace.length === 0) {
-      helpers.error(res, 404, "Session trace not found");
-      return;
+    const result = await traceService.getSessionOverallDiff({ session, path: reqPath });
+    switch (result.kind) {
+      case "ok":
+        helpers.json(res, result.diff);
+        return;
+      case "trace-not-found":
+        helpers.error(res, 404, "Session trace not found");
+        return;
+      case "mutations-not-found":
+        helpers.error(res, 404, "No file mutations found for path");
+        return;
     }
-
-    const mutations = collectFileMutations(trace, reqPath);
-
-    if (mutations.length === 0) {
-      helpers.error(res, 404, "No file mutations found for path");
-      return;
-    }
-
-    const currentText = await readCurrentFileText(session, reqPath);
-    const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
-    const flatLines = computeDiffLines(baselineText, currentText);
-    const hunks = buildDiffHunks(flatLines);
-    const stats = computeLineDiffStatsFromLines(flatLines);
-
-    helpers.json(res, {
-      workspaceId: session.workspaceId ?? "",
-      path: reqPath,
-      baselineText,
-      currentText,
-      addedLines: stats.added,
-      removedLines: stats.removed,
-      hunks,
-      revisionCount: mutations.length,
-      cacheKey: `${sessionId}:${reqPath}:${mutations[mutations.length - 1]?.id ?? "none"}`,
-    });
-  }
-
-  async function readCurrentFileText(session: Session, reqPath: string): Promise<string> {
-    const workRoot = await resolveWorkRoot(session);
-    if (!workRoot) return "";
-
-    const target = resolve(workRoot, reqPath);
-    try {
-      const resolved = await realpath(target);
-      const realWorkRoot = await realpath(workRoot);
-      if (!isPathWithinRoot(resolved, realWorkRoot)) {
-        return "";
-      }
-      const fileStat = await stat(resolved);
-      if (!fileStat.isFile() || fileStat.size > MAX_SESSION_FILE_BYTES) return "";
-      return await readFile(resolved, "utf8");
-    } catch {
-      return "";
-    }
-  }
-
-  function traceBaseDir(): string {
-    const storageWithDataDir = ctx.storage as {
-      getDataDir?: () => string;
-    };
-    return storageWithDataDir.getDataDir?.() ?? process.cwd();
-  }
-
-  function loadSessionTrace(
-    session: Session,
-    traceView: TraceViewMode = "context",
-    leafId?: string | null,
-  ): ReturnType<typeof readSessionTrace> {
-    const baseDir = traceBaseDir();
-    const traceOptions = {
-      view: traceView,
-      attachmentDataDir: baseDir,
-      attachmentSessionId: session.id,
-      ...(leafId !== undefined ? { leafId } : {}),
-    };
-    let trace = readSessionTrace(baseDir, session.id, session.workspaceId, traceOptions);
-
-    if ((!trace || trace.length === 0) && session.piSessionFiles?.length) {
-      trace = readSessionTraceFromFiles(session.piSessionFiles, traceOptions);
-    }
-    if ((!trace || trace.length === 0) && session.piSessionFile) {
-      trace = readSessionTraceFromFile(session.piSessionFile, traceOptions);
-    }
-    if ((!trace || trace.length === 0) && session.piSessionId) {
-      trace = readSessionTraceByUuid(
-        baseDir,
-        session.piSessionId,
-        session.workspaceId,
-        traceOptions,
-      );
-    }
-
-    return trace;
-  }
-
-  async function resolveWorkRoot(session: Session): Promise<string | null> {
-    const workspace = session.workspaceId
-      ? ctx.storage.getWorkspace(session.workspaceId)
-      : undefined;
-
-    if (workspace?.hostMount) {
-      const resolved = resolveSdkSessionCwd(workspace);
-      return (await pathExists(resolved)) ? resolved : null;
-    }
-    return homedir();
-  }
-
-  async function deleteWorkspaceSessionAttachmentCopies(session: Session): Promise<boolean> {
-    const workspace = session.workspaceId
-      ? ctx.storage.getWorkspace(session.workspaceId)
-      : undefined;
-    if (!workspace?.hostMount) return false;
-
-    const workRoot = resolveSdkSessionCwd(workspace);
-    if (!(await pathExists(workRoot))) return false;
-
-    const workRootReal = await realpath(workRoot);
-    const attachmentsRoot = resolve(workRootReal, ".pi", "attachments");
-    const sessionAttachmentsDir = resolve(attachmentsRoot, session.id);
-    if (!isPathWithinRoot(sessionAttachmentsDir, attachmentsRoot)) {
-      throw new Error("Refusing to delete session attachments outside workspace attachment root");
-    }
-
-    const existed = await pathExists(sessionAttachmentsDir);
-    await rm(sessionAttachmentsDir, { recursive: true, force: true });
-    return existed;
   }
 
   function handleGetSessionEvents(
@@ -1629,7 +656,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
-  function resolveTraceView(url: URL): TraceViewMode {
+  function resolveTraceView(url: URL): SessionTraceViewMode {
     const view = url.searchParams.get("view");
     return view === "full" ? "full" : "context";
   }
@@ -1644,45 +671,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
 
-    const traceView = resolveTraceView(url);
-    const live = await ctx.sessionRuntimes.refreshSessionState(sessionId);
-    const liveLeafId = typeof live?.leafId === "string" ? live.leafId : undefined;
-    const refreshedSession = ctx.storage.getSession(sessionId) || session;
-    const hydratedSession = ctx.ensureSessionContextWindow(refreshedSession);
-    const baseDir = traceBaseDir();
-
-    let trace = loadSessionTrace(hydratedSession, traceView, liveLeafId);
-
-    if (!trace || trace.length === 0) {
-      const traceOptions = {
-        view: traceView,
-        attachmentDataDir: traceBaseDir(),
-        attachmentSessionId: sessionId,
-        ...(liveLeafId !== undefined ? { leafId: liveLeafId } : {}),
-      };
-
-      if (live?.sessionFile) {
-        trace = readSessionTraceFromFile(live.sessionFile, traceOptions);
-      }
-      if ((!trace || trace.length === 0) && live?.sessionId) {
-        trace = readSessionTraceByUuid(
-          baseDir,
-          live.sessionId,
-          hydratedSession.workspaceId,
-          traceOptions,
-        );
-      }
-
-      const refreshed = ctx.storage.getSession(sessionId);
-      if (refreshed && (!trace || trace.length === 0)) {
-        ctx.ensureSessionContextWindow(refreshed);
-        trace = loadSessionTrace(refreshed, traceView, liveLeafId);
-      }
-    }
-
-    const latestSession = ctx.storage.getSession(sessionId) || hydratedSession;
-    const hydratedLatest = ctx.ensureSessionContextWindow(latestSession);
-    helpers.compressedJson(req, res, { session: hydratedLatest, trace: trace || [] });
+    const result = await traceService.getSessionWithTrace({
+      session,
+      traceView: resolveTraceView(url),
+    });
+    helpers.compressedJson(req, res, result);
   }
 
   async function handleDeleteSession(
@@ -1693,45 +686,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
 
-    await ctx.sessionRuntimes.stopSessionIfActive(sessionId);
-
-    let deletedTracePaths: string[] = [];
-    let deletedWorkspaceAttachmentCopies = false;
     try {
-      deletedTracePaths = await deleteReferencedLocalPiSessionJsonlFiles(session);
-      if (deletedTracePaths.length > 0) {
-        log.info("sessions.delete.local_pi_traces_deleted", {
-          sessionId,
-          deletedTraceCount: deletedTracePaths.length,
-        });
+      const result = await lifecycle.deleteSession(session);
+      ctx.appEvents?.emitSessionDeleted(result.session);
+      helpers.json(res, { ok: true, deleted: result.deleted });
+    } catch (error: unknown) {
+      if (error instanceof SessionLifecycleError) {
+        helpers.error(res, error.statusCode, error.message);
+        return;
       }
-      deletedWorkspaceAttachmentCopies = await deleteWorkspaceSessionAttachmentCopies(session);
-    } catch (err: unknown) {
-      log.error("sessions.delete.files_delete_failed", {
-        sessionId,
-        error: safeErrorMessage(err),
-      });
-      helpers.error(res, 500, "Failed to delete session files");
-      return;
+      helpers.error(res, 500, safeErrorMessage(error));
     }
-
-    ctx.storage.deleteSession(sessionId);
-    ctx.searchIndex?.deleteSession(sessionId);
-    const deletedGeneratedMediaAttachments = deleteSessionAttachments(
-      ctx.storage.getDataDir(),
-      sessionId,
-    );
-    ctx.appEvents?.emitSessionDeleted(session);
-
-    helpers.json(res, {
-      ok: true,
-      deleted: {
-        sqliteMetadata: true,
-        localPiJsonlFiles: deletedTracePaths.length,
-        workspaceAttachmentCopies: deletedWorkspaceAttachmentCopies,
-        generatedMediaAttachments: deletedGeneratedMediaAttachments,
-      },
-    });
   }
 
   return async ({ method, path, url, req, res }) => {
@@ -1886,13 +851,4 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     return false;
   };
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
