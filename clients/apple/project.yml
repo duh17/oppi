@@ -51,7 +51,7 @@ targets:
         excludes:
           - "Resources/AppIcon.icon"
       - path: Oppi/Resources/AppIcon.icon
-        type: folder
+        type: file
         buildPhase: resources
       - path: Shared
         type: group

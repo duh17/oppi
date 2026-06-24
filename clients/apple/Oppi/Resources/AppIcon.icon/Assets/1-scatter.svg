@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <title>Oppi icon scatter</title>
-  <desc>quiet outer cells, excluding the left jewel cells</desc>
+  <desc>quiet outer cells</desc>
   <g opacity="0.18">
     <rect x="226" y="129" width="86" height="86" rx="23" fill="#DDE4F2"/>
     <rect x="323" y="129" width="86" height="86" rx="23" fill="#DDE4F2"/>
+    <rect x="129" y="518" width="86" height="86" rx="23" fill="#DDE4F2"/>
+    <rect x="226" y="810" width="86" height="86" rx="23" fill="#DDE4F2"/>
     <rect x="810" y="810" width="86" height="86" rx="23" fill="#DDE4F2"/>
   </g>
 </svg>
