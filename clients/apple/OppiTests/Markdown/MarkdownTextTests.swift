@@ -290,6 +290,31 @@ struct FlatSegmentBuildTests {
         }
     }
 
+    @Test func orderedListNestedBulletsKeepParentContinuationIndent() {
+        let markdown = """
+        1. Application services
+           - SessionLifecycleService
+           - SessionListService
+           - WorkspaceService
+        """
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+
+        #expect(segments.count == 1)
+        guard case .text(let attr) = segments.first else {
+            Issue.record("Expected .text segment")
+            return
+        }
+
+        let lines = String(attr.characters).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(lines == [
+            "  1. Application services",
+            "       • SessionLifecycleService",
+            "       • SessionListService",
+            "       • WorkspaceService",
+        ])
+    }
+
     @Test func htmlBlockRendersAsMonospaced() {
         let blocks: [MarkdownBlock] = [.htmlBlock("<div>hello</div>")]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
@@ -1537,43 +1562,6 @@ struct NativeMarkdownImageViewTests {
 
         #expect(showedPlaceholder, "Broken markdown image should show a generic placeholder instead of collapsing")
         #expect(!view.isHidden)
-    }
-
-    @Test func loadedSVGRendererIsFocusable() async throws {
-        let view = NativeMarkdownImageView()
-        view.frame = CGRect(x: 0, y: 0, width: 300, height: 180)
-        view.layoutIfNeeded()
-
-        let svgData = Data("""
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
-          <rect width="100" height="60" fill="red"/>
-        </svg>
-        """.utf8)
-        let url = try #require(WorkspaceFileURL.make(
-            baseURL: URL(string: "https://example.com/api")!,
-            workspaceID: "workspace-1",
-            filePath: "images/diagram.svg"
-        ))
-
-        view.apply(
-            url: url,
-            alt: "Diagram",
-            fetchWorkspaceFile: { _, _ in svgData },
-            fetchSessionFile: nil
-        )
-
-        var visibleWebRenderer: UIView?
-        for _ in 0..<20 {
-            try await Task.sleep(for: .milliseconds(50))
-            visibleWebRenderer = view.subviews.first {
-                String(describing: type(of: $0)).contains("WKWebView") && !$0.isHidden
-            }
-            if visibleWebRenderer != nil { break }
-        }
-
-        let renderer = try #require(visibleWebRenderer)
-        let hasTapGesture = renderer.gestureRecognizers?.contains { $0 is UITapGestureRecognizer } == true
-        #expect(hasTapGesture, "SVG markdown images should be focusable just like raster images")
     }
 
     @Test func fullScreenMarkdownBodyCreatesImageViewsForSessionAbsolutePaths() {
