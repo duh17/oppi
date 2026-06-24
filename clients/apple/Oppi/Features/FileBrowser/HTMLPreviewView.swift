@@ -48,6 +48,17 @@ final class HTMLContentTracker {
         isReady = false
     }
 
+    /// Forget the loaded HTML while preserving render readiness.
+    ///
+    /// Use when the owning view changes identity and will wait for a fresh
+    /// navigation completion before revealing the web view, even if the next
+    /// HTML bytes match the prior load.
+    func resetLoadedContent() {
+        currentHTML = nil
+        loadedHash = nil
+        forceReload = false
+    }
+
     /// Force the next evaluation to return content, even if hash matches.
     func markProcessTerminated() {
         forceReload = true

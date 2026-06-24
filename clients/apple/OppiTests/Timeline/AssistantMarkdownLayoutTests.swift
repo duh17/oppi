@@ -101,6 +101,9 @@ struct AssistantMarkdownLayoutTests {
             frame: CGRect(x: 0, y: 0, width: 393, height: 852),
             collectionViewLayout: layout
         )
+        let window = UIWindow(frame: collectionView.frame)
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
 
         let items: [(String, AssistantTimelineRowConfiguration)] = [
             (
@@ -150,6 +153,7 @@ struct AssistantMarkdownLayoutTests {
         snapshot.appendSections([0])
         snapshot.appendItems(items.map(\.0))
         await ds.apply(snapshot, animatingDifferences: false)
+        window.layoutIfNeeded()
         collectionView.layoutIfNeeded()
 
         let firstIP = IndexPath(item: 0, section: 0)
@@ -158,6 +162,7 @@ struct AssistantMarkdownLayoutTests {
 
         let imageRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
+                window.layoutIfNeeded()
                 guard let firstCell = collectionView.cellForItem(at: firstIP),
                       let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView) else {
                     return false
@@ -172,6 +177,7 @@ struct AssistantMarkdownLayoutTests {
 
         let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
+                window.layoutIfNeeded()
                 guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
                       let secondFrame = collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
                     return false
@@ -185,6 +191,7 @@ struct AssistantMarkdownLayoutTests {
         }
 
         #expect(layoutReflowedWithoutTouch, "Timeline did not keep SVG rows separated after async render")
+        window.resignKey()
     }
 
     /// Regression: mermaid renders asynchronously after the assistant row is

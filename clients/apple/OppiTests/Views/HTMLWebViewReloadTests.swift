@@ -54,6 +54,16 @@ struct HTMLContentTrackerTests {
         #expect(tracker.setContent("<h1>Hello</h1>") == nil)
     }
 
+    @Test func resetLoadedContentAllowsSameContentToReloadWhileReady() {
+        let tracker = HTMLContentTracker()
+        _ = tracker.markReady()
+        _ = tracker.setContent("<h1>Hello</h1>")
+
+        tracker.resetLoadedContent()
+
+        #expect(tracker.setContent("<h1>Hello</h1>") == "<h1>Hello</h1>")
+    }
+
     @Test func differentContentTriggersReload() {
         let tracker = HTMLContentTracker()
         _ = tracker.markReady()
