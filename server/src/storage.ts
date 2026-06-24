@@ -4,25 +4,23 @@
  * Data directory structure:
  * ~/.config/oppi/
  * ├── config.json        # Server config + auth state
- * ├── session-state.db   # Runtime session + review comment state
+ * ├── session-state.db   # Runtime session state
  * ├── sessions/          # Legacy JSON session sidecars, read only for import
- * ├── review-comments/   # Legacy JSON review comments, read only for import
  * └── workspaces/
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
 
-import { existsSync, openSync, readSync, closeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createLogger } from "./logger.js";
+import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
 import {
   ConfigStore,
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
 } from "./storage/config-store.js";
-import type { ReviewCommentListFilters } from "./storage/review-comment-dao.js";
-import { ReviewCommentSqliteStore } from "./storage/review-comment-sqlite-store.js";
 import type {
   WorkspaceSessionSummarySnapshot,
   WorkspaceStoppedTimeBucketSnapshot,
@@ -30,13 +28,9 @@ import type {
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
-  MarkReviewCommentsSentRequest,
-  CreateReviewCommentRequest,
   CreateWorkspaceRequest,
-  ReviewComment,
   ServerConfig,
   Session,
-  UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
 } from "./types.js";
@@ -85,16 +79,55 @@ export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
   private readonly sessionStore: SessionSqliteStore;
-  private readonly reviewCommentStore: ReviewCommentSqliteStore;
   private readonly workspaceStore: WorkspaceStore;
 
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
-    this.reviewCommentStore = new ReviewCommentSqliteStore(this.configStore.getDataDir());
+    this.cleanupServerReviewCommentState();
     this.workspaceStore = new WorkspaceStore(this.configStore);
     this.migrateLegacyWorkspaceSessions();
+  }
+
+  /**
+   * Review comment drafts are client-local state. Remove server-owned storage
+   * created by older builds so the daemon does not retain unused draft data.
+   */
+  private cleanupServerReviewCommentState(): void {
+    const dataDir = this.configStore.getDataDir();
+    const db = openDatabase(join(dataDir, "session-state.db"));
+    try {
+      const rows = db
+        .prepare("SELECT name FROM sqlite_master WHERE name IN (?, ?)")
+        .all("review_comments", "review_comments_next") as Array<{ name?: string }>;
+      const hadTables = rows.length > 0;
+
+      db.exec(`
+        DROP INDEX IF EXISTS review_comments_workspace_created_idx;
+        DROP INDEX IF EXISTS review_comments_workspace_session_idx;
+        DROP INDEX IF EXISTS review_comments_workspace_status_idx;
+        DROP INDEX IF EXISTS review_comments_workspace_path_idx;
+        DROP TABLE IF EXISTS review_comments;
+        DROP TABLE IF EXISTS review_comments_next;
+        DELETE FROM app_state_migrations WHERE key LIKE 'review_comments_json_import_sqlite_backend_v2:%';
+      `);
+
+      const legacyDir = join(dataDir, "review-comments");
+      const hadLegacyDir = existsSync(legacyDir);
+      if (hadLegacyDir) {
+        rmSync(legacyDir, { recursive: true, force: true });
+      }
+
+      if (hadTables || hadLegacyDir) {
+        log.info("storage_migration.review_comments.cleanup", {
+          removedSqliteTables: hadTables,
+          removedLegacyJsonDir: hadLegacyDir,
+        });
+      }
+    } finally {
+      db.close();
+    }
   }
 
   /**
@@ -299,35 +332,6 @@ export class Storage {
 
   deleteSession(sessionId: string): boolean {
     return this.sessionStore.deleteSession(sessionId);
-  }
-
-  // ─── Review comments ───
-
-  listReviewComments(workspaceId: string, filters?: ReviewCommentListFilters): ReviewComment[] {
-    return this.reviewCommentStore.list(workspaceId, filters);
-  }
-
-  createReviewComment(workspaceId: string, input: CreateReviewCommentRequest): ReviewComment {
-    return this.reviewCommentStore.create(workspaceId, input);
-  }
-
-  updateReviewComment(
-    workspaceId: string,
-    commentId: string,
-    patch: UpdateReviewCommentRequest,
-  ): ReviewComment {
-    return this.reviewCommentStore.update(workspaceId, commentId, patch);
-  }
-
-  deleteReviewComment(workspaceId: string, commentId: string): void {
-    this.reviewCommentStore.delete(workspaceId, commentId);
-  }
-
-  markReviewCommentsSent(
-    workspaceId: string,
-    input: MarkReviewCommentsSentRequest,
-  ): ReviewComment[] {
-    return this.reviewCommentStore.markSent(workspaceId, input);
   }
 
   // ─── Workspaces ───

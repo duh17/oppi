@@ -319,36 +319,7 @@ describe("workspaces module", () => {
     expect(ctx.storage.createWorkspace).not.toHaveBeenCalled();
   });
 
-  it("marks review comments sent via the review comments collection", async () => {
-    const comment = { id: "rc-1", workspaceId: "ws-1", status: "sent" };
-    const ctx = {
-      storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-        markReviewCommentsSent: vi.fn(() => [comment]),
-      },
-    } as unknown as RouteContext;
-
-    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
-    const res = makeResponse();
-
-    const handled = await dispatch({
-      method: "POST",
-      path: "/workspaces/ws-1/review/comments/sent",
-      url: new URL("http://localhost/workspaces/ws-1/review/comments/sent"),
-      req: makeRequest({ ids: ["rc-1"], sessionId: "s1" }) as never,
-      res: res as never,
-    });
-
-    expect(handled).toBe(true);
-    expect(res.statusCode).toBe(200);
-    expect(ctx.storage.markReviewCommentsSent).toHaveBeenCalledWith("ws-1", {
-      ids: ["rc-1"],
-      sessionId: "s1",
-    });
-    expect(JSON.parse(res.body)).toEqual({ comments: [comment] });
-  });
-
-  it("does not handle the legacy review comments attach route", async () => {
+  it("does not handle review comment routes", async () => {
     const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
 
     const handled = await dispatch({

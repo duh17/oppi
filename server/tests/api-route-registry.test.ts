@@ -23,11 +23,6 @@ const initialSchemaOperationIds = [
   "getSessionEvents",
   "getSessionToolOutput",
   "listRecentSessions",
-  "listReviewComments",
-  "createReviewComment",
-  "markReviewCommentsSent",
-  "updateReviewComment",
-  "deleteReviewComment",
   "listWorkspaceQuickActions",
   "prepareWorkspaceQuickActionSelection",
   "createWorkspaceQuickActionSession",
@@ -75,11 +70,6 @@ const sessionOperationIds = [
   "listWorkspaceCommits",
   "getWorkspaceCommit",
   "getWorkspaceCommitDiff",
-  "listReviewComments",
-  "createReviewComment",
-  "markReviewCommentsSent",
-  "updateReviewComment",
-  "deleteReviewComment",
   "listWorkspaceQuickActions",
   "prepareWorkspaceQuickActionSelection",
   "createWorkspaceQuickActionSession",
@@ -156,9 +146,6 @@ describe("api route registry", () => {
     );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/diff")).toBe(
       "/workspaces/:workspaceId/git/diff",
-    );
-    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/review/comments/rc-1")).toBe(
-      "/workspaces/:workspaceId/review/comments/:commentId",
     );
     expect(normalizeRegisteredPathPattern("/provider-auth/flows/flow-1/manual-code")).toBe(
       "/provider-auth/flows/:flowId/manual-code",

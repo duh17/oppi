@@ -16,6 +16,34 @@ describe("storage session metadata format", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("cleans up server-owned review comment state on startup", () => {
+    const db = openDatabase(join(dir, "session-state.db"));
+    db.exec(`
+      CREATE TABLE review_comments (id TEXT PRIMARY KEY, comment_json TEXT NOT NULL);
+      CREATE TABLE review_comments_next (id TEXT PRIMARY KEY, comment_json TEXT NOT NULL);
+      CREATE INDEX review_comments_workspace_created_idx ON review_comments (id);
+    `);
+    db.close();
+    mkdirSync(join(dir, "review-comments"), { recursive: true });
+    writeFileSync(
+      join(dir, "review-comments", "workspace-1.json"),
+      JSON.stringify({ comments: [] }),
+    );
+
+    new Storage(dir);
+
+    const reloadedDb = openDatabase(join(dir, "session-state.db"));
+    try {
+      const rows = reloadedDb
+        .prepare("SELECT name FROM sqlite_master WHERE name IN (?, ?)")
+        .all("review_comments", "review_comments_next");
+      expect(rows).toEqual([]);
+    } finally {
+      reloadedDb.close();
+    }
+    expect(existsSync(join(dir, "review-comments"))).toBe(false);
+  });
+
   it("writes runtime session metadata to sqlite only", () => {
     const storage = new Storage(dir);
     const session = storage.createSession("metadata", "anthropic/claude-sonnet-4-0");

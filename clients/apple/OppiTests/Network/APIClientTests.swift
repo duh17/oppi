@@ -1086,32 +1086,6 @@ struct APIClientTests {
         #expect(step == 2)
     }
 
-    // MARK: - Review Comments
-
-    @Test func markReviewCommentsSentUsesSentEndpoint() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "POST")
-            #expect(request.url?.path == "/workspaces/w1/review/comments/sent")
-            let body = try! JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
-            #expect(body?["ids"] as? [String] == ["rc-1"])
-            #expect(body?["sessionId"] as? String == "s1")
-            return self.mockResponse(json: """
-            {"comments":[{"id":"rc-1","workspaceId":"w1","sessionId":"s1","author":"human","status":"sent","body":"Looks good","reference":{"source":"file","path":"App.swift"},"createdAt":1,"updatedAt":2,"sentAt":2}]}
-            """)
-        }
-
-        let comments = try await client.markReviewCommentsSent(
-            workspaceId: "w1",
-            ids: ["rc-1"],
-            sessionId: "s1"
-        )
-        #expect(comments.map(\.id) == ["rc-1"])
-        #expect(comments.first?.status == .sent)
-    }
-
     // MARK: - Device Token
 
     @Test func registerDeviceToken() async throws {

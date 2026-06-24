@@ -239,14 +239,6 @@ struct ReviewComment: Codable, Sendable, Equatable, Identifiable {
     var sentAt: Int64?
 }
 
-struct ReviewCommentsResponse: Codable, Sendable, Equatable {
-    let comments: [ReviewComment]
-}
-
-struct ReviewCommentResponse: Codable, Sendable, Equatable {
-    let comment: ReviewComment
-}
-
 struct WorkspaceReviewDiffHunk: Codable, Sendable, Equatable, Identifiable {
     let oldStart: Int
     let oldCount: Int

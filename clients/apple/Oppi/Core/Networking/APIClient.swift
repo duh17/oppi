@@ -550,67 +550,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(WorkspaceQuickActionSessionResponse.self, from: data)
     }
 
-    func listReviewComments(
-        workspaceId: String,
-        sessionId: String? = nil,
-        status: ReviewCommentStatus? = nil
-    ) async throws -> [ReviewComment] {
-        var query: [String] = []
-        if let sessionId {
-            try query.append("sessionId=\(encodeQueryPath(sessionId))")
-        }
-        if let status {
-            query.append("status=\(status.rawValue)")
-        }
-        let suffix = query.isEmpty ? "" : "?\(query.joined(separator: "&"))"
-        let data = try await get("/workspaces/\(workspaceId)/review/comments\(suffix)")
-        return try JSONDecoder().decode(ReviewCommentsResponse.self, from: data).comments
-    }
-
-    func createReviewComment(
-        workspaceId: String,
-        sessionId: String?,
-        body: String,
-        reference: ReviewCommentReference
-    ) async throws -> ReviewComment {
-        struct Body: Encodable {
-            let sessionId: String?
-            let body: String
-            let reference: ReviewCommentReference
-        }
-
-        let data = try await post(
-            "/workspaces/\(workspaceId)/review/comments",
-            body: Body(sessionId: sessionId, body: body, reference: reference)
-        )
-        return try JSONDecoder().decode(ReviewCommentResponse.self, from: data).comment
-    }
-
-    func deleteReviewComment(workspaceId: String, commentId: String) async throws {
-        let (data, response) = try await request(
-            "DELETE",
-            path: "/workspaces/\(workspaceId)/review/comments/\(commentId)"
-        )
-        try checkStatus(response, data: data)
-    }
-
-    func markReviewCommentsSent(
-        workspaceId: String,
-        ids: [String],
-        sessionId: String? = nil
-    ) async throws -> [ReviewComment] {
-        struct Body: Encodable {
-            let ids: [String]
-            let sessionId: String?
-        }
-
-        let data = try await post(
-            "/workspaces/\(workspaceId)/review/comments/sent",
-            body: Body(ids: ids, sessionId: sessionId)
-        )
-        return try JSONDecoder().decode(ReviewCommentsResponse.self, from: data).comments
-    }
-
     // MARK: - Skills
 
     /// List available skills from Pi resource discovery.
