@@ -79,14 +79,25 @@ export function createSessionFileHandlers(
     });
 
     switch (result.kind) {
-      case "ok":
-        res.writeHead(200, {
-          "Content-Type": result.contentType,
-          "Content-Length": result.size.toString(),
-          "Cache-Control": "private, no-cache",
+      case "ok": {
+        const stream = createReadStream(result.filePath);
+        stream.once("error", (error) => {
+          if (!res.headersSent) {
+            helpers.error(res, 500, "Failed to read file");
+            return;
+          }
+          res.destroy(error);
         });
-        createReadStream(result.filePath).pipe(res as NodeJS.WritableStream);
+        stream.once("open", () => {
+          res.writeHead(200, {
+            "Content-Type": result.contentType,
+            "Content-Length": result.size.toString(),
+            "Cache-Control": "private, no-cache",
+          });
+          stream.pipe(res as NodeJS.WritableStream);
+        });
         return;
+      }
       case "path-required":
         helpers.error(res, 400, "path parameter required");
         return;

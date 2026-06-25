@@ -15,6 +15,15 @@ const SERVER_TYPES_CONTRACT_BARREL_PREFIX = "./types/";
 const SERVER_SESSION_FACADE_FILE = "server/src/sessions.ts";
 const SERVER_MIRROR_SESSION_RESUME_FILE = "server/src/mirror-session-resume.ts";
 
+const SERVER_ROUTE_TO_ROUTE_ALLOWED_IMPORTERS = new Set(["server/src/routes/index.ts"]);
+const SERVER_ROUTE_TO_ROUTE_ALLOWED_TARGETS = new Set([
+  "server/src/routes/http.ts",
+  "server/src/routes/server-stats.ts",
+  "server/src/routes/session-files.ts",
+  "server/src/routes/theme-convert.ts",
+  "server/src/routes/types.ts",
+]);
+
 const SERVER_PI_AI_COMPAT_ALLOWED_FILES = new Set(["server/src/pi-model-auth-service.ts"]);
 
 const SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES = new Set([
@@ -215,6 +224,10 @@ function isServerSessionRuntimeFile(filePath) {
   );
 }
 
+function isServerRouteFile(filePath) {
+  return filePath.startsWith("server/src/routes/") && filePath.endsWith(".ts");
+}
+
 function sortArchitectureViolations(violations) {
   return [...violations].sort((a, b) => {
     const aFile = a.file ?? a.importer ?? "";
@@ -389,6 +402,26 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
             reason: "Only server/src/server.ts may act as the composition root.",
             remediation:
               "Inject dependencies from server.ts instead of importing server.ts from lower layers.",
+          }),
+        );
+      }
+
+      if (
+        isServerRouteFile(importer) &&
+        isServerRouteFile(target) &&
+        !SERVER_ROUTE_TO_ROUTE_ALLOWED_IMPORTERS.has(importer) &&
+        !SERVER_ROUTE_TO_ROUTE_ALLOWED_TARGETS.has(target)
+      ) {
+        violations.push(
+          makeServerViolation({
+            rule: "route-to-route-boundary",
+            importer,
+            target,
+            line: entry.line,
+            column: entry.column,
+            reason: "Concrete route modules must not depend on each other.",
+            remediation:
+              "Move shared route-independent policy into server/src modules, or compose route handlers from routes/index.ts.",
           }),
         );
       }

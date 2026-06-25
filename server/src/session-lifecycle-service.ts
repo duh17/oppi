@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { access, readFile, realpath, rm, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
   canResumeStoppedMirrorAsOppi,
@@ -46,7 +47,7 @@ export interface ForkSessionResult {
 export interface DeleteSessionResult {
   session: Session;
   deleted: {
-    sqliteMetadata: true;
+    sqliteMetadata: boolean;
     localPiJsonlFiles: number;
     workspaceAttachmentCopies: boolean;
     generatedMediaAttachments: boolean;
@@ -422,10 +423,10 @@ export class SessionLifecycleService {
         markStoredSessionStopped();
       }
     } catch (error: unknown) {
-      const message = safeErrorMessage(error);
       if (
         session.runtime === "pi-tui" &&
-        (message.includes("not connected") || message.includes("disconnected"))
+        error instanceof RuntimeDisconnectedError &&
+        error.runtime === "pi-tui"
       ) {
         markStoredSessionStopped("oppi_stop_disconnected_terminal");
       } else {
@@ -464,7 +465,7 @@ export class SessionLifecycleService {
       throw new SessionLifecycleError("Failed to delete session files", 500);
     }
 
-    this.deps.storage.deleteSession(session.id);
+    const deletedSqliteMetadata = this.deps.storage.deleteSession(session.id);
     this.deps.deleteSearchIndexSession?.(session.id);
     const deletedGeneratedMediaAttachments = deleteSessionAttachments(
       this.deps.storage.getDataDir(),
@@ -474,7 +475,7 @@ export class SessionLifecycleService {
     return {
       session,
       deleted: {
-        sqliteMetadata: true,
+        sqliteMetadata: deletedSqliteMetadata,
         localPiJsonlFiles: deletedTracePaths.length,
         workspaceAttachmentCopies: deletedWorkspaceAttachmentCopies,
         generatedMediaAttachments: deletedGeneratedMediaAttachments,

@@ -11,8 +11,8 @@ import {
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
+import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createSessionFileHandlers } from "./session-files.js";
-import { decodeWorkspaceRoutePath } from "./workspace-files.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { pendingAskSnapshots as collectPendingAskSnapshots } from "../session-attention.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
@@ -623,6 +623,24 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         return;
       case "mutations-not-found":
         helpers.error(res, 404, "No file mutations found for path");
+        return;
+      case "workspace-root-not-found":
+        helpers.error(res, 404, "Workspace root not found");
+        return;
+      case "current-file-not-found":
+        helpers.error(res, 404, "Current file not found");
+        return;
+      case "current-file-outside-workspace":
+        helpers.error(res, 403, "Current file path outside workspace");
+        return;
+      case "current-file-not-file":
+        helpers.error(res, 400, "Current path is not a file");
+        return;
+      case "current-file-too-large":
+        helpers.error(res, 413, `Current file too large (max ${result.maxSizeMegabytes}MB)`);
+        return;
+      case "current-file-unreadable":
+        helpers.error(res, 500, "Failed to read current file");
         return;
     }
   }

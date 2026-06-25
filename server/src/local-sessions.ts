@@ -23,7 +23,7 @@ import { stat, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
-import type { LocalSession } from "./types.js";
+import type { LocalSession, Session } from "./types.js";
 
 /** Fixed root of pi agent sessions. */
 const PI_SESSIONS_ROOT = join(homedir(), ".pi", "agent", "sessions");
@@ -267,6 +267,37 @@ export interface KnownLocalSessionIdentities {
 }
 
 type KnownLocalSessions = Set<string> | KnownLocalSessionIdentities | undefined;
+
+function canonicalLocalSessionFilePath(path: string): string {
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) return resolved;
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+export function collectKnownLocalSessionIdentities(
+  sessions: Iterable<Pick<Session, "piSessionFile" | "piSessionFiles" | "piSessionId">>,
+): KnownLocalSessionIdentities {
+  const files = new Set<string>();
+  const piSessionIds = new Set<string>();
+
+  for (const session of sessions) {
+    if (session.piSessionId) {
+      piSessionIds.add(session.piSessionId);
+    }
+    if (session.piSessionFile) {
+      files.add(canonicalLocalSessionFilePath(session.piSessionFile));
+    }
+    for (const file of session.piSessionFiles ?? []) {
+      files.add(canonicalLocalSessionFilePath(file));
+    }
+  }
+
+  return { files, piSessionIds };
+}
 
 function isKnownLocalSession(
   row: Pick<TuiSessionCatalogRow, "path" | "pi_session_id">,

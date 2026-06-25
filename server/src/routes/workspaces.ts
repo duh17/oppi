@@ -16,7 +16,7 @@ import {
   getCommitLog,
 } from "../git-commits.js";
 import { getGitStatus } from "../git-status.js";
-import { discoverLocalSessions } from "../local-sessions.js";
+import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
@@ -103,18 +103,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   async function handleListLocalSessions(res: ServerResponse): Promise<void> {
-    const knownFiles = new Set<string>();
-    for (const session of ctx.storage.listSessions()) {
-      if (session.piSessionFile) {
-        knownFiles.add(session.piSessionFile);
-      }
-
-      for (const file of session.piSessionFiles ?? []) {
-        knownFiles.add(file);
-      }
-    }
-
-    const localSessions = await discoverLocalSessions(knownFiles, {
+    const knownPiSessionIdentities = collectKnownLocalSessionIdentities(ctx.storage.listSessions());
+    const localSessions = await discoverLocalSessions(knownPiSessionIdentities, {
       dataDir: ctx.storage.getDataDir(),
     });
     helpers.json(res, { sessions: localSessions });

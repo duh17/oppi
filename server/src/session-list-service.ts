@@ -1,7 +1,5 @@
-import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
-
 import {
+  collectKnownLocalSessionIdentities,
   discoverLocalSessions,
   listCatalogedLocalSessions,
   validateCwdAlignment,
@@ -280,15 +278,14 @@ export class SessionListService {
     const snapshot = listCatalogedLocalSessions(knownPiSessionIdentities, {
       dataDir: this.deps.storage.getDataDir(),
     });
-    if (!workspace.hostMount) {
-      return snapshot;
+    const hostMount = workspace.hostMount;
+    if (!hostMount) {
+      return { ...snapshot, sessions: [] };
     }
 
     return {
       ...snapshot,
-      sessions: snapshot.sessions.filter((session) =>
-        validateCwdAlignment(session.cwd, workspace.hostMount ?? ""),
-      ),
+      sessions: snapshot.sessions.filter((session) => validateCwdAlignment(session.cwd, hostMount)),
     };
   }
 
@@ -311,20 +308,10 @@ export class SessionListService {
   }
 
   private collectKnownPiSessionIdentities(): { files: Set<string>; piSessionIds: Set<string> } {
-    const files = new Set<string>();
-    const piSessionIds = new Set<string>();
-    for (const session of this.deps.storage.listSessions()) {
-      if (session.piSessionId) {
-        piSessionIds.add(session.piSessionId);
-      }
-      if (session.piSessionFile) {
-        files.add(canonicalSessionFilePath(session.piSessionFile));
-      }
-      for (const file of session.piSessionFiles ?? []) {
-        files.add(canonicalSessionFilePath(file));
-      }
-    }
-    return { files, piSessionIds };
+    return collectKnownLocalSessionIdentities(this.deps.storage.listSessions()) as {
+      files: Set<string>;
+      piSessionIds: Set<string>;
+    };
   }
 }
 
@@ -594,14 +581,4 @@ function splitImportableSessionsByRange(
   visibleSessions.sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
   olderSessions.sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
   return { visibleSessions, olderSessions };
-}
-
-function canonicalSessionFilePath(path: string): string {
-  const resolved = resolve(path);
-  if (!existsSync(resolved)) return resolved;
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
 }

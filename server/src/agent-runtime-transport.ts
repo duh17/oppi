@@ -76,6 +76,16 @@ export function unsupportedRuntimeCommandError(
   return new Error(unsupportedRuntimeCommandMessage(runtime, command, reason));
 }
 
+export class RuntimeDisconnectedError extends Error {
+  constructor(
+    readonly runtime: string,
+    message = `${runtime} is not connected`,
+  ) {
+    super(message);
+    this.name = "RuntimeDisconnectedError";
+  }
+}
+
 export interface ForwardedCommandResultApplication {
   changed: boolean;
   shouldBroadcastState: boolean;

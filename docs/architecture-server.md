@@ -234,6 +234,7 @@ These rules are enforced by `server/scripts/check-architecture-boundaries.ts` an
 - Server tests live under `server/tests/**`, not `server/src/**`.
 - `server/src/server.ts` is the single composition root. Lower layers must not import it.
 - Core modules must not import `server/src/routes/**`; shared logic belongs in non-route modules.
+- Concrete route modules must not import each other. Compose route dispatch in `server/src/routes/index.ts`, and keep shared route helpers limited to the approved route helper modules.
 - `server/src/types.ts` may only re-export modules under `server/src/types/`.
 - `session-*` modules must not import the `sessions.ts` facade.
 - `server/src/storage/**` modules are infrastructure leaves. They must not import routes, stream code, or session runtime modules.

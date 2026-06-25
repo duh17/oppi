@@ -55,7 +55,17 @@ export interface SessionFullToolOutputResult {
 export type SessionOverallDiffResult =
   | { kind: "ok"; diff: WorkspaceReviewDiffResponse }
   | { kind: "trace-not-found" }
-  | { kind: "mutations-not-found" };
+  | { kind: "mutations-not-found" }
+  | { kind: "workspace-root-not-found" }
+  | { kind: "current-file-not-found" }
+  | { kind: "current-file-outside-workspace" }
+  | { kind: "current-file-not-file" }
+  | { kind: "current-file-too-large"; maxSizeMegabytes: number }
+  | { kind: "current-file-unreadable" };
+
+type CurrentFileTextResult =
+  | { kind: "ok"; text: string }
+  | Exclude<SessionOverallDiffResult, { kind: "ok" | "trace-not-found" | "mutations-not-found" }>;
 
 export interface SessionChangesResult {
   workspaceId: string;
@@ -224,7 +234,12 @@ export class SessionTraceService {
       return { kind: "mutations-not-found" };
     }
 
-    const currentText = await this.readCurrentFileText(params.session, params.path);
+    const currentFile = await this.readCurrentFileText(params.session, params.path);
+    if (currentFile.kind !== "ok") {
+      return currentFile;
+    }
+
+    const currentText = currentFile.text;
     const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
     const flatLines = computeDiffLines(baselineText, currentText);
     const hunks = buildDiffHunks(flatLines);
@@ -332,22 +347,56 @@ export class SessionTraceService {
     };
   }
 
-  private async readCurrentFileText(session: Session, reqPath: string): Promise<string> {
+  private async readCurrentFileText(
+    session: Session,
+    reqPath: string,
+  ): Promise<CurrentFileTextResult> {
     const workRoot = await this.resolveWorkRoot(session);
-    if (!workRoot) return "";
+    if (!workRoot) return { kind: "workspace-root-not-found" };
+
+    let realWorkRoot: string;
+    try {
+      realWorkRoot = await realpath(workRoot);
+    } catch {
+      return { kind: "workspace-root-not-found" };
+    }
 
     const target = resolve(workRoot, reqPath);
+    let resolved: string;
     try {
-      const resolved = await realpath(target);
-      const realWorkRoot = await realpath(workRoot);
-      if (!isPathWithinRoot(resolved, realWorkRoot)) {
-        return "";
-      }
-      const fileStat = await stat(resolved);
-      if (!fileStat.isFile() || fileStat.size > MAX_SESSION_FILE_BYTES) return "";
-      return await readFile(resolved, "utf8");
+      resolved = await realpath(target);
+    } catch (error: unknown) {
+      return isPathMissingError(error)
+        ? { kind: "current-file-not-found" }
+        : { kind: "current-file-unreadable" };
+    }
+
+    if (!isPathWithinRoot(resolved, realWorkRoot)) {
+      return { kind: "current-file-outside-workspace" };
+    }
+
+    let fileStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStat = await stat(resolved);
     } catch {
-      return "";
+      return { kind: "current-file-unreadable" };
+    }
+
+    if (!fileStat.isFile()) {
+      return { kind: "current-file-not-file" };
+    }
+
+    if (fileStat.size > MAX_SESSION_FILE_BYTES) {
+      return {
+        kind: "current-file-too-large",
+        maxSizeMegabytes: Math.round(MAX_SESSION_FILE_BYTES / (1024 * 1024)),
+      };
+    }
+
+    try {
+      return { kind: "ok", text: await readFile(resolved, "utf8") };
+    } catch {
+      return { kind: "current-file-unreadable" };
     }
   }
 
@@ -448,6 +497,15 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function isPathMissingError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
 }
 
 function addUniquePath(paths: string[], path: string): void {
