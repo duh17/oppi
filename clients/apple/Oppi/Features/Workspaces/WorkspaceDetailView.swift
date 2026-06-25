@@ -206,46 +206,15 @@ struct WorkspaceDetailView: View {
         workspaceSessions.filter { $0.status != .stopped }
     }
 
-    /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
+    /// Importable local pi TUI sessions for this workspace.
     ///
-    /// The hostMount uses `~` (e.g. `~/workspace/oppi`) while CWD from the server
-    /// is absolute (e.g. `/Users/testuser/workspace/oppi`). We match by checking if
-    /// the CWD ends with the path after `~/`.
+    /// The server owns CWD/hostMount alignment so the client only applies the
+    /// visible search filter here.
     private var filteredLocalSessions: [LocalSession] {
-        guard let mount = currentWorkspace.hostMount, !mount.isEmpty else { return [] }
-
-        // Extract the path suffix after ~/ for matching against absolute CWDs
-        let suffix: String
-        if mount.hasPrefix("~/") {
-            suffix = String(mount.dropFirst(2))  // "workspace/oppi"
-        } else if mount.hasPrefix("~") {
-            suffix = String(mount.dropFirst(1))   // just "~" means home dir
-        } else {
-            suffix = mount  // Already absolute — match directly
-        }
+        guard hasSessionSearchQuery else { return localSessions }
 
         return localSessions.filter { local in
-            if hasSessionSearchQuery {
-                guard FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: local.displayTitle) != nil else {
-                    return false
-                }
-            }
-
-            if suffix.isEmpty {
-                // hostMount is "~" — match any CWD under user's home
-                return true
-            }
-
-            // Check if CWD ends with the suffix (e.g. "/Users/testuser/workspace/oppi" ends with "workspace/oppi")
-            // Also verify a path separator precedes the suffix to avoid partial matches
-            if local.cwd == mount { return true }
-            if local.cwd.hasSuffix("/" + suffix) { return true }
-            if local.cwd.hasSuffix("/" + suffix + "/") { return true }
-            // Check subdirectory
-            if let range = local.cwd.range(of: "/" + suffix + "/") {
-                return range.lowerBound < local.cwd.endIndex
-            }
-            return false
+            FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: local.displayTitle) != nil
         }
     }
 

@@ -195,6 +195,47 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags route modules importing other concrete route modules", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-route-import-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/routes/sessions.ts"),
+        'import { createWorkspaceRoutes } from "./workspaces.js";\nexport { createWorkspaceRoutes };\n',
+      );
+      write(
+        join(repoRoot, "server/src/routes/workspaces.ts"),
+        "export function createWorkspaceRoutes(): void {}\n",
+      );
+      write(
+        join(repoRoot, "server/src/routes/index.ts"),
+        'import { createWorkspaceRoutes } from "./workspaces.js";\nexport { createWorkspaceRoutes };\n',
+      );
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "route-to-route-boundary",
+            file: "server/src/routes/sessions.ts",
+            target: "server/src/routes/workspaces.ts",
+          }),
+        ]),
+      );
+      expect(violations).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "route-to-route-boundary",
+            file: "server/src/routes/index.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags mirror resume imports outside lifecycle/open policy modules", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mirror-resume-"));
 

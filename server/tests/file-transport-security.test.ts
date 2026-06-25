@@ -8,6 +8,7 @@ import { once } from "node:events";
 
 import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import { createSessionFileHandlers } from "../src/routes/session-files.js";
+import { SessionTraceService } from "../src/session-trace-service.js";
 import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
 import type { Session, Workspace } from "../src/types.js";
 
@@ -194,6 +195,52 @@ describe("file transport security parity", () => {
     expect(errors).toEqual([]);
     expect(rawRes.statusCode).toBe(200);
     expect(rawRes.body.toString("utf8")).toBe("hi from oppi\n");
+  });
+
+  it("reports session raw stream open errors before sending success headers", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-security-stream-error-"));
+    const workspace = makeWorkspace(root);
+    const session = makeSession({
+      changeStats: {
+        changedFiles: ["missing.txt"],
+        filesChanged: 1,
+      } as Session["changeStats"],
+    });
+    const errors: Array<{ status: number; message: string }> = [];
+    const helpers = makeHelpers(errors);
+    const traceService = {
+      listSessionChanges: () => ({
+        workspaceId: "ws-1",
+        sessionId: "sess-1",
+        files: [],
+        changedFileCount: 0,
+        changedFilesOverflow: 0,
+      }),
+      getSessionRawFile: async () => ({
+        kind: "ok" as const,
+        filePath: join(root, "missing.txt"),
+        contentType: "text/plain; charset=utf-8",
+        size: 1,
+      }),
+    } as unknown as SessionTraceService;
+    const handlers = createSessionFileHandlers(
+      makeContext(workspace, session),
+      helpers,
+      traceService,
+    );
+
+    const rawRes = new MockWritableResponse();
+    const rawFinished = once(rawRes, "finish");
+    await handlers.handleGetSessionRaw(
+      "ws-1",
+      "sess-1",
+      "missing.txt",
+      rawRes as unknown as ServerResponse,
+    );
+    await rawFinished;
+
+    expect(errors).toEqual([{ status: 500, message: "Failed to read file" }]);
+    expect(rawRes.statusCode).toBe(500);
   });
 
   it("serves workspace raw byte ranges with partial-content headers", async () => {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { RuntimeDisconnectedError } from "../src/agent-runtime-transport.js";
 import {
   SessionLifecycleError,
   SessionLifecycleService,
@@ -74,7 +75,7 @@ function makeService(
     (name?: string, model?: string) =>
       options.forkSession ?? makeSession({ id: "fork-1", name, model }),
   );
-  const deleteSession = vi.fn();
+  const deleteSession = vi.fn(() => true);
   const deleteSearchIndexSession = vi.fn();
   const getDataDir = vi.fn(() => options.dataDir ?? join(tmpdir(), "oppi-lifecycle-service-test"));
   const getSession = vi.fn(() => options.storedSession);
@@ -576,11 +577,11 @@ describe("SessionLifecycleService", () => {
       });
     });
 
-    it("marks disconnected terminal mirrors stopped when the runtime reports disconnect", async () => {
+    it("marks disconnected terminal mirrors stopped when the runtime reports a typed disconnect", async () => {
       const session = makeSession({ runtime: "pi-tui", status: "busy" });
       const { service, saveSession, getSession } = makeService({
         mirrorConnected: true,
-        stopError: new Error("pi-tui disconnected"),
+        stopError: new RuntimeDisconnectedError("pi-tui", "pi-tui disconnected"),
       });
       getSession.mockImplementation(() => saveSession.mock.calls.at(-1)?.[0] as Session);
 
@@ -594,6 +595,17 @@ describe("SessionLifecycleService", () => {
         }),
       );
       expect(result.storedStopOnly).toBe(true);
+    });
+
+    it("does not recover from untyped disconnect-looking stop errors", async () => {
+      const session = makeSession({ runtime: "pi-tui", status: "busy" });
+      const { service, saveSession } = makeService({
+        mirrorConnected: true,
+        stopError: new Error("pi-tui disconnected"),
+      });
+
+      await expect(service.stopSession(session)).rejects.toThrow("pi-tui disconnected");
+      expect(saveSession).not.toHaveBeenCalled();
     });
 
     it("throws non-disconnect runtime stop errors", async () => {
@@ -628,6 +640,16 @@ describe("SessionLifecycleService", () => {
           generatedMediaAttachments: false,
         },
       });
+    });
+
+    it("reports when session metadata was already absent", async () => {
+      const session = makeSession({ id: "delete-1", workspaceId: "ws-1" });
+      const { service, deleteSession } = makeService();
+      deleteSession.mockReturnValue(false);
+
+      const result = await service.deleteSession(session);
+
+      expect(result.deleted.sqliteMetadata).toBe(false);
     });
   });
 });

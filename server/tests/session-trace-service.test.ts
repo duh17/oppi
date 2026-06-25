@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -236,6 +236,123 @@ describe("SessionTraceService", () => {
       },
     });
     expect(result.kind === "ok" ? result.diff.hunks.length : 0).toBeGreaterThan(0);
+  });
+
+  it("reports typed overall-diff misses for current files outside the workspace", async () => {
+    const dataDir = tempDir("oppi-session-overall-diff-outside-");
+    const workspaceRoot = tempDir("oppi-session-overall-diff-outside-workspace-");
+    const outsideRoot = tempDir("oppi-session-overall-diff-outside-root-");
+    const outsidePath = join(outsideRoot, "outside.txt");
+    const tracePath = join(dataDir, "trace.jsonl");
+    writeFileSync(outsidePath, "new", "utf8");
+    writeJsonl(tracePath, [
+      { type: "session", id: "pi-1", cwd: workspaceRoot },
+      {
+        type: "message",
+        id: "assistant-1",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit",
+              name: "edit",
+              arguments: { path: outsidePath, oldText: "old", newText: "new" },
+            },
+          ],
+        },
+      },
+    ]);
+    const { service } = makeService({
+      dataDir,
+      workspace: makeWorkspace({ hostMount: workspaceRoot }),
+    });
+
+    await expect(
+      service.getSessionOverallDiff({
+        session: makeSession({ piSessionFile: tracePath }),
+        path: outsidePath,
+      }),
+    ).resolves.toEqual({ kind: "current-file-outside-workspace" });
+  });
+
+  it("reports typed overall-diff misses for current files above the preview limit", async () => {
+    const dataDir = tempDir("oppi-session-overall-diff-large-");
+    const workspaceRoot = tempDir("oppi-session-overall-diff-large-workspace-");
+    const tracePath = join(dataDir, "trace.jsonl");
+    writeFileSync(join(workspaceRoot, "big.txt"), Buffer.alloc(10 * 1024 * 1024 + 1));
+    writeJsonl(tracePath, [
+      { type: "session", id: "pi-1", cwd: workspaceRoot },
+      {
+        type: "message",
+        id: "assistant-1",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit",
+              name: "edit",
+              arguments: { path: "big.txt", oldText: "old", newText: "new" },
+            },
+          ],
+        },
+      },
+    ]);
+    const { service } = makeService({
+      dataDir,
+      workspace: makeWorkspace({ hostMount: workspaceRoot }),
+    });
+
+    await expect(
+      service.getSessionOverallDiff({
+        session: makeSession({ piSessionFile: tracePath }),
+        path: "big.txt",
+      }),
+    ).resolves.toEqual({ kind: "current-file-too-large", maxSizeMegabytes: 10 });
+  });
+
+  it("reports unreadable current files separately from missing files", async () => {
+    const dataDir = tempDir("oppi-session-overall-diff-unreadable-");
+    const workspaceRoot = tempDir("oppi-session-overall-diff-unreadable-workspace-");
+    const lockedDir = join(workspaceRoot, "locked");
+    const tracePath = join(dataDir, "trace.jsonl");
+    mkdirSync(lockedDir);
+    writeFileSync(join(lockedDir, "secret.txt"), "new", "utf8");
+    writeJsonl(tracePath, [
+      { type: "session", id: "pi-1", cwd: workspaceRoot },
+      {
+        type: "message",
+        id: "assistant-1",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-edit",
+              name: "edit",
+              arguments: { path: "locked/secret.txt", oldText: "old", newText: "new" },
+            },
+          ],
+        },
+      },
+    ]);
+    const { service } = makeService({
+      dataDir,
+      workspace: makeWorkspace({ hostMount: workspaceRoot }),
+    });
+
+    try {
+      chmodSync(lockedDir, 0o000);
+      await expect(
+        service.getSessionOverallDiff({
+          session: makeSession({ piSessionFile: tracePath }),
+          path: "locked/secret.txt",
+        }),
+      ).resolves.toEqual({ kind: "current-file-unreadable" });
+    } finally {
+      chmodSync(lockedDir, 0o700);
+    }
   });
 
   it("reports typed overall-diff misses for absent traces and files without mutations", async () => {

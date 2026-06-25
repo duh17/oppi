@@ -365,6 +365,76 @@ describe("sessions module", () => {
     });
   });
 
+  it("maps overall diff current-file policy misses to HTTP errors", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-route-diff-"));
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-test-route-diff-workspace-"));
+    const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-test-route-diff-outside-"));
+    try {
+      const outsidePath = join(outsideRoot, "outside.txt");
+      const tracePath = join(dataDir, "trace.jsonl");
+      writeFileSync(outsidePath, "new", "utf8");
+      writeFileSync(
+        tracePath,
+        [
+          JSON.stringify({ type: "session", id: "pi-1", cwd: workspaceRoot }),
+          JSON.stringify({
+            type: "message",
+            id: "assistant-1",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "tc-edit",
+                  name: "edit",
+                  arguments: { path: outsidePath, oldText: "old", newText: "new" },
+                },
+              ],
+            },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const session = {
+        id: "s1",
+        workspaceId: "ws-1",
+        piSessionFile: tracePath,
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test", hostMount: workspaceRoot })),
+          getSession: vi.fn(() => session),
+          getDataDir: vi.fn(() => dataDir),
+        },
+        sessionRuntimes: {},
+        ensureSessionContextWindow: vi.fn((s: unknown) => s),
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const url = new URL(
+        `http://localhost/workspaces/ws-1/sessions/s1/diff?path=${encodeURIComponent(outsidePath)}`,
+      );
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/sessions/s1/diff",
+        url,
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body)).toEqual({ error: "Current file path outside workspace" });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it("replays a pi-tui mirror JSONL trace without a live leaf id", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-mirror-trace-"));
     try {

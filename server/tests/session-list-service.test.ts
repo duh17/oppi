@@ -11,6 +11,7 @@ const localSessionState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/local-sessions.js", () => ({
+  collectKnownLocalSessionIdentities: vi.fn(() => ({ files: new Set(), piSessionIds: new Set() })),
   discoverLocalSessions: vi.fn(async () => localSessionState.snapshot.sessions),
   listCatalogedLocalSessions: vi.fn(() => localSessionState.snapshot),
   validateCwdAlignment: vi.fn(() => true),
@@ -270,6 +271,38 @@ describe("SessionListService", () => {
         sinceMs,
         untilMs,
       );
+    });
+
+    it("does not expose importable local sessions for hostless workspaces", () => {
+      const sinceMs = Date.parse("2026-05-13T00:00:00Z");
+      const untilMs = Date.parse("2026-05-14T00:00:00Z");
+      const nowMs = Date.parse("2026-05-13T12:00:00Z");
+      localSessionState.snapshot = {
+        lastScannedAt: nowMs,
+        sessions: [
+          makeLocalSession({
+            path: "/tmp/hostless-tui.jsonl",
+            piSessionId: "hostless-tui",
+            lastModified: sinceMs + 15_000,
+          }),
+        ],
+      };
+      const { service } = makeService();
+
+      const result = service.listWorkspaceSessionRows({
+        workspace: makeWorkspace(),
+        statuses: new Set(["stopped"]),
+        timeRange: { sinceMs, untilMs },
+        nowMs,
+      });
+      const buckets = service.listWorkspaceStoppedSessionBuckets({
+        workspace: makeWorkspace(),
+        beforeMs: untilMs,
+        nowMs,
+      });
+
+      expect(result.stopped).toEqual([]);
+      expect(buckets.buckets).toEqual([]);
     });
   });
 

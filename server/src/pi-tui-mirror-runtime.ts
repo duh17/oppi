@@ -8,6 +8,7 @@ import { WebSocket, type RawData } from "ws";
 
 import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
 import {
+  RuntimeDisconnectedError,
   applyForwardedCommandResultToSession,
   type AgentRuntimeTransport,
 } from "./agent-runtime-transport.js";
@@ -870,7 +871,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const connection = this.connectedBridgeForSession(sessionId);
 
     if (!connection) {
-      throw new Error("pi-tui is not connected; stop it from the terminal");
+      throw new RuntimeDisconnectedError(
+        "pi-tui",
+        "pi-tui is not connected; stop it from the terminal",
+      );
     }
 
     const active = this.active.get(sessionId);
@@ -957,7 +961,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       if (isTerminalStoppedReason(reason)) {
         waiter.resolve();
       } else {
-        waiter.reject(new Error(`pi-tui disconnected before stop completed (${reason})`));
+        waiter.reject(
+          new RuntimeDisconnectedError(
+            "pi-tui",
+            `pi-tui disconnected before stop completed (${reason})`,
+          ),
+        );
       }
     }
   }
