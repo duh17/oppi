@@ -2,6 +2,7 @@ import {
   buildExtensionUINotificationMessage,
   buildExtensionUIRequestMessage,
   buildExtensionUISettledMessage,
+  EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS,
   type ExtensionUIResponsePayload,
   isExtensionUIFireAndForgetMethod,
 } from "./extension-ui-contract.js";
@@ -131,8 +132,6 @@ function notificationReplayKey(req: ExtensionUIRequest): string | undefined {
       return undefined;
   }
 }
-
-const HIGH_FREQUENCY_EXTENSION_UI_NOTIFICATION_THROTTLE_MS = 250;
 
 function widgetLinesHaveContent(lines: string[] | undefined): boolean {
   return lines?.some((line) => line.replace(/[\r\n]/g, "").length > 0) ?? false;
@@ -271,6 +270,8 @@ function notificationBroadcastThrottleKey(req: ExtensionUIRequest): string | und
   switch (req.method) {
     case "setStatus":
       return req.statusKey ? `status:${req.statusKey}` : undefined;
+    case "setWidget":
+      return req.widgetKey ? `widget:${req.widgetKey}` : undefined;
     case "setWorkingIndicator":
       return "working:indicator";
     case "setWorkingMessage":
@@ -374,11 +375,11 @@ function broadcastExtensionUINotification(
   if (
     !isImmediateExtensionUINotification(req) &&
     previous &&
-    now - previous.emittedAt < HIGH_FREQUENCY_EXTENSION_UI_NOTIFICATION_THROTTLE_MS
+    now - previous.emittedAt < EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS
   ) {
     const delayMs = Math.max(
       0,
-      HIGH_FREQUENCY_EXTENSION_UI_NOTIFICATION_THROTTLE_MS - (now - previous.emittedAt),
+      EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS - (now - previous.emittedAt),
     );
     cancelPendingExtensionUINotificationBroadcast(previous);
     previous.pending = {

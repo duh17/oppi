@@ -45,6 +45,9 @@ export const EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS = 80;
 export const EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS = 60_000;
 export const EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS = 160;
 export const EXTENSION_UI_STATUS_TEXT_MAX_CHARS = 160;
+// Shared back-pressure for extension-driven animation, progress, and widget redraw snapshots.
+// Extensions should send animation frames once and let clients animate locally.
+export const EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS = 250;
 export const EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY = "extension-native-ui:v1:text-fallback";
 export const EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY = "extension-native-ui:v1:prompt-native";
 export const EXTENSION_NATIVE_UI_SURFACE_NATIVE_CAPABILITY =
