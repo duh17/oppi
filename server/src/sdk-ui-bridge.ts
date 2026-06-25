@@ -14,6 +14,7 @@ import type {
 } from "./pi-events.js";
 import {
   createExtensionUINativeRenderContext,
+  EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS,
   normalizeExtensionUIWidgetNativeSurface,
   parseExtensionUIAskResponse,
   parseExtensionUIConfirmResponse,
@@ -261,7 +262,9 @@ export class SdkUiBridge {
   // Match Pi TUI: widget keys are a global namespace. Scope metadata only helps
   // Oppi group status/widget surfaces for display; it does not create ownership.
   private readonly activeWidgets = new Map<string, ActiveWidgetComponent>();
-  private readonly pendingWidgetRenders = new Set<string>();
+  private readonly pendingWidgetRenderTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pendingWidgetRenderMicrotasks = new Set<string>();
+  private readonly widgetSnapshotEmittedAt = new Map<string, number>();
   private toolsExpanded = false;
 
   constructor(
@@ -530,26 +533,64 @@ export class SdkUiBridge {
     for (const key of this.activeWidgets.keys()) {
       this.disposeWidget(key);
     }
-    this.pendingWidgetRenders.clear();
+    this.clearPendingWidgetSnapshots();
   }
 
   private disposeWidget(key: string): void {
-    this.pendingWidgetRenders.delete(key);
+    this.clearPendingWidgetSnapshot(key);
+    this.widgetSnapshotEmittedAt.delete(key);
     const active = this.activeWidgets.get(key);
     this.activeWidgets.delete(key);
     active?.component.dispose?.();
   }
 
   private scheduleWidgetSnapshot(key: string): void {
-    if (this.isDisposed() || this.pendingWidgetRenders.has(key)) {
+    if (this.isDisposed() || this.hasPendingWidgetSnapshot(key)) {
       return;
     }
 
-    this.pendingWidgetRenders.add(key);
-    queueMicrotask(() => {
-      this.pendingWidgetRenders.delete(key);
+    const emittedAt = this.widgetSnapshotEmittedAt.get(key);
+    const now = Date.now();
+    const delayMs =
+      emittedAt === undefined
+        ? 0
+        : Math.max(0, EXTENSION_UI_HIGH_FREQUENCY_UPDATE_THROTTLE_MS - (now - emittedAt));
+
+    if (delayMs <= 0) {
+      this.pendingWidgetRenderMicrotasks.add(key);
+      queueMicrotask(() => {
+        this.pendingWidgetRenderMicrotasks.delete(key);
+        this.emitWidgetSnapshot(key);
+      });
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.pendingWidgetRenderTimers.delete(key);
       this.emitWidgetSnapshot(key);
-    });
+    }, delayMs);
+    this.pendingWidgetRenderTimers.set(key, timer);
+  }
+
+  private hasPendingWidgetSnapshot(key: string): boolean {
+    return this.pendingWidgetRenderMicrotasks.has(key) || this.pendingWidgetRenderTimers.has(key);
+  }
+
+  private clearPendingWidgetSnapshot(key: string): void {
+    this.pendingWidgetRenderMicrotasks.delete(key);
+    const timer = this.pendingWidgetRenderTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingWidgetRenderTimers.delete(key);
+    }
+  }
+
+  private clearPendingWidgetSnapshots(): void {
+    this.pendingWidgetRenderMicrotasks.clear();
+    for (const timer of this.pendingWidgetRenderTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.pendingWidgetRenderTimers.clear();
   }
 
   private emitWidgetSnapshot(key: string): void {
@@ -574,6 +615,7 @@ export class SdkUiBridge {
       extensionScopeId: active.extensionScopeId,
       extensionDisplayName: active.extensionDisplayName,
     });
+    this.widgetSnapshotEmittedAt.set(key, Date.now());
   }
 
   private emitExtensionUIRequest(request: Omit<ExtensionUIRequestEvent, "type">): void {

@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
 import { hostMountValidationError } from "../src/host.js";
@@ -14,6 +14,10 @@ import {
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("resolveSdkSessionCwd", () => {
   it("defaults to home dir when workspace is missing", () => {
@@ -1064,6 +1068,8 @@ describe("SdkBackend extension UI bridge", () => {
   });
 
   it("re-renders component widgets when they request a render", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
     let renderCount = 0;
     let requestRender: (() => void) | undefined;
@@ -1082,9 +1088,40 @@ describe("SdkBackend extension UI bridge", () => {
     requestRender?.();
     await Promise.resolve();
 
+    expect(requests).toHaveLength(1);
+    vi.advanceTimersByTime(250);
+
     expect(requests).toHaveLength(2);
     expect(requests[1].method).toBe("setWidget");
     expect(requests[1].widgetLines).toEqual(["Goal tick 1"]);
+  });
+
+  it("coalesces component widget render requests through the shared update throttle", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+    let renderCount = 0;
+    let requestRender: (() => void) | undefined;
+
+    ui.setWidget("goal", (tui) => {
+      requestRender = (tui as { requestRender: () => void }).requestRender;
+      return {
+        render: () => [`Goal tick ${renderCount}`],
+      };
+    });
+
+    renderCount = 1;
+    requestRender?.();
+    renderCount = 2;
+    requestRender?.();
+
+    expect(requests).toHaveLength(1);
+
+    vi.advanceTimersByTime(250);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1].method).toBe("setWidget");
+    expect(requests[1].widgetLines).toEqual(["Goal tick 2"]);
   });
 
   it("disposes component widgets when clearing them", () => {

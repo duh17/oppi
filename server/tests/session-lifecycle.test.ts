@@ -676,6 +676,58 @@ describe("SessionManager extension UI", () => {
     });
   });
 
+  it("throttles high-frequency widget snapshots by key and flushes the latest value", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-1",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents snapshot 1"],
+    });
+    vi.setSystemTime(2_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-2",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents snapshot 2"],
+    });
+
+    const widgetEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" &&
+          event.method === "setWidget" &&
+          event.widgetKey === "subagents",
+      );
+
+    expect(widgetEvents()).toHaveLength(1);
+    expect(manager.getPendingUIRequestMessages("s1")).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "subagents",
+        widgetLines: ["Agents snapshot 2"],
+      }),
+    );
+
+    vi.advanceTimersByTime(149);
+    expect(widgetEvents()).toHaveLength(1);
+
+    vi.advanceTimersByTime(1);
+    expect(widgetEvents()).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents snapshot 2"],
+    });
+  });
+
   it("cancels a throttled status update when the value returns to the last emitted state", () => {
     vi.useFakeTimers();
     vi.setSystemTime(2_000);
@@ -773,6 +825,55 @@ describe("SessionManager extension UI", () => {
 
     vi.advanceTimersByTime(250);
     expect(statusEvents()).toHaveLength(2);
+  });
+
+  it("does not replay a throttled widget snapshot after a clear", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const { manager, events } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-1",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents snapshot 1"],
+    });
+    vi.setSystemTime(2_100);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-2",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["Agents snapshot 2"],
+    });
+    vi.setSystemTime(2_150);
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "widget-subagents-clear",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: undefined,
+    });
+
+    const widgetEvents = () =>
+      events.filter(
+        (event) =>
+          event.type === "extension_ui_notification" &&
+          event.method === "setWidget" &&
+          event.widgetKey === "subagents",
+      );
+
+    expect(widgetEvents()).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: undefined,
+    });
+
+    vi.advanceTimersByTime(250);
+    expect(widgetEvents()).toHaveLength(2);
   });
 
   it("stores bounded persistent extension UI payloads", () => {
