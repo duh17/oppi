@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,6 +52,62 @@ describe("E2E UI harness routes", () => {
       expect(body.filePath).toBe(join(body.hostMount, "clip.mp4"));
       expect(body.filename).toBe("clip.mp4");
       expect(readFileSync(body.filePath, "utf8")).toBe("fixture bytes");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates real git worktree fixtures under the server data dir", async () => {
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-git-fixture-route-"));
+    try {
+      const dispatch = createE2EUIHarnessRoutes(makeContext(dataDir), createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/e2e/ui/fixtures/git-worktree",
+        url: new URL("http://localhost/e2e/ui/fixtures/git-worktree"),
+        req: makeRequest({
+          directoryName: "native-worktree-fixture",
+          branchName: "feature/native-worktree-e2e",
+        }),
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        hostMount: string;
+        worktreePath: string;
+        branchName: string;
+      };
+      expect(body.hostMount).toBe(
+        realpathSync(join(dataDir, "e2e-fixtures", "native-worktree-fixture", "repo")),
+      );
+      expect(body.worktreePath).toBe(
+        realpathSync(
+          join(
+            dataDir,
+            "e2e-fixtures",
+            "native-worktree-fixture",
+            "repo",
+            ".pi",
+            "worktrees",
+            "repo-feature",
+          ),
+        ),
+      );
+      expect(body.branchName).toBe("feature/native-worktree-e2e");
+      expect(readFileSync(join(body.hostMount, "README.md"), "utf8")).toContain("main checkout");
+      expect(readFileSync(join(body.worktreePath, "README.md"), "utf8")).toContain("main checkout");
+      const worktreeList = execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: body.hostMount,
+        encoding: "utf8",
+      });
+      expect(worktreeList).toContain(`worktree ${body.hostMount}`);
+      expect(worktreeList).toContain(`worktree ${body.worktreePath}`);
+      expect(worktreeList).toContain("branch refs/heads/feature/native-worktree-e2e");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -14,6 +14,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
     id: session.id,
     workspaceId: session.workspaceId,
     workspaceName: session.workspaceName,
+    worktreeId: session.worktreeId,
     name: session.name,
     status: session.status,
     createdAt: session.createdAt,

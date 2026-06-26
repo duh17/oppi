@@ -89,8 +89,8 @@ extension ServerConnection {
                 isActiveSession: isFocusedSession(sessionId)
             )
 
-        case .workspaceGitChanged(let workspaceId, _, _, _):
-            invalidateWorkspaceCaches(workspaceId: workspaceId)
+        case .workspaceGitChanged(let workspaceId, let worktreeId, _, _, _):
+            invalidateWorkspaceCaches(workspaceId: workspaceId, worktreeId: worktreeId)
 
         case .ignored:
             break
@@ -188,8 +188,8 @@ extension ServerConnection {
         sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)
     }
 
-    private func invalidateWorkspaceCaches(workspaceId: String) {
-        gitStatusStore.invalidate(workspaceId: workspaceId, apiClient: apiClient)
+    private func invalidateWorkspaceCaches(workspaceId: String, worktreeId: String? = nil) {
+        gitStatusStore.invalidate(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: apiClient)
         fileIndexStore.invalidate(workspaceId: workspaceId)
         Task { await FileBrowserCache.shared.invalidateWorkspaceCaches(for: workspaceId) }
     }

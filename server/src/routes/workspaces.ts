@@ -21,6 +21,7 @@ import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { hostMountValidationError } from "../host.js";
+import { listWorkspaceWorktrees, resolveWorkspaceWorktree } from "../worktrees.js";
 import type {
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
@@ -272,19 +273,38 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     };
   }
 
-  async function handleGetWorkspaceGitStatus(wsId: string, res: ServerResponse): Promise<void> {
+  function handleListWorkspaceWorktrees(wsId: string, res: ServerResponse): void {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
       return;
     }
 
-    if (!workspace.hostMount) {
+    helpers.json(res, { workspaceId: wsId, worktrees: listWorkspaceWorktrees(workspace) });
+  }
+
+  async function handleGetWorkspaceGitStatus(
+    wsId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const worktreeId = url.searchParams.get("worktreeId")?.trim() || undefined;
+    const statusPath = worktreeId
+      ? resolveWorkspaceWorktree(workspace, worktreeId)?.path
+      : workspace.hostMount;
+
+    if (!statusPath) {
       helpers.json(res, emptyGitStatus());
       return;
     }
 
-    const status = await getGitStatus(workspace.hostMount);
+    const status = await getGitStatus(statusPath);
     helpers.json(res, status);
   }
 
@@ -632,9 +652,15 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return true;
     }
 
+    const wsWorktreesMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees$/);
+    if (wsWorktreesMatch && method === "GET") {
+      handleListWorkspaceWorktrees(wsWorktreesMatch[1], res);
+      return true;
+    }
+
     const wsGitStatusResourceMatch = path.match(/^\/workspaces\/([^/]+)\/git\/status$/);
     if (wsGitStatusResourceMatch && method === "GET") {
-      await handleGetWorkspaceGitStatus(wsGitStatusResourceMatch[1], res);
+      await handleGetWorkspaceGitStatus(wsGitStatusResourceMatch[1], url, res);
       return true;
     }
 

@@ -16,6 +16,7 @@ import { createSessionFileHandlers } from "./session-files.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { pendingAskSnapshots as collectPendingAskSnapshots } from "../session-attention.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
+import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 
 const CREATE_SESSION_THINKING_LEVELS = new Set([
   "off",
@@ -212,12 +213,22 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
+    const worktreeSelection = normalizeSessionWorktreeId(
+      workspace,
+      url.searchParams.get("worktreeId") ?? undefined,
+    );
+    if (worktreeSelection.error) {
+      helpers.error(res, 400, worktreeSelection.error);
+      return;
+    }
+
     helpers.compressedJson(
       req,
       res,
       listService.listWorkspaceStoppedSessionBuckets({
         workspace,
         beforeMs,
+        worktreeId: worktreeSelection.worktreeId,
         nowMs: Date.now(),
       }),
     );
@@ -252,6 +263,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
+    const worktreeSelection = normalizeSessionWorktreeId(
+      workspace,
+      url.searchParams.get("worktreeId") ?? undefined,
+    );
+    if (worktreeSelection.error) {
+      helpers.error(res, 400, worktreeSelection.error);
+      return;
+    }
+
     helpers.compressedJson(
       req,
       res,
@@ -259,6 +279,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         workspace,
         statuses: parsedStatus.statuses,
         ...(parsedTimeRange.timeRange ? { timeRange: parsedTimeRange.timeRange } : {}),
+        worktreeId: worktreeSelection.worktreeId,
         nowMs: Date.now(),
       }),
     );
@@ -307,6 +328,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       prompt?: string;
       thinking?: string;
       ephemeral?: boolean;
+      worktreeId?: string;
       attachments?: ChatAttachmentRef[];
       images?: unknown;
     }>(req);
@@ -323,15 +345,25 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
     const requestedModel = body.model;
+    const worktreeSelection = normalizeSessionWorktreeId(workspace, body.worktreeId);
+    if (worktreeSelection.error) {
+      helpers.error(res, 400, worktreeSelection.error);
+      return;
+    }
 
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
       try {
+        const selectedWorktree = resolveWorkspaceWorktree(workspace, worktreeSelection.worktreeId);
+        const importWorkspace = selectedWorktree
+          ? { ...workspace, hostMount: selectedWorktree.path }
+          : workspace;
         const result = await lifecycle.importLocalSession({
-          workspace,
+          workspace: importWorkspace,
           piSessionFile: body.piSessionFile,
           name: body.name,
           model: requestedModel,
+          worktreeId: worktreeSelection.worktreeId,
         });
         ctx.appEvents?.emitSessionImported(result.session);
         helpers.json(res, { session: result.session }, result.created ? 201 : 200);
@@ -353,6 +385,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         prompt: body.prompt,
         thinking: body.thinking,
         ephemeral: body.ephemeral,
+        worktreeId: worktreeSelection.worktreeId,
         attachments: body.attachments,
       });
       ctx.appEvents?.emitSessionCreated(result.createdSession);

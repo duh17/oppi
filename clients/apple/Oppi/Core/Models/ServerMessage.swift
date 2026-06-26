@@ -90,8 +90,8 @@ enum ServerMessage: Sendable, Equatable {
     case extensionUINotification(ExtensionUINotification)
     case extensionUISettled(id: String, sessionId: String)
 
-    // Git status (workspace-level, pushed after file-mutating tool calls)
-    case gitStatus(workspaceId: String, status: GitStatus)
+    // Git status (workspace/worktree-level, pushed after file-mutating tool calls)
+    case gitStatus(workspaceId: String, worktreeId: String?, status: GitStatus)
 
     // Dictation (session audio stream)
     case dictationReady(provider: DictationProviderInfo?)
@@ -289,7 +289,7 @@ extension ServerMessage: Decodable {
         // retry
         case attempt, maxAttempts, delayMs, errorMessage, finalError
         // git_status
-        case workspaceId, status
+        case workspaceId, worktreeId, status
         // dictation
         case sttProvider, sttModel
         case text, snap, committedText, activeText
@@ -538,8 +538,9 @@ extension ServerMessage: Decodable {
 
         case "git_status":
             let workspaceId = try c.decode(String.self, forKey: .workspaceId)
+            let worktreeId = try c.decodeIfPresent(String.self, forKey: .worktreeId)
             let status = try c.decode(GitStatus.self, forKey: .status)
-            self = .gitStatus(workspaceId: workspaceId, status: status)
+            self = .gitStatus(workspaceId: workspaceId, worktreeId: worktreeId, status: status)
 
         // ── Dictation ──
         case "dictation_ready":

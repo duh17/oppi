@@ -107,6 +107,29 @@ struct AppEventMessageTests {
         #expect(notification.extensionDisplayName == "Review Helper")
     }
 
+    @Test func decodesWorkspaceGitChangedWorktreeId() throws {
+        let event = try AppEventMessage.decode(from: """
+        {
+          "type": "workspace_git_changed",
+          "workspaceId": "w1",
+          "worktreeId": "wt_feature",
+          "sessionId": "s1",
+          "emittedAt": 1791650000004,
+          "reason": "mutation_tool"
+        }
+        """)
+
+        guard case .workspaceGitChanged(let workspaceId, let worktreeId, let emittedAt, let sessionId, let reason) = event else {
+            Issue.record("Expected .workspaceGitChanged, got \(event)")
+            return
+        }
+        #expect(workspaceId == "w1")
+        #expect(worktreeId == "wt_feature")
+        #expect(emittedAt == 1_791_650_000_004)
+        #expect(sessionId == "s1")
+        #expect(reason == "mutation_tool")
+    }
+
     @Test func focusedStreamFramesDecodeAsIgnored() throws {
         let event = try AppEventMessage.decode(from: #"{"type":"text_delta","delta":"wrong stream"}"#)
 

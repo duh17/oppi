@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -42,6 +44,16 @@ export function createE2EUIHarnessRoutes(
         return true;
       }
       await handleWorkspaceFileFixture(ctx, helpers, req, res);
+      return true;
+    }
+
+    const gitWorktreeFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/git-worktree$/);
+    if (gitWorktreeFixtureMatch) {
+      if (method !== "POST") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      await handleGitWorktreeFixture(ctx, helpers, req, res);
       return true;
     }
 
@@ -105,10 +117,88 @@ async function handleWorkspaceFileFixture(
   helpers.json(res, { ok: true, hostMount, filePath, filename });
 }
 
+async function handleGitWorktreeFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
+  });
+  const directoryName = safePathSegment(stringField(body.directoryName));
+  const rawBranchName = stringField(body.branchName);
+  const branchName =
+    rawBranchName === undefined ? "feature/e2e-worktree" : safeBranchName(rawBranchName);
+
+  if (!directoryName) {
+    helpers.error(res, 400, "Fixture requires directoryName");
+    return;
+  }
+  if (!branchName) {
+    helpers.error(res, 400, "Fixture branchName is invalid");
+    return;
+  }
+
+  const root = join(ctx.storage.getDataDir(), "e2e-fixtures", directoryName);
+  const repoPath = join(root, "repo");
+  const managedWorktreesRoot = join(repoPath, ".pi", "worktrees");
+  const worktreePath = join(managedWorktreesRoot, "repo-feature");
+
+  try {
+    await rm(root, { recursive: true, force: true });
+    await mkdir(repoPath, { recursive: true, mode: 0o700 });
+    runFixtureGit(repoPath, ["init", "--initial-branch=main"]);
+    runFixtureGit(repoPath, ["config", "user.email", "oppi-e2e@example.invalid"]);
+    runFixtureGit(repoPath, ["config", "user.name", "Oppi E2E"]);
+    await writeFile(join(repoPath, "README.md"), "main checkout\n", { mode: 0o600 });
+    await writeFile(join(repoPath, ".gitignore"), ".pi/\n", { mode: 0o600 });
+    runFixtureGit(repoPath, ["add", "README.md", ".gitignore"]);
+    runFixtureGit(repoPath, ["commit", "-m", "initial"]);
+    runFixtureGit(repoPath, ["branch", branchName]);
+    await mkdir(managedWorktreesRoot, { recursive: true, mode: 0o700 });
+    runFixtureGit(repoPath, ["worktree", "add", worktreePath, branchName]);
+  } catch {
+    helpers.error(res, 500, "Failed to create git worktree fixture");
+    return;
+  }
+
+  helpers.json(res, {
+    ok: true,
+    hostMount: realpathSync(repoPath),
+    worktreePath: realpathSync(worktreePath),
+    branchName,
+  });
+}
+
+function runFixtureGit(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 10_000,
+  });
+}
+
 function safePathSegment(value: string | undefined): string | null {
   if (!value || value === "." || value === ".." || value.includes("\0")) return null;
   if (!/^[A-Za-z0-9._-]+$/.test(value)) return null;
   return value;
+}
+
+function safeBranchName(value: string | undefined): string | null {
+  const branch = value?.trim();
+  if (!branch) return null;
+  if (branch.startsWith("-") || branch.startsWith("/") || branch.endsWith("/")) return null;
+  if (
+    branch.includes("\0") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("//")
+  )
+    return null;
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch)) return null;
+  return branch;
 }
 
 function handleHarnessResponses(

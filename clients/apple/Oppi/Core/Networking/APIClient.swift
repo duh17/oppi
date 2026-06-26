@@ -439,6 +439,13 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).workspace
     }
 
+    /// List git worktrees/checkouts available inside a workspace.
+    func listWorkspaceWorktrees(workspaceId: String) async throws -> [WorkspaceWorktree] {
+        let data = try await get("/workspaces/\(workspaceId)/worktrees")
+        struct Response: Decodable { let worktrees: [WorkspaceWorktree] }
+        return try JSONDecoder().decode(Response.self, from: data).worktrees
+    }
+
     /// Create a new workspace.
     func createWorkspace(_ request: CreateWorkspaceRequest) async throws -> Workspace {
         let data = try await post("/workspaces", body: request)
@@ -481,9 +488,14 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Git Status
 
-    /// Fetch git status for a workspace's host directory.
-    func getGitStatus(workspaceId: String) async throws -> GitStatus {
-        let data = try await get("/workspaces/\(workspaceId)/git/status")
+    /// Fetch git status for a workspace checkout.
+    func getGitStatus(workspaceId: String, worktreeId: String? = nil) async throws -> GitStatus {
+        var queryItems: [URLQueryItem] = []
+        if let worktreeId, !worktreeId.isEmpty {
+            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        let query = try makePercentEncodedQuery(queryItems).map { "?\($0)" } ?? ""
+        let data = try await get("/workspaces/\(workspaceId)/git/status\(query)")
         return try JSONDecoder().decode(GitStatus.self, from: data)
     }
 
@@ -812,14 +824,30 @@ actor APIClient: ClientLogUploading {
     func getWorkspaceSessionList(
         workspace: Workspace,
         since: Date,
-        until: Date
+        until: Date,
+        worktreeId: String? = nil
     ) async throws -> WorkspaceSessionListResponse {
         let workspaceId = workspace.id
         let sinceMs = Int64(since.timeIntervalSince1970 * 1000)
         let untilMs = Int64(until.timeIntervalSince1970 * 1000)
+        var sessionQueryItems = [
+            URLQueryItem(name: "status", value: "active,stopped"),
+            URLQueryItem(name: "sinceMs", value: String(sinceMs)),
+            URLQueryItem(name: "untilMs", value: String(untilMs)),
+        ]
+        var bucketQueryItems = [
+            URLQueryItem(name: "status", value: "stopped"),
+            URLQueryItem(name: "beforeMs", value: String(sinceMs)),
+        ]
+        if let worktreeId, !worktreeId.isEmpty {
+            sessionQueryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+            bucketQueryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        let sessionsQuery = try makePercentEncodedQuery(sessionQueryItems) ?? ""
+        let bucketsQuery = try makePercentEncodedQuery(bucketQueryItems) ?? ""
 
-        async let sectionsData = get("/workspaces/\(workspaceId)/sessions?status=active,stopped&sinceMs=\(sinceMs)&untilMs=\(untilMs)")
-        async let bucketsData = get("/workspaces/\(workspaceId)/session-buckets?status=stopped&beforeMs=\(sinceMs)")
+        async let sectionsData = get("/workspaces/\(workspaceId)/sessions?\(sessionsQuery)")
+        async let bucketsData = get("/workspaces/\(workspaceId)/session-buckets?\(bucketsQuery)")
         async let attention = getWorkspaceAttention(workspaceId: workspaceId)
 
         let resolvedSectionsData = try await sectionsData
@@ -842,11 +870,21 @@ actor APIClient: ClientLogUploading {
     func getWorkspaceSessionListBucket(
         workspaceId: String,
         since: Date,
-        until: Date
+        until: Date,
+        worktreeId: String? = nil
     ) async throws -> WorkspaceSessionListBucketResponse {
         let sinceMs = Int64(since.timeIntervalSince1970 * 1000)
         let untilMs = Int64(until.timeIntervalSince1970 * 1000)
-        let data = try await get("/workspaces/\(workspaceId)/sessions?status=stopped&sinceMs=\(sinceMs)&untilMs=\(untilMs)")
+        var queryItems = [
+            URLQueryItem(name: "status", value: "stopped"),
+            URLQueryItem(name: "sinceMs", value: String(sinceMs)),
+            URLQueryItem(name: "untilMs", value: String(untilMs)),
+        ]
+        if let worktreeId, !worktreeId.isEmpty {
+            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        let query = try makePercentEncodedQuery(queryItems) ?? ""
+        let data = try await get("/workspaces/\(workspaceId)/sessions?\(query)")
         let sections = try JSONDecoder().decode(WorkspaceSessionCollectionResponse.self, from: data)
         return WorkspaceSessionListBucketResponse(
             workspaceId: workspaceId,
@@ -882,6 +920,7 @@ actor APIClient: ClientLogUploading {
         prompt: String? = nil,
         thinking: String? = nil,
         ephemeral: Bool? = nil,
+        worktreeId: String? = nil,
         attachments: [ChatAttachmentRef]? = nil
     ) async throws -> CreateSessionResponse {
         struct Body: Encodable {
@@ -890,6 +929,7 @@ actor APIClient: ClientLogUploading {
             let prompt: String?
             let thinking: String?
             let ephemeral: Bool?
+            let worktreeId: String?
             let attachments: [ChatAttachmentRef]?
         }
         let data = try await post(
@@ -900,6 +940,7 @@ actor APIClient: ClientLogUploading {
                 prompt: prompt,
                 thinking: thinking,
                 ephemeral: ephemeral,
+                worktreeId: worktreeId,
                 attachments: attachments
             )
         )
@@ -976,9 +1017,16 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Create a session that resumes an existing local pi TUI session.
-    func createWorkspaceSessionFromLocal(workspaceId: String, piSessionFile: String) async throws -> Session {
-        struct Body: Encodable { let piSessionFile: String }
-        let data = try await post("/workspaces/\(workspaceId)/sessions", body: Body(piSessionFile: piSessionFile))
+    func createWorkspaceSessionFromLocal(
+        workspaceId: String,
+        piSessionFile: String,
+        worktreeId: String? = nil
+    ) async throws -> Session {
+        struct Body: Encodable { let piSessionFile: String; let worktreeId: String? }
+        let data = try await post(
+            "/workspaces/\(workspaceId)/sessions",
+            body: Body(piSessionFile: piSessionFile, worktreeId: worktreeId)
+        )
         struct Response: Decodable { let session: Session }
         return try JSONDecoder().decode(Response.self, from: data).session
     }

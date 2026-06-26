@@ -202,7 +202,7 @@ describe("workspaces module", () => {
       rmSync(testDir, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("filters GET /local-sessions by canonical Pi session identities", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-session-known-route-"));

@@ -65,6 +65,7 @@ export interface Session {
   id: string;
   workspaceId?: string; // workspace that owns this session
   workspaceName?: string; // denormalized for display
+  worktreeId?: string; // workspace checkout that owns this session; absent sessions use main
   name?: string;
   status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";
   createdAt: number;
@@ -121,6 +122,7 @@ export interface SessionSummary {
   id: string;
   workspaceId?: string;
   workspaceName?: string;
+  worktreeId?: string;
   name?: string;
   status: Session["status"];
   createdAt: number;

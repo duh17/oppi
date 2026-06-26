@@ -17,6 +17,7 @@ import { buildSessionSummary } from "./session-summary.js";
 import type { Storage } from "./storage.js";
 import type { WorkspaceStoppedTimeBucketSnapshot } from "./storage/session-dao.js";
 import type { LocalSession, Session, SessionSummary, Workspace } from "./types.js";
+import { resolveWorkspaceWorktree } from "./worktrees.js";
 
 const LOCAL_SESSION_CATALOG_MAX_AGE_MS = 60_000;
 
@@ -149,6 +150,7 @@ export class SessionListService {
     workspace: Workspace;
     statuses: ReadonlySet<SessionStatusFilter>;
     timeRange?: { sinceMs: number; untilMs: number };
+    worktreeId?: string;
     nowMs?: number;
   }): WorkspaceSessionCollectionResult {
     const serverNow = params.nowMs ?? Date.now();
@@ -164,7 +166,11 @@ export class SessionListService {
     }
 
     if (params.statuses.has("active")) {
-      response.active = this.listWorkspaceActiveSessionRows(params.workspace.id, attention);
+      response.active = this.listWorkspaceActiveSessionRows(
+        params.workspace.id,
+        attention,
+        params.worktreeId,
+      );
     }
 
     if (params.statuses.has("stopped") && params.timeRange) {
@@ -173,6 +179,7 @@ export class SessionListService {
         params.timeRange,
         attention,
         serverNow,
+        params.worktreeId,
       );
     }
 
@@ -182,10 +189,14 @@ export class SessionListService {
   listWorkspaceStoppedSessionBuckets(params: {
     workspace: Workspace;
     beforeMs: number;
+    worktreeId?: string;
     nowMs?: number;
   }): WorkspaceStoppedSessionBucketsResult {
     const serverNow = params.nowMs ?? Date.now();
-    const importableSnapshot = this.listWorkspaceImportableSessions(params.workspace);
+    const importableSnapshot = this.listWorkspaceImportableSessions(
+      params.workspace,
+      params.worktreeId,
+    );
     this.refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt, serverNow);
     const olderImportableSessions = importableSnapshot.sessions
       .filter((session) => session.lastModified < params.beforeMs)
@@ -195,6 +206,7 @@ export class SessionListService {
         params.workspace.id,
         params.beforeMs,
         serverNow,
+        params.worktreeId,
       ),
       olderImportableSessions,
       serverNow,
@@ -212,12 +224,13 @@ export class SessionListService {
   private listWorkspaceActiveSessionRows(
     workspaceId: string,
     attention: PendingAttentionCounts,
+    worktreeId?: string,
   ): ManagedSessionListRow[] {
     const sessions = mergeActiveWorkspaceSessions(
       this.deps.sessionRuntimes,
-      this.deps.storage.listAllWorkspaceSessionSnapshots(workspaceId),
+      this.deps.storage.listAllWorkspaceSessionSnapshots(workspaceId, worktreeId),
       workspaceId,
-      {},
+      { worktreeId },
     )
       .filter(isOpenableManagedListSession)
       .filter(isActiveListSession);
@@ -229,12 +242,14 @@ export class SessionListService {
     timeRange: { sinceMs: number; untilMs: number },
     attention: PendingAttentionCounts,
     serverNow: number,
+    worktreeId?: string,
   ): SessionListRow[] {
     const managed = this.deps.storage
       .listStoppedWorkspaceTimeRangeSessionSnapshots(
         workspace.id,
         timeRange.sinceMs,
         timeRange.untilMs,
+        worktreeId,
       )
       .filter(isOpenableManagedListSession)
       .filter(
@@ -245,7 +260,7 @@ export class SessionListService {
       );
     const managedRows = this.buildManagedSessionListRows(managed, attention);
 
-    const importableSnapshot = this.listWorkspaceImportableSessions(workspace);
+    const importableSnapshot = this.listWorkspaceImportableSessions(workspace, worktreeId);
     this.refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt, serverNow);
     const importableSplit = splitImportableSessionsByRange(
       importableSnapshot.sessions,
@@ -271,14 +286,17 @@ export class SessionListService {
     });
   }
 
-  private listWorkspaceImportableSessions(workspace: {
-    hostMount?: string;
-  }): LocalSessionCatalogSnapshot {
+  private listWorkspaceImportableSessions(
+    workspace: Workspace,
+    worktreeId?: string,
+  ): LocalSessionCatalogSnapshot {
     const knownPiSessionIdentities = this.collectKnownPiSessionIdentities();
     const snapshot = listCatalogedLocalSessions(knownPiSessionIdentities, {
       dataDir: this.deps.storage.getDataDir(),
     });
-    const hostMount = workspace.hostMount;
+    const hostMount = worktreeId
+      ? resolveWorkspaceWorktree(workspace, worktreeId)?.path
+      : workspace.hostMount;
     if (!hostMount) {
       return { ...snapshot, sessions: [] };
     }
@@ -324,6 +342,7 @@ function sessionMatchesWorkspaceListFilters(
   filters: {
     cutoffMs?: number;
     untilMs?: number;
+    worktreeId?: string;
   },
 ): boolean {
   if (filters.cutoffMs !== undefined && session.status === "stopped") {
@@ -336,6 +355,10 @@ function sessionMatchesWorkspaceListFilters(
     if (session.lastActivity >= filters.untilMs) {
       return false;
     }
+  }
+
+  if (filters.worktreeId && (session.worktreeId ?? "main") !== filters.worktreeId) {
+    return false;
   }
 
   return true;
@@ -376,6 +399,7 @@ function mergeActiveSessionsAcrossWorkspaces(
   filters: {
     cutoffMs?: number;
     untilMs?: number;
+    worktreeId?: string;
   },
 ): Session[] {
   const byId = new Map(projectedSessions.map((session) => [session.id, session]));
@@ -399,6 +423,7 @@ function mergeActiveWorkspaceSessions(
   filters: {
     cutoffMs?: number;
     untilMs?: number;
+    worktreeId?: string;
   },
 ): Session[] {
   const byId = new Map(projectedSessions.map((session) => [session.id, session]));

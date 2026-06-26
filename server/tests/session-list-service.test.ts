@@ -270,6 +270,7 @@ describe("SessionListService", () => {
         "ws-1",
         sinceMs,
         untilMs,
+        undefined,
       );
     });
 
@@ -348,6 +349,7 @@ describe("SessionListService", () => {
         "ws-1",
         beforeMs,
         nowMs,
+        undefined,
       );
       expect(discoverLocalSessions).not.toHaveBeenCalled();
       expect(result).toMatchObject({
