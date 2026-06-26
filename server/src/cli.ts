@@ -838,6 +838,11 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   workspaceIdleTimeoutMs: { type: "number", desc: "Workspace idle timeout (ms)" },
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
+  oppiDocsPrompt: { type: "json", desc: "Oppi docs prompt config JSON object" },
+  "oppiDocsPrompt.enabled": {
+    type: "boolean",
+    desc: "Append packaged Oppi docs hint to Oppi sessions",
+  },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },

@@ -39,6 +39,11 @@ export interface ServerConfig {
   /** Additional runtime environment variables. */
   runtimeEnv?: Record<string, string>;
 
+  /** Prompt hint that points Oppi-owned sessions at packaged Oppi docs. */
+  oppiDocsPrompt?: {
+    enabled: boolean;
+  };
+
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 

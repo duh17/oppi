@@ -43,7 +43,7 @@ import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
-import type { Session, Workspace } from "./types.js";
+import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd } from "./worktrees.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
@@ -220,6 +220,12 @@ Guidelines:
 - Show sandbox file paths clearly when working with files.`;
 }
 
+export function isOppiDocsPromptEnabled(
+  config: Pick<ServerConfig, "oppiDocsPrompt"> | undefined,
+): boolean {
+  return config?.oppiDocsPrompt?.enabled !== false;
+}
+
 function buildSdkAppendSystemPrompt(
   workspace: Workspace | undefined,
   options: { includeOppiDocsHint: boolean },
@@ -253,6 +259,8 @@ export interface SdkBackendConfig {
   dataDir?: string;
   /** Operational metrics collector for SDK timing. */
   metrics?: ServerMetricCollector;
+  /** Server settings that affect Oppi-owned SDK sessions. */
+  serverConfig?: Pick<ServerConfig, "oppiDocsPrompt">;
 }
 
 const log = createLogger({ base: { component: "sdk_backend" } });
@@ -416,7 +424,10 @@ export class SdkBackend {
         settingsManager,
         additionalSkillPaths: config.skillPaths ?? [],
         appendSystemPrompt: buildSdkAppendSystemPrompt(workspace, {
-          includeOppiDocsHint: !sandboxMode,
+          includeOppiDocsHint:
+            !sandboxMode &&
+            (session.runtime ?? "oppi") !== "pi-tui" &&
+            isOppiDocsPromptEnabled(config.serverConfig),
         }),
         ...(sandboxMode
           ? {

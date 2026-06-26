@@ -48,6 +48,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
 
     runtimePathEntries: defaultRuntimePathEntries(),
     runtimeEnv: {},
+    oppiDocsPrompt: {
+      enabled: true,
+    },
     tls: { mode: "self-signed" },
     images: {
       autoResize: false,
@@ -94,6 +97,7 @@ function normalizeConfig(
     "maxSessionsGlobal",
     "runtimePathEntries",
     "runtimeEnv",
+    "oppiDocsPrompt",
     "tls",
 
     "token",
@@ -243,6 +247,33 @@ function normalizeConfig(
     config.runtimeEnv = runtimeEnv;
   } else {
     errors.push("config.runtimeEnv: expected object with string values");
+    changed = true;
+  }
+
+  if (!("oppiDocsPrompt" in obj)) {
+    changed = true;
+  } else if (isRecord(obj.oppiDocsPrompt)) {
+    const docsPrompt = obj.oppiDocsPrompt;
+    const allowedDocsPromptKeys = new Set(["enabled"]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(docsPrompt)) {
+        if (!allowedDocsPromptKeys.has(key)) {
+          errors.push(`config.oppiDocsPrompt.${key}: unknown key`);
+        }
+      }
+    }
+
+    if ("enabled" in docsPrompt) {
+      if (typeof docsPrompt.enabled === "boolean") {
+        config.oppiDocsPrompt = { enabled: docsPrompt.enabled };
+      } else {
+        errors.push("config.oppiDocsPrompt.enabled: expected boolean");
+        changed = true;
+      }
+    }
+  } else {
+    errors.push("config.oppiDocsPrompt: expected object");
     changed = true;
   }
 
