@@ -467,6 +467,44 @@ describe("goal extension", () => {
     }
   });
 
+  it("hides the persistent widget after successful completion", async () => {
+    vi.useFakeTimers();
+    const pi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 1 })(pi as never);
+    const ctx = createMockContext({
+      branch: [
+        customGoalEntry(
+          activeGoal({ continuationCount: 1, maxContinuations: 3 }),
+        ),
+      ],
+      pending: true,
+    });
+    await startSession(pi, ctx);
+
+    const widgetFactory = ctx.ui.setWidget.mock.calls[0][1] as (
+      tui: unknown,
+    ) => { render: (width: number) => string[]; renderNative: () => unknown };
+
+    await pi.tools
+      .get("update_goal")
+      ?.execute(
+        "tc-complete-early",
+        { status: "complete", summary: "Done with evidence." },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+    const updatedGoal = pi.appendEntry.mock.calls.at(-1)?.[1].goal;
+    expect(updatedGoal.status).toBe("complete");
+    expect(updatedGoal.completedAt).toBeDefined();
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("goal", undefined);
+    expect(widgetFactory({ requestRender() {} }).render(94)).toEqual([]);
+    expect(
+      widgetFactory({ requestRender() {} }).renderNative(),
+    ).toBeUndefined();
+  });
+
   it("allows model-requested completion before the continuation budget is exhausted", async () => {
     vi.useFakeTimers();
     const pi = createMockPi();

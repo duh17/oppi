@@ -342,6 +342,16 @@ function taskState(
   }
 }
 
+function shouldShowGoalWidget(
+  goal: SessionGoal | undefined,
+): goal is SessionGoal {
+  return (
+    goal?.status === "active" ||
+    goal?.status === "paused" ||
+    goal?.status === "blocked"
+  );
+}
+
 function truncate(value: string, maxLength: number): string {
   return truncateToWidth(value, Math.max(0, Math.floor(maxLength)), "…");
 }
@@ -656,7 +666,7 @@ function createGoalWidget(getGoal: () => SessionGoal | undefined): {
   return {
     render(width: number): string[] {
       const goal = getGoal();
-      if (!goal) return [];
+      if (!shouldShowGoalWidget(goal)) return [];
       const maxTitle = Math.max(24, Math.min(72, width - 14));
       const lines = [
         `Goal · ${statusLabel(goal.status)} · ${goal.continuationCount}/${goal.maxContinuations} · ${formatDuration(goalElapsedMs(goal)) ?? "0s"}`,
@@ -676,7 +686,7 @@ function createGoalWidget(getGoal: () => SessionGoal | undefined): {
     },
     renderNative() {
       const goal = getGoal();
-      if (!goal) return undefined;
+      if (!shouldShowGoalWidget(goal)) return undefined;
       const blocks: Array<Record<string, unknown>> = [
         {
           type: "activityList",
@@ -776,7 +786,7 @@ export function createGoalExtension(
     }
 
     function updateUi(): void {
-      const goal = currentGoal;
+      const goal = shouldShowGoalWidget(currentGoal) ? currentGoal : undefined;
       latestCtx?.ui.setStatus(
         WIDGET_KEY,
         goal
