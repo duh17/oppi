@@ -2257,6 +2257,10 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   const toolArgsByCallId = new Map<string, Record<string, unknown>>();
   const proxiedUIContexts = new WeakSet<object>();
   const widgetForwardingGenerations = new Map<string, number>();
+  const persistentExtensionUIRequests = new Map<
+    string,
+    Record<string, unknown>
+  >();
   let suppressUIForwarding = false;
   let runtimeActive = true;
   let connectionSerial = 0;
@@ -2313,6 +2317,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     connectionSerial += 1;
     clearTimers();
     pendingUIResponses.clear();
+    persistentExtensionUIRequests.clear();
     latestCtx = null;
     connectedSessionId = null;
     connectedWorkspaceId = null;
@@ -2523,6 +2528,87 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     send({ type: "extension_ui_request", ...payload });
   }
 
+  function persistentExtensionUIKey(
+    payload: Record<string, unknown>,
+  ): string | undefined {
+    if (
+      payload.method === "setStatus" &&
+      typeof payload.statusKey === "string" &&
+      payload.statusKey
+    ) {
+      return `status:${payload.statusKey}`;
+    }
+    if (
+      payload.method === "setWidget" &&
+      typeof payload.widgetKey === "string" &&
+      payload.widgetKey
+    ) {
+      return `widget:${payload.widgetKey}`;
+    }
+    return undefined;
+  }
+
+  function widgetLinesHaveContent(value: unknown): boolean {
+    return (
+      Array.isArray(value) &&
+      value.some(
+        (line) =>
+          String(line)
+            .replace(/[\r\n]/g, "")
+            .trim().length > 0,
+      )
+    );
+  }
+
+  function persistentExtensionUIHasContent(
+    payload: Record<string, unknown>,
+  ): boolean {
+    if (payload.method === "setStatus") {
+      return (
+        typeof payload.statusText === "string" &&
+        payload.statusText.trim().length > 0
+      );
+    }
+    if (payload.method === "setWidget") {
+      return (
+        payload.nativeSurface !== undefined ||
+        widgetLinesHaveContent(payload.widgetLines)
+      );
+    }
+    return false;
+  }
+
+  function rememberPersistentExtensionUIRequest(
+    payload: Record<string, unknown>,
+  ): void {
+    const key = persistentExtensionUIKey(payload);
+    if (!key) return;
+
+    if (!persistentExtensionUIHasContent(payload)) {
+      persistentExtensionUIRequests.delete(key);
+      return;
+    }
+
+    persistentExtensionUIRequests.delete(key);
+    persistentExtensionUIRequests.set(key, { ...payload });
+  }
+
+  function sendPersistentExtensionUIRequest(
+    payload: Record<string, unknown>,
+  ): void {
+    rememberPersistentExtensionUIRequest(payload);
+    sendUIRequest(payload);
+  }
+
+  function replayPersistentExtensionUIRequests(): void {
+    for (const payload of persistentExtensionUIRequests.values()) {
+      sendUIRequest({
+        ...payload,
+        id: nextUIRequestId(`${String(payload.method ?? "unknown")}_replay`),
+      });
+    }
+  }
+
   function sendUISettled(id: string): void {
     send({ type: "extension_ui_request_settled", id });
   }
@@ -2679,7 +2765,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     ui.setStatus = (key, text) => {
       original.setStatus?.(key, text);
       if (!suppressUIForwarding) {
-        sendUIRequest({
+        sendPersistentExtensionUIRequest({
           id: nextUIRequestId("setStatus"),
           method: "setStatus",
           statusKey: key,
@@ -2711,7 +2797,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           ) {
             return;
           }
-          sendUIRequest({
+          sendPersistentExtensionUIRequest({
             id: nextUIRequestId("setWidget"),
             method: "setWidget",
             widgetKey: key,
@@ -2759,7 +2845,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         !suppressUIForwarding &&
         (content === undefined || Array.isArray(content))
       ) {
-        sendUIRequest({
+        sendPersistentExtensionUIRequest({
           id: nextUIRequestId("setWidget"),
           method: "setWidget",
           widgetKey: key,
@@ -3464,6 +3550,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           workspaceId: connectedWorkspaceId,
         });
         setIndicatorMode("live");
+        replayPersistentExtensionUIRequests();
         return;
 
       case "command":
@@ -4100,6 +4187,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       "session_start",
       (_event: unknown, ctx: ExtensionContext) => {
         latestCtx = ctx;
+        installExtensionUIProxy(ctx);
         if (settings.autoStart && isInteractiveTerminalProcess()) connect(ctx);
       },
     ),
@@ -4115,6 +4203,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         queueUpdateBridge.internalEventListeners.delete(
           internalAgentEventListener,
         );
+        persistentExtensionUIRequests.clear();
         const shutdownReason = (event as { reason?: unknown }).reason;
         const reason =
           shutdownReason === "reload"
