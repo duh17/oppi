@@ -643,15 +643,26 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
+    private func nestedBlockSurface(
+        base: ReviewCommentSourceContext,
+        fallback: ReviewCommentSurfaceKind
+    ) -> ReviewCommentSurfaceKind {
+        // Full-screen and expanded readers decide inline composer behavior from
+        // their surface. Keep that surface for nested blocks rendered by the
+        // shared markdown renderer; timeline markdown keeps block-specific tags.
+        base.surface.usesInlineCommentWidget ? base.surface : fallback
+    }
+
     private func assistantCodeBlockSourceContext(
         language: String?,
         config: AssistantMarkdownContentView.Configuration,
         lineRange: ClosedRange<Int>?
     ) -> ReviewCommentSourceContext? {
         guard let base = config.reviewCommentSourceContext else { return nil }
+        let surface = nestedBlockSurface(base: base, fallback: .assistantCodeBlock)
         return ReviewCommentSourceContext(
             sessionId: base.sessionId,
-            surface: .assistantCodeBlock,
+            surface: surface,
             sourceLabel: base.sourceLabel,
             filePath: base.filePath,
             lineRange: lineRange ?? base.lineRange,
@@ -665,9 +676,10 @@ final class AssistantMarkdownSegmentApplier {
         lineRange: ClosedRange<Int>?
     ) -> ReviewCommentSourceContext? {
         guard let base = config.reviewCommentSourceContext else { return nil }
+        let surface = nestedBlockSurface(base: base, fallback: .assistantTable)
         return ReviewCommentSourceContext(
             sessionId: base.sessionId,
-            surface: .assistantTable,
+            surface: surface,
             sourceLabel: base.sourceLabel,
             filePath: base.filePath,
             lineRange: lineRange ?? base.lineRange,
