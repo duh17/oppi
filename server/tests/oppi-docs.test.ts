@@ -41,7 +41,14 @@ describe("Oppi documentation prompt hint", () => {
 
     expect(docsPath).toBeDefined();
     expect(buildOppiSystemPromptAppend()).toBe(
-      `Oppi documentation for mobile-compatible Pi extensions: ${docsPath} (start with extensions.md and extension-native-ui.md).`,
+      [
+        "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
+        `- Docs directory: ${docsPath}`,
+        `- Extensions: ${join(docsPath!, "extensions.md")}`,
+        `- Native extension UI: ${join(docsPath!, "extension-native-ui.md")}`,
+        `- Attachment rendering: ${join(docsPath!, "attachment-rendering.md")}`,
+        "- When working on Oppi topics, read the relevant docs completely and follow .md cross-references before implementing.",
+      ].join("\n"),
     );
   });
 
@@ -50,7 +57,9 @@ describe("Oppi documentation prompt hint", () => {
     const once = appendOppiSystemPromptHint(base);
     const twice = appendOppiSystemPromptHint(once);
 
-    expect(once).toContain("Oppi documentation for mobile-compatible Pi extensions:");
+    expect(once).toContain(
+      "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
+    );
     expect(twice).toBe(once);
   });
 
@@ -80,8 +89,41 @@ describe("Oppi documentation prompt hint", () => {
       ).runtime.services.resourceLoader;
       const appendPrompts = resourceLoader.getAppendSystemPrompt();
 
-      expect(appendPrompts[0]).toContain("Oppi documentation for mobile-compatible Pi extensions:");
+      expect(appendPrompts[0]).toContain(
+        "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
+      );
       expect(appendPrompts[1]).toBe("Workspace-specific note.");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("does not add the docs hint when disabled in server settings", async () => {
+    cwd = mkdtempSync(join(tmpdir(), "oppi-docs-disabled-"));
+    mkdirSync(cwd, { recursive: true });
+
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "Docs Disabled Test",
+        runtime: "host",
+        hostMount: cwd,
+        systemPrompt: "Workspace-specific note.",
+      } as Workspace,
+      onEvent: () => {},
+      onEnd: () => {},
+      serverConfig: { oppiDocsPrompt: { enabled: false } },
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+
+      expect(resourceLoader.getAppendSystemPrompt()).toEqual(["Workspace-specific note."]);
     } finally {
       await backend.dispose();
     }

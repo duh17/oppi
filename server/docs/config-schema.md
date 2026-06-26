@@ -57,6 +57,17 @@ Approval behavior is extension-owned. If a session needs approval before an acti
 
 Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
+### Oppi Docs Prompt
+
+| Setting                  | Type    | Default | Description                                                                                                                                            |
+| ------------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `oppiDocsPrompt.enabled` | boolean | `true`  | When `true`, Oppi-owned host sessions append a local packaged-docs hint to the Pi system prompt. Terminal-owned `pi-tui` and sandbox sessions skip it. |
+
+```bash
+oppi config set oppiDocsPrompt.enabled false
+oppi config set oppiDocsPrompt.enabled true
+```
+
 ### Runtime Environment
 
 | Setting              | Type     | Default   | Description                                                                                                                                |
@@ -163,6 +174,7 @@ Controls client-side preprocessing for image attachments before upload.
   "maxSessionsGlobal": 40,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
+  "oppiDocsPrompt": { "enabled": true },
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
   "images": { "autoResize": false }
@@ -179,6 +191,7 @@ Examples:
 oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config set images.autoResize false
+oppi config set oppiDocsPrompt.enabled false
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config set extensions.voice.defaultVoiceId warm-technical-teammate
 oppi config validate

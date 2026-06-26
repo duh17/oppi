@@ -57,6 +57,7 @@ export class SessionStartCoordinator {
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
           dataDir: this.deps.storage.getDataDir(),
           metrics: this.deps.metrics,
+          serverConfig: this.deps.config,
         });
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 

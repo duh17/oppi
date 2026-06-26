@@ -23,6 +23,7 @@ describe("Storage config validation", () => {
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
+    expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
     expect(result.config?.tls?.mode).toBe("self-signed");
     expect(result.config?.images?.autoResize).toBe(false);
   });
@@ -179,6 +180,34 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(true);
     expect(result.config?.asr).toBeUndefined();
+  });
+
+  it("preserves Oppi docs prompt config", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      oppiDocsPrompt: {
+        enabled: false,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.oppiDocsPrompt?.enabled).toBe(false);
+  });
+
+  it("rejects invalid Oppi docs prompt config in strict mode", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      oppiDocsPrompt: {
+        enabled: "nope",
+        unknownField: true,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("config.oppiDocsPrompt.enabled: expected boolean");
+    expect(result.errors).toContain("config.oppiDocsPrompt.unknownField: unknown key");
   });
 
   it("preserves image auto-resize config", () => {

@@ -162,6 +162,12 @@ describe("oppi config", () => {
     expect(stdout.trim()).toBe("http://127.0.0.1:7936");
   });
 
+  it("config set/get supports the Oppi docs prompt toggle", () => {
+    run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
+    const { stdout } = run(["config", "get", "oppiDocsPrompt.enabled"]);
+    expect(stdout.trim()).toBe("false");
+  });
+
   it("config set supports nested extension config paths", () => {
     run(["config", "set", "extensions.voice.defaultVoiceId", "warm-technical-teammate"]);
     const { stdout } = run(["config", "get", "extensions"]);

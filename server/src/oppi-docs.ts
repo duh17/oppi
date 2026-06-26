@@ -2,8 +2,14 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REQUIRED_OPPI_DOCS = ["extensions.md", "extension-native-ui.md"] as const;
-const OPPI_DOCS_HINT_PREFIX = "Oppi documentation for mobile-compatible Pi extensions:";
+const REQUIRED_OPPI_DOCS = [
+  "extensions.md",
+  "extension-native-ui.md",
+  "attachment-rendering.md",
+] as const;
+const OPPI_DOCS_HINT_PREFIX =
+  "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):";
+const OLD_OPPI_DOCS_HINT_PREFIX = "Oppi documentation for mobile-compatible Pi extensions:";
 
 function moduleDir(): string {
   return dirname(fileURLToPath(import.meta.url));
@@ -32,11 +38,18 @@ export function buildOppiSystemPromptAppend(docsPath = getOppiDocsPath()): strin
     return undefined;
   }
 
-  return `${OPPI_DOCS_HINT_PREFIX} ${docsPath} (start with extensions.md and extension-native-ui.md).`;
+  return [
+    OPPI_DOCS_HINT_PREFIX,
+    `- Docs directory: ${docsPath}`,
+    `- Extensions: ${join(docsPath, "extensions.md")}`,
+    `- Native extension UI: ${join(docsPath, "extension-native-ui.md")}`,
+    `- Attachment rendering: ${join(docsPath, "attachment-rendering.md")}`,
+    "- When working on Oppi topics, read the relevant docs completely and follow .md cross-references before implementing.",
+  ].join("\n");
 }
 
 export function appendOppiSystemPromptHint(prompt: string): string {
-  if (prompt.includes(OPPI_DOCS_HINT_PREFIX)) {
+  if (prompt.includes(OPPI_DOCS_HINT_PREFIX) || prompt.includes(OLD_OPPI_DOCS_HINT_PREFIX)) {
     return prompt;
   }
 
