@@ -170,6 +170,30 @@ enum ToolTimelineRowPresentationHelpers {
         }
     }
 
+    /// Force a self-sizing pass for controls that synchronously change their
+    /// own height while the user is detached from the bottom. Detached anchors
+    /// still preserve the viewport during `layoutSubviews`; this only bypasses
+    /// the helper's normal skip for passive snapshot-driven updates.
+    static func forceInvalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
+        invalidateEnclosingStreamingHeightCache(startingAt: sourceView)
+
+        var view: UIView? = sourceView.superview
+        while let current = view {
+            guard let collectionView = current as? UICollectionView else {
+                view = current.superview
+                continue
+            }
+
+            if isUserInteracting(with: collectionView) {
+                scheduleForcedInvalidationWhenInteractionEnds(for: collectionView)
+                return
+            }
+
+            invalidateCollectionViewLayout(collectionView, allowDetachedAnchorInvalidation: true)
+            return
+        }
+    }
+
     // MARK: - Coalesced invalidation
 
     /// Collection views that already have a coalesced invalidation pending.
@@ -192,6 +216,7 @@ enum ToolTimelineRowPresentationHelpers {
     // MARK: - Interaction-deferred invalidation
 
     private static var pendingInteractionInvalidations: Set<ObjectIdentifier> = []
+    private static var pendingForcedInteractionInvalidations: Set<ObjectIdentifier> = []
 
     private static func scheduleInvalidationWhenInteractionEnds(for collectionView: UICollectionView) {
         let identifier = ObjectIdentifier(collectionView)
@@ -201,35 +226,57 @@ enum ToolTimelineRowPresentationHelpers {
         recheckInteractionAndInvalidateWhenIdle(
             collectionView: collectionView,
             identifier: identifier,
-            retriesRemaining: 180
+            retriesRemaining: 180,
+            allowDetachedAnchorInvalidation: false
+        )
+    }
+
+    private static func scheduleForcedInvalidationWhenInteractionEnds(for collectionView: UICollectionView) {
+        let identifier = ObjectIdentifier(collectionView)
+        guard pendingForcedInteractionInvalidations.insert(identifier).inserted else {
+            return
+        }
+        recheckInteractionAndInvalidateWhenIdle(
+            collectionView: collectionView,
+            identifier: identifier,
+            retriesRemaining: 180,
+            allowDetachedAnchorInvalidation: true
         )
     }
 
     private static func recheckInteractionAndInvalidateWhenIdle(
         collectionView: UICollectionView,
         identifier: ObjectIdentifier,
-        retriesRemaining: Int
+        retriesRemaining: Int,
+        allowDetachedAnchorInvalidation: Bool
     ) {
         guard retriesRemaining > 0 else {
             pendingInteractionInvalidations.remove(identifier)
+            pendingForcedInteractionInvalidations.remove(identifier)
             return
         }
 
         guard isUserInteracting(with: collectionView) else {
             pendingInteractionInvalidations.remove(identifier)
-            invalidateCollectionViewLayout(collectionView)
+            pendingForcedInteractionInvalidations.remove(identifier)
+            invalidateCollectionViewLayout(
+                collectionView,
+                allowDetachedAnchorInvalidation: allowDetachedAnchorInvalidation
+            )
             return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak collectionView] in
             guard let collectionView else {
                 pendingInteractionInvalidations.remove(identifier)
+                pendingForcedInteractionInvalidations.remove(identifier)
                 return
             }
             recheckInteractionAndInvalidateWhenIdle(
                 collectionView: collectionView,
                 identifier: identifier,
-                retriesRemaining: retriesRemaining - 1
+                retriesRemaining: retriesRemaining - 1,
+                allowDetachedAnchorInvalidation: allowDetachedAnchorInvalidation
             )
         }
     }
@@ -238,27 +285,25 @@ enum ToolTimelineRowPresentationHelpers {
         collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
     }
 
-    private static func invalidateCollectionViewLayout(_ collectionView: UICollectionView) {
-        // When an expand/collapse anchor is active, skip the full
-        // invalidateLayout(). The snapshot reconfigure + layoutIfNeeded
-        // already measured the cell at its correct size. A full
-        // invalidateLayout() clears ALL cached cell heights, reverting
-        // off-screen cells to .estimated(44pt). This triggers a self-sizing
-        // cascade where UIKit re-measures cells one per frame, adjusting
-        // contentOffset by ~6pt each time — creating visible drift that
-        // the AnchoredCollectionView cannot fully intercept because UIKit
-        // applies some offset changes AFTER layoutSubviews() returns.
-        // Skip full invalidateLayout() when an anchor is active. The
-        // snapshot reconfigure + layoutIfNeeded already measured cells at
-        // their correct sizes. A full invalidateLayout() clears ALL cached
-        // cell heights, reverting off-screen cells to .estimated(100pt)
-        // defaults. This triggers a self-sizing cascade where UIKit
-        // re-measures cells one per frame, adjusting contentOffset by
-        // ~6pt each time — creating visible drift.
-        if let anchoredCV = collectionView as? AnchoredCollectionView,
-           anchoredCV.expandCollapseAnchorIP != nil
-            || (anchoredCV.isDetachedFromBottom && anchoredCV.detachedAnchorIsActive) {
-            return
+    private static func invalidateCollectionViewLayout(
+        _ collectionView: UICollectionView,
+        allowDetachedAnchorInvalidation: Bool = false
+    ) {
+        // Passive snapshot updates skip full invalidation while an anchor is
+        // active because the snapshot path already measured the changed cell.
+        // A full layout invalidation clears cached off-screen heights and can
+        // produce visible drift while UICollectionView re-measures cells.
+        // Explicit local controls, such as code wrapping, can opt into a
+        // detached-anchor invalidation because AnchoredCollectionView preserves
+        // the viewport during layoutSubviews.
+        if let anchoredCV = collectionView as? AnchoredCollectionView {
+            if anchoredCV.expandCollapseAnchorIP != nil {
+                return
+            }
+            if !allowDetachedAnchorInvalidation,
+               anchoredCV.isDetachedFromBottom && anchoredCV.detachedAnchorIsActive {
+                return
+            }
         }
 
         UIView.performWithoutAnimation {

@@ -45,6 +45,149 @@ struct CodeBlockStreamingWidthTests {
         )
     }
 
+    @Test func wrappedCodeBlockHeightIncludesSoftWrappedLines() throws {
+        let codeView = NativeCodeBlockView()
+        let code = Self.longMarkdownPromptCode
+
+        codeView.apply(
+            language: "markdown",
+            code: code,
+            palette: ThemeRuntimeState.currentPalette(),
+            isOpen: false
+        )
+
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 310, height: 1_200))
+        codeView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(codeView)
+        NSLayoutConstraint.activate([
+            codeView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            codeView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            codeView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.layoutIfNeeded()
+
+        let unwrappedHeight = codeView.systemLayoutSizeFitting(
+            CGSize(width: 310, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+
+        let wrapButton = try #require(
+            timelineAllViews(in: codeView).compactMap { $0 as? UIButton }.first {
+                $0.accessibilityIdentifier == "markdown.codeBlock.wrap"
+            }
+        )
+        wrapButton.sendActions(for: .touchUpInside)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let wrappedHeight = codeView.systemLayoutSizeFitting(
+            CGSize(width: 310, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        let textView = try #require(timelineAllTextViews(in: codeView).first)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        let textUsedHeight = ceil(textView.layoutManager.usedRect(for: textView.textContainer).height)
+
+        #expect(
+            wrappedHeight > unwrappedHeight + 40,
+            "Wrapping should increase code block height (unwrapped: \(unwrappedHeight), wrapped: \(wrappedHeight))"
+        )
+        #expect(
+            textView.bounds.height >= textUsedHeight - 1,
+            "Wrapped code text is clipped (bounds: \(textView.bounds.height), used: \(textUsedHeight))"
+        )
+    }
+
+    @Test func timelineRemeasuresAfterCodeBlockWrapToggle() async throws {
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "code-block-wrap-toggle",
+            frame: CGRect(x: 0, y: 0, width: 390, height: 1_200),
+            useAnchoredCollectionView: true
+        )
+        let assistant = """
+        And the real prompt is `/grilling`:
+
+        ```markdown
+        \(Self.longMarkdownPromptCode)
+        ```
+
+        I'll use this as the reference for what you wanted.
+        """
+        wh.applyItems(
+            [
+                .assistantMessage(
+                    id: "assistant-wrap",
+                    text: assistant,
+                    timestamp: Date(timeIntervalSince1970: 0)
+                ),
+                .userMessage(
+                    id: "user-after",
+                    text: "Yep, let's make this a prompt.",
+                    timestamp: Date(timeIntervalSince1970: 1)
+                ),
+            ],
+            isBusy: false
+        )
+
+        let firstIP = IndexPath(item: 0, section: 0)
+        let secondIP = IndexPath(item: 1, section: 0)
+        let initialFirstHeight = try #require(
+            wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame.height
+        )
+        let anchoredCollectionView = try #require(wh.collectionView as? AnchoredCollectionView)
+        anchoredCollectionView.isDetachedFromBottom = true
+        anchoredCollectionView.captureDetachedAnchor()
+        #expect(anchoredCollectionView.detachedAnchorIsActive)
+        let firstCell = try #require(wh.collectionView.cellForItem(at: firstIP))
+        let codeBlock = try #require(
+            timelineFirstView(ofType: NativeCodeBlockView.self, in: firstCell.contentView)
+        )
+        let wrapButton = try #require(
+            timelineAllViews(in: codeBlock).compactMap { $0 as? UIButton }.first {
+                $0.accessibilityIdentifier == "markdown.codeBlock.wrap"
+            }
+        )
+
+        wrapButton.sendActions(for: .touchUpInside)
+
+        let reflowed = await waitForTimelineCondition(timeoutMs: 800) {
+            await MainActor.run {
+                wh.collectionView.layoutIfNeeded()
+                guard let firstFrame = wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                      let secondFrame = wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
+                    return false
+                }
+                return firstFrame.height > initialFirstHeight + 40
+                    && secondFrame.minY >= firstFrame.maxY - 0.5
+            }
+        }
+
+        let finalFrames = await MainActor.run {
+            (
+                wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame
+            )
+        }
+        #expect(
+            reflowed,
+            Comment(rawValue: "Timeline did not remeasure after code wrap "
+                + "(initial first height: \(initialFirstHeight), "
+                + "final first: \(String(describing: finalFrames.0)), "
+                + "final second: \(String(describing: finalFrames.1)))")
+        )
+    }
+
+    private static let longMarkdownPromptCode = """
+    ---
+    name: grilling
+    description: Interview the user relentlessly about a plan or design. Use when the user wants to stress-test a plan before building, or uses any 'grill' trigger phrases.
+    ---
+
+    Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each assumption and challenge anything unclear.
+    """
+
     // MARK: - Streaming code block width via AssistantMarkdownContentView
 
     @Test func streamingCodeBlockWidthMatchesContainer() throws {
