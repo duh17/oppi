@@ -188,6 +188,36 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toHaveLength(0);
   });
 
+  it("keeps structural turn lifecycle events out of info logs", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const { coordinator } = makeCoordinator(active);
+    const writes: string[] = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(((
+      chunk: string | Uint8Array,
+    ) => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stderr.write);
+
+    try {
+      coordinator.handlePiEvent(active.session.id, {
+        type: "turn_start",
+      } as unknown as SessionBackendEvent);
+      coordinator.handlePiEvent(active.session.id, {
+        type: "turn_end",
+        message: {},
+        toolResults: [],
+      } as unknown as SessionBackendEvent);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+
+    const output = writes.join("");
+    expect(output).not.toContain('"event":"session_agent_events.pi_event"');
+    expect(output).not.toContain('"eventType":"turn_start"');
+    expect(output).not.toContain('"eventType":"turn_end"');
+  });
+
   it("attaches managed SDK renderResult snapshots to tool_end details", () => {
     const active = makeActiveSession({ status: "busy" });
     active.sdkBackend = {

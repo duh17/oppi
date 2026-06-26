@@ -52,8 +52,6 @@ export class SessionAgentEventCoordinator {
   private static readonly INFO_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
-    "turn_start",
-    "turn_end",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -61,6 +59,8 @@ export class SessionAgentEventCoordinator {
   ]);
 
   private static readonly DEBUG_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
+    "turn_start",
+    "turn_end",
     "message_end",
     "tool_execution_start",
     "tool_execution_end",
