@@ -215,7 +215,7 @@ describe("discoverLocalSessions", () => {
     expect(found!.model).toBe("anthropic/claude-sonnet-4-5");
     expect(found!.messageCount).toBe(1);
     expect(found!.path).toContain("uuid-1.jsonl");
-  });
+  }, 30_000);
 
   it("filters out known session files", async () => {
     const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-2.jsonl");

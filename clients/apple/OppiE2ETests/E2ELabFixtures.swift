@@ -28,6 +28,12 @@ struct E2ELabWorkspaceFileFixture {
     let filename: String
 }
 
+struct E2ELabGitWorktreeFixture {
+    let hostMount: String
+    let worktreePath: String
+    let branchName: String
+}
+
 extension E2ETestCase {
     /// Seeds a set of real server workspaces and optional active/stopped sessions.
     func seedLabWorkspaces(_ fixtures: [E2ELabWorkspaceFixture]) throws {
@@ -58,6 +64,26 @@ extension E2ETestCase {
             hostMount: try XCTUnwrap(response["hostMount"] as? String, "Fixture response missing hostMount"),
             filePath: try XCTUnwrap(response["filePath"] as? String, "Fixture response missing filePath"),
             filename: try XCTUnwrap(response["filename"] as? String, "Fixture response missing filename")
+        )
+    }
+
+    /// Creates a git repository fixture with a real linked worktree on the E2E server.
+    func createLabGitWorktreeFixture(
+        directoryName: String,
+        branchName: String
+    ) throws -> E2ELabGitWorktreeFixture {
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/fixtures/git-worktree",
+            body: [
+                "directoryName": directoryName,
+                "branchName": branchName,
+            ]
+        )
+        return E2ELabGitWorktreeFixture(
+            hostMount: try XCTUnwrap(response["hostMount"] as? String, "Fixture response missing hostMount"),
+            worktreePath: try XCTUnwrap(response["worktreePath"] as? String, "Fixture response missing worktreePath"),
+            branchName: try XCTUnwrap(response["branchName"] as? String, "Fixture response missing branchName")
         )
     }
 
@@ -227,11 +253,17 @@ extension E2ETestCase {
 
     private func e2eLabURL(path: String, scheme: String) throws -> URL {
         let port = ProcessInfo.processInfo.environment["E2E_PORT"] ?? "17760"
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
         var components = URLComponents()
         components.scheme = scheme
         components.host = "127.0.0.1"
         components.port = Int(port)
-        components.path = path.hasPrefix("/") ? path : "/\(path)"
+        if let queryStart = normalizedPath.firstIndex(of: "?") {
+            components.path = String(normalizedPath[..<queryStart])
+            components.percentEncodedQuery = String(normalizedPath[normalizedPath.index(after: queryStart)...])
+        } else {
+            components.path = normalizedPath
+        }
         return try XCTUnwrap(components.url, "Invalid E2E URL for \(path)")
     }
 

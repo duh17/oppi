@@ -373,6 +373,7 @@ export type AppEventMessage =
   | (AppEventBase & {
       type: "workspace_git_changed";
       workspaceId: string;
+      worktreeId?: string;
       sessionId?: string;
       reason?: string;
     });
@@ -539,10 +540,11 @@ export type ServerMessage = // ── Connection ──
         id: string;
         sessionId: string;
       }
-    // ── Git status (workspace-level, pushed after file-mutating tool calls) ──
+    // ── Git status (workspace/worktree-level, pushed after file-mutating tool calls) ──
     | {
         type: "git_status";
         workspaceId: string;
+        worktreeId?: string;
         status: GitStatus;
       }
     // ── Dictation ──

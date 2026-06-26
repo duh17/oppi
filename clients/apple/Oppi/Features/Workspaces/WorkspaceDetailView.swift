@@ -126,6 +126,9 @@ struct WorkspaceDetailView: View {
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var showEditWorkspace = false
     @State private var localSessions: [LocalSession] = []
+    @State private var worktrees: [WorkspaceWorktree] = []
+    @State private var selectedWorktreeId = WorkspaceWorktree.mainId
+    @State private var isLoadingWorktrees = false
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
     @State private var pendingDeleteSession: Session?
@@ -158,7 +161,7 @@ struct WorkspaceDetailView: View {
     }
 
     private var workspaceRefreshPollingTaskId: String {
-        "\(workspace.id):\(isNavigatingDeeperInWorkspaceStack ? "covered" : "visible")"
+        "\(workspace.id):\(selectedWorktreeId):\(isNavigatingDeeperInWorkspaceStack ? "covered" : "visible")"
     }
 
     private var currentServerId: String? {
@@ -200,6 +203,7 @@ struct WorkspaceDetailView: View {
         // session cache. Timeline-frequency events should not make this view
         // rebuild its section tree.
         sessionStore.listProjectionSessions(workspaceId: workspace.id)
+            .filter { ($0.worktreeId ?? WorkspaceWorktree.mainId) == selectedWorktreeId }
     }
 
     private var activeSessions: [Session] {
@@ -239,6 +243,82 @@ struct WorkspaceDetailView: View {
         )
 
         return SessionListPresentation.activeSectionKind(for: session, attention: attention)
+    }
+
+    private var selectedWorktree: WorkspaceWorktree? {
+        worktrees.first { $0.id == selectedWorktreeId }
+    }
+
+    private var worktreeNavigationTitle: String {
+        currentWorkspace.name
+    }
+
+    private var selectedWorktreeDisplayName: String {
+        selectedWorktree?.displayName ?? "Main"
+    }
+
+    private var visibleWorktrees: [WorkspaceWorktree] {
+        if worktrees.isEmpty {
+            return [
+                WorkspaceWorktree(
+                    id: WorkspaceWorktree.mainId,
+                    name: "Main checkout",
+                    path: currentWorkspace.hostMount ?? "",
+                    branch: nil,
+                    headSha: nil,
+                    isMain: true,
+                    isGitRepo: false
+                ),
+            ]
+        }
+        return worktrees
+    }
+
+    private func worktreeMenuTitle(for worktree: WorkspaceWorktree) -> String {
+        if worktree.isMain { return "Main" }
+        if let branch = worktree.branch, !branch.isEmpty { return branch }
+        return worktree.name
+    }
+
+    @ViewBuilder
+    private var worktreeTitleMenu: some View {
+        Menu {
+            Section("Worktree") {
+                ForEach(visibleWorktrees) { worktree in
+                    Button {
+                        selectWorktree(worktree)
+                    } label: {
+                        Label {
+                            Text(worktreeMenuTitle(for: worktree))
+                        } icon: {
+                            Image(systemName: selectedWorktreeId == worktree.id ? "checkmark" : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted")
+                        }
+                    }
+                    .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                VStack(spacing: 1) {
+                    Text(currentWorkspace.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                    Text(selectedWorktreeDisplayName)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Switch worktree, current worktree \(selectedWorktreeDisplayName)")
+        }
+        .disabled(isLoadingWorktrees || visibleWorktrees.count <= 1)
+        .accessibilityIdentifier("workspace.worktree.menu")
     }
 
     private var viewData: ViewData {
@@ -388,7 +468,7 @@ struct WorkspaceDetailView: View {
                     ContentUnavailableView(
                         "No Sessions",
                         systemImage: "terminal",
-                        description: Text("Tap the compose button to start a new session. Long press for incognito.")
+                        description: Text("Tap the compose button to start a new session in this worktree. Long press for incognito.")
                     )
                     .listRowBackground(Color.themeBg)
                 }
@@ -430,7 +510,7 @@ struct WorkspaceDetailView: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contextBarHeight = $0 }
             }
         }
-        .navigationTitle(currentWorkspace.name)
+        .navigationTitle(worktreeNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(.hidden, for: .tabBar)
         .toolbarVisibility(
@@ -469,6 +549,9 @@ struct WorkspaceDetailView: View {
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
         }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                worktreeTitleMenu
+            }
             ToolbarItem(placement: .topBarLeading) {
                 workspaceListToolbarItem
             }
@@ -485,6 +568,7 @@ struct WorkspaceDetailView: View {
             await refreshWorkspaceData()
         }
         .task(id: workspace.id) {
+            await loadWorktrees()
             // Start git status immediately so the context bar does not wait for
             // the workspace session-list refresh.
             refreshGitStatusContextBar()
@@ -688,6 +772,47 @@ struct WorkspaceDetailView: View {
 
     // MARK: - Actions
 
+    private func selectWorktree(_ worktree: WorkspaceWorktree) {
+        guard selectedWorktreeId != worktree.id else { return }
+        selectedWorktreeId = worktree.id
+        resetWorktreeScopedState()
+        refreshGitStatusContextBar()
+        Task { await refreshWorkspaceData() }
+    }
+
+    private func loadWorktrees() async {
+        guard let api = apiClient else { return }
+        isLoadingWorktrees = worktrees.isEmpty
+        defer { isLoadingWorktrees = false }
+
+        do {
+            let fetched = try await api.listWorkspaceWorktrees(workspaceId: workspace.id)
+            worktrees = fetched
+            if !fetched.contains(where: { $0.id == selectedWorktreeId }) {
+                selectedWorktreeId = fetched.first?.id ?? WorkspaceWorktree.mainId
+                resetWorktreeScopedState()
+            }
+        } catch {
+            // Worktree discovery is best-effort for older servers. Keep the main checkout visible.
+            if worktrees.isEmpty {
+                worktrees = visibleWorktrees
+            }
+        }
+    }
+
+    private func resetWorktreeScopedState() {
+        workspaceRefreshGeneration &+= 1
+        localSessions = []
+        archiveBuckets = []
+        archiveStoppedSessionsByBucketID = [:]
+        archiveLocalSessionsByBucketID = [:]
+        loadingArchiveBucketIDs = []
+        expandedStoppedGroupIDs = []
+        collapsedStoppedGroupIDs = []
+        isRefreshingWorkspaceData = false
+        workspaceLoad = nil
+    }
+
     /// Create a new session in this workspace.
     ///
     /// Sandbox VM errors (QEMU unavailable, VM start failure) return as
@@ -714,7 +839,8 @@ struct WorkspaceDetailView: View {
         do {
             let response = try await api.createWorkspaceSession(
                 workspaceId: workspace.id,
-                ephemeral: ephemeral ? true : nil
+                ephemeral: ephemeral ? true : nil,
+                worktreeId: selectedWorktreeId
             )
             sessionStore.upsert(response.session)
             isCreating = false
@@ -795,7 +921,8 @@ struct WorkspaceDetailView: View {
         do {
             let session = try await api.createWorkspaceSessionFromLocal(
                 workspaceId: workspace.id,
-                piSessionFile: local.path
+                piSessionFile: local.path,
+                worktreeId: selectedWorktreeId
             )
             sessionStore.upsert(session)
 
@@ -845,7 +972,8 @@ struct WorkspaceDetailView: View {
             let response = try await api.getWorkspaceSessionListBucket(
                 workspaceId: workspace.id,
                 since: bucket.startAt,
-                until: bucket.endAt
+                until: bucket.endAt,
+                worktreeId: selectedWorktreeId
             )
             archiveStoppedSessionsByBucketID[bucket.id] = response.sessionSummaries
                 .map(\.session)
@@ -970,7 +1098,8 @@ struct WorkspaceDetailView: View {
             let response = try await api.getWorkspaceSessionList(
                 workspace: workspace,
                 since: range.since,
-                until: range.until
+                until: range.until,
+                worktreeId: selectedWorktreeId
             )
             guard !Task.isCancelled,
                   requestedGeneration == workspaceRefreshGeneration else { return }
@@ -1017,6 +1146,8 @@ struct WorkspaceDetailView: View {
         workspaceRefreshGeneration &+= 1
         error = nil
         localSessions = []
+        worktrees = []
+        selectedWorktreeId = WorkspaceWorktree.mainId
         archiveBuckets = []
         archiveStoppedSessionsByBucketID = [:]
         archiveLocalSessionsByBucketID = [:]
@@ -1044,6 +1175,7 @@ struct WorkspaceDetailView: View {
         guard let api = apiClient else { return }
         gitStatusStore.loadInitial(
             workspaceId: workspace.id,
+            worktreeId: selectedWorktreeId,
             apiClient: api,
             gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
         )

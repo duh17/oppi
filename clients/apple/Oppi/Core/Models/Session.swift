@@ -48,6 +48,7 @@ struct Session: Identifiable, Sendable, Equatable {
     let id: String
     var workspaceId: String?
     var workspaceName: String?
+    var worktreeId: String? = nil
     var name: String?
     var status: SessionStatus
     let createdAt: Date
@@ -149,6 +150,7 @@ struct SessionSummary: Sendable, Equatable {
     let id: String
     var workspaceId: String?
     var workspaceName: String?
+    var worktreeId: String? = nil
     var name: String?
     var status: SessionStatus
     let createdAt: Date
@@ -183,6 +185,7 @@ struct SessionSummary: Sendable, Equatable {
             id: id,
             workspaceId: workspaceId,
             workspaceName: workspaceName,
+            worktreeId: worktreeId,
             name: name,
             status: status,
             createdAt: createdAt,
@@ -212,6 +215,7 @@ extension SessionSummary {
         self.id = session.id
         self.workspaceId = session.workspaceId
         self.workspaceName = session.workspaceName
+        self.worktreeId = session.worktreeId
         self.name = session.name
         self.status = session.status
         self.createdAt = session.createdAt
@@ -238,7 +242,7 @@ extension SessionSummary {
 }
 
 private enum SessionWireCodingKeys: String, CodingKey {
-    case id, workspaceId, workspaceName
+    case id, workspaceId, workspaceName, worktreeId
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
@@ -250,6 +254,7 @@ private struct DecodedSessionWireFields {
     let id: String
     let workspaceId: String?
     let workspaceName: String?
+    let worktreeId: String?
     let name: String?
     let status: SessionStatus
     let createdAt: Date
@@ -275,6 +280,7 @@ private struct DecodedSessionWireFields {
         id = try container.decode(String.self, forKey: .id)
         workspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceId)
         workspaceName = try container.decodeIfPresent(String.self, forKey: .workspaceName)
+        worktreeId = try container.decodeIfPresent(String.self, forKey: .worktreeId)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         status = try container.decode(SessionStatus.self, forKey: .status)
         createdAt = try container.decodeUnixMilliseconds(forKey: .createdAt)
@@ -304,6 +310,7 @@ private extension DecodedSessionWireFields {
             id: id,
             workspaceId: workspaceId,
             workspaceName: workspaceName,
+            worktreeId: worktreeId,
             name: name,
             status: status,
             createdAt: createdAt,
@@ -371,6 +378,7 @@ extension Session: Codable {
         try c.encode(id, forKey: .id)
         try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
         try c.encodeIfPresent(workspaceName, forKey: .workspaceName)
+        try c.encodeIfPresent(worktreeId, forKey: .worktreeId)
         try c.encodeIfPresent(name, forKey: .name)
         try c.encode(status, forKey: .status)
         try c.encodeIfPresent(model, forKey: .model)

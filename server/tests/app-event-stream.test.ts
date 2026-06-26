@@ -345,6 +345,7 @@ describe("AppEventStreamMux", () => {
       event: {
         type: "git_status",
         workspaceId: "ws-1",
+        worktreeId: "wt_feature",
         status: {
           isGitRepo: true,
           branch: "main",
@@ -372,6 +373,7 @@ describe("AppEventStreamMux", () => {
     expect(gitChanged).toEqual({
       type: "workspace_git_changed",
       workspaceId: "ws-1",
+      worktreeId: "wt_feature",
       sessionId: session.id,
       emittedAt: 1_791_650_100_000,
       reason: "mutation_tool",

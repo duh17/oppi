@@ -24,7 +24,7 @@ enum AppEventMessage: Sendable, Equatable {
     case extensionUISettled(id: String, sessionId: String, workspaceId: String?, emittedAt: Int64)
     case extensionUINotification(notification: ExtensionUINotification, sessionId: String, workspaceId: String?, emittedAt: Int64)
 
-    case workspaceGitChanged(workspaceId: String, emittedAt: Int64, sessionId: String?, reason: String?)
+    case workspaceGitChanged(workspaceId: String, worktreeId: String?, emittedAt: Int64, sessionId: String?, reason: String?)
 
     /// Unknown or explicitly focused-stream-only frame types are decoded but ignored.
     case ignored(type: String)
@@ -33,7 +33,7 @@ enum AppEventMessage: Sendable, Equatable {
 extension AppEventMessage: Decodable {
     private enum CodingKeys: String, CodingKey {
         case type, serverTime, snapshotRequired
-        case sessionId, workspaceId, emittedAt, summary
+        case sessionId, workspaceId, worktreeId, emittedAt, summary
         case reason, source, message, code, fatal, id
         case seq, currentSeq
     }
@@ -158,6 +158,7 @@ extension AppEventMessage: Decodable {
         case "workspace_git_changed":
             self = .workspaceGitChanged(
                 workspaceId: try c.decode(String.self, forKey: .workspaceId),
+                worktreeId: try c.decodeIfPresent(String.self, forKey: .worktreeId),
                 emittedAt: try c.decode(Int64.self, forKey: .emittedAt),
                 sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId),
                 reason: try c.decodeIfPresent(String.self, forKey: .reason)

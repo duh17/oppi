@@ -19,7 +19,7 @@ import {
 } from "./session-repair.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
-const SCHEMA_VERSION = "6";
+const SCHEMA_VERSION = "7";
 
 interface SessionJsonRow {
   session_json: string;
@@ -29,6 +29,7 @@ interface SessionProjectionRow {
   id: string;
   workspace_id: string | null;
   workspace_name: string | null;
+  worktree_id: string | null;
   name: string | null;
   status: Session["status"];
   created_at: number;
@@ -94,6 +95,7 @@ const SESSION_PROJECTION_COLUMNS = `
   id,
   workspace_id,
   workspace_name,
+  worktree_id,
   name,
   status,
   created_at,
@@ -125,6 +127,7 @@ const SESSION_PROJECTION_COLUMNS = `
 const SESSION_COLUMN_DEFINITIONS = [
   ["workspace_id", "TEXT"],
   ["workspace_name", "TEXT"],
+  ["worktree_id", "TEXT"],
   ["name", "TEXT"],
   ["status", "TEXT NOT NULL DEFAULT 'stopped'"],
   ["created_at", "INTEGER NOT NULL DEFAULT 0"],
@@ -222,6 +225,7 @@ export class SessionSqliteStore {
       normalized.id,
       normalized.workspaceId ?? null,
       normalized.workspaceName ?? null,
+      normalized.worktreeId ?? null,
       normalized.name ?? null,
       normalized.status,
       normalized.createdAt,
@@ -282,22 +286,24 @@ export class SessionSqliteStore {
     return this.parseJsonRows(rows).map(stripInternalFields);
   }
 
-  listAllWorkspaceSessionSnapshots(workspaceId: string): Session[] {
-    return this.queryWorkspaceProjectedSessions(workspaceId);
+  listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
+    return this.queryWorkspaceProjectedSessions(workspaceId, { worktreeId });
   }
 
   listRecentWorkspaceSessionSnapshots(
     workspaceId: string,
     recentDays: number,
     nowMs: number = Date.now(),
+    worktreeId?: string,
   ): Session[] {
     const normalizedRecentDays = normalizePositiveInteger(recentDays);
     if (!normalizedRecentDays) {
-      return this.queryWorkspaceProjectedSessions(workspaceId);
+      return this.queryWorkspaceProjectedSessions(workspaceId, { worktreeId });
     }
 
     return this.queryWorkspaceProjectedSessions(workspaceId, {
       stoppedSinceMs: nowMs - normalizedRecentDays * 86_400_000,
+      worktreeId,
     });
   }
 
@@ -305,10 +311,12 @@ export class SessionSqliteStore {
     workspaceId: string,
     sinceMs: number,
     untilMs: number,
+    worktreeId?: string,
   ): Session[] {
     return this.queryWorkspaceProjectedSessions(workspaceId, {
       stoppedSinceMs: normalizeTimestamp(sinceMs),
       stoppedUntilMs: normalizeTimestamp(untilMs),
+      worktreeId,
     });
   }
 
@@ -316,11 +324,13 @@ export class SessionSqliteStore {
     workspaceId: string,
     sinceMs: number,
     untilMs: number,
+    worktreeId?: string,
   ): Session[] {
     return this.queryWorkspaceProjectedSessions(workspaceId, {
       status: "stopped",
       stoppedSinceMs: normalizeTimestamp(sinceMs),
       stoppedUntilMs: normalizeTimestamp(untilMs),
+      worktreeId,
     });
   }
 
@@ -353,6 +363,7 @@ export class SessionSqliteStore {
     workspaceId: string,
     beforeMs: number,
     nowMs: number = Date.now(),
+    worktreeId?: string,
   ): WorkspaceStoppedTimeBucketSnapshot[] {
     const recentDayCutoffMs = nowMs - 30 * 86_400_000;
     const rows = this.db
@@ -370,6 +381,7 @@ export class SessionSqliteStore {
          WHERE workspace_id = ?
            AND status = 'stopped'
            AND last_activity < ?
+           ${worktreeId ? "AND COALESCE(worktree_id, 'main') = ?" : ""}
          GROUP BY bucket_kind, bucket_key
          ORDER BY latest_activity DESC, bucket_key DESC`,
       )
@@ -378,6 +390,7 @@ export class SessionSqliteStore {
         recentDayCutoffMs,
         workspaceId,
         beforeMs,
+        ...(worktreeId ? [worktreeId] : []),
       ) as WorkspaceStoppedTimeBucketRow[];
 
     return rows.flatMap((row) => {
@@ -517,6 +530,7 @@ export class SessionSqliteStore {
         id TEXT PRIMARY KEY,
         workspace_id TEXT,
         workspace_name TEXT,
+        worktree_id TEXT,
         name TEXT,
         status TEXT NOT NULL,
         created_at INTEGER NOT NULL,
@@ -571,6 +585,9 @@ export class SessionSqliteStore {
       CREATE INDEX IF NOT EXISTS session_state_sessions_workspace_activity_idx
         ON session_state_sessions (workspace_id, last_activity DESC, id ASC);
 
+      CREATE INDEX IF NOT EXISTS session_state_sessions_workspace_worktree_activity_idx
+        ON session_state_sessions (workspace_id, worktree_id, last_activity DESC, id ASC);
+
       CREATE INDEX IF NOT EXISTS session_state_sessions_status_activity_idx
         ON session_state_sessions (status, last_activity DESC, id ASC);
 
@@ -619,6 +636,7 @@ export class SessionSqliteStore {
         id,
         workspace_id,
         workspace_name,
+        worktree_id,
         name,
         status,
         created_at,
@@ -648,10 +666,11 @@ export class SessionSqliteStore {
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
+        worktree_id = excluded.worktree_id,
         name = excluded.name,
         status = excluded.status,
         created_at = excluded.created_at,
@@ -759,6 +778,7 @@ export class SessionSqliteStore {
       status?: Session["status"];
       stoppedSinceMs?: number;
       stoppedUntilMs?: number;
+      worktreeId?: string;
     } = {},
   ): Session[] {
     const whereParts = ["workspace_id = ?"];
@@ -767,6 +787,11 @@ export class SessionSqliteStore {
     if (filters.status) {
       whereParts.push("status = ?");
       params.push(filters.status);
+    }
+
+    if (filters.worktreeId) {
+      whereParts.push("COALESCE(worktree_id, 'main') = ?");
+      params.push(filters.worktreeId);
     }
 
     if (filters.stoppedSinceMs !== undefined) {
@@ -832,6 +857,7 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
 
   if (row.workspace_id !== null) session.workspaceId = row.workspace_id;
   if (row.workspace_name !== null) session.workspaceName = row.workspace_name;
+  if (row.worktree_id !== null) session.worktreeId = row.worktree_id;
   if (row.name !== null) session.name = row.name;
   if (row.last_agent_reply_at !== null) session.lastAgentReplyAt = row.last_agent_reply_at;
   if (row.current_turn_started_at !== null)
@@ -958,6 +984,9 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.workspaceName !== undefined && session.workspaceName !== null) {
     normalized.workspaceName = session.workspaceName;
+  }
+  if (session.worktreeId !== undefined && session.worktreeId !== null) {
+    normalized.worktreeId = session.worktreeId;
   }
   if (session.name !== undefined && session.name !== null) {
     normalized.name = session.name;

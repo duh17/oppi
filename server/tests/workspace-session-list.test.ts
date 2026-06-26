@@ -360,6 +360,7 @@ describe("workspace session list routes", () => {
       "ws-1",
       beforeMs,
       Date.now(),
+      "main",
     );
 
     const response = mock.responses[0]?.data as {
@@ -567,6 +568,7 @@ describe("workspace session list routes", () => {
       "ws-1",
       sinceMs,
       untilMs,
+      "main",
     );
     expect(mock.storage.listWorkspaceTimeRangeSessionSnapshots).not.toHaveBeenCalled();
 

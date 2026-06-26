@@ -19,16 +19,18 @@ final class GitStatusStore {
     /// True while the initial fetch is in-flight.
     private(set) var isLoading = false
 
-    /// The workspace ID this store is tracking.
+    /// The workspace/worktree this store is tracking.
     private(set) var workspaceId: String?
+    private(set) var worktreeId: String?
 
     private var invalidationRefreshTask: Task<Void, Never>?
 
     // MARK: - Handle push from WebSocket
 
     /// Called when a `git_status` ServerMessage arrives.
-    func handleGitStatusPush(workspaceId: String, status: GitStatus) {
-        guard workspaceId == self.workspaceId else { return }
+    func handleGitStatusPush(workspaceId: String, worktreeId: String? = nil, status: GitStatus) {
+        guard workspaceId == self.workspaceId,
+              (worktreeId ?? WorkspaceWorktree.mainId) == (self.worktreeId ?? WorkspaceWorktree.mainId) else { return }
         invalidationRefreshTask?.cancel()
         invalidationRefreshTask = nil
         if gitStatus != status {
@@ -47,11 +49,13 @@ final class GitStatusStore {
     /// invalidation event from an active session.
     func invalidate(
         workspaceId: String,
+        worktreeId: String? = nil,
         apiClient: APIClient? = nil,
         gitStatusEnabled: Bool = true,
         debounce: Duration = .seconds(2)
     ) {
-        guard workspaceId == self.workspaceId else { return }
+        guard workspaceId == self.workspaceId,
+              (worktreeId ?? WorkspaceWorktree.mainId) == (self.worktreeId ?? WorkspaceWorktree.mainId) else { return }
 
         invalidationRefreshTask?.cancel()
         invalidationRefreshTask = nil
@@ -70,8 +74,10 @@ final class GitStatusStore {
         invalidationRefreshTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: debounce)
-                let status = try await apiClient.getGitStatus(workspaceId: workspaceId)
-                guard let self, self.workspaceId == workspaceId else { return }
+                let status = try await apiClient.getGitStatus(workspaceId: workspaceId, worktreeId: worktreeId)
+                guard let self,
+                      self.workspaceId == workspaceId,
+                      (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId) else { return }
                 if self.gitStatus != status {
                     self.gitStatus = status
                 }
@@ -80,7 +86,9 @@ final class GitStatusStore {
             } catch is CancellationError {
                 // A newer invalidation or explicit load will replace this refresh.
             } catch {
-                guard let self, self.workspaceId == workspaceId else { return }
+                guard let self,
+                      self.workspaceId == workspaceId,
+                      (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId) else { return }
                 logger.warning("Debounced git status refresh failed: \(error.localizedDescription)")
                 self.isLoading = false
                 self.invalidationRefreshTask = nil
@@ -92,12 +100,19 @@ final class GitStatusStore {
 
     /// Fetch initial git status when entering a chat view.
     /// Subsequent updates arrive via WebSocket push.
-    func loadInitial(workspaceId: String, apiClient: APIClient, gitStatusEnabled: Bool = true) {
+    func loadInitial(
+        workspaceId: String,
+        worktreeId: String? = nil,
+        apiClient: APIClient,
+        gitStatusEnabled: Bool = true
+    ) {
         invalidationRefreshTask?.cancel()
         invalidationRefreshTask = nil
 
-        let workspaceChanged = self.workspaceId != workspaceId
+        let normalizedWorktreeId = worktreeId ?? WorkspaceWorktree.mainId
+        let workspaceChanged = self.workspaceId != workspaceId || (self.worktreeId ?? WorkspaceWorktree.mainId) != normalizedWorktreeId
         self.workspaceId = workspaceId
+        self.worktreeId = normalizedWorktreeId
 
         guard gitStatusEnabled else {
             gitStatus = nil
@@ -114,8 +129,10 @@ final class GitStatusStore {
 
         Task { [weak self] in
             do {
-                let status = try await apiClient.getGitStatus(workspaceId: workspaceId)
-                guard let self, self.workspaceId == workspaceId else { return }
+                let status = try await apiClient.getGitStatus(workspaceId: workspaceId, worktreeId: normalizedWorktreeId)
+                guard let self,
+                      self.workspaceId == workspaceId,
+                      (self.worktreeId ?? WorkspaceWorktree.mainId) == normalizedWorktreeId else { return }
                 if self.gitStatus != status {
                     self.gitStatus = status
                 }
@@ -135,6 +152,7 @@ final class GitStatusStore {
         invalidationRefreshTask = nil
         gitStatus = nil
         workspaceId = nil
+        worktreeId = nil
         isLoading = false
     }
 }

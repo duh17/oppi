@@ -128,6 +128,7 @@ export class SessionLifecycleService {
     prompt?: string;
     thinking?: string;
     ephemeral?: boolean;
+    worktreeId?: string;
     attachments?: ChatAttachmentRef[];
   }): Promise<CreateWorkspaceSessionResult> {
     const modelSelection = resolveInitialChatModel({
@@ -138,6 +139,9 @@ export class SessionLifecycleService {
 
     session.workspaceId = params.workspace.id;
     session.workspaceName = params.workspace.name;
+    if (params.worktreeId) {
+      session.worktreeId = params.worktreeId;
+    }
     if (params.ephemeral === true) {
       session.ephemeral = true;
     }
@@ -241,6 +245,7 @@ export class SessionLifecycleService {
     piSessionFile: string;
     name?: string;
     model?: string;
+    worktreeId?: string;
   }): Promise<ImportLocalSessionResult> {
     const validation = validateLocalSessionPath(params.piSessionFile);
     if ("error" in validation) {
@@ -273,6 +278,9 @@ export class SessionLifecycleService {
     if (existingSession) {
       existingSession.workspaceId = params.workspace.id;
       existingSession.workspaceName = params.workspace.name;
+      if (params.worktreeId) {
+        existingSession.worktreeId = params.worktreeId;
+      }
       existingSession.piSessionFile = validation.path;
       existingSession.piSessionFiles = Array.from(
         new Set([...(existingSession.piSessionFiles ?? []), validation.path]),
@@ -308,6 +316,9 @@ export class SessionLifecycleService {
 
     session.workspaceId = params.workspace.id;
     session.workspaceName = params.workspace.name;
+    if (params.worktreeId) {
+      session.worktreeId = params.worktreeId;
+    }
     if (localMeta?.firstMessage) {
       session.firstMessage = localMeta.firstMessage.slice(0, 200);
     }
@@ -360,6 +371,9 @@ export class SessionLifecycleService {
     // Timeline forks stay independent root sessions in the workspace list.
     forkSession.workspaceId = params.workspace.id;
     forkSession.workspaceName = params.workspace.name;
+    if (latestSource.worktreeId) {
+      forkSession.worktreeId = latestSource.worktreeId;
+    }
     forkSession.piSessionFile = sourceSessionFile;
     forkSession.piSessionFiles = Array.from(
       new Set([...(latestSource.piSessionFiles || []), sourceSessionFile]),

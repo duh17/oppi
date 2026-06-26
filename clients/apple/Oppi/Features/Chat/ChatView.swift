@@ -1021,6 +1021,7 @@ struct ChatView: View {
             let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
             gitStatusStore.loadInitial(
                 workspaceId: wsId,
+                worktreeId: session?.worktreeId,
                 apiClient: api,
                 gitStatusEnabled: ws?.gitStatusEnabled ?? true
             )

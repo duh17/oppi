@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import { getGitStatus } from "./git-status.js";
+import { resolveWorkspaceWorktree } from "./worktrees.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
@@ -420,31 +421,37 @@ export class SessionEventProcessor {
 
     const wsId = session.workspaceId;
     if (!wsId) return;
+    const worktreeId = session.worktreeId ?? "main";
+    const timerKey = `${wsId}:${worktreeId}`;
 
-    // Debounce per workspace — cancel any pending timer and restart
-    const existing = this.gitStatusTimers.get(wsId);
+    // Debounce per workspace/worktree — cancel any pending timer and restart
+    const existing = this.gitStatusTimers.get(timerKey);
     if (existing) clearTimeout(existing);
 
     this.gitStatusTimers.set(
-      wsId,
+      timerKey,
       setTimeout(() => {
-        this.gitStatusTimers.delete(wsId);
-        this.emitGitStatusNow(key, wsId);
+        this.gitStatusTimers.delete(timerKey);
+        this.emitGitStatusNow(key, wsId, worktreeId);
       }, SessionEventProcessor.GIT_STATUS_DEBOUNCE_MS),
     );
   }
 
-  private emitGitStatusNow(key: string, wsId: string): void {
+  private emitGitStatusNow(key: string, wsId: string, worktreeId: string): void {
     const workspace = this.deps.storage.getWorkspace(wsId);
     if (!workspace?.hostMount) return;
     if (workspace.gitStatusEnabled === false) return;
 
-    void getGitStatus(workspace.hostMount)
+    const worktreePath = resolveWorkspaceWorktree(workspace, worktreeId)?.path;
+    if (!worktreePath) return;
+
+    void getGitStatus(worktreePath)
       .then((status) => {
         if (!status.isGitRepo) return;
         this.deps.broadcast(key, {
           type: "git_status",
           workspaceId: wsId,
+          worktreeId,
           status,
         });
       })

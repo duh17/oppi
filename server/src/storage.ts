@@ -286,35 +286,49 @@ export class Storage {
     return this.sessionStore.listSessions();
   }
 
-  listAllWorkspaceSessionSnapshots(workspaceId: string): Session[] {
-    return this.sessionStore.listAllWorkspaceSessionSnapshots(workspaceId);
+  listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
+    return this.sessionStore.listAllWorkspaceSessionSnapshots(workspaceId, worktreeId);
   }
 
   listRecentWorkspaceSessionSnapshots(
     workspaceId: string,
     recentDays: number,
     nowMs?: number,
+    worktreeId?: string,
   ): Session[] {
-    return this.sessionStore.listRecentWorkspaceSessionSnapshots(workspaceId, recentDays, nowMs);
+    return this.sessionStore.listRecentWorkspaceSessionSnapshots(
+      workspaceId,
+      recentDays,
+      nowMs,
+      worktreeId,
+    );
   }
 
   listWorkspaceTimeRangeSessionSnapshots(
     workspaceId: string,
     sinceMs: number,
     untilMs: number,
+    worktreeId?: string,
   ): Session[] {
-    return this.sessionStore.listWorkspaceTimeRangeSessionSnapshots(workspaceId, sinceMs, untilMs);
+    return this.sessionStore.listWorkspaceTimeRangeSessionSnapshots(
+      workspaceId,
+      sinceMs,
+      untilMs,
+      worktreeId,
+    );
   }
 
   listStoppedWorkspaceTimeRangeSessionSnapshots(
     workspaceId: string,
     sinceMs: number,
     untilMs: number,
+    worktreeId?: string,
   ): Session[] {
     return this.sessionStore.listStoppedWorkspaceTimeRangeSessionSnapshots(
       workspaceId,
       sinceMs,
       untilMs,
+      worktreeId,
     );
   }
 
@@ -326,8 +340,14 @@ export class Storage {
     workspaceId: string,
     beforeMs: number,
     nowMs?: number,
+    worktreeId?: string,
   ): WorkspaceStoppedTimeBucketSnapshot[] {
-    return this.sessionStore.listWorkspaceStoppedTimeBuckets(workspaceId, beforeMs, nowMs);
+    return this.sessionStore.listWorkspaceStoppedTimeBuckets(
+      workspaceId,
+      beforeMs,
+      nowMs,
+      worktreeId,
+    );
   }
 
   deleteSession(sessionId: string): boolean {

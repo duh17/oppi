@@ -43,8 +43,8 @@ extension ServerConnection {
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
             _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: MessageSender.turnSendRequiredStage)
 
-        case .gitStatus(let workspaceId, let status):
-            gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, status: status)
+        case .gitStatus(let workspaceId, let worktreeId, let status):
+            gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, worktreeId: worktreeId, status: status)
             fileIndexStore.invalidate()
             Task { await FileBrowserCache.shared.invalidateDirectoryListings(for: workspaceId) }
 

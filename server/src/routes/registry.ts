@@ -535,6 +535,13 @@ const rawApiRouteSpecs = [
 
   {
     method: "GET",
+    path: "/workspaces/{workspaceId}/worktrees",
+    operationId: "listWorkspaceWorktrees",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
     path: "/workspaces/{workspaceId}/git/status",
     operationId: "getWorkspaceGitStatus",
     surface: "core",

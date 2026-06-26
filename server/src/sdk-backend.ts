@@ -44,6 +44,7 @@ import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { Session, Workspace } from "./types.js";
+import { resolveWorkspaceSessionCwd } from "./worktrees.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
 type AttachmentToolExecute = ToolDefinition["execute"] & {
@@ -123,7 +124,15 @@ export function resolveSandboxGuestCwd(workspace: Workspace): string {
   return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
 }
 
-export function resolveSdkSessionCwd(workspace?: Workspace): string {
+export function resolveSdkSessionCwd(
+  workspace?: Workspace,
+  session?: Pick<Session, "worktreeId">,
+): string {
+  if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
+    const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId);
+    if (worktreePath) return worktreePath;
+  }
+
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
     if (workspace?.runtime === "sandbox") {
@@ -140,11 +149,14 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
   return resolveHostPath(rawHostMount);
 }
 
-export function resolveSdkSessionDisplayCwd(workspace?: Workspace): string {
+export function resolveSdkSessionDisplayCwd(
+  workspace?: Workspace,
+  session?: Pick<Session, "worktreeId">,
+): string {
   if (workspace?.runtime === "sandbox") {
     return resolveSandboxGuestCwd(workspace);
   }
-  return resolveSdkSessionCwd(workspace);
+  return resolveSdkSessionCwd(workspace, session);
 }
 
 type AgentContextFile = { path: string; content: string };
@@ -354,8 +366,8 @@ export class SdkBackend {
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
     const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
-    const initialHostCwd = resolveSdkSessionCwd(workspace);
-    const initialCwd = resolveSdkSessionDisplayCwd(workspace);
+    const initialHostCwd = resolveSdkSessionCwd(workspace, session);
+    const initialCwd = resolveSdkSessionDisplayCwd(workspace, session);
     const sandboxMode = workspace?.runtime === "sandbox";
     const runtimeAssertCwd = sandboxMode ? initialHostCwd : initialCwd;
     const hostMountError = hostMountValidationError(workspace?.hostMount);

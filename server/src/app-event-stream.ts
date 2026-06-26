@@ -469,6 +469,7 @@ export class AppEventStreamMux implements AppEventEmitter {
           {
             type: "workspace_git_changed",
             workspaceId: event.workspaceId,
+            ...(event.worktreeId ? { worktreeId: event.worktreeId } : {}),
             sessionId,
             emittedAt,
             reason: "mutation_tool",
