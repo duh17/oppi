@@ -6,7 +6,7 @@ Current status:
 
 - Oppi server no longer injects this extension from `SdkBackend`.
 - `subagents` is not an Oppi built-in workspace extension.
-- The code is kept here as reference material for the Clanker control-plane/API work.
+- The code is kept here as reference material for Agent launch/API work.
 - If someone loads this manually as a Pi extension, it still expects Oppi workspace/session HTTP APIs and an Oppi API descriptor.
 
 The old tool surface was:
@@ -15,4 +15,6 @@ The old tool surface was:
 - `inspect_agent`
 - `send_message`
 
-The useful ideas to carry forward are generic session creation, parent/session identity, idempotent launch, and explicit permission/runtime boundaries. Those belong in the Clanker control plane, not hidden `SdkBackend` built-in injection.
+The useful ideas to carry forward are generic session creation, parent/session identity, idempotent launch, and explicit tool/runtime boundaries. Those belong in AgentLaunchService and injected coordinator extensions, not hidden `SdkBackend` built-in injection.
+
+There is no active child-session tool in v1; do not revive this parked tool surface unless a concrete active caller needs it.
