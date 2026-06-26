@@ -200,8 +200,33 @@ final class NativeCodeBlockView: UIView {
         let width = wrappedCodeWidth()
         if abs((codeLabelWidthConstraint?.constant ?? 0) - width) > 0.5 {
             codeLabelWidthConstraint?.constant = width
+            updateTextContainerForCurrentWrapping()
             codeLabel.invalidateIntrinsicContentSize()
         }
+    }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        if isLineWrappingEnabled {
+            let hasTargetWidth = targetSize.width.isFinite
+                && targetSize.width > Self.codeHorizontalPadding
+            let targetWidth = hasTargetWidth ? targetSize.width : nil
+            let width = wrappedCodeWidth(availableWidth: targetWidth)
+            if abs((codeLabelWidthConstraint?.constant ?? 0) - width) > 0.5 {
+                codeLabelWidthConstraint?.constant = width
+            }
+            updateTextContainerForCurrentWrapping()
+            codeLabel.invalidateIntrinsicContentSize()
+        }
+
+        return super.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: horizontalFittingPriority,
+            verticalFittingPriority: verticalFittingPriority
+        )
     }
 
     // periphery:ignore:parameters isOpen
@@ -287,6 +312,7 @@ final class NativeCodeBlockView: UIView {
         codeScrollView.alwaysBounceHorizontal = false
         codeScrollView.showsHorizontalScrollIndicator = false
         codeLabelWidthConstraint?.constant = isLineWrappingEnabled ? wrappedCodeWidth() : measuredUnwrappedCodeWidth
+        updateTextContainerForCurrentWrapping()
 
         if resetHorizontalOffset {
             codeScrollView.setContentOffset(.zero, animated: false)
@@ -299,9 +325,26 @@ final class NativeCodeBlockView: UIView {
         superview?.setNeedsLayout()
     }
 
-    private func wrappedCodeWidth() -> CGFloat {
-        let availableWidth = [codeScrollView.bounds.width, bounds.width, superview?.bounds.width ?? 0]
-            .first(where: { $0 > Self.codeHorizontalPadding }) ?? 320
+    private func updateTextContainerForCurrentWrapping() {
+        codeLabel.textContainer.widthTracksTextView = isLineWrappingEnabled
+        codeLabel.textContainer.size = isLineWrappingEnabled
+            ? CGSize(
+                width: max(1, codeLabelWidthConstraint?.constant ?? wrappedCodeWidth()),
+                height: CGFloat.greatestFiniteMagnitude
+            )
+            : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        codeLabel.layoutManager.invalidateLayout(
+            forCharacterRange: NSRange(location: 0, length: codeLabel.textStorage.length),
+            actualCharacterRange: nil
+        )
+        codeLabel.layoutManager.ensureLayout(for: codeLabel.textContainer)
+    }
+
+    private func wrappedCodeWidth(availableWidth explicitAvailableWidth: CGFloat? = nil) -> CGFloat {
+        let availableWidth = explicitAvailableWidth
+            ?? [codeScrollView.bounds.width, bounds.width, superview?.bounds.width ?? 0]
+                .first(where: { $0 > Self.codeHorizontalPadding })
+            ?? 320
         return max(1, availableWidth - Self.codeHorizontalPadding)
     }
 
@@ -324,7 +367,7 @@ final class NativeCodeBlockView: UIView {
     }
 
     private func invalidateTimelineLayout() {
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     private func showCopiedFlash() {
