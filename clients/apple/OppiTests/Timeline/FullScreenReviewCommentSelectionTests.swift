@@ -88,6 +88,182 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(composerAppeared, "The native menu Comment action should open the inline comment composer")
     }
 
+    @Test func markdownCodeBlockInFullScreenUsesInlineComposer() async throws {
+        let router = ReviewCommentSelectionRouter(
+            dispatchWithPresentation: { _, _ in
+                Issue.record("Full-screen markdown code blocks should use the inline review composer")
+            },
+            inlineSave: { _, _ in true }
+        )
+        let body = NativeFullScreenMarkdownBody(
+            content: "Intro\n\n```swift\nlet one = 1\nlet two = 2\n```\n\nDone",
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: router,
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenMarkdown,
+                filePath: "CHANGELOG.md",
+                languageHint: "markdown"
+            )
+        )
+        let hostController = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        hostController.loadViewIfNeeded()
+        body.translatesAutoresizingMaskIntoConstraints = false
+        hostController.view.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: hostController.view.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: hostController.view.trailingAnchor),
+            body.topAnchor.constraint(equalTo: hostController.view.topAnchor),
+            body.bottomAnchor.constraint(equalTo: hostController.view.bottomAnchor),
+        ])
+        hostController.view.setNeedsLayout()
+        hostController.view.layoutIfNeeded()
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("let two = 2")
+        })
+        let rendered = timelineRenderedText(of: textView) as NSString
+        let selectedRange = rendered.range(of: "let two = 2")
+        #expect(selectedRange.location != NSNotFound)
+        textView.becomeFirstResponder()
+        textView.selectedRange = selectedRange
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: selectedRange,
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
+
+        let button = UIButton(type: .system)
+        button.addAction(commentAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+
+        let composerAppeared = await waitForMainActorCondition {
+            self.hasVisibleView(identifier: "review-comment.inline-composer", in: hostController.view)
+        }
+        #expect(composerAppeared, "Commenting in a full-screen markdown code block should keep the reader open and show the inline composer")
+    }
+
+    @Test func markdownTableInFullScreenUsesInlineComposer() async throws {
+        let router = ReviewCommentSelectionRouter(
+            dispatchWithPresentation: { _, _ in
+                Issue.record("Full-screen markdown tables should use the inline review composer")
+            },
+            inlineSave: { _, _ in true }
+        )
+        let body = NativeFullScreenMarkdownBody(
+            content: "| Item | Status |\n| --- | --- |\n| Destination | Needs review |",
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: router,
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenMarkdown,
+                filePath: "CHANGELOG.md",
+                languageHint: "markdown"
+            )
+        )
+        let hostController = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        hostController.loadViewIfNeeded()
+        body.translatesAutoresizingMaskIntoConstraints = false
+        hostController.view.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: hostController.view.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: hostController.view.trailingAnchor),
+            body.topAnchor.constraint(equalTo: hostController.view.topAnchor),
+            body.bottomAnchor.constraint(equalTo: hostController.view.bottomAnchor),
+        ])
+        hostController.view.setNeedsLayout()
+        hostController.view.layoutIfNeeded()
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let textView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("Needs review")
+        })
+        let rendered = timelineRenderedText(of: textView) as NSString
+        let selectedRange = rendered.range(of: "Needs review")
+        #expect(selectedRange.location != NSNotFound)
+        textView.becomeFirstResponder()
+        textView.selectedRange = selectedRange
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: selectedRange,
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
+
+        let button = UIButton(type: .system)
+        button.addAction(commentAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+
+        let composerAppeared = await waitForMainActorCondition {
+            self.hasVisibleView(identifier: "review-comment.inline-composer", in: hostController.view)
+        }
+        #expect(composerAppeared, "Commenting in a full-screen markdown table should keep the reader open and show the inline composer")
+    }
+
+    @Test func markdownNestedBlockSurfacesMatchContainingSurfaceDestination() throws {
+        let content = """
+        ```swift
+        let nested = true
+        ```
+
+        | Item | Status |
+        | --- | --- |
+        | Destination | Needs review |
+        """
+
+        var assistantRequests: [ReviewCommentSelectionRequest] = []
+        let assistantView = makeMarkdownContentView(
+            content: content,
+            surface: .assistantProse,
+            captured: { assistantRequests.append($0) }
+        )
+        let assistantHost = attachToHost(assistantView)
+        _ = assistantHost
+        try dispatchCommentAction(
+            textView: try #require(timelineAllTextViews(in: assistantView).first { timelineRenderedText(of: $0).contains("let nested = true") }),
+            selectedText: "let nested = true"
+        )
+        try dispatchCommentAction(
+            textView: try #require(timelineAllTextViews(in: assistantView).first { timelineRenderedText(of: $0).contains("Needs review") }),
+            selectedText: "Needs review"
+        )
+        #expect(assistantRequests.map(\.source.surface) == [.assistantCodeBlock, .assistantTable])
+
+        var expandedRequests: [ReviewCommentSelectionRequest] = []
+        let expandedView = makeMarkdownContentView(
+            content: content,
+            surface: .toolExpandedText,
+            captured: { expandedRequests.append($0) }
+        )
+        let expandedHost = attachToHost(expandedView)
+        _ = expandedHost
+        try dispatchCommentAction(
+            textView: try #require(timelineAllTextViews(in: expandedView).first { timelineRenderedText(of: $0).contains("let nested = true") }),
+            selectedText: "let nested = true"
+        )
+        try dispatchCommentAction(
+            textView: try #require(timelineAllTextViews(in: expandedView).first { timelineRenderedText(of: $0).contains("Needs review") }),
+            selectedText: "Needs review"
+        )
+        #expect(expandedRequests.map(\.source.surface) == [.toolExpandedText, .toolExpandedText])
+    }
+
     @Test func inlineCommentComposerStaysAboveKeyboardWhenAnchorIsBehindKeyboard() throws {
         let hostController = UIViewController()
         let window = UIWindow(frame: UIScreen.main.bounds)
@@ -436,6 +612,7 @@ struct FullScreenReviewCommentSelectionTests {
 
         let request = try #require(captured)
         #expect(request.selectedText == "let two = 2")
+        #expect(request.source.surface == .fullScreenMarkdown)
         #expect(request.source.filePath == "CHANGELOG.md")
         #expect(request.source.lineRange == 5...5)
     }
@@ -894,6 +1071,29 @@ struct FullScreenReviewCommentSelectionTests {
                 languageHint: "markdown"
             )
         )
+    }
+
+    private func makeMarkdownContentView(
+        content: String,
+        surface: ReviewCommentSurfaceKind,
+        captured: @escaping (ReviewCommentSelectionRequest) -> Void
+    ) -> AssistantMarkdownContentView {
+        let view = AssistantMarkdownContentView()
+        view.apply(configuration: .make(
+            content: content,
+            isStreaming: false,
+            themeID: ThemeID.dark,
+            textSelectionEnabled: true,
+            reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured($0) },
+            reviewCommentSourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: surface,
+                sourceLabel: "Markdown",
+                filePath: "CHANGELOG.md",
+                languageHint: "markdown"
+            )
+        ))
+        return view
     }
 
     private func attachToHost(_ body: UIView) -> UIView {
