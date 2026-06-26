@@ -290,6 +290,32 @@ struct FlatSegmentBuildTests {
         }
     }
 
+    @Test func orderedListSplitByFencedCodeBlockContinuesNumbering() {
+        let markdown = """
+        1. In `file.swift`, add:
+
+        ```swift
+        let value = 1
+        ```
+
+        2. Add helpers:
+        """
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+
+        #expect(segments.count == 3)
+        guard case .text(let firstItem) = segments[0],
+              case .codeBlock(let language, let code) = segments[1],
+              case .text(let secondItem) = segments[2] else {
+            Issue.record("Expected text/code/text segments, got \(segments)")
+            return
+        }
+
+        #expect(String(firstItem.characters).hasPrefix("  1. In file.swift, add:"))
+        #expect(language == "swift")
+        #expect(code == "let value = 1")
+        #expect(String(secondItem.characters).hasPrefix("  2. Add helpers:"))
+    }
+
     @Test func orderedListNestedBulletsKeepParentContinuationIndent() {
         let markdown = """
         1. Application services

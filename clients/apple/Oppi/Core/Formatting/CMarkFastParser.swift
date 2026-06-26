@@ -298,7 +298,7 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
             }
             return .taskList(taskItems)
         } else if listType == CMARK_ORDERED_LIST {
-            return .orderedList(start: 1, items)
+            return .orderedList(start: Int(cmark_node_get_list_start(node)), items)
         } else {
             return .unorderedList(items)
         }
