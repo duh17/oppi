@@ -33,12 +33,14 @@ function writeJsonl(path: string, userText: string, assistantText: string): void
     JSON.stringify({
       type: "message",
       id: "u1",
+      parentId: null,
       timestamp: new Date().toISOString(),
       message: { role: "user", content: [{ type: "text", text: userText }] },
     }),
     JSON.stringify({
       type: "message",
       id: "a1",
+      parentId: "u1",
       timestamp: new Date().toISOString(),
       message: { role: "assistant", content: [{ type: "text", text: assistantText }] },
     }),
@@ -187,6 +189,163 @@ describe("SearchIndex indexes transcript content only", () => {
       expect(second.reusedIndexedTranscript).toBe(1);
       expect(index.search("newtitletoken", "ws-1", 10)).toHaveLength(1);
       expect(index.search("oldtitletoken", "ws-1", 10)).toHaveLength(0);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("indexes only visible post-compaction trace content", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const jsonlPath = join(dataDir, "compacted-session.jsonl");
+    writeRawJsonl(jsonlPath, [
+      JSON.stringify({
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: "2026-01-01T00:00:01Z",
+        message: { role: "user", content: "hiddencompacttoken old user text" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "2026-01-01T00:00:02Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hiddenassistantcompacttoken" }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "u2",
+        parentId: "a1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: { role: "user", content: "keptcompacttoken visible user text" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "a2",
+        parentId: "u2",
+        timestamp: "2026-01-01T00:00:04Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "keptassistantcompacttoken" }],
+        },
+      }),
+      JSON.stringify({
+        type: "compaction",
+        id: "c1",
+        parentId: "a2",
+        timestamp: "2026-01-01T00:00:05Z",
+        summary: "summarycompacttoken should not become indexed assistant text",
+        firstKeptEntryId: "u2",
+        tokensBefore: 12345,
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "u3",
+        parentId: "c1",
+        timestamp: "2026-01-01T00:00:06Z",
+        message: { role: "user", content: "postcompacttoken visible follow-up" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "a3",
+        parentId: "u3",
+        timestamp: "2026-01-01T00:00:07Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "postassistantcompacttoken" }],
+        },
+      }),
+    ]);
+
+    const session = makeSession({ id: "sess-compacted", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      const result = index.sync([session]);
+      expect(result.added).toBe(1);
+      expect(result.transcriptsRead).toBe(1);
+      expect(result.transcriptBytesRead).toBeGreaterThan(0);
+
+      expect(index.search("hiddencompacttoken", "ws-1", 10)).toHaveLength(0);
+      expect(index.search("hiddenassistantcompacttoken", "ws-1", 10)).toHaveLength(0);
+      expect(index.search("summarycompacttoken", "ws-1", 10)).toHaveLength(0);
+      expect(index.search("keptcompacttoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("keptassistantcompacttoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("postcompacttoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("postassistantcompacttoken", "ws-1", 10)).toHaveLength(1);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("indexes only the active latest branch in trace content", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const jsonlPath = join(dataDir, "branched-session.jsonl");
+    writeRawJsonl(jsonlPath, [
+      JSON.stringify({
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: "2026-01-01T00:00:01Z",
+        message: { role: "user", content: "sharedbranchroot" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "2026-01-01T00:00:02Z",
+        message: { role: "assistant", content: [{ type: "text", text: "sharedbranchanswer" }] },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "u2-inactive",
+        parentId: "a1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: { role: "user", content: "inactivebranchtoken stale branch text" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "u2-active",
+        parentId: "a1",
+        timestamp: "2026-01-01T00:00:04Z",
+        message: { role: "user", content: "activebranchtoken latest branch text" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "a2-active",
+        parentId: "u2-active",
+        timestamp: "2026-01-01T00:00:05Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "activeassistantbranchtoken" }],
+        },
+      }),
+    ]);
+
+    const session = makeSession({ id: "sess-branched", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      const result = index.sync([session]);
+      expect(result.added).toBe(1);
+      expect(result.transcriptsRead).toBe(1);
+      expect(result.transcriptBytesRead).toBeGreaterThan(0);
+
+      expect(index.search("inactivebranchtoken", "ws-1", 10)).toHaveLength(0);
+      expect(index.search("activebranchtoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("activeassistantbranchtoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("sharedbranchroot", "ws-1", 10)).toHaveLength(1);
     } finally {
       index.close();
     }

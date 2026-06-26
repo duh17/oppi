@@ -12,12 +12,12 @@
  */
 
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
-import { StringDecoder } from "node:string_decoder";
 
 import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";
+import { readSessionTraceFromFile } from "./trace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,32 +34,6 @@ export interface SearchResult {
 // ---------------------------------------------------------------------------
 // Content extraction
 // ---------------------------------------------------------------------------
-
-/** Text block types we extract from message content arrays. */
-const TEXT_BLOCK_TYPES = new Set(["text", "output_text"]);
-
-function extractTextFromContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object" && TEXT_BLOCK_TYPES.has(block.type) && block.text) {
-      parts.push(block.text);
-    }
-  }
-  return parts.join("\n");
-}
-
-function extractToolNames(content: unknown): Set<string> {
-  const names = new Set<string>();
-  if (!Array.isArray(content)) return names;
-  for (const block of content) {
-    if (block && typeof block === "object" && block.type === "toolCall" && block.name) {
-      names.add(block.name);
-    }
-  }
-  return names;
-}
 
 const USER_MESSAGE_CAP = 50_000;
 const ASSISTANT_MESSAGE_CAP = 100_000;
@@ -89,97 +63,40 @@ function extractSessionTitle(session: Session): string {
     .slice(0, 500);
 }
 
-const TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024;
-
-function processTranscriptLine(
-  line: string,
-  state: {
-    userParts: string[];
-    assistantParts: string[];
-    toolNameSet: Set<string>;
-    userLen: number;
-    assistantLen: number;
-  },
-): void {
-  if (!line) return;
-
-  let entry: Record<string, unknown>;
-  try {
-    entry = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (entry.type !== "message") return;
-
-  const msg = entry.message as Record<string, unknown> | undefined;
-  if (!msg?.content) return;
-
-  if (msg.role === "user" && state.userLen < USER_MESSAGE_CAP) {
-    const text = extractTextFromContent(msg.content);
-    state.userParts.push(text);
-    state.userLen += text.length;
-    return;
-  }
-
-  if (msg.role === "assistant" && state.assistantLen < ASSISTANT_MESSAGE_CAP) {
-    const text = extractTextFromContent(msg.content);
-    state.assistantParts.push(text);
-    state.assistantLen += text.length;
-    for (const name of extractToolNames(msg.content)) {
-      state.toolNameSet.add(name);
-    }
-  }
-}
-
 function extractTranscriptContent(jsonlPath: string): TranscriptContent | null {
-  let fd: number;
+  let bytesRead: number;
   try {
-    fd = openSync(jsonlPath, "r");
+    bytesRead = statSync(jsonlPath).size;
   } catch {
     return null;
   }
 
-  const state = {
-    userParts: [] as string[],
-    assistantParts: [] as string[],
-    toolNameSet: new Set<string>(),
-    userLen: 0,
-    assistantLen: 0,
-  };
+  const events = readSessionTraceFromFile(jsonlPath);
+  if (!events) return null;
 
-  const buffer = Buffer.allocUnsafe(TRANSCRIPT_READ_CHUNK_BYTES);
-  const decoder = new StringDecoder("utf8");
-  let bytesReadTotal = 0;
-  let pending = "";
+  const userParts: string[] = [];
+  const assistantParts: string[] = [];
+  const toolNameSet = new Set<string>();
+  let userLen = 0;
+  let assistantLen = 0;
 
-  try {
-    while (true) {
-      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
-      if (bytesRead === 0) break;
-      bytesReadTotal += bytesRead;
-      pending += decoder.write(buffer.subarray(0, bytesRead));
-
-      let newlineIndex = pending.indexOf("\n");
-      while (newlineIndex !== -1) {
-        processTranscriptLine(pending.slice(0, newlineIndex), state);
-        pending = pending.slice(newlineIndex + 1);
-        newlineIndex = pending.indexOf("\n");
-      }
+  for (const event of events) {
+    if (event.type === "user" && event.text && userLen < USER_MESSAGE_CAP) {
+      userParts.push(event.text);
+      userLen += event.text.length;
+    } else if (event.type === "assistant" && event.text && assistantLen < ASSISTANT_MESSAGE_CAP) {
+      assistantParts.push(event.text);
+      assistantLen += event.text.length;
+    } else if (event.type === "toolCall" && event.tool) {
+      toolNameSet.add(event.tool);
     }
-
-    pending += decoder.end();
-    processTranscriptLine(pending, state);
-  } catch {
-    return null;
-  } finally {
-    closeSync(fd);
   }
 
   return {
-    userMessages: state.userParts.join("\n").slice(0, USER_MESSAGE_CAP),
-    assistantMessages: state.assistantParts.join("\n").slice(0, ASSISTANT_MESSAGE_CAP),
-    toolNames: [...state.toolNameSet].join(" "),
-    bytesRead: bytesReadTotal,
+    userMessages: userParts.join("\n").slice(0, USER_MESSAGE_CAP),
+    assistantMessages: assistantParts.join("\n").slice(0, ASSISTANT_MESSAGE_CAP),
+    toolNames: [...toolNameSet].join(" "),
+    bytesRead,
   };
 }
 
