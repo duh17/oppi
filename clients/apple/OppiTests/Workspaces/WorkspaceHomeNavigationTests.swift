@@ -30,4 +30,14 @@ struct WorkspaceHomeNavigationTests {
         #expect(mode.rowBodyAction(isE2EInviteMode: false) == .openWorkspace)
         #expect(mode.rowBodyAction(isE2EInviteMode: true) == .openWorkspace)
     }
+
+    @Test func workspaceHomePreviewCandidatesOmitStoppedSessions() {
+        let ready = makeTestSession(id: "ready", status: .ready)
+        let busy = makeTestSession(id: "busy", status: .busy)
+        let stopped = makeTestSession(id: "stopped", status: .stopped)
+
+        let candidates = WorkspaceHomePreviewPlanner.previewableSessions([stopped, ready, busy])
+
+        #expect(candidates.map(\.id) == ["ready", "busy"])
+    }
 }

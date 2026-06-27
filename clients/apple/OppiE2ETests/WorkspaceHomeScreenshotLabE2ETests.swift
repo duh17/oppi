@@ -9,12 +9,17 @@ private let pendingQuickSessionShareText = "E2E quick session share text 7F5E7D5
 /// the same path the app uses in a real paired simulator.
 @MainActor
 final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
+    nonisolated(unsafe) private var hiddenPreviewWorkspaceName: String?
+    nonisolated(unsafe) private var hiddenPreviewActiveSessionId: String?
+    nonisolated(unsafe) private var hiddenPreviewStoppedSessionIds: [String] = []
+
     override var e2eLaunchesWorkspaceHomeOnly: Bool {
         true
     }
 
     override var e2eRequiresFreshLaunch: Bool {
         name.contains("testPendingQuickSessionShareOnColdLaunchPresentsSheet")
+            || name.contains("testWorkspaceHomeHidesStoppedSessionPreviews")
     }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {
@@ -24,6 +29,9 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
 
     override func seedE2EFixtures() throws {
         try seedLabWorkspaces(WorkspaceHomeLabScenario.allFixtures)
+        if name.contains("testWorkspaceHomeHidesStoppedSessionPreviews") {
+            try seedHiddenStoppedPreviewFixture()
+        }
     }
 
     func testWorkspaceHomeWrappingScreenshotLab() throws {
@@ -32,6 +40,36 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
 
     func testWorkspaceHomeDenseCountsScreenshotLab() throws {
         try runWorkspaceHomeLab(.denseCounts)
+    }
+
+    func testWorkspaceHomeHidesStoppedSessionPreviews() throws {
+        let workspaceName = try XCTUnwrap(hiddenPreviewWorkspaceName)
+        let activeSessionId = try XCTUnwrap(hiddenPreviewActiveSessionId)
+        let stoppedSessionIds = hiddenPreviewStoppedSessionIds
+
+        let workspaceList = app.collectionViews["workspace.list"]
+        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not visible")
+        dismissExtensionSheetIfNeeded(timeout: 3)
+        workspaceList.swipeDown()
+
+        XCTAssertTrue(
+            scrollWorkspaceHomeList(workspaceList, toText: workspaceName, timeout: 20),
+            "Workspace with mixed active and stopped sessions did not appear after refresh"
+        )
+
+        let activePreview = app.descendants(matching: .any)["workspaceHome.sessionPreview.\(activeSessionId)"]
+        XCTAssertTrue(
+            activePreview.waitForExistence(timeout: 20),
+            "Active session preview \(activeSessionId) did not appear"
+        )
+
+        for stoppedSessionId in stoppedSessionIds {
+            let stoppedPreview = app.descendants(matching: .any)["workspaceHome.sessionPreview.\(stoppedSessionId)"]
+            XCTAssertFalse(
+                stoppedPreview.waitForExistence(timeout: 1),
+                "Stopped session preview \(stoppedSessionId) should stay hidden on workspace home"
+            )
+        }
     }
 
     func testQuickSessionComposerGrowthFitsMeasuredContent() throws {
@@ -103,6 +141,35 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return latest
+    }
+
+    private nonisolated func seedHiddenStoppedPreviewFixture() throws {
+        let workspaceName = "AAA Stopped Preview Hidden \(UUID().uuidString.prefix(6))"
+        let workspaceId = try createLabWorkspace(named: workspaceName)
+        hiddenPreviewWorkspaceName = workspaceName
+        hiddenPreviewActiveSessionId = try XCTUnwrap(
+            createLabSessions(count: 1, workspaceId: workspaceId, stopAfterCreate: false).first
+        )
+        hiddenPreviewStoppedSessionIds = try createLabSessions(
+            count: 2,
+            workspaceId: workspaceId,
+            stopAfterCreate: true
+        )
+    }
+
+    private func scrollWorkspaceHomeList(
+        _ workspaceList: XCUIElement,
+        toText text: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let target = app.staticTexts[text]
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if target.exists { return true }
+            workspaceList.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return target.exists
     }
 
     private nonisolated var currentScenario: WorkspaceHomeLabScenario {
