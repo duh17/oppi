@@ -318,6 +318,10 @@ enum WorkspaceHomePreviewPlanner {
     static let maxRows = 5
     static let preferredYourTurnRows = 3
 
+    static func previewableSessions(_ sessions: [Session]) -> [Session] {
+        sessions.filter { $0.status != .stopped }
+    }
+
     static func activeRows<T>(
         yourTurn: [T],
         working: [T],
@@ -857,14 +861,14 @@ struct WorkspaceHomeView: View {
     ) -> [WorkspaceHomeSessionPreview] {
         guard let connection else { return [] }
         let workspaceSessions = connection.sessionStore.listProjectionSessions(workspaceId: workspaceId)
-        guard !workspaceSessions.isEmpty else { return [] }
+        let previewableSessions = WorkspaceHomePreviewPlanner.previewableSessions(workspaceSessions)
+        guard !previewableSessions.isEmpty else { return [] }
 
-        let activeSessions = workspaceSessions.filter { $0.status != .stopped }
         var attentionBySessionId: [String: SessionListAttentionCounts] = [:]
         var yourTurn: [Session] = []
         var working: [Session] = []
 
-        for session in activeSessions {
+        for session in previewableSessions {
             let attention = SessionRowPresentationBuilder.attentionCounts(
                 sessionId: session.id,
                 pendingAskCountForSession: { pendingAskCount(for: $0, connection: connection) }
@@ -900,24 +904,6 @@ struct WorkspaceHomeView: View {
             )
         }
         previews.append(contentsOf: activePreviewRows)
-
-        let remainingRecentSlots = max(0, maxPreviewRows - previews.count)
-        if remainingRecentSlots > 0 {
-            let recentStopped = workspaceSessions.filter { $0.status == .stopped }
-                .sorted { lhs, rhs in
-                    if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
-                    return lhs.id < rhs.id
-                }
-                .prefix(remainingRecentSlots)
-                .map {
-                    previewRow(
-                        session: $0,
-                        attention: .none,
-                        connection: connection
-                    )
-                }
-            previews.append(contentsOf: recentStopped)
-        }
 
         return previews
     }
@@ -1230,7 +1216,7 @@ private struct WorkspaceHomeSessionPreviewRow: View {
 
 private struct WorkspaceHomePreviewEmptyRow: View {
     var body: some View {
-        Text("No sessions")
+        Text("No active sessions")
             .font(.caption)
             .foregroundStyle(.themeComment)
             .padding(.vertical, 4)
