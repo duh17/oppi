@@ -182,6 +182,10 @@ struct FileBrowserView: View {
         layoutMode == .compactOnly && contentChromeMode == .treePane
     }
 
+    private var shouldShowInlineDirectoryBackButton: Bool {
+        usesInlineCompactDirectoryNavigation && !isRoot && selectedFile == nil
+    }
+
     private var fileIndex: [String]? {
         fileIndexStore.paths
     }
@@ -237,6 +241,16 @@ struct FileBrowserView: View {
         .fileBrowserSearchable(isEnabled: activeLayout == .compact, text: $searchText)
         .navigationTitle(isRoot ? "Files" : lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if shouldShowInlineDirectoryBackButton {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: navigateToInlineParentDirectory) {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .accessibilityIdentifier("fileBrowser.inlineBack")
+                }
+            }
+        }
         .onChange(of: initialPath) { _, _ in
             treeDirectoryPath = nil
             selectedFile = nil
@@ -928,6 +942,11 @@ struct FileBrowserView: View {
                 isTreeOverlayVisible = true
             }
         }
+    }
+
+    private func navigateToInlineParentDirectory() {
+        guard shouldShowInlineDirectoryBackButton else { return }
+        popToBreadcrumbDepth(max(0, currentDepth - 1))
     }
 
     private func openDirectory(path: String) {
