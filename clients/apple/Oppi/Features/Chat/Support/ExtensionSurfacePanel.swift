@@ -74,6 +74,7 @@ private struct ExtensionDisclosureChevron: View {
 private struct ExtensionWidgetLinesView: View {
     let lines: [String]
     var scrollIdentifier: String? = nil
+    var onOpenFullScreen: (() -> Void)? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
@@ -88,7 +89,28 @@ private struct ExtensionWidgetLinesView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier(scrollIdentifier ?? "extension-widget-lines-scroll")
+        .extensionWidgetFullScreenActivation(onOpenFullScreen)
         .extensionGlassInset(cornerRadius: 12)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func extensionWidgetFullScreenActivation(_ onOpenFullScreen: (() -> Void)?) -> some View {
+        if let onOpenFullScreen {
+            self
+                .accessibilityHint("Double tap to open full screen.")
+                .accessibilityAction(named: Text("Open Full Screen")) {
+                    onOpenFullScreen()
+                }
+                .highPriorityGesture(
+                    TapGesture(count: 2).onEnded {
+                        onOpenFullScreen()
+                    }
+                )
+        } else {
+            self
+        }
     }
 }
 
@@ -1215,11 +1237,33 @@ private struct ExtensionNativeActivityRowContent: View {
     }
 }
 
+private struct ExtensionWidgetTerminalLineText: UIViewRepresentable {
+    let line: String
+    let baseForeground: Color
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.backgroundColor = .clear
+        label.numberOfLines = 1
+        label.lineBreakMode = .byClipping
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentHuggingPriority(.required, for: .vertical)
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
+        return label
+    }
+
+    func updateUIView(_ uiView: UILabel, context: Context) {
+        uiView.attributedText = ANSIParser.attributedString(from: line, baseForeground: baseForeground)
+        uiView.accessibilityLabel = ANSIParser.strip(line)
+    }
+}
+
 private struct ExtensionWidgetLineView: View {
     let line: String
 
     private var trimmedLine: String {
-        line.trimmingCharacters(in: .whitespacesAndNewlines)
+        ANSIParser.strip(line).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isHeader: Bool {
@@ -1253,10 +1297,10 @@ private struct ExtensionWidgetLineView: View {
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
             } else {
-                Text(line)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(isActivity ? .themeComment : .themeFg)
-                    .lineLimit(1)
+                ExtensionWidgetTerminalLineText(
+                    line: line,
+                    baseForeground: isActivity ? .themeComment : .themeFg
+                )
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -1518,6 +1562,7 @@ private struct ExtensionWidgetCard: View {
     let titleOverride: String?
 
     @State private var isExpanded = true
+    @State private var isDetailPresented = false
 
     private var identifierSuffix: String {
         widget.key.extensionAccessibilityIdentifierComponent
@@ -1533,7 +1578,7 @@ private struct ExtensionWidgetCard: View {
 
     private var collapsedPreview: String? {
         widget.lines
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { ANSIParser.strip($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
     }
 
@@ -1541,59 +1586,102 @@ private struct ExtensionWidgetCard: View {
         ExtensionSurfaceHeaderText(title: titleText, statusText: statusText)
     }
 
+    private var fullScreenContent: FullScreenCodeContent {
+        .terminal(content: widget.lines.joined(separator: "\n"), command: nil)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(headerText.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.themeFg)
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headerText.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if let subtitle = headerText.subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
                             .lineLimit(1)
                             .truncationMode(.tail)
-
-                        if let subtitle = headerText.subtitle {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        } else if !headerText.didPromoteStatus, !isExpanded, let collapsedPreview {
-                            Text(collapsedPreview)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.themeComment)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
+                    } else if !headerText.didPromoteStatus, !isExpanded, let collapsedPreview {
+                        Text(collapsedPreview)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    ExtensionDisclosureChevron(isExpanded: isExpanded)
                 }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                ExtensionDisclosureChevron(isExpanded: isExpanded)
             }
-            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .gesture(activationGesture)
             .accessibilityIdentifier("extension-widget-\(identifierSuffix)-toggle")
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(headerText.title) widget")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Tap to expand. Double tap to open full screen.")
+            .accessibilityAction {
+                toggleExpanded()
+            }
+            .accessibilityAction(named: Text("Open Full Screen")) {
+                openDetail()
+            }
 
             if isExpanded {
                 ExtensionWidgetLinesView(
                     lines: widget.lines,
-                    scrollIdentifier: "extension-widget-\(identifierSuffix)-scroll"
+                    scrollIdentifier: "extension-widget-\(identifierSuffix)-scroll",
+                    onOpenFullScreen: openDetail
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .highPriorityGesture(
+            TapGesture(count: 2).onEnded {
+                if isExpanded {
+                    openDetail()
+                }
+            }
+        )
+        .fullScreenViewer(
+            isPresented: $isDetailPresented,
+            content: fullScreenContent,
+            sourceLabel: headerText.title
+        )
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .extensionGlassPanel(cornerRadius: 18)
+    }
+
+    private var activationGesture: some Gesture {
+        TapGesture(count: 2)
+            .exclusively(before: TapGesture())
+            .onEnded { value in
+                switch value {
+                case .first:
+                    openDetail()
+                case .second:
+                    toggleExpanded()
+                }
+            }
+    }
+
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isExpanded.toggle()
+        }
+    }
+
+    private func openDetail() {
+        isDetailPresented = true
     }
 }
 
