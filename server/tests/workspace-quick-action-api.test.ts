@@ -378,6 +378,62 @@ describe("workspace prompt-template quick actions", () => {
     }
   });
 
+  it("prepares prompt-template quick actions for committed files", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-commit-quick-action-"));
+
+    try {
+      initRepo(repoDir);
+
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Inspect committed paths: $ARGUMENTS\n",
+        "utf8",
+      );
+      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
+      gitIn(repoDir, "add review.swift .pi/prompts/grill-me.md");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
+      gitIn(repoDir, "add review.swift");
+      gitIn(repoDir, 'commit -m "feature commit"');
+      const commitSha = gitIn(repoDir, "rev-parse --short HEAD");
+
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/quick-actions/selection",
+        new URL("http://localhost/workspaces/w1/quick-actions/selection"),
+        makeRequest({
+          paths: ["review.swift"],
+          commitSha,
+          promptTemplateName: "grill-me",
+        }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSelectionResponse;
+
+      expect(body.promptTemplateName).toBe("grill-me");
+      expect(body.filePaths).toEqual(["review.swift"]);
+      expect(body.visiblePrompt).toBe(
+        [
+          "Inspect committed paths: review.swift",
+          "",
+          "Selected commit:",
+          `- SHA: ${commitSha}`,
+          "- Message: feature commit",
+          "Use this commit as the source context for the selected files.",
+        ].join("\n"),
+      );
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates a seeded quick-action session from a prompt template and selected files", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-session-"));
 

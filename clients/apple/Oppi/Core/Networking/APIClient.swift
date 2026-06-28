@@ -519,11 +519,13 @@ actor APIClient: ClientLogUploading {
         workspaceId: String,
         paths: [String],
         selectedSessionId: String? = nil,
+        commitSha: String? = nil,
         promptTemplateName: String
     ) async throws -> WorkspaceQuickActionSelectionResponse {
         struct Body: Encodable {
             let paths: [String]
             let selectedSessionId: String?
+            let commitSha: String?
             let promptTemplateName: String
         }
 
@@ -532,6 +534,7 @@ actor APIClient: ClientLogUploading {
             body: Body(
                 paths: paths,
                 selectedSessionId: selectedSessionId,
+                commitSha: commitSha,
                 promptTemplateName: promptTemplateName
             )
         )
@@ -543,11 +546,13 @@ actor APIClient: ClientLogUploading {
         workspaceId: String,
         paths: [String],
         selectedSessionId: String? = nil,
+        commitSha: String? = nil,
         promptTemplateName: String
     ) async throws -> WorkspaceQuickActionSessionResponse {
         struct Body: Encodable {
             let paths: [String]
             let selectedSessionId: String?
+            let commitSha: String?
             let promptTemplateName: String
         }
 
@@ -556,6 +561,7 @@ actor APIClient: ClientLogUploading {
             body: Body(
                 paths: paths,
                 selectedSessionId: selectedSessionId,
+                commitSha: commitSha,
                 promptTemplateName: promptTemplateName
             )
         )

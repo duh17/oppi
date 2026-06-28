@@ -89,6 +89,7 @@ export interface WorkspaceQuickActionsResponse {
 export interface CreateWorkspaceQuickActionSessionRequest {
   paths: string[];
   selectedSessionId?: string;
+  commitSha?: string;
   promptTemplateName: string;
 }
 
