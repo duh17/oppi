@@ -2,6 +2,12 @@ import { existsSync, realpathSync } from "node:fs";
 import { access, readFile, realpath, rm, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import {
+  AgentLaunchService,
+  type AgentDefinition,
+  type AgentLaunchResult,
+  type ThinkingLevel,
+} from "./agent-launch-service.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
@@ -64,6 +70,7 @@ export interface CreateWorkspaceSessionResult {
   createdSession: Session;
   summarySession?: Session;
   prompted?: boolean;
+  launchKind?: AgentLaunchResult["kind"];
 }
 
 export class SessionLifecycleError extends Error {
@@ -84,6 +91,7 @@ export interface SessionLifecycleServiceDeps {
     | "getDataDir"
     | "getSession"
     | "getWorkspace"
+    | "findSessionByLaunchIdempotencyKey"
     | "listSessions"
     | "saveSession"
   >;
@@ -130,58 +138,45 @@ export class SessionLifecycleService {
     ephemeral?: boolean;
     worktreeId?: string;
     attachments?: ChatAttachmentRef[];
+    idempotencyKey?: string;
+    leaseOwner?: string;
   }): Promise<CreateWorkspaceSessionResult> {
-    const modelSelection = resolveInitialChatModel({
-      requestModel: params.model,
-      workspace: params.workspace,
+    const inlineAgent: AgentDefinition = {
+      name: params.name?.trim() || params.workspace.name || "Workspace session",
+      sessionDefaults: {
+        model: params.model,
+        thinkingLevel: params.thinking as ThinkingLevel | undefined,
+      },
+    };
+    const launchService = new AgentLaunchService({
+      storage: this.deps.storage,
+      sessions: this.deps.sessions,
+      ensureSessionContextWindow: this.deps.ensureSessionContextWindow,
     });
-    const session = this.deps.storage.createSession(params.name, modelSelection.model);
 
-    session.workspaceId = params.workspace.id;
-    session.workspaceName = params.workspace.name;
-    if (params.worktreeId) {
-      session.worktreeId = params.worktreeId;
-    }
-    if (params.ephemeral === true) {
-      session.ephemeral = true;
-    }
-    if (params.thinking) {
-      session.thinkingLevel = params.thinking;
-    }
-    this.deps.storage.saveSession(session);
-    const createdSession = this.hydratedSnapshot(session);
+    const result = await launchService.launch({
+      agent: inlineAgent,
+      target: { workspace: params.workspace, worktreeId: params.worktreeId },
+      prompt: params.prompt,
+      attachments: params.attachments,
+      idempotencyKey: params.idempotencyKey,
+      leaseOwner: params.leaseOwner,
+      sessionName: params.name,
+      ephemeral: params.ephemeral,
+      source: "workspace-wrapper",
+    });
 
-    const prompt = params.prompt?.trim();
-    if (!prompt) {
-      return { session: createdSession, createdSession };
+    if (result.kind === "launch_in_progress") {
+      throw new SessionLifecycleError("launch_in_progress", 409);
     }
 
-    try {
-      // `session.thinkingLevel` is written before startSession so the SDK
-      // receives it as an initial session option, matching Pi CLI startup
-      // semantics instead of replaying a toolbar-level set_thinking command.
-      await this.deps.sessions.startSession(session.id, params.workspace);
-      await this.deps.sessions.sendPrompt(session.id, prompt, {
-        ...(params.attachments ? { attachments: params.attachments } : {}),
-      });
-      session.firstMessage = prompt.slice(0, 200);
-      this.deps.storage.saveSession(session);
-      const summarySession = this.hydratedSnapshot(session);
-      return {
-        session: summarySession,
-        createdSession,
-        summarySession,
-        prompted: true,
-      };
-    } catch (_error: unknown) {
-      // Session was created but prompt delivery failed — return it
-      // with prompted: false so the client knows to retry or send manually.
-      return {
-        session: this.hydratedSnapshot(session),
-        createdSession,
-        prompted: false,
-      };
-    }
+    return {
+      session: result.session,
+      createdSession: result.createdSession,
+      summarySession: result.summarySession,
+      ...(params.prompt?.trim() ? { prompted: result.promptDispatch === "delivered" } : {}),
+      launchKind: result.kind,
+    };
   }
 
   async resumeWorkspaceSession(params: {

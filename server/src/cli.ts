@@ -34,7 +34,7 @@ import {
   resolveTlsConfig,
   tlsSchemeForConfig,
 } from "./tls.js";
-import type { ServerConfig } from "./types.js";
+import type { ServerConfig, Session } from "./types.js";
 import { generateInvite } from "./invite.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
 import { getPackageInfo } from "./version.js";
@@ -1085,6 +1085,285 @@ function cmdConfig(
   process.exit(1);
 }
 
+type CliJsonEnvelope =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; error: { message: string; status?: number } };
+
+function writeJsonEnvelope(envelope: CliJsonEnvelope): void {
+  process.stdout.write(JSON.stringify(envelope, null, 2) + "\n");
+}
+
+function localApiBaseUrl(storage: Storage): string {
+  const config = storage.getConfig();
+  const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host;
+  return `${tlsSchemeForConfig(config)}://${host}:${config.port}`;
+}
+
+async function localApiRequest<T>(
+  storage: Storage,
+  path: string,
+  options: { method?: string; body?: Record<string, unknown> } = {},
+): Promise<T> {
+  const token = storage.getToken();
+  if (!token) {
+    throw new Error("No owner bearer token configured. Run 'oppi init' or 'oppi pair' first.");
+  }
+
+  const response = await fetch(`${localApiBaseUrl(storage)}${path}`, {
+    method: options.method ?? "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as unknown;
+  if (!response.ok) {
+    const message =
+      isRecord(payload) && typeof payload.error === "string"
+        ? payload.error
+        : `HTTP ${response.status}`;
+    const error = new Error(message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return payload as T;
+}
+
+function parseDurationMs(value: string): number {
+  const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/);
+  if (!match) throw new Error("Duration must look like 15m, 1h, or 1d");
+  const amountText = match[1];
+  const unit = match[2];
+  if (!amountText || !unit) throw new Error("Duration must look like 15m, 1h, or 1d");
+  const amount = Number.parseInt(amountText, 10);
+  const multiplier =
+    unit === "ms"
+      ? 1
+      : unit === "s"
+        ? 1_000
+        : unit === "m"
+          ? 60_000
+          : unit === "h"
+            ? 3_600_000
+            : 86_400_000;
+  return amount * multiplier;
+}
+
+function scheduleTriggerFromFlags(flags: Record<string, string>): Record<string, unknown> {
+  const timeZone = flags.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  if (flags.at) {
+    const at = Date.parse(flags.at);
+    if (!Number.isFinite(at)) throw new Error("--at must be an ISO timestamp");
+    return { type: "at", at, timeZone };
+  }
+  if (flags.every) {
+    return { type: "every", intervalMs: parseDurationMs(flags.every), timeZone };
+  }
+  if (flags.cron) {
+    return { type: "cron", expression: flags.cron, timeZone };
+  }
+  throw new Error("one of --at, --every, or --cron is required");
+}
+
+async function cmdSchedule(
+  storage: Storage,
+  action: string | undefined,
+  positional: string[],
+  flags: Record<string, string>,
+): Promise<void> {
+  const mode = action || "list";
+  const jsonOutput = flags.json === "true";
+
+  async function call<T>(
+    path: string,
+    options?: { method?: string; body?: Record<string, unknown> },
+  ): Promise<T> {
+    return localApiRequest<T>(storage, path, options);
+  }
+
+  function output(data: Record<string, unknown>, human: () => void): void {
+    if (jsonOutput) writeJsonEnvelope({ ok: true, data });
+    else human();
+  }
+
+  try {
+    if (mode === "list") {
+      const result = await call<Record<string, unknown>>("/schedules");
+      output(result, () => {
+        const schedules = Array.isArray(result.schedules) ? result.schedules : [];
+        console.log(c.bold(`  Schedules (${schedules.length})`));
+        for (const schedule of schedules as Array<{
+          id?: string;
+          name?: string;
+          status?: string;
+        }>) {
+          console.log(
+            `  ${c.cyan(schedule.id ?? "?")}  ${schedule.status ?? "?"}  ${schedule.name ?? "(unnamed)"}`,
+          );
+        }
+        console.log("");
+      });
+      return;
+    }
+
+    if (mode === "get") {
+      const id = positional[0];
+      if (!id) throw new Error("schedule id is required");
+      const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`);
+      output(result, () => {
+        const schedule = result.schedule as
+          | { id?: string; name?: string; status?: string }
+          | undefined;
+        console.log(c.green("  Schedule"));
+        console.log(`  ID:     ${c.cyan(schedule?.id ?? id)}`);
+        console.log(`  Name:   ${schedule?.name ?? "(unnamed)"}`);
+        console.log(`  Status: ${schedule?.status ?? "?"}`);
+        console.log("");
+      });
+      return;
+    }
+
+    if (mode === "create") {
+      const workspaceId = flags.workspace?.trim();
+      const prompt = flags.prompt;
+      if (!workspaceId || !prompt?.trim()) throw new Error("--workspace and --prompt are required");
+      const name = flags.name || `Schedule ${new Date().toISOString()}`;
+      const body = {
+        name,
+        trigger: scheduleTriggerFromFlags(flags),
+        action: {
+          type: "new_session",
+          workspaceId,
+          prompt,
+          ...(flags.model ? { model: flags.model } : {}),
+          ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
+          ...(flags.name ? { name: flags.name } : {}),
+        },
+      };
+      const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });
+      output(result, () => {
+        const schedule = result.schedule as { id?: string } | undefined;
+        console.log(c.green("  ✓ Schedule created"));
+        console.log(`  Schedule: ${c.cyan(schedule?.id ?? "?")}`);
+        console.log("");
+        console.log(c.bold("  Next commands:"));
+        console.log(`    ${c.dim(`oppi schedule run ${schedule?.id ?? "<id>"}`)}`);
+        console.log(`    ${c.dim(`oppi schedule runs ${schedule?.id ?? "<id>"}`)}`);
+        console.log("");
+      });
+      return;
+    }
+
+    if (["run", "runs", "pause", "resume", "archive"].includes(mode)) {
+      const id = positional[0];
+      if (!id) throw new Error("schedule id is required");
+      if (mode === "runs") {
+        const result = await call<Record<string, unknown>>(
+          `/schedules/${encodeURIComponent(id)}/runs`,
+        );
+        output(result, () => {
+          const runs = Array.isArray(result.runs) ? result.runs : [];
+          console.log(c.bold(`  Runs for ${id} (${runs.length})`));
+          for (const run of runs as Array<{ id?: string; status?: string; sessionId?: string }>) {
+            console.log(`  ${c.cyan(run.id ?? "?")}  ${run.status ?? "?"}  ${run.sessionId ?? ""}`);
+          }
+          console.log("");
+        });
+        return;
+      }
+      const requestId = flags["request-id"] || `${Date.now()}`;
+      const result = await call<Record<string, unknown>>(
+        `/schedules/${encodeURIComponent(id)}/${mode}`,
+        { method: "POST", body: mode === "run" ? { requestId } : undefined },
+      );
+      output(result, () => {
+        console.log(c.green(`  ✓ schedule ${mode}`));
+        if ((result.run as { id?: string; sessionId?: string } | undefined)?.id) {
+          const run = result.run as { id?: string; sessionId?: string };
+          console.log(`  Run:     ${c.cyan(run.id ?? "?")}`);
+          if (run.sessionId) console.log(`  Session: ${c.cyan(run.sessionId)}`);
+        }
+        console.log("");
+      });
+      return;
+    }
+
+    throw new Error("Usage: oppi schedule list|get|create|run|runs|pause|resume|archive");
+  } catch (err: unknown) {
+    const status =
+      typeof (err as { status?: unknown }).status === "number"
+        ? (err as { status: number }).status
+        : undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    if (jsonOutput)
+      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
+    else console.log(c.red(`  Error: ${message}`));
+    process.exit(1);
+  }
+}
+
+async function cmdSession(
+  storage: Storage,
+  action: string | undefined,
+  flags: Record<string, string>,
+): Promise<void> {
+  const mode = action || "help";
+  const jsonOutput = flags.json === "true";
+
+  if (mode !== "create") {
+    const message = "Usage: oppi session create --workspace <id> --prompt <text> [--json]";
+    if (jsonOutput) writeJsonEnvelope({ ok: false, error: { message } });
+    else console.log(c.red(`  ${message}`));
+    process.exit(1);
+  }
+
+  const workspaceId = flags.workspace?.trim();
+  const promptText = flags.prompt;
+  if (!workspaceId || promptText === undefined || promptText.trim() === "") {
+    const message = "--workspace and --prompt are required";
+    if (jsonOutput) writeJsonEnvelope({ ok: false, error: { message } });
+    else {
+      console.log(c.red(`  Error: ${message}`));
+      console.log(c.dim("  Usage: oppi session create --workspace <id> --prompt <text> [--json]"));
+    }
+    process.exit(1);
+  }
+
+  try {
+    const result = await localApiRequest<{ session: Session; prompted?: boolean }>(
+      storage,
+      `/workspaces/${encodeURIComponent(workspaceId)}/sessions`,
+      { method: "POST", body: { prompt: promptText } },
+    );
+    if (jsonOutput) {
+      writeJsonEnvelope({ ok: true, data: result as unknown as Record<string, unknown> });
+      return;
+    }
+
+    console.log(c.green("  ✓ Session created"));
+    console.log(`  Workspace: ${c.cyan(workspaceId)}`);
+    console.log(`  Session:   ${c.cyan(result.session.id)}`);
+    console.log("");
+    console.log(c.bold("  Next commands:"));
+    console.log(`    ${c.dim(`oppi session create --workspace ${workspaceId} --prompt "..."`)}`);
+    console.log("");
+  } catch (err: unknown) {
+    const status =
+      typeof (err as { status?: unknown }).status === "number"
+        ? (err as { status: number }).status
+        : undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    if (jsonOutput) {
+      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
+    } else {
+      console.log(c.red(`  Error: ${message}`));
+    }
+    process.exit(1);
+  }
+}
+
 function cmdServer(action: string | undefined, flags: Record<string, string>): void {
   printHeader();
 
@@ -1461,6 +1740,20 @@ function cmdHelp(): void {
   console.log(`    ${c.cyan("config validate")}            Validate config file`);
   console.log("");
 
+  console.log("  " + c.bold("Sessions:"));
+  console.log("");
+  console.log(
+    `    ${c.cyan("session create")}             Create a workspace session via local server API`,
+  );
+  console.log("");
+
+  console.log("  " + c.bold("Schedules:"));
+  console.log("");
+  console.log(`    ${c.cyan("schedule list")}              List Agent schedules`);
+  console.log(`    ${c.cyan("schedule create")}            Create an Agent schedule`);
+  console.log(`    ${c.cyan("schedule run")}               Run a schedule now`);
+  console.log("");
+
   console.log("  " + c.bold("Options:"));
   console.log("");
   console.log(`    ${c.dim("--host <host>")}      Hostname/IP encoded in pairing QR`);
@@ -1560,6 +1853,14 @@ async function main(): Promise<void> {
 
     case "config":
       cmdConfig(storage, positional[0], positional.slice(1), flags);
+      break;
+
+    case "session":
+      await cmdSession(storage, positional[0], flags);
+      break;
+
+    case "schedule":
+      await cmdSchedule(storage, positional[0], positional.slice(1), flags);
       break;
 
     default:
