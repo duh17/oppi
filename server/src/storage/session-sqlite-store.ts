@@ -19,7 +19,7 @@ import {
 } from "./session-repair.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
-const SCHEMA_VERSION = "7";
+const SCHEMA_VERSION = "8";
 
 interface SessionJsonRow {
   session_json: string;
@@ -56,6 +56,12 @@ interface SessionProjectionRow {
   pi_session_files_json: string | null;
   pi_session_id: string | null;
   ephemeral: number;
+  launch_idempotency_key: string | null;
+  launch_source: string | null;
+  launch_status: string | null;
+  launch_lease_owner: string | null;
+  launch_lease_until_ms: number | null;
+  launch_metadata_json: string | null;
 }
 
 interface SessionIdRow {
@@ -121,7 +127,13 @@ const SESSION_PROJECTION_COLUMNS = `
   pi_session_file,
   pi_session_files_json,
   pi_session_id,
-  ephemeral
+  ephemeral,
+  launch_idempotency_key,
+  launch_source,
+  launch_status,
+  launch_lease_owner,
+  launch_lease_until_ms,
+  launch_metadata_json
 `;
 
 const SESSION_COLUMN_DEFINITIONS = [
@@ -154,6 +166,19 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["pi_session_files_json", "TEXT"],
   ["pi_session_id", "TEXT"],
   ["ephemeral", "INTEGER NOT NULL DEFAULT 0"],
+  ["agent_id", "TEXT"],
+  ["agent_version", "INTEGER"],
+  ["launch_source", "TEXT"],
+  ["launch_status", "TEXT"],
+  ["launch_lease_owner", "TEXT"],
+  ["launch_lease_until_ms", "INTEGER"],
+  ["parent_session_id", "TEXT"],
+  ["todo_id", "TEXT"],
+  ["goal_id", "TEXT"],
+  ["schedule_id", "TEXT"],
+  ["schedule_run_id", "TEXT"],
+  ["launch_idempotency_key", "TEXT"],
+  ["launch_metadata_json", "TEXT"],
   ["session_json", "TEXT NOT NULL DEFAULT ''"],
   ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
 ] as const;
@@ -252,6 +277,19 @@ export class SessionSqliteStore {
       normalized.piSessionFiles ? JSON.stringify(normalized.piSessionFiles) : null,
       normalized.piSessionId ?? null,
       normalized.ephemeral ? 1 : 0,
+      normalized.launch?.agentId ?? null,
+      normalized.launch?.agentVersion ?? null,
+      normalized.launch?.source ?? null,
+      normalized.launch?.status ?? null,
+      normalized.launch?.lease?.owner ?? null,
+      normalized.launch?.lease?.expiresAt ?? null,
+      normalized.launch?.parentSessionId ?? null,
+      normalized.launch?.todoId ?? null,
+      normalized.launch?.goalId ?? null,
+      normalized.launch?.schedule?.scheduleId ?? null,
+      normalized.launch?.schedule?.runId ?? null,
+      normalized.launch?.idempotencyKey ?? null,
+      normalized.launch ? JSON.stringify(normalized.launch) : null,
       json,
       Date.now(),
     );
@@ -557,6 +595,19 @@ export class SessionSqliteStore {
         pi_session_files_json TEXT,
         pi_session_id TEXT,
         ephemeral INTEGER NOT NULL DEFAULT 0,
+        agent_id TEXT,
+        agent_version INTEGER,
+        launch_source TEXT,
+        launch_status TEXT,
+        launch_lease_owner TEXT,
+        launch_lease_until_ms INTEGER,
+        parent_session_id TEXT,
+        todo_id TEXT,
+        goal_id TEXT,
+        schedule_id TEXT,
+        schedule_run_id TEXT,
+        launch_idempotency_key TEXT,
+        launch_metadata_json TEXT,
         session_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -591,6 +642,14 @@ export class SessionSqliteStore {
       CREATE INDEX IF NOT EXISTS session_state_sessions_status_activity_idx
         ON session_state_sessions (status, last_activity DESC, id ASC);
 
+      CREATE UNIQUE INDEX IF NOT EXISTS session_state_sessions_launch_idempotency_idx
+        ON session_state_sessions (launch_idempotency_key)
+        WHERE launch_idempotency_key IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS session_state_sessions_launch_schedule_idx
+        ON session_state_sessions (schedule_id, schedule_run_id)
+        WHERE schedule_id IS NOT NULL;
+
       CREATE TABLE IF NOT EXISTS session_state_schema (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -600,6 +659,28 @@ export class SessionSqliteStore {
         key TEXT PRIMARY KEY,
         completed_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS server_agent_extension_audit_events (
+        id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        workspace_id TEXT,
+        schedule_id TEXT,
+        run_id TEXT,
+        session_id TEXT,
+        event_type TEXT NOT NULL,
+        approval_ref_id TEXT,
+        extension_scope_id TEXT,
+        extension_display_name TEXT,
+        display_json TEXT,
+        provenance_json TEXT,
+        envelope_json TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_schedule_idx
+        ON server_agent_extension_audit_events (schedule_id, created_at ASC, id ASC);
+
+      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_run_idx
+        ON server_agent_extension_audit_events (run_id, created_at ASC, id ASC);
 
       INSERT OR REPLACE INTO session_state_schema (key, value)
       VALUES ('version', '${SCHEMA_VERSION}');
@@ -663,10 +744,23 @@ export class SessionSqliteStore {
         pi_session_files_json,
         pi_session_id,
         ephemeral,
+        agent_id,
+        agent_version,
+        launch_source,
+        launch_status,
+        launch_lease_owner,
+        launch_lease_until_ms,
+        parent_session_id,
+        todo_id,
+        goal_id,
+        schedule_id,
+        schedule_run_id,
+        launch_idempotency_key,
+        launch_metadata_json,
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -697,6 +791,19 @@ export class SessionSqliteStore {
         pi_session_files_json = excluded.pi_session_files_json,
         pi_session_id = excluded.pi_session_id,
         ephemeral = excluded.ephemeral,
+        agent_id = excluded.agent_id,
+        agent_version = excluded.agent_version,
+        launch_source = excluded.launch_source,
+        launch_status = excluded.launch_status,
+        launch_lease_owner = excluded.launch_lease_owner,
+        launch_lease_until_ms = excluded.launch_lease_until_ms,
+        parent_session_id = excluded.parent_session_id,
+        todo_id = excluded.todo_id,
+        goal_id = excluded.goal_id,
+        schedule_id = excluded.schedule_id,
+        schedule_run_id = excluded.schedule_run_id,
+        launch_idempotency_key = excluded.launch_idempotency_key,
+        launch_metadata_json = excluded.launch_metadata_json,
         session_json = excluded.session_json,
         updated_at = excluded.updated_at
     `);
@@ -709,6 +816,16 @@ export class SessionSqliteStore {
     `);
     this.stmtListIds = this.db.prepare("SELECT id FROM session_state_sessions");
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
+  }
+
+  findSessionByLaunchIdempotencyKey(idempotencyKey: string): Session | undefined {
+    const key = idempotencyKey.trim();
+    if (!key) return undefined;
+    const row = this.db
+      .prepare("SELECT session_json FROM session_state_sessions WHERE launch_idempotency_key = ?")
+      .get(key) as SessionJsonRow | undefined;
+    const session = row ? this.parseSession(row.session_json) : undefined;
+    return session ? stripInternalFields(session) : undefined;
   }
 
   private ensureCache(): Map<string, Session> {
@@ -875,6 +992,9 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   if (row.pi_session_id !== null) session.piSessionId = row.pi_session_id;
   if (row.ephemeral !== 0) session.ephemeral = true;
 
+  const launch = parseJsonValue<Session["launch"]>(row.launch_metadata_json, row.id, "launch");
+  if (launch) session.launch = launch;
+
   const changeStats = parseJsonValue<Session["changeStats"]>(
     row.change_stats_json,
     row.id,
@@ -1033,6 +1153,12 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.piSessionId !== undefined && session.piSessionId !== null) {
     normalized.piSessionId = session.piSessionId;
+  }
+  if (session.launch !== undefined && session.launch !== null) {
+    normalized.launch = session.launch;
+  }
+  if (session.launch !== undefined && session.launch !== null) {
+    normalized.launch = session.launch;
   }
   if (session.ephemeral === true) {
     normalized.ephemeral = true;

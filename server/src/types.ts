@@ -19,3 +19,4 @@ export * from "./types/telemetry.js";
 export type * from "./types/protocol.js";
 export type * from "./types/push.js";
 export type * from "./types/invite.js";
+export type * from "./types/schedules.js";

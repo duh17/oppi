@@ -44,6 +44,48 @@ export interface PiTuiMirrorSessionMetadata {
   protocolVersion?: number;
 }
 
+export interface SessionLaunchMetadata {
+  source?: "human" | "agent" | "schedule" | "workspace-wrapper" | "api" | "cli";
+  agentId?: string;
+  agentVersion?: number;
+  parentSessionId?: string;
+  /** Client-supplied key used to make agent launch retries create at most one session. */
+  idempotencyKey?: string;
+  schedule?: {
+    scheduleId: string;
+    runId: string;
+    scheduledForMs?: number;
+    slotKey: string;
+    scheduleVersion?: number;
+  };
+  target?: {
+    workspaceId?: string;
+    worktreeId?: string;
+    runtime?: "sandbox" | "host";
+    server?: true;
+    displayCwd?: string;
+  };
+  model?: string;
+  thinkingLevel?: string;
+  tools?: {
+    allowed?: string[];
+    excluded?: string[];
+    noTools?: "all" | "builtin";
+  };
+  status: "launching" | "accepted" | "failed" | "created";
+  promptDispatch?: "delivered" | "not_sent";
+  promptError?: string;
+  requestedAt: number;
+  completedAt?: number;
+  todoId?: string;
+  goalId?: string;
+  lease?: {
+    owner: string;
+    acquiredAt: number;
+    expiresAt: number;
+  };
+}
+
 export interface SessionChangeStats extends SessionSummaryChangeStats {
   /**
    * @internal Per-file line count tracking for accurate write deltas.
@@ -106,6 +148,10 @@ export interface Session {
   piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
   piSessionId?: string; // pi internal session UUID reported by get_state
+
+  // Agent launch metadata. Session rows own launch idempotency; there is no
+  // separate launch record table.
+  launch?: SessionLaunchMetadata;
 
   // Privacy / persistence
   ephemeral?: boolean; // true for in-memory pi sessions (incognito mode)

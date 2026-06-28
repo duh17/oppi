@@ -195,6 +195,19 @@ describe("oppi config", () => {
   });
 });
 
+// ── Session ──
+
+describe("oppi session", () => {
+  it("session create --json reports missing required flags in a stable envelope", () => {
+    const { stdout, exitCode } = run(["session", "create", "--json"]);
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toEqual({
+      ok: false,
+      error: { message: "--workspace and --prompt are required" },
+    });
+  });
+});
+
 // ── Status ──
 
 describe("oppi status", () => {
