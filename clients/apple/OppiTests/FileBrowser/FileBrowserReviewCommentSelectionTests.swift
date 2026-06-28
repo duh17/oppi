@@ -188,6 +188,37 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(breadcrumb.selectedFile == nil)
     }
 
+    @Test func fileNavigationContextMovesToAdjacentFilesWithoutWrapping() {
+        let context = FileBrowserNavigationContext(files: [
+            FileBrowserSelection(path: "a.png", name: "a.png", size: 10),
+            FileBrowserSelection(path: "b.png", name: "b.png", size: 20),
+            FileBrowserSelection(path: "c.txt", name: "c.txt", size: 30),
+        ])
+
+        #expect(context.selection(adjacentTo: "b.png", direction: .previous)?.path == "a.png")
+        #expect(context.selection(adjacentTo: "b.png", direction: .next)?.path == "c.txt")
+        #expect(context.selection(adjacentTo: "a.png", direction: .previous) == nil)
+        #expect(context.selection(adjacentTo: "c.txt", direction: .next) == nil)
+    }
+
+    @Test func horizontalBackSwipePolicyAcceptsOnlyRightDominantSwipes() {
+        #expect(HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: CGSize(width: 90, height: 12)))
+        #expect(!HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: CGSize(width: 90, height: 90)))
+        #expect(!HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: CGSize(width: -90, height: 12)))
+        #expect(!HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: CGSize(width: 50, height: 2)))
+    }
+
+    @Test func horizontalBackSwipePolicyUsesVelocityToAvoidVerticalPanStealing() {
+        #expect(HorizontalBackSwipeGesturePolicy.shouldBegin(velocity: CGPoint(x: 800, y: 80)))
+        #expect(!HorizontalBackSwipeGesturePolicy.shouldBegin(velocity: CGPoint(x: 80, y: 800)))
+        #expect(!HorizontalBackSwipeGesturePolicy.shouldBegin(velocity: CGPoint(x: -800, y: 80)))
+    }
+
+    @Test func filePushTransitionMovesNextFileInFromTrailingEdge() {
+        #expect(FileBrowserPushTransitionSpec.spec(for: .next) == .init(insertion: .trailing, removal: .leading))
+        #expect(FileBrowserPushTransitionSpec.spec(for: .previous) == .init(insertion: .leading, removal: .trailing))
+    }
+
     @Test func treePaneTextUsesEmbeddedFileViewerWithoutNavigationChrome() {
         #expect(FileBrowserContentRenderingPolicy.textRenderer(for: .treePane) == .embeddedFileViewer)
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .treePane) == false)

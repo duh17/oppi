@@ -9,6 +9,7 @@ import SwiftUI
 /// The breadcrumb bar uses `NavigationPath.removeLast(_:)` to jump
 /// to any ancestor without intermediate pop animations.
 struct FileBrowserNavTarget: Hashable {
+    let serverId: String
     let workspaceId: String
     let path: String
 
@@ -33,12 +34,69 @@ struct FileBrowserNavTarget: Hashable {
     }
 }
 
-struct FileBrowserSelection: Hashable, Identifiable {
+struct FileBrowserSelection: Hashable, Identifiable, Sendable {
     let path: String
     let name: String
     let size: Int?
 
     var id: String { path }
+}
+
+struct FileBrowserNavigationContext: Hashable, Sendable {
+    let files: [FileBrowserSelection]
+
+    init(files: [FileBrowserSelection]) {
+        var seen: Set<String> = []
+        self.files = files.filter { file in
+            let normalizedPath = file.path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedPath.isEmpty else { return false }
+            return seen.insert(normalizedPath).inserted
+        }
+    }
+
+    func selection(adjacentTo currentPath: String, direction: FileBrowserNavigationDirection) -> FileBrowserSelection? {
+        guard let currentIndex = files.firstIndex(where: { $0.path == currentPath }) else { return nil }
+        let targetIndex: Int
+        switch direction {
+        case .previous:
+            targetIndex = currentIndex - 1
+        case .next:
+            targetIndex = currentIndex + 1
+        }
+        guard files.indices.contains(targetIndex) else { return nil }
+        return files[targetIndex]
+    }
+}
+
+enum FileBrowserNavigationDirection: Equatable, Sendable {
+    case previous
+    case next
+}
+
+enum FileBrowserPushTransitionEdge: Equatable, Sendable {
+    case leading
+    case trailing
+
+    var edge: Edge {
+        switch self {
+        case .leading: return .leading
+        case .trailing: return .trailing
+        }
+    }
+}
+
+struct FileBrowserPushTransitionSpec: Equatable, Sendable {
+    let insertion: FileBrowserPushTransitionEdge
+    let removal: FileBrowserPushTransitionEdge
+
+    static func spec(for direction: FileBrowserNavigationDirection) -> FileBrowserPushTransitionSpec {
+        switch direction {
+        case .previous:
+            return .init(insertion: .leading, removal: .trailing)
+        case .next:
+            return .init(insertion: .trailing, removal: .leading)
+        }
+    }
 }
 
 struct FileBrowserTreeNavigationMutation: Equatable {
@@ -54,6 +112,11 @@ enum FileBrowserTreeNavigationReducer {
     static func popToBreadcrumb(path: String, selectedFile: FileBrowserSelection?) -> FileBrowserTreeNavigationMutation {
         FileBrowserTreeNavigationMutation(treeDirectoryPath: path, selectedFile: nil)
     }
+}
+
+enum FileBrowserLayoutMode: Equatable {
+    case adaptive
+    case compactOnly
 }
 
 private enum FileBrowserAdaptiveLayout: Equatable {
@@ -77,11 +140,21 @@ struct FileBrowserView: View {
     let serverId: String?
     let workspaceId: String
     let initialPath: String
+    let layoutMode: FileBrowserLayoutMode
+    let contentChromeMode: FileBrowserContentChromeMode
 
-    init(serverId: String? = nil, workspaceId: String, initialPath: String) {
+    init(
+        serverId: String? = nil,
+        workspaceId: String,
+        initialPath: String,
+        layoutMode: FileBrowserLayoutMode = .adaptive,
+        contentChromeMode: FileBrowserContentChromeMode = .pushed
+    ) {
         self.serverId = serverId
         self.workspaceId = workspaceId
         self.initialPath = initialPath
+        self.layoutMode = layoutMode
+        self.contentChromeMode = contentChromeMode
     }
 
     @Environment(\.apiClient) private var apiClient
@@ -105,18 +178,40 @@ struct FileBrowserView: View {
         currentDirectoryPath.isEmpty || currentDirectoryPath == "/"
     }
 
+    private var usesInlineCompactDirectoryNavigation: Bool {
+        layoutMode == .compactOnly && contentChromeMode == .treePane
+    }
+
     private var fileIndex: [String]? {
         fileIndexStore.paths
     }
 
+    private var currentFileNavigationContext: FileBrowserNavigationContext? {
+        if !searchText.isEmpty {
+            return searchFileNavigationContext
+        }
+        guard let listing else { return nil }
+        return fileNavigationContext(for: listing.entries, relativeTo: currentDirectoryPath)
+    }
+
+    private var searchFileNavigationContext: FileBrowserNavigationContext {
+        FileBrowserNavigationContext(files: fuzzyResults.map { result in
+            FileBrowserSelection(
+                path: result.path,
+                name: (result.path as NSString).lastPathComponent,
+                size: nil
+            )
+        })
+    }
+
     /// Current depth for breadcrumb pop calculations.
     private var currentDepth: Int {
-        FileBrowserNavTarget(workspaceId: workspaceId, path: currentDirectoryPath).depth
+        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, path: currentDirectoryPath).depth
     }
 
     /// Breadcrumb segments for the current path.
     private var breadcrumbSegments: [(label: String, depth: Int)] {
-        FileBrowserNavTarget(workspaceId: workspaceId, path: currentDirectoryPath).breadcrumbSegments
+        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, path: currentDirectoryPath).breadcrumbSegments
     }
 
     var body: some View {
@@ -183,6 +278,7 @@ struct FileBrowserView: View {
     }
 
     private func adaptiveLayout(for size: CGSize) -> FileBrowserAdaptiveLayout {
+        guard layoutMode == .adaptive else { return .compact }
         guard UIDevice.current.userInterfaceIdiom == .pad else { return .compact }
         guard horizontalSizeClass == .regular else { return .compact }
         return size.width >= size.height ? .landscapeTree : .portraitOverlay
@@ -254,15 +350,17 @@ struct FileBrowserView: View {
 
     @ViewBuilder
     private var selectedFileContent: some View {
-        if let selectedFile {
+        if let activeSelection = selectedFile {
             FileBrowserContentView(
                 workspaceId: workspaceId,
-                filePath: selectedFile.path,
-                fileName: selectedFile.name,
-                fileSize: selectedFile.size,
-                chromeMode: .treePane
+                filePath: activeSelection.path,
+                fileName: activeSelection.name,
+                fileSize: activeSelection.size,
+                chromeMode: .treePane,
+                navigationContext: currentFileNavigationContext,
+                onNavigationSelectionChange: { selectedFile = $0 },
+                onBackNavigation: clearSelectedFileForBackNavigation
             )
-            .id(selectedFile.id)
         } else {
             ContentUnavailableView {
                 Label("Select a File", systemImage: "doc.text.magnifyingglass")
@@ -423,7 +521,8 @@ struct FileBrowserView: View {
                             path: result.path,
                             subtitle: dirPath.isEmpty ? nil : dirPath,
                             size: nil,
-                            modifiedText: nil
+                            modifiedText: nil,
+                            navigationContext: searchFileNavigationContext
                         )
                     }
                 }
@@ -455,8 +554,9 @@ struct FileBrowserView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 220)
                 } else {
+                    let navigationContext = fileNavigationContext(for: response.entries, relativeTo: currentDirectoryPath)
                     ForEach(response.entries) { entry in
-                        fileTreeEntryButton(entry, relativeTo: currentDirectoryPath)
+                        fileTreeEntryButton(entry, relativeTo: currentDirectoryPath, navigationContext: navigationContext)
                     }
                 }
 
@@ -473,7 +573,11 @@ struct FileBrowserView: View {
     }
 
     @ViewBuilder
-    private func fileTreeEntryButton(_ entry: FileEntry, relativeTo parentPath: String) -> some View {
+    private func fileTreeEntryButton(
+        _ entry: FileEntry,
+        relativeTo parentPath: String,
+        navigationContext: FileBrowserNavigationContext
+    ) -> some View {
         if entry.isDirectory {
             let dirPath = directoryPath(for: entry, relativeTo: parentPath)
             Button {
@@ -497,7 +601,8 @@ struct FileBrowserView: View {
                 subtitle: entry.formattedSize.isEmpty ? nil : entry.formattedSize,
                 size: entry.size,
                 modifiedText: entry.relativeModifiedTime,
-                isRecentlyModified: entry.isRecentlyModified
+                isRecentlyModified: entry.isRecentlyModified,
+                navigationContext: navigationContext
             )
         }
     }
@@ -508,7 +613,8 @@ struct FileBrowserView: View {
         subtitle: String?,
         size: Int?,
         modifiedText: String?,
-        isRecentlyModified: Bool = false
+        isRecentlyModified: Bool = false,
+        navigationContext: FileBrowserNavigationContext
     ) -> some View {
         Button {
             selectFile(path: path, name: name, size: size)
@@ -652,7 +758,8 @@ struct FileBrowserView: View {
                         compactFileNavigationLink(
                             path: result.path,
                             name: fileName,
-                            size: nil
+                            size: nil,
+                            navigationContext: searchFileNavigationContext
                         ) {
                             Label {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -696,19 +803,37 @@ struct FileBrowserView: View {
         relativeTo parentPath: String
     ) -> some View {
         if entry.isDirectory {
-            NavigationLink(value: {
-                FileBrowserNavTarget(
-                    workspaceId: workspaceId,
-                    path: directoryPath(for: entry, relativeTo: parentPath)
-                )
-            }()) {
-                Label {
-                    Text(showFullPath ? (entry.path ?? entry.name) : entry.name)
-                        .font(.body)
-                        .lineLimit(1)
-                } icon: {
-                    Image(systemName: "folder.fill")
-                        .foregroundStyle(.themeBlue)
+            let dirPath = directoryPath(for: entry, relativeTo: parentPath)
+            let label = Label {
+                Text(showFullPath ? (entry.path ?? entry.name) : entry.name)
+                    .font(.body)
+                    .lineLimit(1)
+            } icon: {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(.themeBlue)
+            }
+
+            if usesInlineCompactDirectoryNavigation {
+                Button {
+                    openDirectory(path: dirPath)
+                } label: {
+                    label
+                }
+                .buttonStyle(.plain)
+            } else if let serverId {
+                NavigationLink(value: FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, path: dirPath)) {
+                    label
+                }
+            } else {
+                NavigationLink {
+                    FileBrowserView(
+                        workspaceId: workspaceId,
+                        initialPath: dirPath,
+                        layoutMode: layoutMode,
+                        contentChromeMode: contentChromeMode
+                    )
+                } label: {
+                    label
                 }
             }
         } else {
@@ -716,7 +841,8 @@ struct FileBrowserView: View {
             compactFileNavigationLink(
                 path: filePath,
                 name: entry.name,
-                size: entry.size
+                size: entry.size,
+                navigationContext: currentFileNavigationContext
             ) {
                 Label {
                     HStack {
@@ -746,9 +872,10 @@ struct FileBrowserView: View {
         path: String,
         name: String,
         size: Int?,
+        navigationContext: FileBrowserNavigationContext? = nil,
         @ViewBuilder label: () -> Label
     ) -> some View {
-        if let target = linkedFileTarget(path: path, name: name) {
+        if let target = linkedFileTarget(path: path, name: name, navigationContext: navigationContext) {
             NavigationLink(value: target) {
                 label()
             }
@@ -758,7 +885,9 @@ struct FileBrowserView: View {
                     workspaceId: workspaceId,
                     filePath: path,
                     fileName: name,
-                    fileSize: size
+                    fileSize: size,
+                    chromeMode: contentChromeMode,
+                    navigationContext: navigationContext
                 )
             } label: {
                 label()
@@ -766,13 +895,18 @@ struct FileBrowserView: View {
         }
     }
 
-    private func linkedFileTarget(path: String, name: String) -> WorkspaceLinkedFileNavTarget? {
+    private func linkedFileTarget(
+        path: String,
+        name: String,
+        navigationContext: FileBrowserNavigationContext?
+    ) -> WorkspaceLinkedFileNavTarget? {
         guard let serverId, !serverId.isEmpty else { return nil }
         return .workspaceFile(
             serverId: serverId,
             workspaceId: workspaceId,
             path: path,
-            fileName: name
+            fileName: name,
+            navigationContext: navigationContext
         )
     }
 
@@ -787,8 +921,17 @@ struct FileBrowserView: View {
         }
     }
 
+    private func clearSelectedFileForBackNavigation() {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            selectedFile = nil
+            if activeLayout == .portraitOverlay {
+                isTreeOverlayVisible = true
+            }
+        }
+    }
+
     private func openDirectory(path: String) {
-        guard activeLayout == .compact else {
+        guard activeLayout == .compact && !usesInlineCompactDirectoryNavigation else {
             let mutation = FileBrowserTreeNavigationReducer.openDirectory(
                 path: path,
                 selectedFile: selectedFile
@@ -801,7 +944,18 @@ struct FileBrowserView: View {
         }
 
         selectedFile = nil
-        let target = FileBrowserNavTarget(workspaceId: workspaceId, path: path)
+        guard let serverId else {
+            let mutation = FileBrowserTreeNavigationReducer.openDirectory(
+                path: path,
+                selectedFile: selectedFile
+            )
+            treeDirectoryPath = mutation.treeDirectoryPath
+            selectedFile = mutation.selectedFile
+            error = nil
+            listing = nil
+            return
+        }
+        let target = FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, path: path)
         switch navigation.workspaceNavigationPresentation {
         case .stack:
             navigation.workspacePath.append(target)
@@ -821,11 +975,22 @@ struct FileBrowserView: View {
         entry.path ?? (parentPath.isEmpty ? entry.name : "\(parentPath)\(entry.name)")
     }
 
+    private func fileNavigationContext(for entries: [FileEntry], relativeTo parentPath: String) -> FileBrowserNavigationContext {
+        FileBrowserNavigationContext(files: entries.compactMap { entry in
+            guard !entry.isDirectory else { return nil }
+            return FileBrowserSelection(
+                path: filePath(for: entry, relativeTo: parentPath),
+                name: entry.name,
+                size: entry.size
+            )
+        })
+    }
+
     private func popToBreadcrumbDepth(_ targetDepth: Int) {
         let popCount = currentDepth - targetDepth
         guard popCount > 0 else { return }
 
-        guard activeLayout == .compact else {
+        guard activeLayout == .compact && !usesInlineCompactDirectoryNavigation else {
             let mutation = FileBrowserTreeNavigationReducer.popToBreadcrumb(
                 path: breadcrumbPath(for: targetDepth),
                 selectedFile: selectedFile
@@ -863,6 +1028,13 @@ struct FileBrowserView: View {
     private func loadDirectory(path: String) async {
         guard let api = apiClient else {
             self.error = "Not connected"
+            ClientLog.error("FileBrowser", "Directory load failed", metadata: [
+                "workspaceId": workspaceId,
+                "path": safeDebugPath(path),
+                "reason": "missing_api_client",
+                "layoutMode": String(describing: layoutMode),
+                "contentChromeMode": String(describing: contentChromeMode),
+            ])
             return
         }
         do {
@@ -873,7 +1045,22 @@ struct FileBrowserView: View {
         } catch {
             guard path == currentDirectoryPath else { return }
             self.error = error.localizedDescription
+            var metadata = ClientLog.networkErrorMetadata(error)
+            metadata.merge([
+                "workspaceId": workspaceId,
+                "path": safeDebugPath(path),
+                "layoutMode": String(describing: layoutMode),
+                "contentChromeMode": String(describing: contentChromeMode),
+            ]) { current, _ in current }
+            ClientLog.error("FileBrowser", "Directory load failed", metadata: metadata)
         }
+    }
+
+    private func safeDebugPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "<root>" }
+        if trimmed.count <= 96 { return trimmed }
+        return String(trimmed.prefix(93)) + "..."
     }
 
     private func ensureFileIndex() {

@@ -157,7 +157,7 @@ struct AppNavigationShellRoutingTests {
     @Test func fileBrowserUsesSplitDetailSelectionInSplitPresentation() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        let fileTarget = FileBrowserNavTarget(workspaceId: "workspace-1", path: "")
+        let fileTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
         navigation.setWorkspaceNavigationPresentation(.split)
 
         navigation.openWorkspaceFileBrowser(fileTarget, workspace: workspaceTarget)
@@ -278,8 +278,8 @@ struct AppNavigationShellRoutingTests {
     @Test func splitFileBrowserDirectoryDrillSurvivesCompactRotation() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        let rootTarget = FileBrowserNavTarget(workspaceId: "workspace-1", path: "")
-        let childTarget = FileBrowserNavTarget(workspaceId: "workspace-1", path: "notes/")
+        let rootTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
+        let childTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "notes/")
         navigation.setWorkspaceNavigationPresentation(.split)
 
         navigation.openWorkspaceFileBrowser(rootTarget, workspace: workspaceTarget)

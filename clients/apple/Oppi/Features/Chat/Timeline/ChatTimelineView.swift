@@ -33,6 +33,7 @@ struct ChatTimelineView: View {
     let sessionManager: ChatSessionManager
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let onFork: (String) -> Void
+    let onBackSwipe: () -> Void
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
@@ -93,6 +94,7 @@ struct ChatTimelineView: View {
                 sessionId: sessionId,
                 workspaceId: workspaceId,
                 onFork: onFork,
+                onBackSwipe: onBackSwipe,
                 onShowEarlier: {
                     renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
                 },

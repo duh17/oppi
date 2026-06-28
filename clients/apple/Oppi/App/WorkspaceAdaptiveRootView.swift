@@ -148,14 +148,12 @@ private struct WorkspaceSplitFileBrowserDestinationView: View {
 
     @State private var scopedConnection: ServerConnection?
 
-    private var targetServerId: String? {
-        navigation.splitSelectedWorkspace?.serverId ?? coordinator.activeServerId
+    private var targetServerId: String {
+        target.serverId
     }
 
     private var resolvedConnection: ServerConnection? {
-        if let scopedConnection { return scopedConnection }
-        guard let targetServerId else { return nil }
-        return coordinator.connection(for: targetServerId)
+        scopedConnection ?? coordinator.connection(for: targetServerId)
     }
 
     var body: some View {
@@ -175,7 +173,6 @@ private struct WorkspaceSplitFileBrowserDestinationView: View {
 
     @MainActor
     private func activateTargetServer() {
-        guard let targetServerId else { return }
         guard coordinator.switchToServer(targetServerId) else { return }
         scopedConnection = coordinator.connection(for: targetServerId)
     }

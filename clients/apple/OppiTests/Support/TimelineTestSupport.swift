@@ -453,6 +453,7 @@ func makeTimelineConfiguration(
     connection: ServerConnection,
     scrollController: ChatScrollController,
     audioPlayer: AudioPlayerService,
+    onBackSwipe: @escaping () -> Void = {},
     topOverlap: CGFloat = 0,
     bottomOverlap: CGFloat = 0,
     reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
@@ -466,6 +467,7 @@ func makeTimelineConfiguration(
         sessionId: sessionId,
         workspaceId: "ws-test",
         onFork: { _ in },
+        onBackSwipe: onBackSwipe,
         onShowEarlier: onShowEarlier,
         scrollCommand: scrollCommand,
         scrollController: scrollController,

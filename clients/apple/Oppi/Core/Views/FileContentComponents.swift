@@ -166,14 +166,19 @@ struct NativeCodeBodyView: UIViewRepresentable {
 
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
     @Environment(\.reviewCommentSourceContext) private var environmentReviewCommentSourceContext
+    @Environment(\.horizontalBackSwipeAction) private var horizontalBackSwipeAction
 
     /// Approximate line height for the current fullscreen code font.
     private static var estimatedLineHeight: CGFloat { ceil(FullScreenCodeTypography.codeFont.lineHeight) }
     /// textContainerInset top + bottom (8 + 8).
     private static let estimatedVerticalPadding: CGFloat = 16.0
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeUIView(context: Context) -> NativeFullScreenCodeBody {
-        NativeFullScreenCodeBody(
+        let view = NativeFullScreenCodeBody(
             content: content,
             language: language,
             startLine: startLine,
@@ -182,9 +187,13 @@ struct NativeCodeBodyView: UIViewRepresentable {
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext ?? environmentReviewCommentSourceContext
         )
+        context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: view)
+        return view
     }
 
-    func updateUIView(_ uiView: NativeFullScreenCodeBody, context: Context) {}
+    func updateUIView(_ uiView: NativeFullScreenCodeBody, context: Context) {
+        context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: uiView)
+    }
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
@@ -196,5 +205,17 @@ struct NativeCodeBodyView: UIViewRepresentable {
         let naturalHeight = CGFloat(lineCount) * Self.estimatedLineHeight + Self.estimatedVerticalPadding
         let width = proposal.width ?? UIScreen.main.bounds.width
         return CGSize(width: width, height: min(naturalHeight, maxHeight))
+    }
+
+    @MainActor
+    final class Coordinator {
+        private let backSwipeCoordinator = HorizontalBackSwipeActionCoordinator()
+
+        func installBackSwipe(
+            action: (@MainActor @Sendable () -> Void)?,
+            on view: UIView
+        ) {
+            backSwipeCoordinator.install(action: action, on: view)
+        }
     }
 }

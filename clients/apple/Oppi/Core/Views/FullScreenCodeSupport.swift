@@ -29,6 +29,155 @@ enum FullScreenViewerChrome {
     // Grep for `FullScreenViewerChrome` to find all adopters.
 }
 
+/// Shared policy for the app-wide horizontal back gesture.
+///
+/// Left-to-right swipes must mean exactly one thing in Oppi: leave the current
+/// surface. We keep this policy pure and tiny so SwiftUI and UIKit hosts use the
+/// same thresholds. This avoids the earlier split where file preview swipes,
+/// full-screen viewers, and chat timeline each guessed independently and fought
+/// vertical document scrolling.
+enum HorizontalBackSwipeGesturePolicy {
+    static let minimumHorizontalDistance: CGFloat = 72
+    static let horizontalDominanceRatio: CGFloat = 1.35
+
+    static func isBackSwipe(translation: CGSize) -> Bool {
+        let horizontal = translation.width
+        let vertical = abs(translation.height)
+        guard horizontal >= minimumHorizontalDistance else { return false }
+        return horizontal > vertical * horizontalDominanceRatio
+    }
+
+    static func shouldBegin(velocity: CGPoint) -> Bool {
+        guard velocity.x > 0 else { return false }
+        return velocity.x > abs(velocity.y) * horizontalDominanceRatio
+    }
+}
+
+private struct HorizontalBackSwipeGestureModifier: ViewModifier {
+    let isEnabled: Bool
+    let onBack: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
+                        .onEnded { value in
+                            guard HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: value.translation) else { return }
+                            onBack()
+                        }
+                )
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    /// SwiftUI adapter for surfaces built from SwiftUI views.
+    /// UIKit scroll views should use ``HorizontalBackSwipeGestureInstaller`` so
+    /// the recognizer lives on the view that actually receives pan events.
+    func horizontalBackSwipeGesture(
+        isEnabled: Bool = true,
+        _ onBack: @escaping () -> Void
+    ) -> some View {
+        modifier(HorizontalBackSwipeGestureModifier(isEnabled: isEnabled, onBack: onBack))
+    }
+}
+
+private struct HorizontalBackSwipeActionKey: EnvironmentKey {
+    static let defaultValue: (@MainActor @Sendable () -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    /// Back action inherited by UIKit-backed SwiftUI renderers.
+    ///
+    /// Use this when a SwiftUI surface contains `UIViewRepresentable` scroll
+    /// views: the parent keeps SwiftUI fallback handling, while the UIKit child
+    /// installs the same recognizer on the actual scroll receiver.
+    var horizontalBackSwipeAction: (@MainActor @Sendable () -> Void)? {
+        get { self[HorizontalBackSwipeActionKey.self] }
+        set { self[HorizontalBackSwipeActionKey.self] = newValue }
+    }
+}
+
+/// Retains the UIKit recognizer/action bridge for `UIViewRepresentable` coordinators.
+@MainActor
+final class HorizontalBackSwipeActionCoordinator {
+    private var action: (@MainActor @Sendable () -> Void)?
+    private var installer: HorizontalBackSwipeGestureInstaller?
+
+    func install(
+        action: (@MainActor @Sendable () -> Void)?,
+        on view: UIView
+    ) {
+        self.action = action
+        guard action != nil else { return }
+        if installer == nil {
+            installer = HorizontalBackSwipeGestureInstaller { [weak self] in
+                self?.action?()
+            }
+        }
+        installer?.install(on: view)
+    }
+}
+
+@MainActor
+final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDelegate {
+    private let onBack: @MainActor () -> Void
+    private let shouldReceiveTouch: (@MainActor (UITouch) -> Bool)?
+    private weak var recognizer: UIPanGestureRecognizer?
+
+    init(
+        onBack: @escaping @MainActor () -> Void,
+        shouldReceiveTouch: (@MainActor (UITouch) -> Bool)? = nil
+    ) {
+        self.onBack = onBack
+        self.shouldReceiveTouch = shouldReceiveTouch
+        super.init()
+    }
+
+    func install(on view: UIView) {
+        if recognizer?.view === view { return }
+        if let recognizer {
+            recognizer.view?.removeGestureRecognizer(recognizer)
+        }
+
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = self
+        view.addGestureRecognizer(recognizer)
+        self.recognizer = recognizer
+    }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        let translation = recognizer.translation(in: recognizer.view)
+        guard HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: CGSize(width: translation.x, height: translation.y)) else { return }
+        onBack()
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        return HorizontalBackSwipeGesturePolicy.shouldBegin(velocity: pan.velocity(in: pan.view))
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        shouldReceiveTouch?(touch) ?? true
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+}
+
 @MainActor
 enum FullScreenViewerNavigationChrome {
     enum DismissMode {

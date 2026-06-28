@@ -24,6 +24,11 @@ class E2ETestCase: XCTestCase {
         false
     }
 
+    /// Override in tests whose behavior starts from the auto-created chat session.
+    var e2eStartsInAutoCreatedChat: Bool {
+        false
+    }
+
     /// Override for tests that must control launch-only state such as pending app-group handoff data.
     var e2eRequiresFreshLaunch: Bool {
         false
@@ -54,6 +59,8 @@ class E2ETestCase: XCTestCase {
 
         if e2eLaunchesWorkspaceHomeOnly {
             try ensureAtWorkspaceHome()
+        } else if e2eStartsInAutoCreatedChat {
+            try ensureAtChatSession()
         } else {
             // Navigate back to workspace detail if a previous test left the app elsewhere.
             try ensureAtWorkspaceDetail()
@@ -95,12 +102,11 @@ class E2ETestCase: XCTestCase {
         // can hide or rename the bar without changing readiness.
         let workspaceList = application.collectionViews["workspace.list"]
         let newSessionButton = application.buttons["workspace.newSession"]
-        let chatInput = application.textViews["chat.input"]
         let pairedDeadline = Date().addingTimeInterval(30)
-        var paired = workspaceList.exists || newSessionButton.exists || chatInput.exists
+        var paired = workspaceList.exists || newSessionButton.exists || chatSessionSurfaceExists(in: application)
         while !paired && Date() < pairedDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-            paired = workspaceList.exists || newSessionButton.exists || chatInput.exists
+            paired = workspaceList.exists || newSessionButton.exists || chatSessionSurfaceExists(in: application)
         }
         if e2eLaunchesWorkspaceHomeOnly {
             XCTAssertTrue(
@@ -115,7 +121,15 @@ class E2ETestCase: XCTestCase {
         )
         guard paired else { return }
 
-        if newSessionButton.waitForExistence(timeout: 2) || chatInput.exists {
+        if e2eStartsInAutoCreatedChat {
+            XCTAssertTrue(
+                waitForChatSessionSurface(in: application, timeout: 30),
+                "Auto-created chat did not load after pairing"
+            )
+            return
+        }
+
+        if newSessionButton.waitForExistence(timeout: 2) || chatSessionSurfaceExists(in: application) {
             return
         }
 
@@ -135,10 +149,16 @@ class E2ETestCase: XCTestCase {
         // not synthesize the event into the neighboring disclosure button.
         openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
 
-        // Verify we arrived at workspace detail
+        // Verify we arrived at workspace detail, or an E2E auto-created session opened directly.
+        let detailDeadline = Date().addingTimeInterval(15)
+        var openedWorkspaceSurface = newSessionButton.exists || chatSessionSurfaceExists(in: application)
+        while !openedWorkspaceSurface && Date() < detailDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            openedWorkspaceSurface = newSessionButton.exists || chatSessionSurfaceExists(in: application)
+        }
         XCTAssertTrue(
-            newSessionButton.waitForExistence(timeout: 15),
-            "Workspace detail did not load after tapping e2e-workspace"
+            openedWorkspaceSurface,
+            "Workspace detail or auto-created chat did not load after tapping e2e-workspace"
         )
     }
 
@@ -212,6 +232,49 @@ class E2ETestCase: XCTestCase {
         XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not reachable")
     }
 
+    /// Ensures the app is inside a chat session before each test.
+    private func ensureAtChatSession() throws {
+        dismissExtensionSheetIfNeeded(timeout: 1)
+
+        if waitForChatSessionSurface(in: app, timeout: 3) {
+            return
+        }
+
+        let newSessionButton = app.buttons["workspace.newSession"]
+        if newSessionButton.waitForExistence(timeout: 3) {
+            tap(newSessionButton, named: "new session button")
+            XCTAssertTrue(
+                waitForChatSessionSurface(in: app, timeout: 30),
+                "Chat session did not appear after creating session"
+            )
+            return
+        }
+
+        Self._app = nil
+        try launchAndPair()
+        XCTAssertTrue(
+            waitForChatSessionSurface(in: app, timeout: 30),
+            "Chat session not reachable after relaunch"
+        )
+    }
+
+    private func chatSessionSurfaceExists(in application: XCUIApplication) -> Bool {
+        application.buttons["chat.toolbar.files"].exists
+            || application.textViews["chat.input"].exists
+            || application.descendants(matching: .any)["chat.input"].exists
+    }
+
+    private func waitForChatSessionSurface(in application: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if chatSessionSurfaceExists(in: application) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return chatSessionSurfaceExists(in: application)
+    }
+
     /// Ensures the app is at the workspace detail screen before each test.
     /// Handles recovery from chat sessions, workspace list, or unknown states.
     private func ensureAtWorkspaceDetail() throws {
@@ -255,15 +318,19 @@ class E2ETestCase: XCTestCase {
             application.buttons["Cancel"],
             application.buttons["Done"],
         ]
+        let deadline = Date().addingTimeInterval(timeout)
 
-        for button in buttons where button.waitForExistence(timeout: timeout) {
-            if button.isHittable {
-                button.tap()
-            } else {
-                button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        repeat {
+            for button in buttons where button.exists {
+                if button.isHittable {
+                    button.tap()
+                } else {
+                    button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                }
+                return
             }
-            return
-        }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
     }
 
     func tap(_ element: XCUIElement, named name: String, timeout: TimeInterval = 10) {
@@ -281,8 +348,7 @@ class E2ETestCase: XCTestCase {
 
     /// Creates a new session by tapping the + button and waits for the app to open it.
     func createSession() {
-        let chatInput = app.textViews["chat.input"]
-        if chatInput.waitForExistence(timeout: 3) {
+        if waitForChatSessionSurface(in: app, timeout: 3) {
             return
         }
 
@@ -294,8 +360,8 @@ class E2ETestCase: XCTestCase {
         tap(newSessionButton, named: "new session button")
 
         XCTAssertTrue(
-            chatInput.waitForExistence(timeout: 30),
-            "Chat input did not appear after creating session"
+            waitForChatSessionSurface(in: app, timeout: 30),
+            "Chat session did not appear after creating session"
         )
     }
 

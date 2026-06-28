@@ -603,7 +603,13 @@ struct OppiApp: App {
                 await PushRegistration.shared.requestAndRegister()
                 await coordinator.registerPushWithAllServers()
             }
+#if DEBUG
+            if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] == nil {
+                connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
+            }
+#else
             connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
+#endif
         } catch {
             connection.sessionStore.markSyncFailed()
 #if DEBUG

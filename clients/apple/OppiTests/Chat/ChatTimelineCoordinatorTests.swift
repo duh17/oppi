@@ -21,6 +21,30 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func applyConfigurationWiresBackSwipeCallbackOntoCollectionController() {
+        let harness = makeTimelineHarness(sessionId: "session-back")
+        let controller = ChatTimelineCollectionHost.Controller()
+        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout())
+        var callbackCount = 0
+        let config = makeTimelineConfiguration(
+            items: [],
+            sessionId: "session-back",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer,
+            onBackSwipe: { callbackCount += 1 }
+        )
+
+        controller.apply(configuration: config, to: collectionView)
+        controller.onBackSwipe?()
+
+        #expect(callbackCount == 1)
+    }
+
+    @MainActor
     @Test func toolOutputCompletionDispositionGuardsStaleAndCanceledStates() {
         #expect(
             ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(

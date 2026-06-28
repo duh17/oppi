@@ -645,6 +645,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     private let palette: ThemePalette
     private let scrollView = UIScrollView()
     private let containerView = AnimatedImageWebContainerView()
+    private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
 
     init(data: Data, mimeType: String?, title: String) {
         self.data = data
@@ -662,6 +663,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
         view.backgroundColor = UIColor(palette.bgDark)
         view.accessibilityLabel = previewTitle
         setupNavigationChrome()
+        setupBackSwipeDismiss()
         setupScrollView()
         setupPreviewView()
         setupDoubleTap()
@@ -680,6 +682,14 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
             palette: palette,
             accessibilityIdentifier: "fullscreen-image-data.dismiss"
         )
+    }
+
+    private func setupBackSwipeDismiss() {
+        let handler = HorizontalBackSwipeGestureInstaller { [weak self] in
+            self?.dismiss(animated: true)
+        }
+        handler.install(on: view)
+        backSwipeDismissHandler = handler
     }
 
     private func setupScrollView() {

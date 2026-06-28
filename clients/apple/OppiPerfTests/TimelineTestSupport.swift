@@ -451,6 +451,7 @@ func makeTimelineConfiguration(
         sessionId: sessionId,
         workspaceId: "ws-test",
         onFork: { _ in },
+        onBackSwipe: {},
         onShowEarlier: onShowEarlier,
         scrollCommand: scrollCommand,
         scrollController: scrollController,

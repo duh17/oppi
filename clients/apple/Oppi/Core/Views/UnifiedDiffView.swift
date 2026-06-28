@@ -163,6 +163,8 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
     let reviewCommentSelectionContext: ReviewCommentSelectionContext?
     let sourceContext: ReviewCommentSourceContext?
 
+    @Environment(\.horizontalBackSwipeAction) private var horizontalBackSwipeAction
+
     func makeCoordinator() -> Coordinator {
         Coordinator(
             reviewCommentSelectionContext: reviewCommentSelectionContext,
@@ -206,6 +208,7 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         layoutManager.measuredContentWidth = built.contentWidth
 
         scrollView.addSubview(textView)
+        context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: scrollView)
 
         let wrapper = UIView()
         wrapper.backgroundColor = UIColor(Color.themeBgDark)
@@ -231,11 +234,16 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.reviewCommentSelectionContext = reviewCommentSelectionContext
         context.coordinator.sourceContext = sourceContext
+        if let scrollView = uiView.subviews.compactMap({ $0 as? UnifiedDiffScrollView }).first {
+            context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: scrollView)
+        }
     }
 
+    @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
         var reviewCommentSelectionContext: ReviewCommentSelectionContext?
         var sourceContext: ReviewCommentSourceContext?
+        private let backSwipeCoordinator = HorizontalBackSwipeActionCoordinator()
 
         init(
             reviewCommentSelectionContext: ReviewCommentSelectionContext?,
@@ -243,6 +251,13 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         ) {
             self.reviewCommentSelectionContext = reviewCommentSelectionContext
             self.sourceContext = sourceContext
+        }
+
+        func installBackSwipe(
+            action: (@MainActor @Sendable () -> Void)?,
+            on view: UIView
+        ) {
+            backSwipeCoordinator.install(action: action, on: view)
         }
 
         func textView(

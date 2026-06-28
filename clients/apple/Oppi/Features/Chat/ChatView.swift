@@ -53,6 +53,7 @@ struct ExtensionSurfaceSessionLink: Equatable {
 struct ChatView: View {
     let sessionId: String
     private let workspaceIdHint: String?
+    private let ownsWorkspacePathBackNavigation: Bool
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
@@ -68,6 +69,7 @@ struct ChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.dismiss) private var dismiss
 
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
@@ -84,6 +86,8 @@ struct ChatView: View {
     @State private var attachmentPreparationText: String?
 
     @State private var showOutline = false
+    @State private var isFilePanelVisible = false
+    @State private var selectedFilePanelTab: ChatFileBrowserPanelTab
     @State private var showModelPicker = false
     @State private var showComposer = false
     @State private var sessionRouteToOpen: SessionRoute?
@@ -115,13 +119,16 @@ struct ChatView: View {
         sessionId: String,
         workspaceIdHint: String? = nil,
         initialInputText: String = "",
-        initialPendingFiles: [PendingFileReference] = []
+        initialPendingFiles: [PendingFileReference] = [],
+        ownsWorkspacePathBackNavigation: Bool = false
     ) {
         self.sessionId = sessionId
         self.workspaceIdHint = workspaceIdHint
+        self.ownsWorkspacePathBackNavigation = ownsWorkspacePathBackNavigation
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId, workspaceIdHint: workspaceIdHint))
         _inputText = State(initialValue: initialInputText)
         _pendingRepoPointers = State(initialValue: initialPendingFiles)
+        _selectedFilePanelTab = State(initialValue: ChatFileBrowserPanelTabStore.shared.tab(for: sessionId))
     }
 
     private struct ForkRoute: Identifiable, Hashable {
@@ -258,6 +265,7 @@ struct ChatView: View {
             sessionManager: sessionManager,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
             onFork: forkFromMessage,
+            onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: headerHeight,
             bottomOverlap: footerHeight
@@ -322,6 +330,10 @@ struct ChatView: View {
                 isPresented: $showOutline,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { outlineSheet }
+            .chatAuxiliaryPresentation(
+                isPresented: $isFilePanelVisible,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
+            ) { filePanelSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .chatAuxiliaryPresentation(
                 isPresented: $showContextInspector,
@@ -464,7 +476,12 @@ struct ChatView: View {
                 pendingRepoPointers = []
                 contextBarExpanded = false
                 showOutline = false
+                isFilePanelVisible = false
+                selectedFilePanelTab = ChatFileBrowserPanelTabStore.shared.tab(for: newId)
                 showContextInspector = false
+            }
+            .onChange(of: selectedFilePanelTab) { _, newTab in
+                ChatFileBrowserPanelTabStore.shared.setTab(newTab, for: sessionId)
             }
             .onDisappear {
                 actionHandler.cleanup()
@@ -496,6 +513,10 @@ struct ChatView: View {
             )
             .toolbarVisibility(.visible, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    chatLeadingToolbarItem
+                }
+
                 ToolbarItem(placement: .principal) {
                     chatPrincipalToolbarItem
                 }
@@ -511,6 +532,7 @@ struct ChatView: View {
             .background(Color.themeBg.ignoresSafeArea())
             .navigationTitle(sessionDisplayName)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(usesCustomChatBackButton)
             .navigationDestination(item: $forkedSessionToOpen) { route in
                 Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
@@ -711,6 +733,82 @@ struct ChatView: View {
         }
     }
 
+    private func toggleChatFilePanel(source: String) {
+        AppHaptics.toolbarExpansion()
+        let willShow = !isFilePanelVisible
+        isFilePanelVisible = willShow
+        ClientLog.info("FileBrowser", "Chat files toggle tapped", metadata: [
+            "sessionId": sessionId,
+            "workspaceId": session?.workspaceId ?? "none",
+            "isFilePanelVisible": String(isFilePanelVisible),
+            "selectedTab": selectedFilePanelTab.rawValue,
+            "source": source,
+        ])
+        if isFilePanelVisible {
+            showOutline = false
+        }
+    }
+
+    private func closeChatFilePanel() {
+        isFilePanelVisible = false
+    }
+
+    private var usesCustomChatBackButton: Bool {
+        appNavigation.workspaceNavigationPresentation == .stack
+    }
+
+    @ViewBuilder
+    private var chatLeadingToolbarItem: some View {
+        HStack(spacing: 10) {
+            if usesCustomChatBackButton {
+                Button(action: navigateBackFromChat) {
+                    Image(systemName: "chevron.left")
+                        .font(.headline.weight(.semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                .accessibilityIdentifier("chat.toolbar.back")
+            }
+
+            chatFilesToolbarItem
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func navigateBackFromChat() {
+        if ownsWorkspacePathBackNavigation,
+           appNavigation.workspaceNavigationPresentation == .stack,
+           appNavigation.workspacePath.count > 0 {
+            appNavigation.workspacePath.removeLast()
+            return
+        }
+        if appNavigation.workspaceNavigationPresentation == .split {
+            appNavigation.splitColumnVisibility = .all
+            return
+        }
+        dismiss()
+    }
+
+    @ViewBuilder
+    private var chatFilesToolbarItem: some View {
+        if session?.workspaceId != nil {
+            Button {
+                toggleChatFilePanel(source: "top_leading_pill")
+            } label: {
+                Image(systemName: isFilePanelVisible ? "folder.fill" : "folder")
+                    .font(.subheadline)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isFilePanelVisible ? .themeBlue : .themeFg)
+            .accessibilityLabel(isFilePanelVisible ? "Close chat files" : "Open chat files")
+            .accessibilityIdentifier("chat.toolbar.files")
+        }
+    }
+
     @ViewBuilder
     private var chatPrincipalToolbarItem: some View {
         Button {
@@ -740,7 +838,10 @@ struct ChatView: View {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
                         .font(.subheadline)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Open session outline")
                 .accessibilityIdentifier("chat.toolbar.outline")
             }
@@ -1519,12 +1620,10 @@ struct ChatView: View {
             items: reducer.items,
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
-            changedFiles: session?.changeStats?.changedFiles ?? [],
             onSelect: { targetID in
                 scrollController.scrollTargetID = targetID
             },
             onFork: forkFromMessage,
-            fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
             onNavigateTreeNode: { request in
                 try await navigateFromTree(request)
             },
@@ -1532,6 +1631,25 @@ struct ChatView: View {
                 try await connection.getSessionTree(filterMode: filterMode)
             }
         )
+    }
+
+    private var filePanelSheet: some View {
+        NavigationStack {
+            ChatFileBrowserPanel(
+                sessionId: sessionId,
+                workspaceId: session?.workspaceId,
+                changedFiles: session?.changeStats?.changedFiles ?? [],
+                selectedTab: $selectedFilePanelTab,
+                fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter)
+            )
+            .navigationTitle("Files")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { closeChatFilePanel() }
+                }
+            }
+        }
     }
 
     private var reviewCommentStashSheet: some View {
@@ -1738,6 +1856,7 @@ struct ChatView: View {
     }
 }
 
+
 private extension View {
     @ViewBuilder
     func chatAuxiliaryPresentation<PresentedContent: View>(
@@ -1751,6 +1870,7 @@ private extension View {
             sheet(isPresented: isPresented) {
                 content()
                     .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }

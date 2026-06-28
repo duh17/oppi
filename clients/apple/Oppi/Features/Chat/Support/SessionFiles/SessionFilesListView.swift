@@ -100,6 +100,13 @@ struct SessionFilesListView: View {
 
     var body: some View {
         let groups = displayDirectoryGroups
+        let orderedPaths = groups.flatMap { $0.files.map(\.path) }
+        let reviewNavigationFiles = reviewNavigationFiles(for: orderedPaths)
+        let sessionTouchedNavigationContext = navigationContext(for: orderedPaths.filter(isAbsolutePath))
+        let workspaceFileNavigationContext = navigationContext(for: orderedPaths.filter { path in
+            !isAbsolutePath(path) && gitFilesByPath[path] == nil
+        })
+
         Group {
             if currentChangedFiles.isEmpty {
                 ContentUnavailableView(
@@ -118,9 +125,15 @@ struct SessionFilesListView: View {
                         Section {
                             if !isCollapsed {
                                 ForEach(group.files) { file in
-                                    fileRow(path: file.path, matchPositions: file.matchPositions)
-                                        .listRowBackground(Color.themeBgDark)
-                                        .listRowSeparatorTint(Color.themeComment.opacity(0.15))
+                                    fileRow(
+                                        path: file.path,
+                                        matchPositions: file.matchPositions,
+                                        reviewNavigationFiles: reviewNavigationFiles,
+                                        sessionTouchedNavigationContext: sessionTouchedNavigationContext,
+                                        workspaceFileNavigationContext: workspaceFileNavigationContext
+                                    )
+                                    .listRowBackground(Color.themeBgDark)
+                                    .listRowSeparatorTint(Color.themeComment.opacity(0.15))
                                 }
                             }
                         } header: {
@@ -171,10 +184,26 @@ struct SessionFilesListView: View {
         }
     }
 
+    private func reviewNavigationFiles(for paths: [String]) -> [WorkspaceReviewFile] {
+        paths.compactMap { gitFilesByPath[$0]?.toReviewFile() }
+    }
+
+    private func navigationContext(for paths: [String]) -> FileBrowserNavigationContext {
+        FileBrowserNavigationContext(files: paths.map { path in
+            FileBrowserSelection(path: path, name: path.lastPathComponentForDisplay, size: nil)
+        })
+    }
+
     // MARK: - File Row
 
     @ViewBuilder
-    private func fileRow(path: String, matchPositions: [Int] = []) -> some View {
+    private func fileRow(
+        path: String,
+        matchPositions: [Int] = [],
+        reviewNavigationFiles: [WorkspaceReviewFile],
+        sessionTouchedNavigationContext: FileBrowserNavigationContext,
+        workspaceFileNavigationContext: FileBrowserNavigationContext
+    ) -> some View {
         let icon = FileIcon.forPath(path)
         let fileName = path.lastPathComponentForDisplay
         let parentPath = path.parentPathForDisplay
@@ -189,7 +218,8 @@ struct SessionFilesListView: View {
                         workspaceId: workspaceId,
                         selectedSessionId: sessionId,
                         file: gitFile.toReviewFile(),
-                        reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope()
+                        reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope(),
+                        navigationFiles: reviewNavigationFiles
                     )
                 } label: {
                     fileRowContent(
@@ -206,13 +236,15 @@ struct SessionFilesListView: View {
                                 workspaceId: workspaceId,
                                 sessionId: sessionId,
                                 filePath: path,
-                                fileName: path.lastPathComponentForDisplay
+                                fileName: path.lastPathComponentForDisplay,
+                                navigationContext: sessionTouchedNavigationContext
                             )
                         } else {
                             FileBrowserContentView(
                                 workspaceId: workspaceId,
                                 filePath: path,
-                                fileName: path.lastPathComponentForDisplay
+                                fileName: path.lastPathComponentForDisplay,
+                                navigationContext: workspaceFileNavigationContext
                             )
                         }
                     }

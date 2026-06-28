@@ -23,7 +23,9 @@ final class FullScreenCodeViewController: UIViewController {
         /// Embedded inside a SwiftUI NavigationStack — chevron.backward + closure.
         case embedded(onDismiss: @MainActor @Sendable () -> Void)
         /// Embedded pane content without a navigation bar or dismiss affordance.
-        case contentOnly
+        /// A parent can still provide a back-swipe action so content-only panes
+        /// keep the app-wide right-swipe-back invariant without rendering chrome.
+        case contentOnly(onBackSwipe: (@MainActor @Sendable () -> Void)? = nil)
     }
 
     private struct Presentation {
@@ -66,6 +68,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private weak var contentHostController: UIViewController?
+    private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
     private var liveSourceMarkdownBodyView: NativeFullScreenMarkdownBody?
@@ -145,6 +148,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         let palette = ThemeRuntimeState.currentThemeID().palette
         view.backgroundColor = UIColor(palette.bgDark)
+        setupBackSwipeDismissIfNeeded()
 
         let nav = UINavigationController(rootViewController: makeContentController())
         if case .contentOnly = presentationMode {
@@ -164,6 +168,21 @@ final class FullScreenCodeViewController: UIViewController {
             nav.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         nav.didMove(toParent: self)
+    }
+
+    private func setupBackSwipeDismissIfNeeded() {
+        let handler: HorizontalBackSwipeGestureInstaller?
+        switch presentationMode {
+        case .contentOnly(let onBackSwipe):
+            guard let onBackSwipe else { return }
+            handler = HorizontalBackSwipeGestureInstaller { onBackSwipe() }
+        case .sheet, .embedded:
+            handler = HorizontalBackSwipeGestureInstaller { [weak self] in
+                self?.doneTapped()
+            }
+        }
+        handler?.install(on: view)
+        backSwipeDismissHandler = handler
     }
 
     private func makeContentController() -> UIViewController {
@@ -804,8 +823,8 @@ final class FullScreenCodeViewController: UIViewController {
             dismiss(animated: true)
         case .embedded(let onDismiss):
             onDismiss()
-        case .contentOnly:
-            break
+        case .contentOnly(let onBackSwipe):
+            onBackSwipe?()
         }
     }
 
