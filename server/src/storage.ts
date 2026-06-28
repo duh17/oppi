@@ -14,6 +14,7 @@ import { closeSync, existsSync, openSync, readSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createLogger } from "./logger.js";
+import { AgentScheduleStore } from "./agent-schedules.js";
 import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
 import {
@@ -79,12 +80,14 @@ export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
   private readonly sessionStore: SessionSqliteStore;
+  private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
 
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
+    this.scheduleStore = new AgentScheduleStore(this.configStore.getDataDir());
     this.cleanupServerReviewCommentState();
     this.workspaceStore = new WorkspaceStore(this.configStore);
     this.migrateLegacyWorkspaceSessions();
@@ -282,6 +285,10 @@ export class Storage {
     return this.sessionStore.getSession(sessionId);
   }
 
+  findSessionByLaunchIdempotencyKey(idempotencyKey: string): Session | undefined {
+    return this.sessionStore.findSessionByLaunchIdempotencyKey(idempotencyKey);
+  }
+
   listSessions(): Session[] {
     return this.sessionStore.listSessions();
   }
@@ -378,6 +385,12 @@ export class Storage {
 
   deleteWorkspace(workspaceId: string): boolean {
     return this.workspaceStore.deleteWorkspace(workspaceId);
+  }
+
+  // ─── Agent schedules ───
+
+  getAgentScheduleStore(): AgentScheduleStore {
+    return this.scheduleStore;
   }
 
   // ─── Helpers ───

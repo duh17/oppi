@@ -331,6 +331,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       worktreeId?: string;
       attachments?: ChatAttachmentRef[];
       images?: unknown;
+      idempotencyKey?: string;
+      launchIdempotencyKey?: string;
+      launchLeaseOwner?: string;
     }>(req);
     if (Array.isArray(body.images) && body.images.length > 0) {
       helpers.error(
@@ -387,8 +390,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         ephemeral: body.ephemeral,
         worktreeId: worktreeSelection.worktreeId,
         attachments: body.attachments,
+        idempotencyKey: body.launchIdempotencyKey ?? body.idempotencyKey,
+        leaseOwner: body.launchLeaseOwner,
       });
-      ctx.appEvents?.emitSessionCreated(result.createdSession);
+      if (result.launchKind !== "existing") {
+        ctx.appEvents?.emitSessionCreated(result.createdSession);
+      }
       if (result.summarySession) {
         ctx.appEvents?.emitSessionSummary(result.summarySession);
       }
@@ -397,11 +404,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         {
           session: result.session,
           ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
+          ...(result.launchKind === "existing" ? { launch: { existing: true } } : {}),
         },
-        201,
+        result.launchKind === "existing" ? 200 : 201,
       );
     } catch (error: unknown) {
       if (error instanceof SessionLifecycleError) {
+        if (error.message === "launch_in_progress") {
+          helpers.json(res, { error: "launch_in_progress", retryable: true }, error.statusCode);
+          return;
+        }
         helpers.error(res, error.statusCode, error.message);
         return;
       }
