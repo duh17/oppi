@@ -233,9 +233,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "chat-file-panel-portrait-changed")
 
         app.buttons["All"].tap()
-        XCTAssertTrue(app.staticTexts["clients"].waitForExistence(timeout: 5), "All-files browser did not open")
+        let clientsDirectory = app.staticTexts["clients"]
+        XCTAssertTrue(clientsDirectory.waitForExistence(timeout: 5), "All-files browser did not open")
         sleep(1)
         saveScreenshot(name: "chat-file-panel-portrait-all")
+
+        clientsDirectory.tap()
+        XCTAssertTrue(
+            app.buttons["fileBrowser.inlineBack"].waitForExistence(timeout: 3),
+            "Inline file browser directory should show a Back button"
+        )
+        sleep(1)
+        saveScreenshot(name: "chat-file-panel-portrait-all-back")
 
         XCUIDevice.shared.orientation = .portrait
     }
