@@ -805,6 +805,7 @@ struct UIHangHarnessView: View {
                     sessionId: "harness-\(selectedSession.rawValue)",
                     workspaceId: "harness-workspace",
                     onFork: { _ in },
+                    onBackSwipe: {},
                     onShowEarlier: {
                         renderWindow = min(currentItems.count, renderWindow + Self.renderWindowStep)
                     },

@@ -28,6 +28,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let sessionId: String
         let workspaceId: String?
         let onFork: (String) -> Void
+        let onBackSwipe: () -> Void
         let onShowEarlier: () -> Void
         let scrollCommand: ChatTimelineScrollCommand?
         let scrollController: ChatScrollController
@@ -56,6 +57,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             sessionId: String,
             workspaceId: String?,
             onFork: @escaping (String) -> Void,
+            onBackSwipe: @escaping () -> Void,
             onShowEarlier: @escaping () -> Void,
             scrollCommand: ChatTimelineScrollCommand? = nil,
             scrollController: ChatScrollController,
@@ -83,6 +85,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.sessionId = sessionId
             self.workspaceId = workspaceId
             self.onFork = onFork
+            self.onBackSwipe = onBackSwipe
             self.onShowEarlier = onShowEarlier
             self.scrollCommand = scrollCommand
             self.scrollController = scrollController
@@ -121,6 +124,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         tapGesture.cancelsTouchesInView = false
         tapGesture.delegate = context.coordinator
         collectionView.addGestureRecognizer(tapGesture)
+        // The timeline is a UIKit scroll view, so the shared back-swipe
+        // recognizer must live here instead of on the SwiftUI parent.
+        context.coordinator.installBackSwipeGesture(on: collectionView)
 
         collectionView.accessibilityIdentifier = "chat.timeline"
         collectionView.contentInset.top = configuration.topOverlap
@@ -171,6 +177,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             set { context.audioLifecycleCoordinator = newValue }
         }
         weak var collectionView: UICollectionView?
+        private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?
+        var onBackSwipe: (() -> Void)?
 
         var sessionId: String {
             get { context.sessionId }
@@ -185,6 +193,19 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var onFork: ((String) -> Void)? {
             get { context.onFork }
             set { context.onFork = newValue }
+        }
+
+        func installBackSwipeGesture(on collectionView: UICollectionView) {
+            let installer = HorizontalBackSwipeGestureInstaller(
+                onBack: { [weak self] in
+                    self?.onBackSwipe?()
+                },
+                shouldReceiveTouch: { [weak self] touch in
+                    self?.shouldReceiveTimelineGestureTouch(touch) ?? true
+                }
+            )
+            installer.install(on: collectionView)
+            backSwipeGestureInstaller = installer
         }
 
         var onShowEarlier: (() -> Void)? {
@@ -524,6 +545,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             context.apply(configuration: configuration)
             self.collectionView = collectionView
+            onBackSwipe = configuration.onBackSwipe
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
 
             // Detect theme change from runtime state instead of threaded param.
@@ -888,6 +910,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             gesture.view?.window?.endEditing(true)
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            shouldReceiveTimelineGestureTouch(touch)
+        }
+
+        private func shouldReceiveTimelineGestureTouch(_ touch: UITouch) -> Bool {
             var current = touch.view
             while let candidate = current {
                 if let textView = candidate as? UITextView, textView.isSelectable { return false }

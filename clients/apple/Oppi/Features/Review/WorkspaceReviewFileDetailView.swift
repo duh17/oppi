@@ -25,11 +25,15 @@ struct WorkspaceReviewFileDetailView: View {
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
     var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
+    var navigationFiles: [WorkspaceReviewFile] = []
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(SessionStore.self) private var sessionStore
 
+    @State private var activeFile: WorkspaceReviewFile?
+    @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var selectedTab: DetailTab = .diff
     @State private var diff: WorkspaceReviewDiffResponse?
     @State private var error: String?
@@ -40,6 +44,10 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var isLoadingQuickActions = false
 
+    private var currentFile: WorkspaceReviewFile {
+        activeFile ?? file
+    }
+
     private var effectiveReviewCommentSelectionScope: ReviewCommentSelectionScope? {
         reviewCommentSelectionScopeOverride ?? reviewCommentSelectionScope
     }
@@ -47,8 +55,8 @@ struct WorkspaceReviewFileDetailView: View {
     private var reviewCommentSelectionContext: ReviewCommentSelectionContext? {
         effectiveReviewCommentSelectionScope?.makeContext(
             sessionId: selectedSessionId,
-            sourceLabel: file.path.lastPathComponentForDisplay,
-            filePath: file.path
+            sourceLabel: currentFile.path.lastPathComponentForDisplay,
+            filePath: currentFile.path
         )
     }
 
@@ -94,10 +102,22 @@ struct WorkspaceReviewFileDetailView: View {
                 content(diff: diff)
             }
         }
-        .navigationTitle(file.path.lastPathComponentForDisplay)
+        .environment(\.horizontalBackSwipeAction, { dismiss() })
+        .filePushTransition(id: currentFile.path, direction: fileTransitionDirection)
+        .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe) { dismiss() }
+        .overlay(alignment: .bottom) {
+            reviewNavigatorControls
+                .padding(.bottom, 22)
+        }
+        .navigationTitle(currentFile.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: workspaceId + "|" + (selectedSessionId ?? "") + "|" + file.path) {
-            await loadDiff()
+        .task(id: workspaceId + "|" + (selectedSessionId ?? "") + "|" + currentFile.path) {
+            await loadDiff(for: currentFile)
+        }
+        .onChange(of: file.path) { _, _ in
+            activeFile = nil
+            diff = nil
+            error = nil
         }
         .task(id: workspaceId) {
             await loadQuickActionsIfNeeded()
@@ -152,10 +172,7 @@ struct WorkspaceReviewFileDetailView: View {
         }
         .alert(
             "Unable to start quick action",
-            isPresented: Binding(
-                get: { launchError != nil },
-                set: { if !$0 { launchError = nil } }
-            )
+            isPresented: launchErrorPresented
         ) {
             Button("OK", role: .cancel) { launchError = nil }
         } message: {
@@ -163,15 +180,47 @@ struct WorkspaceReviewFileDetailView: View {
         }
     }
 
+    private var launchErrorPresented: Binding<Bool> {
+        Binding(
+            get: { launchError != nil },
+            set: { isPresented in
+                if !isPresented { launchError = nil }
+            }
+        )
+    }
+
+    private var parentOwnsBackSwipe: Bool {
+        guard let diff else { return true }
+        if isDeletedFile { return diff.hunks.isEmpty }
+        if isNewFile { return !currentContentInstallsUIKitBackSwipe(diff.currentText) }
+
+        switch selectedTab {
+        case .diff:
+            return diff.hunks.isEmpty
+        case .current:
+            return !currentContentInstallsUIKitBackSwipe(diff.currentText)
+        }
+    }
+
+    private func currentContentInstallsUIKitBackSwipe(_ text: String) -> Bool {
+        switch FileType.detect(from: currentFile.path, content: text) {
+        case .code, .json, .plain, .graphviz:
+            return true
+        case .markdown, .html, .image, .audio, .video, .pdf, .binary,
+             .latex, .orgMode, .mermaid:
+            return false
+        }
+    }
+
     /// Whether the file is brand-new (added or untracked) — no prior content to diff against.
     private var isNewFile: Bool {
-        let s = file.status.trimmingCharacters(in: .whitespaces)
+        let s = currentFile.status.trimmingCharacters(in: .whitespaces)
         return s == "A" || s == "??"
     }
 
     /// Whether the file was deleted — no current content to display.
     private var isDeletedFile: Bool {
-        file.status.trimmingCharacters(in: .whitespaces) == "D"
+        currentFile.status.trimmingCharacters(in: .whitespaces) == "D"
     }
 
     /// Build shareable content from the review, switching on the active tab.
@@ -185,19 +234,19 @@ struct WorkspaceReviewFileDetailView: View {
             || isDeletedFile  // deleted files always show diff
 
         if showingDiff, !diff.hunks.isEmpty {
-            return .diff(diff.hunks, filePath: file.path)
+            return .diff(diff.hunks, filePath: currentFile.path)
         }
 
         guard !diff.currentText.isEmpty else { return nil }
-        return .fromText(diff.currentText, filePath: file.path)
+        return .fromText(diff.currentText, filePath: currentFile.path)
     }
 
     private func content(diff: WorkspaceReviewDiffResponse) -> some View {
         VStack(spacing: 0) {
             ReviewFileSummaryBar(
-                path: file.path,
-                status: file.status,
-                statusLabel: file.statusLabel,
+                path: currentFile.path,
+                status: currentFile.status,
+                statusLabel: currentFile.statusLabel,
                 addedLines: diff.addedLines,
                 removedLines: diff.removedLines
             )
@@ -208,7 +257,7 @@ struct WorkspaceReviewFileDetailView: View {
 
                 FileContentView(
                     content: diff.currentText,
-                    filePath: file.path,
+                    filePath: currentFile.path,
                     presentation: .document
                 )
                 .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
@@ -219,7 +268,7 @@ struct WorkspaceReviewFileDetailView: View {
 
                 WorkspaceReviewDiffView(
                     diff: diff,
-                    filePath: file.path,
+                    filePath: currentFile.path,
                     reviewCommentSelectionContext: reviewCommentSelectionContext
                 )
                 .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
@@ -241,7 +290,7 @@ struct WorkspaceReviewFileDetailView: View {
                     case .diff:
                         WorkspaceReviewDiffView(
                             diff: diff,
-                            filePath: file.path,
+                            filePath: currentFile.path,
                             reviewCommentSelectionContext: reviewCommentSelectionContext
                         )
                         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
@@ -258,7 +307,7 @@ struct WorkspaceReviewFileDetailView: View {
     private func currentContent(diff: WorkspaceReviewDiffResponse) -> some View {
         FileContentView(
             content: diff.currentText,
-            filePath: file.path,
+            filePath: currentFile.path,
             presentation: .document
         )
         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
@@ -277,7 +326,7 @@ struct WorkspaceReviewFileDetailView: View {
         do {
             let response = try await api.createWorkspaceQuickActionSession(
                 workspaceId: workspaceId,
-                paths: [file.path],
+                paths: [currentFile.path],
                 selectedSessionId: selectedSessionId,
                 promptTemplateName: option.promptTemplateName
             )
@@ -294,6 +343,52 @@ struct WorkspaceReviewFileDetailView: View {
         }
     }
 
+    // MARK: - File Navigation
+
+    private var reviewNavigationFiles: [WorkspaceReviewFile] {
+        var seen: Set<String> = []
+        return navigationFiles.filter { file in
+            seen.insert(file.path).inserted
+        }
+    }
+
+    private var reviewNavigatorControls: some View {
+        AdjacentFileNavigatorControls(
+            canGoPrevious: adjacentReviewFile(.previous) != nil,
+            canGoNext: adjacentReviewFile(.next) != nil,
+            onPrevious: { navigateToAdjacentReviewFile(.previous) },
+            onNext: { navigateToAdjacentReviewFile(.next) }
+        )
+    }
+
+    private func adjacentReviewFile(_ direction: FileBrowserNavigationDirection) -> WorkspaceReviewFile? {
+        let files = reviewNavigationFiles
+        guard let currentIndex = files.firstIndex(where: { $0.path == currentFile.path }) else { return nil }
+        let targetIndex: Int
+        switch direction {
+        case .previous:
+            targetIndex = currentIndex - 1
+        case .next:
+            targetIndex = currentIndex + 1
+        }
+        guard files.indices.contains(targetIndex) else { return nil }
+        return files[targetIndex]
+    }
+
+    private func navigateToAdjacentReviewFile(_ direction: FileBrowserNavigationDirection) {
+        guard let nextFile = adjacentReviewFile(direction) else { return }
+        fileTransitionDirection = direction
+        withAnimation(.easeInOut(duration: 0.22)) {
+            activeFile = nextFile
+            diff = nil
+            error = nil
+        }
+    }
+
+    private func isCurrentReviewFile(_ requestedFile: WorkspaceReviewFile) -> Bool {
+        !Task.isCancelled && currentFile.path == requestedFile.path
+    }
+
     private func loadQuickActionsIfNeeded() async {
         guard !isLoadingQuickActions else { return }
         guard let api = apiClient else { return }
@@ -308,25 +403,33 @@ struct WorkspaceReviewFileDetailView: View {
         }
     }
 
-    private func loadDiff() async {
-        guard !isLoading else { return }
+    private func loadDiff(for requestedFile: WorkspaceReviewFile) async {
         guard let api = apiClient else {
             error = "Server is offline."
             return
         }
 
+        diff = nil
+        error = nil
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if currentFile.path == requestedFile.path {
+                isLoading = false
+            }
+        }
 
         do {
-            diff = try await loadBestAvailableDiff(api: api)
+            let loadedDiff = try await loadBestAvailableDiff(api: api, file: requestedFile)
+            guard isCurrentReviewFile(requestedFile) else { return }
+            diff = loadedDiff
             error = nil
         } catch {
+            guard isCurrentReviewFile(requestedFile) else { return }
             self.error = error.localizedDescription
         }
     }
 
-    private func loadBestAvailableDiff(api: APIClient) async throws -> WorkspaceReviewDiffResponse {
+    private func loadBestAvailableDiff(api: APIClient, file: WorkspaceReviewFile) async throws -> WorkspaceReviewDiffResponse {
         if let selectedSessionId {
             do {
                 let sessionDiff = try await api.getSessionDiff(

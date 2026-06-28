@@ -9,6 +9,7 @@ final class FullScreenImageViewController: UIViewController {
     private let palette: ThemePalette
     private let scrollView = UIScrollView()
     private let imageView: UIImageView
+    private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var savedFeedbackLabel: UILabel?
 
     init(image: UIImage) {
@@ -26,6 +27,7 @@ final class FullScreenImageViewController: UIViewController {
         view.backgroundColor = UIColor(palette.bgDark)
 
         setupNavigationChrome()
+        setupBackSwipeDismiss()
         setupScrollView()
         setupImageView()
         setupConstraints()
@@ -46,6 +48,14 @@ final class FullScreenImageViewController: UIViewController {
 
         // No custom UINavigationBarAppearance — iOS 26 Liquid Glass renders
         // bar items as floating glass pills. See FullScreenViewerChrome.
+    }
+
+    private func setupBackSwipeDismiss() {
+        let handler = HorizontalBackSwipeGestureInstaller { [weak self] in
+            self?.dismiss(animated: true)
+        }
+        handler.install(on: view)
+        backSwipeDismissHandler = handler
     }
 
     private func setupScrollView() {

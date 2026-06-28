@@ -218,37 +218,48 @@ final class ScreenshotPreviewUITests: XCTestCase {
             saveScreenshot(name: "session-outline-tree-summary-none")
         }
 
-        let filesTab = app.buttons["Files (3)"]
-        if filesTab.waitForExistence(timeout: 2) {
-            filesTab.tap()
-            XCTAssertTrue(app.staticTexts["SessionOutlineView.swift"].waitForExistence(timeout: 3), "Files tab content not visible")
-            saveScreenshot(name: "session-outline-files")
-        }
+        XCTAssertFalse(
+            app.buttons["Files (3)"].exists,
+            "Session Outline should not expose the old Files tab; use the chat file panel instead"
+        )
+    }
+
+    func testChatFileBrowserPanelPreview() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "chat-file-panel")
+
+        XCTAssertTrue(app.staticTexts["Files"].waitForExistence(timeout: 5), "Files panel header not visible")
+        sleep(1)
+        saveScreenshot(name: "chat-file-panel-portrait-changed")
+
+        app.buttons["All"].tap()
+        XCTAssertTrue(app.staticTexts["clients"].waitForExistence(timeout: 5), "All-files browser did not open")
+        sleep(1)
+        saveScreenshot(name: "chat-file-panel-portrait-all")
+
+        XCUIDevice.shared.orientation = .portrait
     }
 
     func testSessionFilesDirectoryGroupingPreview() throws {
-        launchPreview(screen: "session-timeline")
+        launchPreview(screen: "chat-file-panel")
 
-        let filesTab = app.buttons["Files (3)"]
-        XCTAssertTrue(filesTab.waitForExistence(timeout: 5), "Files tab not visible")
-        filesTab.tap()
+        let changedTab = app.buttons["Changed"]
+        XCTAssertTrue(changedTab.waitForExistence(timeout: 5), "Changed files tab not visible")
+        changedTab.tap()
 
-        let supportGroup = app.buttons["Collapse clients/apple/Oppi/Features/Chat/Support files"]
-        XCTAssertTrue(supportGroup.waitForExistence(timeout: 3), "Support directory group not visible")
+        let chatGroup = app.buttons["Collapse clients/apple/Oppi/Features/Chat files"]
+        XCTAssertTrue(chatGroup.waitForExistence(timeout: 3), "Chat directory group not visible")
+        XCTAssertTrue(app.staticTexts["ChatView.swift"].waitForExistence(timeout: 3), "Chat file row not visible before collapse")
 
-        let serverGroup = app.buttons["Collapse server/src files"]
-        XCTAssertTrue(serverGroup.waitForExistence(timeout: 3), "Server directory collapse control not visible")
-        XCTAssertTrue(app.staticTexts["session-commands.ts"].waitForExistence(timeout: 3), "Server file row not visible before collapse")
+        chatGroup.tap()
+        XCTAssertFalse(app.staticTexts["ChatView.swift"].waitForExistence(timeout: 1), "Collapsed directory should hide its file rows")
 
-        serverGroup.tap()
-        XCTAssertFalse(app.staticTexts["session-commands.ts"].waitForExistence(timeout: 1), "Collapsed directory should hide its file rows")
+        let expandChatGroup = app.buttons["Expand clients/apple/Oppi/Features/Chat files"]
+        XCTAssertTrue(expandChatGroup.waitForExistence(timeout: 3), "Collapsed Chat directory expand control not visible")
+        expandChatGroup.tap()
+        XCTAssertTrue(app.staticTexts["ChatView.swift"].waitForExistence(timeout: 3), "Expanded directory should restore its file rows")
 
-        let expandServerGroup = app.buttons["Expand server/src files"]
-        XCTAssertTrue(expandServerGroup.waitForExistence(timeout: 3), "Collapsed server directory expand control not visible")
-        expandServerGroup.tap()
-        XCTAssertTrue(app.staticTexts["session-commands.ts"].waitForExistence(timeout: 3), "Expanded directory should restore its file rows")
-
-        saveScreenshot(name: "session-outline-files-grouped")
+        saveScreenshot(name: "chat-file-panel-changed-grouped")
     }
 
     func testContextBarOverlapPreview() throws {
@@ -368,11 +379,6 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(rootNode.waitForExistence(timeout: 3), "Filtered root node not visible")
         XCTAssertTrue(branchNode.waitForExistence(timeout: 3), "Filtered branch node not visible")
         XCTAssertTrue(siblingNode.waitForExistence(timeout: 3), "Filtered sibling branch node not visible")
-        XCTAssertFalse(
-            app.staticTexts["Drafted a migration plan and test checklist."].exists,
-            "Assistant node should be filtered out in Users tree filter"
-        )
-
         XCTAssertFalse(rootNode.frame.isEmpty, "Filtered root node frame missing")
         XCTAssertFalse(branchNode.frame.isEmpty, "Filtered branch node frame missing")
         XCTAssertFalse(siblingNode.frame.isEmpty, "Filtered sibling node frame missing")

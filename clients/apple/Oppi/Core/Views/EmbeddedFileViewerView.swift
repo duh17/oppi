@@ -32,6 +32,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var reviewCommentSessionId: String?
     var reviewCommentSourceLabel: String?
     var showsNavigationChrome = true
+    var backSwipeAction: (@MainActor @Sendable () -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -52,7 +53,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         if showsNavigationChrome {
             presentationMode = .embedded(onDismiss: { dismissAction() })
         } else {
-            presentationMode = .contentOnly
+            let backSwipeAction = backSwipeAction
+            presentationMode = .contentOnly(onBackSwipe: { backSwipeAction?() ?? dismissAction() })
         }
         return FullScreenCodeViewController(
             content: content,

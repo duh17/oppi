@@ -274,6 +274,10 @@ struct WorkspaceDetailView: View {
         return worktrees
     }
 
+    private var canSwitchWorktrees: Bool {
+        !isLoadingWorktrees && visibleWorktrees.count > 1
+    }
+
     private func worktreeMenuTitle(for worktree: WorkspaceWorktree) -> String {
         if worktree.isMain { return "Main" }
         if let branch = worktree.branch, !branch.isEmpty { return branch }
@@ -282,43 +286,54 @@ struct WorkspaceDetailView: View {
 
     @ViewBuilder
     private var worktreeTitleMenu: some View {
-        Menu {
-            Section("Worktree") {
-                ForEach(visibleWorktrees) { worktree in
-                    Button {
-                        selectWorktree(worktree)
-                    } label: {
-                        Label {
-                            Text(worktreeMenuTitle(for: worktree))
-                        } icon: {
-                            Image(systemName: selectedWorktreeId == worktree.id ? "checkmark" : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted")
+        if canSwitchWorktrees {
+            Menu {
+                Section("Worktree") {
+                    ForEach(visibleWorktrees) { worktree in
+                        Button {
+                            selectWorktree(worktree)
+                        } label: {
+                            Label {
+                                Text(worktreeMenuTitle(for: worktree))
+                            } icon: {
+                                Image(systemName: selectedWorktreeId == worktree.id ? "checkmark" : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted")
+                            }
                         }
+                        .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
                     }
-                    .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
                 }
+            } label: {
+                worktreeTitleLabel(showsChevron: true)
+                    .accessibilityLabel("Switch worktree, current worktree \(selectedWorktreeDisplayName)")
             }
-        } label: {
-            HStack(spacing: 5) {
-                VStack(spacing: 1) {
-                    Text(currentWorkspace.name)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                    Text(selectedWorktreeDisplayName)
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                }
+            .accessibilityIdentifier("workspace.worktree.menu")
+        } else {
+            worktreeTitleLabel(showsChevron: false)
+                .accessibilityLabel("Current worktree \(selectedWorktreeDisplayName)")
+                .accessibilityIdentifier("workspace.worktree.title")
+        }
+    }
+
+    private func worktreeTitleLabel(showsChevron: Bool) -> some View {
+        HStack(spacing: 5) {
+            VStack(spacing: 1) {
+                Text(currentWorkspace.name)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                Text(selectedWorktreeDisplayName)
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(1)
+            }
+            if showsChevron {
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.themeComment)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Switch worktree, current worktree \(selectedWorktreeDisplayName)")
         }
-        .disabled(isLoadingWorktrees || visibleWorktrees.count <= 1)
-        .accessibilityIdentifier("workspace.worktree.menu")
+        .accessibilityElement(children: .ignore)
     }
 
     private var viewData: ViewData {
@@ -540,9 +555,6 @@ struct WorkspaceDetailView: View {
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
         }
-        .navigationDestination(for: FileBrowserNavTarget.self) { target in
-            FileBrowserView(serverId: currentServerId, workspaceId: target.workspaceId, initialPath: target.path)
-        }
         .navigationDestination(
             item: $navigateToSessionId
         ) { sessionId in
@@ -558,10 +570,12 @@ struct WorkspaceDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 workspaceConfigurationButton
             }
-            ToolbarItemGroup(placement: .bottomBar) {
-                workspaceFilesToolbarItem
-                Spacer()
-                newSessionToolbarItem
+            if !isNavigatingDeeperInWorkspaceStack {
+                ToolbarItemGroup(placement: .bottomBar) {
+                    workspaceFilesToolbarItem
+                    Spacer()
+                    newSessionToolbarItem
+                }
             }
         }
         .refreshable {
@@ -676,24 +690,47 @@ struct WorkspaceDetailView: View {
 
     @ViewBuilder
     private var workspaceFilesToolbarItem: some View {
-        let target = FileBrowserNavTarget(workspaceId: workspace.id, path: "")
+        if let currentServerId {
+            let target = FileBrowserNavTarget(serverId: currentServerId, workspaceId: workspace.id, path: "")
 
-        switch navigation.workspaceNavigationPresentation {
-        case .stack:
-            NavigationLink(value: target) {
+            switch navigation.workspaceNavigationPresentation {
+            case .stack:
+                Button {
+                    ClientLog.info("FileBrowser", "Workspace files toolbar tapped", metadata: [
+                        "workspaceId": workspace.id,
+                        "serverId": currentServerId,
+                        "presentation": "stack",
+                        "workspacePathCount": String(navigation.workspacePath.count),
+                    ])
+                    navigation.openWorkspaceFileBrowser(target)
+                } label: {
+                    workspaceFilesToolbarLabel
+                }
+                .accessibilityIdentifier("workspace.files.open")
+                .accessibilityLabel("Open workspace files")
+            case .split:
+                Button {
+                    ClientLog.info("FileBrowser", "Workspace files toolbar tapped", metadata: [
+                        "workspaceId": workspace.id,
+                        "serverId": currentServerId,
+                        "presentation": "split",
+                        "workspacePathCount": String(navigation.workspacePath.count),
+                    ])
+                    navigation.openWorkspaceFileBrowser(
+                        target,
+                        workspace: WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+                    )
+                } label: {
+                    workspaceFilesToolbarLabel
+                }
+                .accessibilityIdentifier("workspace.files.open")
+                .accessibilityLabel("Open workspace files")
+            }
+        } else {
+            Button {} label: {
                 workspaceFilesToolbarLabel
             }
-            .accessibilityIdentifier("workspace.files.open")
-            .accessibilityLabel("Open workspace files")
-        case .split:
-            Button {
-                navigation.openWorkspaceFileBrowser(
-                    target,
-                    workspace: currentServerId.map { WorkspaceNavTarget(serverId: $0, workspace: currentWorkspace) }
-                )
-            } label: {
-                workspaceFilesToolbarLabel
-            }
+            .disabled(true)
             .accessibilityIdentifier("workspace.files.open")
             .accessibilityLabel("Open workspace files")
         }
@@ -902,14 +939,18 @@ struct WorkspaceDetailView: View {
     }
 
     private func routeToSession(_ sessionId: String) {
-        guard navigation.workspaceNavigationPresentation == .split,
-              let currentServerId else {
+        guard let currentServerId else {
             navigateToSessionId = sessionId
             return
         }
 
         navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: currentServerId, sessionId: sessionId)
+            WorkspaceSessionNavTarget(
+                serverId: currentServerId,
+                sessionId: sessionId,
+                workspaceId: currentWorkspace.id
+            ),
+            workspace: WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
         )
     }
 

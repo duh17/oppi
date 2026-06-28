@@ -45,8 +45,14 @@ struct FileBrowserContentView: View {
     /// Known file size from directory listing. Nil when opened from search results.
     var fileSize: Int?
     var chromeMode: FileBrowserContentChromeMode = .pushed
+    var navigationContext: FileBrowserNavigationContext?
+    var onNavigationSelectionChange: ((FileBrowserSelection) -> Void)?
+    var onBackNavigation: (() -> Void)?
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.dismiss) private var dismiss
+    @State private var activeSelection: FileBrowserSelection?
+    @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
     @State private var isExpensiveNetwork = false
 
@@ -58,14 +64,21 @@ struct FileBrowserContentView: View {
     /// when we know it's non-nil (since we just used it to load the file).
     @State private var loadedApiClient: APIClient?
 
+    private var currentSelection: FileBrowserSelection {
+        activeSelection ?? FileBrowserSelection(path: filePath, name: fileName, size: fileSize)
+    }
+
+    private var currentFilePath: String { currentSelection.path }
+    private var currentFileName: String { currentSelection.name }
+
     private var fileExtension: String {
-        fileName.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
+        (currentFilePath as NSString).pathExtension.lowercased()
     }
 
     /// Determine preview behavior using Oppi's canonical file-type detector.
     /// This avoids `.ts` being misclassified as MPEG transport stream video.
     private var mediaCategory: FilePreviewCategory {
-        FileType.detect(from: filePath).previewCategory
+        FileType.detect(from: currentFilePath).previewCategory
     }
 
     /// Whether the UIKit file viewer is active (text content loaded).
@@ -88,48 +101,27 @@ struct FileBrowserContentView: View {
         shouldShowEmbeddedNavigationChrome && isUsingFileViewer
     }
 
-    var body: some View {
-        Group {
-            switch content {
-            case .loading:
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .sizeWarning(let bytes):
-                fileSizeWarningView(bytes: bytes)
-            case .error(let message):
-                ContentUnavailableView(
-                    "Unable to Load",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(message)
-                )
-            case .text(let text):
-                if shouldUseEmbeddedFileViewer {
-                    EmbeddedFileViewerView(
-                        content: fullScreenContent(text: text),
-                        showsNavigationChrome: shouldShowEmbeddedNavigationChrome
-                    )
-                    .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
-                } else {
-                    inlineTextView(text)
-                }
-            case .image(let data):
-                imageView(data)
-            case .video(let source):
-                videoView(source)
-            case .audio(let source):
-                audioView(source)
-            case .pdf(let data):
-                PDFBrowserView(data: data)
-            case .binary:
-                ContentUnavailableView(
-                    "Binary File",
-                    systemImage: "doc.fill",
-                    description: Text("This file type cannot be displayed as text.")
-                )
-            }
+    private var parentOwnsBackSwipe: Bool {
+        switch content {
+        case .text:
+            return !shouldUseEmbeddedFileViewer
+        case .pdf:
+            return false
+        case .loading, .sizeWarning, .error, .image, .video, .audio, .binary:
+            return true
         }
-        .background(Color.themeBg)
-        .navigationTitle(shouldHideHostNavigationBar ? "" : fileName)
+    }
+
+    var body: some View {
+        fileContent
+            .filePushTransition(id: currentFilePath, direction: fileTransitionDirection)
+            .background(Color.themeBg)
+            .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe, navigateBackToFileList)
+            .overlay(alignment: .bottom) {
+                fileNavigatorControls
+                    .padding(.bottom, 22)
+            }
+        .navigationTitle(shouldHideHostNavigationBar ? "" : currentFileName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
@@ -141,8 +133,63 @@ struct FileBrowserContentView: View {
                 }
             }
         }
-        .task { await loadContent() }
+        .task(id: currentFilePath) { await loadContent() }
         .task { await checkNetworkCost() }
+        .onChange(of: filePath) { _, _ in
+            activeSelection = nil
+            content = .loading
+        }
+    }
+
+    @ViewBuilder
+    private var fileContent: some View {
+        switch content {
+        case .loading:
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .sizeWarning(let bytes):
+            fileSizeWarningView(bytes: bytes)
+        case .error(let message):
+            ContentUnavailableView(
+                "Unable to Load",
+                systemImage: "exclamationmark.triangle",
+                description: Text(message)
+            )
+        case .text(let text):
+            if shouldUseEmbeddedFileViewer {
+                EmbeddedFileViewerView(
+                    content: fullScreenContent(text: text),
+                    showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
+                    backSwipeAction: navigateBackToFileList
+                )
+                .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
+            } else {
+                inlineTextView(text)
+            }
+        case .image(let data):
+            imageView(data)
+        case .video(let source):
+            videoView(source)
+        case .audio(let source):
+            audioView(source)
+        case .pdf(let data):
+            PDFBrowserView(data: data, onBackSwipe: navigateBackToFileList)
+        case .binary:
+            ContentUnavailableView(
+                "Binary File",
+                systemImage: "doc.fill",
+                description: Text("This file type cannot be displayed as text.")
+            )
+        }
+    }
+
+    private var fileNavigatorControls: some View {
+        AdjacentFileNavigatorControls(
+            canGoPrevious: adjacentSelection(.previous) != nil,
+            canGoNext: adjacentSelection(.next) != nil,
+            onPrevious: { navigateToAdjacentFile(.previous) },
+            onNext: { navigateToAdjacentFile(.next) }
+        )
     }
 
     @ViewBuilder
@@ -173,7 +220,7 @@ struct FileBrowserContentView: View {
                 .font(.system(size: 48))
                 .foregroundStyle(.themeComment)
 
-            Text(fileName)
+            Text(currentFileName)
                 .font(.headline)
                 .foregroundStyle(.themeFg)
 
@@ -261,13 +308,18 @@ struct FileBrowserContentView: View {
             return
         }
 
+        let requestedSelection = currentSelection
+        let requestedPath = requestedSelection.path
+        let requestedExtension = (requestedPath as NSString).pathExtension.lowercased()
+        let requestedCategory = FileType.detect(from: requestedPath).previewCategory
+
         // Capture the API client while we know it's non-nil.
         // See loadedApiClient comment for why this is needed.
         loadedApiClient = api
 
         // For text files with known size above threshold, show a warning first.
-        if !force, mediaCategory == .text,
-           let size = fileSize, size > Self.sizeWarningThreshold
+        if !force, requestedCategory == .text,
+           let size = requestedSelection.size, size > Self.sizeWarningThreshold
         {
             content = .sizeWarning(size)
             return
@@ -276,28 +328,29 @@ struct FileBrowserContentView: View {
         content = .loading
 
         do {
-            let category = mediaCategory
-
-            switch category {
+            switch requestedCategory {
             case .video:
                 let source = try await api.makeWorkspaceMediaSource(
                     workspaceId: workspaceId,
-                    path: filePath,
-                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: fileExtension),
-                    sourceFileExtension: fileExtension
+                    path: requestedPath,
+                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: requestedExtension),
+                    sourceFileExtension: requestedExtension
                 )
+                guard isCurrentFile(requestedPath) else { return }
                 content = .video(source)
             case .audio:
                 let source = try await api.makeWorkspaceMediaSource(
                     workspaceId: workspaceId,
-                    path: filePath,
-                    contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: fileExtension),
-                    sourceFileExtension: fileExtension
+                    path: requestedPath,
+                    contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: requestedExtension),
+                    sourceFileExtension: requestedExtension
                 )
+                guard isCurrentFile(requestedPath) else { return }
                 content = .audio(source)
             case .image, .pdf, .text, .binary:
-                let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
-                switch category {
+                let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: requestedPath)
+                guard isCurrentFile(requestedPath) else { return }
+                switch requestedCategory {
                 case .image: content = .image(data)
                 case .pdf: content = .pdf(data)
                 case .binary: content = .binary
@@ -312,6 +365,7 @@ struct FileBrowserContentView: View {
                 }
             }
         } catch {
+            guard isCurrentFile(requestedPath) else { return }
             content = .error(error.localizedDescription)
         }
     }
@@ -325,12 +379,13 @@ struct FileBrowserContentView: View {
     /// re-evaluates `body` after an async state change. The captured reference is
     /// guaranteed non-nil since we used it to successfully load the file.
     private func fullScreenContent(text: String) -> FullScreenCodeContent {
+        let sourcePath = currentFilePath
         guard let api = loadedApiClient ?? apiClient else {
-            return .fromText(text, filePath: filePath)
+            return .fromText(text, filePath: sourcePath)
         }
         return .fromText(
             text,
-            filePath: filePath,
+            filePath: sourcePath,
             workspaceContext: .init(
                 workspaceID: workspaceId,
                 serverBaseURL: api.baseURL,
@@ -350,13 +405,41 @@ struct FileBrowserContentView: View {
     private func shareableContent() -> FileShareService.ShareableContent? {
         switch content {
         case .text(let text):
-            return .fromText(text, filePath: filePath)
+            return .fromText(text, filePath: currentFilePath)
         case .image(let data):
-            return .imageData(data, filename: fileName)
+            return .imageData(data, filename: currentFileName)
         case .pdf(let data):
-            return .pdfData(data, filename: fileName)
+            return .pdfData(data, filename: currentFileName)
         default:
             return nil
+        }
+    }
+
+    // MARK: - File Navigation
+
+    private func isCurrentFile(_ requestedPath: String) -> Bool {
+        !Task.isCancelled && currentFilePath == requestedPath
+    }
+
+    private func adjacentSelection(_ direction: FileBrowserNavigationDirection) -> FileBrowserSelection? {
+        navigationContext?.selection(adjacentTo: currentFilePath, direction: direction)
+    }
+
+    private func navigateToAdjacentFile(_ direction: FileBrowserNavigationDirection) {
+        guard let nextSelection = adjacentSelection(direction) else { return }
+        fileTransitionDirection = direction
+        withAnimation(.easeInOut(duration: 0.22)) {
+            activeSelection = nextSelection
+            content = .loading
+            onNavigationSelectionChange?(nextSelection)
+        }
+    }
+
+    private func navigateBackToFileList() {
+        if let onBackNavigation {
+            onBackNavigation()
+        } else {
+            dismiss()
         }
     }
 
@@ -376,15 +459,98 @@ struct FileBrowserContentView: View {
     }
 }
 
+// MARK: - File Navigation Transition
+
+private struct FilePushTransitionModifier<ID: Hashable>: ViewModifier {
+    let id: ID
+    let direction: FileBrowserNavigationDirection
+
+    func body(content: Content) -> some View {
+        let spec = FileBrowserPushTransitionSpec.spec(for: direction)
+        ZStack {
+            content
+                .id(id)
+                .transition(.asymmetric(
+                    insertion: .move(edge: spec.insertion.edge).combined(with: .opacity),
+                    removal: .move(edge: spec.removal.edge).combined(with: .opacity)
+                ))
+        }
+        .clipped()
+        .animation(.easeInOut(duration: 0.22), value: id)
+    }
+}
+
+extension View {
+    func filePushTransition<ID: Hashable>(
+        id: ID,
+        direction: FileBrowserNavigationDirection
+    ) -> some View {
+        modifier(FilePushTransitionModifier(id: id, direction: direction))
+    }
+}
+
+// MARK: - File Navigation Controls
+
+/// Explicit file-to-file controls keep horizontal swipes reserved for back.
+struct AdjacentFileNavigatorControls: View {
+    let canGoPrevious: Bool
+    let canGoNext: Bool
+    let onPrevious: () -> Void
+    let onNext: () -> Void
+
+    var body: some View {
+        if canGoPrevious || canGoNext {
+            HStack(spacing: 14) {
+                navigatorButton(
+                    systemImage: "chevron.left",
+                    accessibilityLabel: "Previous file",
+                    isEnabled: canGoPrevious,
+                    action: onPrevious
+                )
+                navigatorButton(
+                    systemImage: "chevron.right",
+                    accessibilityLabel: "Next file",
+                    isEnabled: canGoNext,
+                    action: onNext
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.themeBgDark.opacity(0.64), in: Capsule())
+            .glassEffect(.regular, in: Capsule())
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func navigatorButton(
+        systemImage: String,
+        accessibilityLabel: String,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(isEnabled ? Color.themeFg : Color.themeComment)
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 // MARK: - PDF View
 
 /// Wraps `PDFKit.PDFView` for inline PDF rendering with scroll, zoom, and text selection.
 private struct PDFBrowserView: View {
     let data: Data
+    let onBackSwipe: @MainActor @Sendable () -> Void
 
     var body: some View {
         if PDFDocument(data: data) != nil {
-            PDFKitView(data: data)
+            PDFKitView(data: data, onBackSwipe: onBackSwipe)
                 .ignoresSafeArea(edges: .bottom)
         } else {
             ContentUnavailableView(
@@ -392,6 +558,7 @@ private struct PDFBrowserView: View {
                 systemImage: "doc.badge.exclamationmark",
                 description: Text("Could not decode PDF data.")
             )
+            .horizontalBackSwipeGesture(onBackSwipe)
         }
     }
 }
@@ -399,6 +566,11 @@ private struct PDFBrowserView: View {
 /// UIKit wrapper for `PDFKit.PDFView`.
 private struct PDFKitView: UIViewRepresentable {
     let data: Data
+    let onBackSwipe: @MainActor @Sendable () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
@@ -407,10 +579,25 @@ private struct PDFKitView: UIViewRepresentable {
         view.displayDirection = .vertical
         view.backgroundColor = .clear
         view.document = PDFDocument(data: data)
+        context.coordinator.installBackSwipe(action: onBackSwipe, on: view)
         return view
     }
 
-    func updateUIView(_ view: PDFView, context: Context) {}
+    func updateUIView(_ view: PDFView, context: Context) {
+        context.coordinator.installBackSwipe(action: onBackSwipe, on: view)
+    }
+
+    @MainActor
+    final class Coordinator {
+        private let backSwipeCoordinator = HorizontalBackSwipeActionCoordinator()
+
+        func installBackSwipe(
+            action: @escaping @MainActor @Sendable () -> Void,
+            on view: UIView
+        ) {
+            backSwipeCoordinator.install(action: action, on: view)
+        }
+    }
 }
 
 // MARK: - Phase

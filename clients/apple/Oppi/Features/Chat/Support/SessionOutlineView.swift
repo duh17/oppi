@@ -20,10 +20,8 @@ struct SessionOutlineView: View {
         let label: String?
     }
 
-    let changedFiles: [String]
     let onSelect: (String) -> Void
     var onFork: ((String) -> Void)?
-    var fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil
     var onNavigateTreeNode: ((TreeNavigationRequest) async throws -> Void)? = nil
     var initialTreeSnapshot: SessionTreeSnapshot? = nil
     var loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = nil
@@ -32,7 +30,6 @@ struct SessionOutlineView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var outlineTab: OutlineTab = .outline
     @State private var outlineLayout: OutlineLayout = .timeline
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -64,11 +61,6 @@ struct SessionOutlineView: View {
 
     @State private var searchDebounceTask: Task<Void, Never>?
 
-    enum OutlineTab: String, CaseIterable {
-        case outline = "Outline"
-        case files = "Files"
-    }
-
     enum OutlineLayout: String, CaseIterable {
         case timeline = "Timeline"
         case tree = "Tree"
@@ -80,57 +72,22 @@ struct SessionOutlineView: View {
         case tools = "Tools"
     }
 
-    private var hasFiles: Bool {
-        !changedFiles.isEmpty
-    }
-
     private var hasTree: Bool {
         initialTreeSnapshot != nil || loadTree != nil || treeSnapshot != nil
     }
 
     private var searchPrompt: String {
-        switch outlineTab {
-        case .outline:
-            switch outlineLayout {
-            case .timeline:
-                return "Search session timeline…"
-            case .tree:
-                return "Search session tree…"
-            }
-        case .files:
-            return "Search files…"
+        switch outlineLayout {
+        case .timeline:
+            return "Search session timeline…"
+        case .tree:
+            return "Search session tree…"
         }
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if hasFiles {
-                    outlineTabPicker
-                }
-
-                switch outlineTab {
-                case .outline:
-                    outlinePane
-                case .files:
-                    if hasFiles {
-                        SessionFilesListView(
-                            sessionId: sessionId,
-                            workspaceId: workspaceId,
-                            changedFiles: changedFiles,
-                            searchText: debouncedSearchText,
-                            fileDetailReviewCommentScope: fileDetailReviewCommentScope
-                        )
-                    } else {
-                        ContentUnavailableView(
-                            "No Files",
-                            systemImage: "doc.text",
-                            description: Text("This session hasn't created or edited any files yet.")
-                        )
-                        .background(Color.themeBgDark)
-                    }
-                }
-            }
+            outlinePane
             .background(Color.themeBg)
             .searchable(text: $searchText, prompt: searchPrompt)
             .navigationTitle("Session Outline")
@@ -175,11 +132,6 @@ struct SessionOutlineView: View {
             }
             .onChange(of: filter) { _, _ in
                 applyFilter()
-            }
-            .onChange(of: outlineTab) { _, newTab in
-                if newTab != .outline || outlineLayout != .tree {
-                    treeNavigateErrorMessage = nil
-                }
             }
             .onChange(of: outlineLayout) { _, newLayout in
                 if newLayout != .tree {
@@ -243,21 +195,6 @@ struct SessionOutlineView: View {
                 customSummaryInstructionsSheet
             }
         }
-    }
-
-    // MARK: - Tab Picker
-
-    private var outlineTabPicker: some View {
-        let fileCount = changedFiles.count
-        return Picker("Tab", selection: $outlineTab) {
-            Text("Outline").tag(OutlineTab.outline)
-            if hasFiles {
-                Text("Files (\(fileCount))").tag(OutlineTab.files)
-            }
-        }
-        .pickerStyle(.segmented)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     // MARK: - Index Building
