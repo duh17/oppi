@@ -490,6 +490,15 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
     body.promptTemplateName = promptTemplateName;
 
+    if (body.commitSha !== undefined) {
+      const commitSha = typeof body.commitSha === "string" ? body.commitSha.trim() : "";
+      if (!commitSha) {
+        helpers.error(res, 400, "commitSha must not be empty");
+        return null;
+      }
+      body.commitSha = commitSha;
+    }
+
     return { workspace, body, selectedSession };
   }
 
@@ -527,6 +536,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         workspace: parsed.workspace,
         paths: Array.isArray(parsed.body.paths) ? parsed.body.paths : [],
         selectedSession: parsed.selectedSession,
+        commitSha: parsed.body.commitSha,
         promptTemplateName: parsed.body.promptTemplateName,
       });
       const response: WorkspaceQuickActionSelectionResponse = {
@@ -584,6 +594,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       workspace,
       paths: Array.isArray(body.paths) ? body.paths : [],
       selectedSession,
+      commitSha: body.commitSha,
       promptTemplateName: body.promptTemplateName,
     });
 

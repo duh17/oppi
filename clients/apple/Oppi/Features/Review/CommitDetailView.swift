@@ -8,9 +8,25 @@ struct CommitDetailView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(SessionStore.self) private var sessionStore
     @State private var detail: GitCommitDetail?
     @State private var error: String?
     @State private var selectedFile: GitCommitFileInfo?
+    @State private var launchActionInFlightTitle: String?
+    @State private var launchError: String?
+    @State private var navigateToQuickAction: QuickActionSessionNavDestination?
+    @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
+    @State private var isLoadingQuickActions = false
+
+    private var sortedQuickActionOptions: [WorkspaceQuickActionOption] {
+        quickActionOptions.sorted { left, right in
+            if left.sourceScope != right.sourceScope {
+                if left.sourceScope == "project" { return true }
+                if right.sourceScope == "project" { return false }
+            }
+            return left.commandName.localizedCaseInsensitiveCompare(right.commandName) == .orderedAscending
+        }
+    }
 
     var body: some View {
         Group {
@@ -33,6 +49,39 @@ struct CommitDetailView: View {
         .task(id: commit.sha) {
             await loadDetail()
         }
+        .task(id: workspaceId) {
+            await loadQuickActionsIfNeeded()
+        }
+        .navigationDestination(item: $navigateToQuickAction) { dest in
+            ChatView(
+                sessionId: dest.id,
+                workspaceIdHint: workspaceId,
+                initialInputText: dest.inputText,
+                initialPendingFiles: dest.filePaths.map {
+                    PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)
+                }
+            )
+        }
+        .overlay {
+            if let launchActionInFlightTitle {
+                ProgressView(launchActionInFlightTitle)
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                quickActionMenu
+            }
+        }
+        .alert(
+            "Unable to start quick action",
+            isPresented: launchErrorPresented
+        ) {
+            Button("OK", role: .cancel) { launchError = nil }
+        } message: {
+            Text(launchError ?? "")
+        }
         .sheet(item: $selectedFile) { file in
             NavigationStack {
                 CommitFileDiffView(workspaceId: workspaceId, sha: commit.sha, file: file)
@@ -49,6 +98,43 @@ struct CommitDetailView: View {
                     }
             }
         }
+    }
+
+    private var launchErrorPresented: Binding<Bool> {
+        Binding(
+            get: { launchError != nil },
+            set: { isPresented in
+                if !isPresented { launchError = nil }
+            }
+        )
+    }
+
+    private var quickActionMenu: some View {
+        Menu {
+            Section("Prompt Templates") {
+                if isLoadingQuickActions && quickActionOptions.isEmpty {
+                    Button("Loading templates…") {}
+                        .disabled(true)
+                } else if sortedQuickActionOptions.isEmpty {
+                    Button("No prompt templates") {}
+                        .disabled(true)
+                } else {
+                    ForEach(sortedQuickActionOptions) { option in
+                        Button {
+                            Task {
+                                await createQuickActionSession(option: option)
+                            }
+                        } label: {
+                            Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .disabled(launchActionInFlightTitle != nil || (detail?.files.isEmpty ?? true))
+        .accessibilityLabel("Prompt templates")
     }
 
     // MARK: - Loaded Content
@@ -215,6 +301,61 @@ struct CommitDetailView: View {
             detail = try await api.getCommitDetail(workspaceId: workspaceId, sha: commit.sha)
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func loadQuickActionsIfNeeded() async {
+        guard !workspaceId.isEmpty else { return }
+        guard !isLoadingQuickActions else { return }
+        guard let api = apiClient else { return }
+
+        isLoadingQuickActions = true
+        defer { isLoadingQuickActions = false }
+
+        do {
+            quickActionOptions = try await api.getWorkspaceQuickActions(workspaceId: workspaceId).actions
+        } catch {
+            quickActionOptions = []
+        }
+    }
+
+    private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
+        guard launchActionInFlightTitle == nil else { return }
+        guard !workspaceId.isEmpty else {
+            launchError = "Workspace is unavailable."
+            return
+        }
+        guard let detail else { return }
+        let paths = detail.files.map(\.path)
+        guard !paths.isEmpty else {
+            launchError = "Commit has no changed files."
+            return
+        }
+        guard let api = apiClient else {
+            launchError = "Server is offline."
+            return
+        }
+
+        launchActionInFlightTitle = option.progressTitle
+        defer { launchActionInFlightTitle = nil }
+
+        do {
+            let response = try await api.createWorkspaceQuickActionSession(
+                workspaceId: workspaceId,
+                paths: paths,
+                commitSha: detail.sha,
+                promptTemplateName: option.promptTemplateName
+            )
+            sessionStore.upsert(response.session)
+            launchError = nil
+            navigateToQuickAction = QuickActionSessionNavDestination(
+                id: response.session.id,
+                inputText: response.visiblePrompt,
+                filePaths: response.filePaths,
+                fileDisplayPrefix: option.title
+            )
+        } catch {
+            launchError = error.localizedDescription
         }
     }
 

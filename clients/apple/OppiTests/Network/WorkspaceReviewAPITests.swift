@@ -172,6 +172,55 @@ struct WorkspaceReviewAPITests {
         #expect(response.filePaths == ["Sources/App.swift", "README.md"])
     }
 
+    @Test func createWorkspaceQuickActionSessionCanTargetCommit() async throws {
+        let client = makeClient()
+        defer { WorkspaceReviewMockURLProtocol.handler = nil }
+
+        WorkspaceReviewMockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/workspaces/w1/quick-actions/session")
+
+            let body = self.requestBodyData(request)
+            let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            #expect(json?["commitSha"] as? String == "9b82f812")
+            #expect(json?["promptTemplateName"] as? String == "review")
+            #expect(json?["paths"] as? [String] == ["server/src/routes/workspaces.ts"])
+
+            return self.mockResponse(json: """
+            {
+              "promptTemplateName": "review",
+              "selectedPathCount": 1,
+              "session": {
+                "id": "s-new",
+                "workspaceId": "w1",
+                "workspaceName": "Workspace",
+                "name": "Review: 9b82f812",
+                "status": "ready",
+                "createdAt": 1,
+                "lastActivity": 1,
+                "messageCount": 0,
+                "tokens": { "input": 0, "output": 0 },
+                "cost": 0
+              },
+              "visiblePrompt": "Review this commit.",
+              "filePaths": ["server/src/routes/workspaces.ts"]
+            }
+            """)
+        }
+
+        let response = try await client.createWorkspaceQuickActionSession(
+            workspaceId: "w1",
+            paths: ["server/src/routes/workspaces.ts"],
+            commitSha: "9b82f812",
+            promptTemplateName: "review"
+        )
+        #expect(response.promptTemplateName == "review")
+        #expect(response.selectedPathCount == 1)
+        #expect(response.session.id == "s-new")
+        #expect(response.visiblePrompt == "Review this commit.")
+        #expect(response.filePaths == ["server/src/routes/workspaces.ts"])
+    }
+
     private func requestBodyData(_ request: URLRequest) -> Data {
         if let body = request.httpBody {
             return body
