@@ -50,7 +50,15 @@ describe("mirror widget snapshots", () => {
       render: (width: number) => ["\u001b[32m●\u001b[0m Agents", `  running width=${width}`, ""],
     });
 
-    expect(lines).toEqual(["● Agents", "  running width=88"]);
+    expect(lines).toEqual(["\u001b[32m●\u001b[0m Agents", "  running width=88"]);
+  });
+
+  it("strips terminal control sequences while preserving SGR color", () => {
+    const lines = snapshotMirrorWidgetLines({
+      render: () => ["\u001b]0;title\u0007\u001b[1;32mReady   \u001b[0m\u001b[2K"],
+    });
+
+    expect(lines).toEqual(["\u001b[1;32mReady\u001b[0m"]);
   });
 
   it("limits long widget snapshots", () => {

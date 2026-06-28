@@ -568,8 +568,15 @@ function nativeTerminalFallbackSurfaceFromWidgetLines(
   if (!widgetKey || !rawWidgetLines || !sanitizedWidgetLines) return undefined;
 
   const parsedLines = rawWidgetLines.map((line) => terminalLineToTextSpans(line));
-  const hasLink = parsedLines.some((line) => line.some((span) => Boolean(span.link)));
-  if (!hasLink) return undefined;
+  const hasNativeTerminalAttributes = parsedLines.some((line) =>
+    line.some(
+      (span) =>
+        Boolean(span.link) ||
+        Boolean(span.role) ||
+        (Array.isArray(span.traits) && span.traits.length > 0),
+    ),
+  );
+  if (!hasNativeTerminalAttributes) return undefined;
 
   const fallbackLines = sanitizedWidgetLines.filter(
     (line) => line.trim().length > 0 || line.length > 0,

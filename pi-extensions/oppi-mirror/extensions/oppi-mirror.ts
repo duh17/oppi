@@ -1687,12 +1687,30 @@ const MIRROR_WIDGET_SNAPSHOT_WIDTH = 88;
 const MIRROR_WIDGET_SNAPSHOT_MAX_LINES = 12;
 const MIRROR_WIDGET_NATIVE_SURFACE_MAX_BYTES = 64 * 1024;
 
+const MIRROR_NON_SGR_ESCAPE_RE =
+  // eslint-disable-next-line no-control-regex
+  /\x1b\[[?>=!][\d;]*[A-Za-z]|\x1b\[[\d;]*[A-Za-ln-z]|\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)|\x1b[()#][A-Z0-9]|\x1b[\x20-\x2f][\x40-\x5f]|\x1b[=>NMcDEHZ78]|\x9b[\d;]*[A-Za-z]/g;
+
+const MIRROR_ANSI_ESCAPE_RE =
+  // eslint-disable-next-line no-control-regex
+  /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
 function stripAnsiCodes(input: string): string {
-  return input.replace(
-    // eslint-disable-next-line no-control-regex
-    /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
-    "",
-  );
+  return input.replace(MIRROR_ANSI_ESCAPE_RE, "");
+}
+
+function stripNonSgrAnsiCodes(input: string): string {
+  if (!input.includes("\x1b") && !input.includes("\x9b")) return input;
+  return input.replace(MIRROR_NON_SGR_ESCAPE_RE, "");
+}
+
+function trimAnsiLineEnd(input: string): string {
+  let current = input;
+  for (;;) {
+    const next = current.replace(/[ \t\r\n]+((?:\x1b\[[\d;]*m)*)$/g, "$1");
+    if (next === current) return current;
+    current = next;
+  }
 }
 
 function isMirrorWidgetComponent(
@@ -1718,8 +1736,8 @@ export function snapshotMirrorWidgetLines(component: unknown): string[] {
   }
 
   const safeLines = lines
-    .map((line) => stripAnsiCodes(String(line)).trimEnd())
-    .filter((line) => line.length > 0);
+    .map((line) => trimAnsiLineEnd(stripNonSgrAnsiCodes(String(line))))
+    .filter((line) => stripAnsiCodes(line).length > 0);
   const limited = safeLines.slice(0, MIRROR_WIDGET_SNAPSHOT_MAX_LINES);
   if (safeLines.length > MIRROR_WIDGET_SNAPSHOT_MAX_LINES) {
     limited.push(

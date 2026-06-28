@@ -468,12 +468,36 @@ describe("extension UI contract", () => {
     });
   });
 
-  it("sanitizes non-link terminal control sequences without replacing ordinary widgets", () => {
+  it("promotes styled ANSI widget lines into a generic native terminal surface", () => {
     const message = buildExtensionUINotificationMessage({
       id: "widget-ansi-1",
       method: "setWidget",
       widgetKey: "plain",
       widgetLines: ["\x1b]0;window\x07\x1b[1;32mReady\x1b[0m"],
+    });
+
+    expect(message.widgetLines).toEqual(["Ready"]);
+    expect(message.nativeSurface).toMatchObject({
+      version: 1,
+      id: "widget:plain",
+      source: "widget",
+      blocks: [
+        {
+          type: "terminal",
+          id: "terminal-fallback",
+          lines: [[{ text: "Ready", role: "success", traits: ["bold"] }]],
+        },
+      ],
+      fallback: { lines: ["Ready"] },
+    });
+  });
+
+  it("sanitizes non-SGR terminal control sequences without replacing ordinary widgets", () => {
+    const message = buildExtensionUINotificationMessage({
+      id: "widget-control-1",
+      method: "setWidget",
+      widgetKey: "plain",
+      widgetLines: ["\x1b]0;window\x07Ready\x1b[2K"],
     });
 
     expect(message.widgetLines).toEqual(["Ready"]);
