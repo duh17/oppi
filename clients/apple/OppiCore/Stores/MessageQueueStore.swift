@@ -1,8 +1,34 @@
 import Foundation
 
+struct MessageQueueStoreMetricEvent: Equatable, Sendable {
+    enum Name: String, Equatable, Sendable {
+        case staleDrop
+        case startMiss
+    }
+
+    let name: Name
+    let sessionId: String
+    let tags: [String: String]
+}
+
+struct MessageQueueStoreTelemetry: Sendable {
+    let record: @Sendable (MessageQueueStoreMetricEvent) -> Void
+
+    init(record: @escaping @Sendable (MessageQueueStoreMetricEvent) -> Void = { _ in }) {
+        self.record = record
+    }
+
+    static let none = MessageQueueStoreTelemetry()
+}
+
 @MainActor @Observable
 final class MessageQueueStore {
+    private let telemetry: MessageQueueStoreTelemetry
     private(set) var queuesBySessionId: [String: MessageQueueState] = [:]
+
+    init(telemetry: MessageQueueStoreTelemetry = .none) {
+        self.telemetry = telemetry
+    }
 
     func queue(for sessionId: String?) -> MessageQueueState {
         guard let sessionId else { return .empty }
@@ -12,7 +38,7 @@ final class MessageQueueStore {
     func apply(_ state: MessageQueueState, for sessionId: String) {
         if let current = queuesBySessionId[sessionId], state.version < current.version {
             recordQueueEventMetric(
-                .messageQueueStaleDrop,
+                .staleDrop,
                 sessionId: sessionId,
                 tags: [
                     "source": "queue_state",
@@ -89,7 +115,7 @@ final class MessageQueueStore {
         var state = queuesBySessionId[sessionId] ?? .empty
         guard queueVersion >= state.version else {
             recordQueueEventMetric(
-                .messageQueueStaleDrop,
+                .staleDrop,
                 sessionId: sessionId,
                 tags: [
                     "source": "queue_item_started",
@@ -110,7 +136,7 @@ final class MessageQueueStore {
 
         if !removed {
             recordQueueEventMetric(
-                .messageQueueStartMiss,
+                .startMiss,
                 sessionId: sessionId,
                 tags: [
                     "kind": kind.rawValue,
@@ -124,22 +150,15 @@ final class MessageQueueStore {
     }
 
     private func recordQueueEventMetric(
-        _ metric: ChatMetricName,
+        _ name: MessageQueueStoreMetricEvent.Name,
         sessionId: String,
         tags: [String: String]
     ) {
-        let session = sessionId
-        let metricTags = tags
-
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: metric,
-                value: 1,
-                unit: .count,
-                sessionId: session,
-                tags: metricTags
-            )
-        }
+        telemetry.record(MessageQueueStoreMetricEvent(
+            name: name,
+            sessionId: sessionId,
+            tags: tags
+        ))
     }
 
     @discardableResult

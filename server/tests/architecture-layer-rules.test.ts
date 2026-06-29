@@ -63,11 +63,11 @@ describe("architecture layer rule helpers", () => {
 
     try {
       write(
-        join(repoRoot, "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift"),
+        join(repoRoot, "clients/apple/OppiCore/Runtime/TimelineReducer.swift"),
         "import UIKit\n",
       );
       write(
-        join(repoRoot, "clients/apple/Oppi/Core/Runtime/DeltaCoalescer.swift"),
+        join(repoRoot, "clients/apple/OppiCore/Runtime/DeltaCoalescer.swift"),
         "import Foundation\n",
       );
 
@@ -85,7 +85,23 @@ describe("architecture layer rule helpers", () => {
         "import Foundation\n",
       );
       write(
-        join(repoRoot, "clients/apple/Oppi/Core/Services/MessageQueueStore.swift"),
+        join(repoRoot, "clients/apple/OppiCore/Stores/AskRequestStore.swift"),
+        "import Foundation\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/OppiCore/Stores/MessageQueueStore.swift"),
+        "import Foundation\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/OppiCore/Stores/ReviewCommentStore.swift"),
+        "import Foundation\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/OppiCore/Stores/FileIndexStore.swift"),
+        "import Foundation\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/OppiCore/Stores/GitStatusStore.swift"),
         "import Foundation\n",
       );
 
@@ -95,7 +111,7 @@ describe("architecture layer rule helpers", () => {
         expect.arrayContaining([
           expect.objectContaining({
             rule: "runtime-no-uikit",
-            file: "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift",
+            file: "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
           }),
           expect.objectContaining({
             rule: "view-layer-network-boundary",
@@ -108,6 +124,42 @@ describe("architecture layer rule helpers", () => {
         (violation) => violation.rule === "store-isolation",
       );
       expect(storeIsolationViolations).toHaveLength(0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("flags platform imports in non-adapter shared Apple core files", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-apple-core-"));
+
+    try {
+      write(
+        join(repoRoot, "clients/apple/OppiCore/Models/BadDTO.swift"),
+        ["import Foundation", "import SwiftUI", "struct BadDTO {}"].join("\n"),
+      );
+      write(
+        join(repoRoot, "clients/apple/OppiCore/PlatformAdapters/MacImageAdapter.swift"),
+        ["import AppKit", "struct MacImageAdapter {}"].join("\n"),
+      );
+
+      const violations = findIosLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "apple-shared-core-platform-import",
+            file: "clients/apple/OppiCore/Models/BadDTO.swift",
+          }),
+        ]),
+      );
+      expect(violations).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "apple-shared-core-platform-import",
+            file: "clients/apple/OppiCore/PlatformAdapters/MacImageAdapter.swift",
+          }),
+        ]),
+      );
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

@@ -375,4 +375,82 @@ struct DeltaCoalescerTests {
         coalescer.receive(.agentStart(sessionId: "s1"))
         coalescer.flushNow()
     }
+
+    // MARK: - Telemetry
+
+    @Test func telemetrySinkReceivesFlushWindowWhenDrainHasSignal() async {
+        let recorder = DeltaCoalescerTelemetryRecorder()
+        let coalescer = DeltaCoalescer(telemetry: .init(
+            recordFlushWindow: { window in
+                await recorder.record(window)
+            }
+        ))
+        coalescer.sessionId = "s1"
+
+        coalescer.receive(.textDelta(sessionId: "s1", delta: String(repeating: "x", count: 70 * 1024)))
+        coalescer.flushNow()
+
+        let didRecord = await waitForTestCondition(timeout: .milliseconds(500), poll: .milliseconds(10)) {
+            await recorder.flushWindowCount() == 1
+        }
+        #expect(didRecord)
+
+        let window = await recorder.firstFlushWindow()
+        #expect(window?.sessionId == "s1")
+        #expect(window?.eventCount == 1)
+        #expect(window?.byteCount == 70 * 1024)
+        #expect(window?.flushCount == 1)
+    }
+
+    @Test func telemetrySinkReceivesOversizedTimelinePayload() async {
+        let recorder = DeltaCoalescerTelemetryRecorder()
+        let coalescer = DeltaCoalescer(telemetry: .init(
+            recordLargeTimelinePayload: { payload in
+                Task { await recorder.record(payload) }
+            }
+        ))
+
+        let oversized = String(repeating: "z", count: DeltaCoalescer.maxBufferedBytesForTesting + 1)
+        coalescer.receive(.textDelta(sessionId: "s1", delta: oversized))
+
+        let didRecord = await waitForTestCondition(timeout: .milliseconds(500), poll: .milliseconds(10)) {
+            await recorder.largePayloadCount() == 1
+        }
+        #expect(didRecord)
+
+        let payload = await recorder.firstLargePayload()
+        #expect(payload?.sessionId == "s1")
+        #expect(payload?.eventCount == 1)
+        #expect(payload?.byteCount == oversized.utf8.count)
+        #expect(payload?.largestEventByteCount == oversized.utf8.count)
+    }
+}
+
+private actor DeltaCoalescerTelemetryRecorder {
+    private var flushWindows: [DeltaCoalescerFlushWindow] = []
+    private var largePayloads: [DeltaCoalescerLargeTimelinePayload] = []
+
+    func record(_ window: DeltaCoalescerFlushWindow) {
+        flushWindows.append(window)
+    }
+
+    func record(_ payload: DeltaCoalescerLargeTimelinePayload) {
+        largePayloads.append(payload)
+    }
+
+    func flushWindowCount() -> Int {
+        flushWindows.count
+    }
+
+    func firstFlushWindow() -> DeltaCoalescerFlushWindow? {
+        flushWindows.first
+    }
+
+    func largePayloadCount() -> Int {
+        largePayloads.count
+    }
+
+    func firstLargePayload() -> DeltaCoalescerLargeTimelinePayload? {
+        largePayloads.first
+    }
 }

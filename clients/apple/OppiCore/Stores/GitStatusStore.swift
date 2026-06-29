@@ -1,7 +1,18 @@
 import Foundation
-import OSLog
 
-private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "GitStatusStore")
+protocol WorkspaceGitStatusFetching: Sendable {
+    func getGitStatus(workspaceId: String, worktreeId: String?) async throws -> GitStatus
+}
+
+struct GitStatusStoreEnvironment: Sendable {
+    let logWarning: @Sendable (_ message: String) -> Void
+
+    init(logWarning: @escaping @Sendable (_ message: String) -> Void = { _ in }) {
+        self.logWarning = logWarning
+    }
+
+    static let none = GitStatusStoreEnvironment()
+}
 
 /// Receives git status updates pushed over WebSocket after file-mutating tool calls.
 ///
@@ -10,6 +21,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "GitS
 /// on-demand refresh via the REST endpoint (e.g. on initial load).
 @MainActor @Observable
 final class GitStatusStore {
+    private let environment: GitStatusStoreEnvironment
 
     // MARK: - Public state
 
@@ -24,6 +36,10 @@ final class GitStatusStore {
     private(set) var worktreeId: String?
 
     private var invalidationRefreshTask: Task<Void, Never>?
+
+    init(environment: GitStatusStoreEnvironment = .none) {
+        self.environment = environment
+    }
 
     // MARK: - Handle push from WebSocket
 
@@ -50,7 +66,7 @@ final class GitStatusStore {
     func invalidate(
         workspaceId: String,
         worktreeId: String? = nil,
-        apiClient: APIClient? = nil,
+        apiClient: (any WorkspaceGitStatusFetching)? = nil,
         gitStatusEnabled: Bool = true,
         debounce: Duration = .seconds(2)
     ) {
@@ -89,7 +105,7 @@ final class GitStatusStore {
                 guard let self,
                       self.workspaceId == workspaceId,
                       (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId) else { return }
-                logger.warning("Debounced git status refresh failed: \(error.localizedDescription)")
+                self.environment.logWarning("Debounced git status refresh failed: \(error.localizedDescription)")
                 self.isLoading = false
                 self.invalidationRefreshTask = nil
             }
@@ -103,7 +119,7 @@ final class GitStatusStore {
     func loadInitial(
         workspaceId: String,
         worktreeId: String? = nil,
-        apiClient: APIClient,
+        apiClient: any WorkspaceGitStatusFetching,
         gitStatusEnabled: Bool = true
     ) {
         invalidationRefreshTask?.cancel()
@@ -139,7 +155,7 @@ final class GitStatusStore {
             } catch is CancellationError {
                 // Expected
             } catch {
-                logger.warning("Initial git status fetch failed: \(error.localizedDescription)")
+                self?.environment.logWarning("Initial git status fetch failed: \(error.localizedDescription)")
             }
             self?.isLoading = false
         }

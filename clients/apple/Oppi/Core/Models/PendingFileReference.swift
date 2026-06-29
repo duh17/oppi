@@ -194,7 +194,7 @@ enum UserMessageAttachmentPresentation {
     }
 
     static func comparableText(_ rawText: String) -> String {
-        parse(rawText: rawText).visibleText
+        UserMessageTextProjection.comparableText(rawText)
     }
 
     static func makeTimelineText(

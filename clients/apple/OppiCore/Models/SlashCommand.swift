@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// Slash command metadata returned by pi RPC `get_commands`.
 struct SlashCommand: Identifiable, Sendable, Equatable {
@@ -36,14 +35,6 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
             }
         }
 
-        var iconColor: Color {
-            switch self {
-            case .builtin: return .themeBlue
-            case .extension: return .themePurple
-            case .prompt: return .themeGreen
-            case .skill: return .themeYellow
-            }
-        }
     }
 
     let name: String
