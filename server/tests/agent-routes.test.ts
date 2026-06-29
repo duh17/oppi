@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
+import { RouteHandler } from "../src/routes/index.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { Session } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
@@ -27,6 +28,47 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe("agent routes", () => {
+  it("mounts saved Agent routes in the main route handler", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-mounted-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+        },
+      } as unknown as RouteContext;
+      const routes = new RouteHandler(ctx);
+
+      const listRes = makeResponse();
+      await routes.dispatch(
+        "GET",
+        "/agents",
+        new URL("http://localhost/agents"),
+        {} as never,
+        listRes as never,
+      );
+      expect(listRes.statusCode).toBe(200);
+      expect(JSON.parse(listRes.body).agents).toEqual([
+        expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" }),
+      ]);
+
+      const launchRes = makeResponse();
+      await routes.dispatch(
+        "POST",
+        `/agents/${agent.id}/sessions`,
+        new URL(`http://localhost/agents/${agent.id}/sessions`),
+        makeRequest({}) as never,
+        launchRes as never,
+      );
+      expect(launchRes.statusCode).toBe(400);
+      expect(JSON.parse(launchRes.body)).toEqual({ error: "prompt.text required" });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates, lists, gets, updates, and archives durable Agent definitions", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-routes-"));
     try {

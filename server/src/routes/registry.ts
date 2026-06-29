@@ -599,6 +599,49 @@ const rawApiRouteSpecs = [
 
   {
     method: "GET",
+    path: "/agents",
+    operationId: "listAgents",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/agents",
+    operationId: "createAgent",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/agents/{agentId}",
+    operationId: "getAgent",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "PATCH",
+    path: "/agents/{agentId}",
+    operationId: "updateAgent",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "DELETE",
+    path: "/agents/{agentId}",
+    operationId: "archiveAgent",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/agents/{agentId}/sessions",
+    operationId: "createAgentSession",
+    surface: "core",
+    auth: "owner",
+  },
+
+  {
+    method: "GET",
     path: "/schedules",
     operationId: "listAgentSchedules",
     surface: "core",
