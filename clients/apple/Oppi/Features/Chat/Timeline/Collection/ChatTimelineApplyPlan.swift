@@ -9,6 +9,7 @@ struct ChatTimelineApplyPlan {
     static func build(
         items: [ChatItem],
         hiddenCount: Int,
+        hasOlderServerPage: Bool = false,
         isBusy: Bool,
         showsWorkingIndicator: Bool? = nil,
         streamingAssistantID _: String?
@@ -16,7 +17,10 @@ struct ChatTimelineApplyPlan {
         var nextIDs: [String] = []
         nextIDs.reserveCapacity(items.count + 2)
 
-        if hiddenCount > 0 {
+        if TimelineRenderWindowPolicy.showsShowEarlierControl(
+            hiddenCount: hiddenCount,
+            hasOlderServerPage: hasOlderServerPage
+        ) {
             nextIDs.append(ChatTimelineCollectionHost.loadMoreID)
         }
 

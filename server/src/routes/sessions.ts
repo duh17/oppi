@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { performance } from "node:perf_hooks";
+import { gzipSync } from "node:zlib";
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
 import { SessionListService, type SessionStatusFilter } from "../session-list-service.js";
 import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
@@ -761,6 +763,85 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.compressedJson(req, res, result);
   }
 
+  function positiveIntegerParam(url: URL, name: string): { value?: number; error?: string } {
+    const raw = url.searchParams.get(name)?.trim();
+    if (!raw) return {};
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isFinite(value) || value < 1) {
+      return { error: `${name} must be a positive integer` };
+    }
+    return { value };
+  }
+
+  function attachTracePageResponseMetrics<T extends { metrics: object }>(
+    result: T,
+  ): T & { metrics: T["metrics"] & Record<string, number> } {
+    const stringifyStart = performance.now();
+    const json = JSON.stringify(result);
+    const stringifyMs = Math.round((performance.now() - stringifyStart) * 100) / 100;
+    const gzipStart = performance.now();
+    const gzipped = gzipSync(json, { level: 1 });
+    const gzipMs = Math.round((performance.now() - gzipStart) * 100) / 100;
+    return {
+      ...result,
+      metrics: {
+        ...result.metrics,
+        jsonBytes: Buffer.byteLength(json),
+        stringifyMs,
+        gzipBytes: gzipped.byteLength,
+        gzipMs,
+      },
+    };
+  }
+
+  async function handleGetSessionTracePage(
+    req: IncomingMessage,
+    workspaceId: string,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!session) return;
+
+    const targetEvents = positiveIntegerParam(url, "targetEvents");
+    if (targetEvents.error) {
+      helpers.error(res, 400, targetEvents.error);
+      return;
+    }
+    const previewBytes = positiveIntegerParam(url, "previewBytes");
+    if (previewBytes.error) {
+      helpers.error(res, 400, previewBytes.error);
+      return;
+    }
+
+    const result = await traceService.getSessionTracePage({
+      session,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+      aroundEntryId: url.searchParams.get("aroundEntryId") ?? undefined,
+      targetEvents: targetEvents.value,
+      previewBytes: previewBytes.value,
+    });
+    if (!result) {
+      helpers.error(res, 404, "Session trace not found");
+      return;
+    }
+    helpers.compressedJson(req, res, attachTracePageResponseMetrics(result));
+  }
+
+  async function handleGetSessionTraceOutline(
+    req: IncomingMessage,
+    workspaceId: string,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!session) return;
+
+    const result = await traceService.getSessionTraceOutline({ session });
+    helpers.compressedJson(req, res, attachTracePageResponseMetrics(result));
+  }
+
   function handleGenericSessionCollection(url: URL, res: ServerResponse): void {
     const byId = new Map<string, Session>();
     for (const session of ctx.storage.listSessions()) {
@@ -1153,6 +1234,33 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionEventsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/);
     if (wsSessionEventsMatch && method === "GET") {
       handleGetSessionEvents(wsSessionEventsMatch[1], wsSessionEventsMatch[2], url, res);
+      return true;
+    }
+
+    const wsSessionTracePageMatch = path.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/trace-page$/,
+    );
+    if (wsSessionTracePageMatch && method === "GET") {
+      await handleGetSessionTracePage(
+        req,
+        wsSessionTracePageMatch[1],
+        wsSessionTracePageMatch[2],
+        url,
+        res,
+      );
+      return true;
+    }
+
+    const wsSessionTraceOutlineMatch = path.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/trace-outline$/,
+    );
+    if (wsSessionTraceOutlineMatch && method === "GET") {
+      await handleGetSessionTraceOutline(
+        req,
+        wsSessionTraceOutlineMatch[1],
+        wsSessionTraceOutlineMatch[2],
+        res,
+      );
       return true;
     }
 

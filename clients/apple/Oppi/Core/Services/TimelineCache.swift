@@ -10,6 +10,11 @@ struct CachedTrace: Codable, Sendable {
     let lastEventId: String?
     let savedAt: Date
     let events: [TraceEvent]
+    let page: TracePageMetadata?
+
+    var isPartial: Bool {
+        page?.hasOlder == true
+    }
 }
 
 /// Aggregate cache telemetry for diagnostics.
@@ -110,12 +115,13 @@ actor TimelineCache {
         }
     }
 
-    func saveTrace(_ sessionId: String, events: [TraceEvent]) {
+    func saveTrace(_ sessionId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
         do {
             let url = traceURL(sessionId)
             if let existingData = try? Data(contentsOf: url),
                let existing = try? decoder.decode(CachedTrace.self, from: existingData),
-               existing.events == events {
+               existing.events == events,
+               existing.page == page {
                 logger.debug("Cache unchanged: trace for \(sessionId) (\(events.count) events, \(existingData.count) bytes)")
                 return
             }
@@ -125,7 +131,8 @@ actor TimelineCache {
                 eventCount: events.count,
                 lastEventId: events.last?.id,
                 savedAt: Date(),
-                events: events
+                events: events,
+                page: page
             )
             let data = try encoder.encode(cached)
 

@@ -13,6 +13,18 @@ actor APIClient: ClientLogUploading {
         case full
     }
 
+    struct SessionTracePageResponse: Decodable, Sendable {
+        let session: Session
+        let trace: [TraceEvent]
+        let page: TracePageMetadata
+        let metrics: TracePageMetrics
+    }
+
+    struct SessionTraceOutlineResponse: Decodable, Sendable {
+        let session: Session
+        let outline: SessionOutlineSnapshot
+    }
+
     let baseURL: URL
     let token: String
     private let tlsCertFingerprint: String?
@@ -232,6 +244,44 @@ actor APIClient: ClientLogUploading {
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.session, response.trace)
+    }
+
+    /// Get a paged workspace session trace for timeline history.
+    func getWorkspaceSessionTracePage(
+        workspaceId: String,
+        sessionId: String,
+        cursor: String? = nil,
+        aroundEntryId: String? = nil,
+        targetEvents: Int? = nil,
+        previewBytes: Int? = nil
+    ) async throws -> SessionTracePageResponse {
+        var items: [URLQueryItem] = []
+        if let cursor {
+            items.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        if let aroundEntryId {
+            items.append(URLQueryItem(name: "aroundEntryId", value: aroundEntryId))
+        }
+        if let previewBytes {
+            items.append(URLQueryItem(name: "previewBytes", value: String(previewBytes)))
+        }
+        if let targetEvents {
+            items.append(URLQueryItem(name: "targetEvents", value: String(targetEvents)))
+        }
+        var components = URLComponents()
+        components.queryItems = items.isEmpty ? nil : items
+        let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-page\(query)")
+        return try JSONDecoder().decode(SessionTracePageResponse.self, from: data)
+    }
+
+    /// Get a lightweight workspace session outline without full trace payloads.
+    func getWorkspaceSessionTraceOutline(
+        workspaceId: String,
+        sessionId: String
+    ) async throws -> SessionTraceOutlineResponse {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-outline")
+        return try JSONDecoder().decode(SessionTraceOutlineResponse.self, from: data)
     }
 
     /// Stop a running workspace session.

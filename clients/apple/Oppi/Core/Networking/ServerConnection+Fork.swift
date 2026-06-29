@@ -85,6 +85,16 @@ extension ServerConnection {
         try await sender.getSessionTree(filterMode: filterMode)
     }
 
+    func getSessionTraceOutline(workspaceId: String, sessionId: String) async throws -> SessionOutlineSnapshot {
+        guard let apiClient else {
+            throw CommandRequestError.rejected(command: "trace_outline", reason: "API client unavailable")
+        }
+        return try await apiClient.getWorkspaceSessionTraceOutline(
+            workspaceId: workspaceId,
+            sessionId: sessionId
+        ).outline
+    }
+
     func navigateTree(
         targetId: String,
         summarize: Bool,

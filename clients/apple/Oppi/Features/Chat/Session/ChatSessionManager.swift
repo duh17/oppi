@@ -85,6 +85,13 @@ final class ChatSessionManager {
     private(set) var isSyncing = false
     private(set) var lastSyncFailed = false
 
+    private(set) var tracePage: TracePageMetadata?
+    private(set) var isLoadingOlderTracePage = false
+
+    var hasOlderTracePage: Bool {
+        reducer.canPrependTracePage && tracePage?.hasOlder == true && tracePage?.olderCursor != nil
+    }
+
     /// Test seam: inject a scripted bare message stream to exercise lifecycle
     /// races without opening a real WebSocket. Production streams use
     /// `SessionStreamEvent` so metadata travels in-band.
@@ -136,6 +143,8 @@ final class ChatSessionManager {
     }
 
     private static let snapshotFlushMinInterval: TimeInterval = 10
+    private static let tracePageTargetEvents = 180
+    private static let tracePagePreviewBytes = 4096
 
     private static func firstMessageFallbackTraceEvent(for session: Session) -> TraceEvent? {
         guard let firstMessage = session.firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -441,8 +450,10 @@ final class ChatSessionManager {
 
         let signature: TraceSignature?
         if let cached {
+            tracePage = cached.page
             signature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
         } else {
+            tracePage = nil
             signature = nil
         }
 
@@ -763,8 +774,10 @@ final class ChatSessionManager {
         defer { snapshotFlushInFlight = false }
 
         let trace: [TraceEvent]?
+        let page: TracePageMetadata?
         if let fetchHook = _fetchTraceSnapshotForTesting {
             trace = await fetchHook()
+            page = tracePage
         } else if let api = connection.apiClient {
             guard let workspaceId = resolveWorkspaceId(from: connection.sessionStore) else {
                 log.debug("Snapshot flush skipped for \(self.sessionId): missing workspaceId")
@@ -772,12 +785,14 @@ final class ChatSessionManager {
             }
 
             do {
-                let (_, fetchedTrace) = try await api.getWorkspaceSession(
+                let response = try await api.getWorkspaceSessionTracePage(
                     workspaceId: workspaceId,
                     sessionId: sessionId,
-                    traceView: .full
+                    targetEvents: Self.tracePageTargetEvents,
+                    previewBytes: Self.tracePagePreviewBytes
                 )
-                trace = fetchedTrace
+                trace = response.trace
+                page = response.page
             } catch {
                 log.debug("Snapshot flush skipped for \(self.sessionId): \(error.localizedDescription)")
                 return
@@ -793,9 +808,10 @@ final class ChatSessionManager {
         if let saveHook = _saveTraceSnapshotForTesting {
             await saveHook(trace)
         } else {
-            await TimelineCache.shared.saveTrace(sessionId, events: trace)
+            await TimelineCache.shared.saveTrace(sessionId, events: trace, page: page)
         }
 
+        tracePage = page
         latestTraceSignature = TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
         lastSnapshotFlushAt = Date()
     }
@@ -1087,18 +1103,25 @@ final class ChatSessionManager {
         do {
             let session: Session
             let trace: [TraceEvent]
+            let page: TracePageMetadata?
             if let fetchHook = _fetchSessionTraceForTesting {
                 (session, trace) = try await fetchHook(workspaceId, sessionId)
+                page = nil
             } else {
-                (session, trace) = try await api.getWorkspaceSession(
+                let response = try await api.getWorkspaceSessionTracePage(
                     workspaceId: workspaceId,
                     sessionId: sessionId,
-                    traceView: .full
+                    targetEvents: Self.tracePageTargetEvents,
+                    previewBytes: Self.tracePagePreviewBytes
                 )
+                session = response.session
+                trace = response.trace
+                page = response.page
             }
 
             guard !Task.isCancelled else { return nil }
             sessionStore.upsert(session)
+            tracePage = page
             markSyncSucceeded()
 
             let timelineTrace = Self.timelineTrace(from: trace, session: session)
@@ -1189,7 +1212,7 @@ final class ChatSessionManager {
 
             // Always update cache with fresh data
             Task.detached {
-                await TimelineCache.shared.saveTrace(self.sessionId, events: trace)
+                await TimelineCache.shared.saveTrace(self.sessionId, events: trace, page: page)
             }
 
             let durationMs = max(0, ChatSessionTelemetry.nowMs() - loadStartedMs)
@@ -1210,6 +1233,104 @@ final class ChatSessionManager {
             log.warning("Trace fetch failed for \(self.sessionId): \(error.localizedDescription)")
             return nil
         }
+    }
+
+    @discardableResult
+    func loadOlderTracePage(connection: ServerConnection, sessionStore: SessionStore) async -> Bool {
+        guard !isLoadingOlderTracePage else { return false }
+        guard reducer.canPrependTracePage else { return false }
+        guard let cursor = tracePage?.olderCursor, tracePage?.hasOlder == true else { return false }
+        guard let api = connection.apiClient else { return false }
+        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
+            log.warning("Older trace page skipped for \(self.sessionId): missing workspaceId")
+            return false
+        }
+
+        isLoadingOlderTracePage = true
+        defer { isLoadingOlderTracePage = false }
+
+        do {
+            let response = try await api.getWorkspaceSessionTracePage(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                cursor: cursor,
+                targetEvents: Self.tracePageTargetEvents,
+                previewBytes: Self.tracePagePreviewBytes
+            )
+            return applyPrependedTracePage(response, connection: connection, sessionStore: sessionStore)
+        } catch {
+            markSyncFailed()
+            log.warning("Older trace page failed for \(self.sessionId): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    func loadTracePageAround(
+        entryId: String,
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) async -> Bool {
+        guard !reducer.items.contains(where: { $0.id == entryId }) else { return true }
+        guard !isLoadingOlderTracePage else { return false }
+        guard reducer.canPrependTracePage else { return false }
+        guard let api = connection.apiClient else { return false }
+        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
+            log.warning("Trace page around skipped for \(self.sessionId): missing workspaceId")
+            return false
+        }
+
+        isLoadingOlderTracePage = true
+        defer { isLoadingOlderTracePage = false }
+
+        do {
+            let response = try await api.getWorkspaceSessionTracePage(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                aroundEntryId: entryId,
+                targetEvents: Self.tracePageTargetEvents,
+                previewBytes: Self.tracePagePreviewBytes
+            )
+            guard applyPrependedTracePage(response, connection: connection, sessionStore: sessionStore) else {
+                return reducer.items.contains(where: { $0.id == entryId })
+            }
+            return reducer.items.contains(where: { $0.id == entryId })
+        } catch {
+            markSyncFailed()
+            log.warning("Trace page around failed for \(self.sessionId): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func applyPrependedTracePage(
+        _ response: APIClient.SessionTracePageResponse,
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) -> Bool {
+        guard !Task.isCancelled else { return false }
+        if response.page.staleCursor {
+            tracePage = nil
+            scheduleHistoryReload(
+                generation: connectionGeneration,
+                connection: connection,
+                sessionStore: sessionStore,
+                cachedSignature: nil
+            )
+            return false
+        }
+
+        sessionStore.upsert(response.session)
+        let finalizeOpenTools = !response.session.status.isRunning
+        let didPrepend = reducer.prependTracePage(response.trace, finalizeOpenTools: finalizeOpenTools)
+        guard didPrepend else { return false }
+        tracePage = response.page
+        markSyncSucceeded()
+
+        let cacheEvents = reducer.traceEventsForCache()
+        Task.detached {
+            await TimelineCache.shared.saveTrace(self.sessionId, events: cacheEvents, page: response.page)
+        }
+        return didPrepend
     }
 
     private func scheduleHistoryReload(

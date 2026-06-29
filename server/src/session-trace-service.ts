@@ -21,6 +21,7 @@ import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import {
+  collectSessionTraceJsonlPaths,
   findToolOutput,
   readSessionTrace,
   readSessionTraceByUuid,
@@ -29,6 +30,16 @@ import {
   type TraceEvent,
   type TraceViewMode,
 } from "./trace.js";
+import {
+  readSessionTracePageFromFiles,
+  type TracePageMetadata,
+  type TracePageMetrics,
+} from "./trace-paging.js";
+import {
+  readSessionTraceOutlineFromFiles,
+  type TraceOutlineMetrics,
+  type TraceOutlineSnapshot,
+} from "./trace-outline.js";
 import type { Session, Workspace, WorkspaceReviewDiffResponse } from "./types.js";
 import { buildDiffHunks } from "./workspace-review-diff.js";
 
@@ -39,6 +50,19 @@ export type SessionTraceViewMode = TraceViewMode;
 export interface SessionTraceResult {
   session: Session;
   trace: TraceEvent[];
+}
+
+export interface SessionTracePageResult {
+  session: Session;
+  trace: TraceEvent[];
+  page: TracePageMetadata;
+  metrics: TracePageMetrics;
+}
+
+export interface SessionTraceOutlineResult {
+  session: Session;
+  outline: TraceOutlineSnapshot;
+  metrics: TraceOutlineMetrics;
 }
 
 export interface SessionToolOutputResult {
@@ -146,6 +170,80 @@ export class SessionTraceService {
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
       trace: trace || [],
+    };
+  }
+
+  async getSessionTracePage(params: {
+    session: Session;
+    cursor?: string;
+    aroundEntryId?: string;
+    targetEvents?: number;
+    previewBytes?: number;
+  }): Promise<SessionTracePageResult | null> {
+    const live = await this.deps.sessionRuntimes.refreshSessionState(params.session.id);
+    const refreshedSession = this.deps.storage.getSession(params.session.id) || params.session;
+    const hydratedSession = this.deps.ensureSessionContextWindow(refreshedSession);
+    const jsonlPaths = await this.collectTracePageJsonlPaths(
+      hydratedSession,
+      typeof live?.sessionFile === "string" ? live.sessionFile : undefined,
+    );
+    if (jsonlPaths.length === 0) {
+      const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
+      const previewBytes = Math.max(0, params.previewBytes ?? 4096);
+      return {
+        session: this.deps.ensureSessionContextWindow(latestSession),
+        trace: [],
+        page: {
+          hasOlder: false,
+          olderCursor: null,
+          traceVersion: "",
+          previewBytes,
+          staleCursor: false,
+        },
+        metrics: {
+          rawEntryCount: 0,
+          traceEventCount: 0,
+          selectedRawEntryCount: 0,
+          jsonlBytes: 0,
+          scannedBytes: 0,
+          readMs: 0,
+          parseMs: 0,
+          selectMs: 0,
+          formatMs: 0,
+          previewMs: 0,
+        },
+      };
+    }
+
+    const result = readSessionTracePageFromFiles(jsonlPaths, {
+      cursor: params.cursor,
+      aroundEntryId: params.aroundEntryId,
+      targetEvents: params.targetEvents,
+      previewBytes: params.previewBytes,
+    });
+    const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
+    return {
+      session: this.deps.ensureSessionContextWindow(latestSession),
+      trace: result.trace,
+      page: result.page,
+      metrics: result.metrics,
+    };
+  }
+
+  async getSessionTraceOutline(params: { session: Session }): Promise<SessionTraceOutlineResult> {
+    const live = await this.deps.sessionRuntimes.refreshSessionState(params.session.id);
+    const refreshedSession = this.deps.storage.getSession(params.session.id) || params.session;
+    const hydratedSession = this.deps.ensureSessionContextWindow(refreshedSession);
+    const jsonlPaths = await this.collectTracePageJsonlPaths(
+      hydratedSession,
+      typeof live?.sessionFile === "string" ? live.sessionFile : undefined,
+    );
+    const result = await readSessionTraceOutlineFromFiles(jsonlPaths);
+    const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
+    return {
+      session: this.deps.ensureSessionContextWindow(latestSession),
+      outline: result.outline,
+      metrics: result.metrics,
     };
   }
 
@@ -472,22 +570,42 @@ export class SessionTraceService {
     return this.deps.storage.getDataDir?.() ?? process.cwd();
   }
 
+  private async collectTracePageJsonlPaths(
+    session: Session,
+    liveSessionFile: string | undefined,
+  ): Promise<string[]> {
+    const baseDir = this.traceBaseDir();
+    const canonical = await existingPaths(
+      collectSessionTraceJsonlPaths(baseDir, session.id, session.workspaceId),
+    );
+    if (canonical.length > 0) return canonical;
+
+    const explicit = await this.collectExistingSessionJsonlPaths(session);
+    if (explicit.length > 0) return explicit;
+
+    return liveSessionFile ? existingPaths([liveSessionFile]) : [];
+  }
+
   private async collectExistingSessionJsonlPaths(session: Session): Promise<string[]> {
     const candidates = [...(session.piSessionFiles ?? [])];
     if (session.piSessionFile) {
       candidates.push(session.piSessionFile);
     }
 
-    const uniquePaths = Array.from(new Set(candidates));
-    const existing = await Promise.all(
-      uniquePaths.map(async (candidate) => ({
-        candidate,
-        exists: await pathExists(candidate),
-      })),
-    );
-
-    return existing.filter((entry) => entry.exists).map((entry) => entry.candidate);
+    return existingPaths(candidates);
   }
+}
+
+async function existingPaths(candidates: string[]): Promise<string[]> {
+  const uniquePaths = Array.from(new Set(candidates));
+  const existing = await Promise.all(
+    uniquePaths.map(async (candidate) => ({
+      candidate,
+      exists: await pathExists(candidate),
+    })),
+  );
+
+  return existing.filter((entry) => entry.exists).map((entry) => entry.candidate);
 }
 
 async function pathExists(path: string): Promise<boolean> {

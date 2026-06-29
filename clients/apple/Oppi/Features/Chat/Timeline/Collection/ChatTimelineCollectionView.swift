@@ -21,6 +21,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     struct Configuration {
         let items: [ChatItem]
         let hiddenCount: Int
+        let hasOlderServerPage: Bool
         let renderWindowStep: Int
         let isBusy: Bool
         let showsWorkingIndicator: Bool
@@ -50,6 +51,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         init(
             items: [ChatItem],
             hiddenCount: Int,
+            hasOlderServerPage: Bool = false,
             renderWindowStep: Int,
             isBusy: Bool,
             showsWorkingIndicator: Bool? = nil,
@@ -78,6 +80,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         ) {
             self.items = items
             self.hiddenCount = hiddenCount
+            self.hasOlderServerPage = hasOlderServerPage
             self.renderWindowStep = renderWindowStep
             self.isBusy = isBusy
             self.showsWorkingIndicator = showsWorkingIndicator ?? isBusy
@@ -169,6 +172,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private let context = ChatTimelineControllerContext()
 
         var hiddenCount = 0
+        var hasOlderServerPage = false
         var renderWindowStep = 0
         var streamingAssistantID: String?
         var audioPlayer: AudioPlayerService?
@@ -279,6 +283,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousItemByID: [String: ChatItem] = [:]
         private var previousStreamingAssistantID: String?
         private var previousHiddenCount = 0
+        private var previousHasOlderServerPage = false
         private var previousItemCount = 0
         private var previousShowsWorkingIndicator = false
         private var previousExtensionWorkingState: ExtensionWorkingState?
@@ -527,6 +532,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
 
             hiddenCount = configuration.hiddenCount
+            hasOlderServerPage = configuration.hasOlderServerPage
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
             // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
@@ -592,6 +598,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 && configuration.isBusy == isTimelineBusy
                 && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
                 && configuration.hiddenCount == previousHiddenCount
+                && configuration.hasOlderServerPage == previousHasOlderServerPage
                 && !appearanceChanged
                 && configuration.extensionWorkingState == previousExtensionWorkingState
                 && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
@@ -649,6 +656,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
                 previousStreamingAssistantID = configuration.streamingAssistantID
                 previousHiddenCount = configuration.hiddenCount
+                previousHasOlderServerPage = configuration.hasOlderServerPage
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
                 previousShowsWorkingIndicator = configuration.showsWorkingIndicator
@@ -707,6 +715,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     )
                     previousStreamingAssistantID = configuration.streamingAssistantID
                     previousHiddenCount = configuration.hiddenCount
+                previousHasOlderServerPage = configuration.hasOlderServerPage
                     previousItemCount = configuration.items.count
                     previousThemeID = currentThemeID
                     previousShowsWorkingIndicator = configuration.showsWorkingIndicator
@@ -750,6 +759,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
                 previousStreamingAssistantID = configuration.streamingAssistantID
                 previousHiddenCount = configuration.hiddenCount
+                previousHasOlderServerPage = configuration.hasOlderServerPage
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
                 previousShowsWorkingIndicator = configuration.showsWorkingIndicator
@@ -780,6 +790,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let applyPlan = ChatTimelineApplyPlan.build(
                 items: configuration.items,
                 hiddenCount: configuration.hiddenCount,
+                hasOlderServerPage: configuration.hasOlderServerPage,
                 isBusy: configuration.isBusy,
                 showsWorkingIndicator: configuration.showsWorkingIndicator,
                 streamingAssistantID: configuration.streamingAssistantID
@@ -838,6 +849,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousItemByID = applyPlan.nextItemByID
             previousStreamingAssistantID = configuration.streamingAssistantID
             previousHiddenCount = configuration.hiddenCount
+                previousHasOlderServerPage = configuration.hasOlderServerPage
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
             previousShowsWorkingIndicator = configuration.showsWorkingIndicator

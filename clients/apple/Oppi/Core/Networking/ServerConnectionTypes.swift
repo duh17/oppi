@@ -72,6 +72,29 @@ struct SessionTreeSnapshot: Equatable, Sendable {
     let nodes: [SessionTreeNodeSnapshot]
 }
 
+// MARK: - Session Outline Types
+
+struct SessionOutlineEntrySnapshot: Codable, Identifiable, Equatable, Sendable {
+    let id: String
+    let kind: String
+    let summary: String
+    let timestamp: String
+    let isMessage: Bool
+    let isTool: Bool
+    let passesAllFilter: Bool
+    let isForkable: Bool?
+    let tool: String?
+    let isError: Bool?
+}
+
+struct SessionOutlineSnapshot: Codable, Equatable, Sendable {
+    let traceVersion: String
+    let entries: [SessionOutlineEntrySnapshot]
+    let itemCount: Int
+    let sourceCount: Int
+    let jsonlBytes: Int
+}
+
 struct NavigateTreeSummaryEntrySnapshot: Equatable, Sendable {
     let id: String
 }
