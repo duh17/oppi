@@ -930,7 +930,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const parts = new Set<GenericTraceIncludePart>();
     const invalid: string[] = [];
-    for (const part of raw.split(",").map((value) => value.trim()).filter(Boolean)) {
+    for (const part of raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)) {
       if (genericTraceIncludeParts.has(part as GenericTraceIncludePart)) {
         parts.add(part as GenericTraceIncludePart);
       } else {
