@@ -163,6 +163,11 @@ describe("api route registry", () => {
       "/sessions/:sessionId/command",
     );
     expect(normalizeRegisteredPathPattern("/sessions/s1/stop")).toBe("/sessions/:sessionId/stop");
+    expect(normalizeRegisteredPathPattern("/agents")).toBe("/agents");
+    expect(normalizeRegisteredPathPattern("/agents/reviewer")).toBe("/agents/:agentId");
+    expect(normalizeRegisteredPathPattern("/agents/reviewer/sessions")).toBe(
+      "/agents/:agentId/sessions",
+    );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/status")).toBe(
       "/workspaces/:workspaceId/git/status",
     );
