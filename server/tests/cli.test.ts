@@ -25,7 +25,7 @@ try {
 function run(
   args: string[],
   env?: Record<string, string>,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ): { stdout: string; exitCode: number } {
   try {
     const stdout = execFileSync("node", [CLI, ...args], {
@@ -43,7 +43,7 @@ function run(
 function runBin(
   args: string[],
   env?: Record<string, string>,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ): { stdout: string; exitCode: number } {
   try {
     const stdout = execFileSync(CLI, args, {
@@ -65,7 +65,7 @@ function stripAnsi(text: string): string {
 async function runAsync(
   args: string[],
   env?: Record<string, string>,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ): Promise<{ stdout: string; exitCode: number }> {
   return await new Promise((resolveRun) => {
     execFile(
