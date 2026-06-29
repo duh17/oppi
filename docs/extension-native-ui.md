@@ -397,15 +397,45 @@ ctx.ui.setWidget("review", () => ({
 }));
 ```
 
-Extension authors describe the widget state with semantic blocks. Apple clients own the screen budget and interaction policy:
+Extension authors describe the widget state with semantic blocks. Apple clients own the screen budget and interaction policy. A widget snapshot does not grant unbounded inline height.
 
-- Collapsed: one compact row in the chat dock.
-- Expanded: bounded inline viewport with the same content semantics.
-- Full screen: complete scrollable detail surface.
-- Tap toggles collapsed/expanded. Double tap opens full screen.
-- Native blocks stay viewport-independent; clients decide iPhone, iPad, Dynamic Type, color scheme, and scroll ownership locally.
+### Widget placement and collapsed budget
 
-If a future feature needs true per-client rendering, it must add an explicit client render request protocol instead of overloading the broadcast surface snapshot.
+Pi's widget placement maps to two separate composer-adjacent strips:
+
+- `aboveEditor` or an omitted placement renders in the strip above the composer.
+- `belowEditor` renders in the strip below the composer.
+- The two placements remain separate. A widget from one placement must not move into the other strip to fill space.
+
+```text
+aboveEditor strip
+[ Agents · 1 running ] [ Tools · 2 active ] [ Git · +3.5k -118 ]
+
+composer
+
+belowEditor strip
+[ Fleet · 2 sessions ] [ Queue · 1 follow-up ]
+```
+
+Each visible strip has a bounded collapsed state:
+
+- The collapsed strip uses one row of pills. Pills scroll horizontally when they overflow.
+- A collapsed widget must not add vertical height beyond the strip budget. Empty strips are hidden.
+- One pill represents one widget or one standalone status entry.
+- The pill label comes from, in order: native `presentation.title` and `presentation.subtitle`, an attached `setStatus` value, the `widgetKey`, then the first fallback line.
+- Accessibility sizes can change the exact row height or promote content to a sheet, but the collapsed state remains bounded.
+
+Each placement has one expanded drawer:
+
+- Tapping a pill opens that widget in the drawer for the same placement.
+- Tapping another pill replaces the drawer content instead of stacking another card.
+- Tapping the active pill or collapse control closes the drawer.
+- The drawer has a maximum height and scrolls internally. Long content can open full screen.
+- `renderNative()` content renders as native blocks. Widgets without `renderNative()` render the sanitized terminal fallback in the drawer and full-screen view.
+
+`setStatus(key, text)` attaches to a widget when `key === widgetKey`. If exactly one status and one widget share an extension scope, a client can attach the status by scope. Other status entries render as standalone pills in the same placement group.
+
+Native blocks stay viewport-independent; clients decide iPhone, iPad, Dynamic Type, color scheme, and scroll ownership locally. If a future feature needs true per-client rendering, it must add an explicit client render request protocol instead of overloading the broadcast surface snapshot.
 
 ## Mapping from Pi extension APIs
 
@@ -420,8 +450,8 @@ If a future feature needs true per-client rendering, it must add an explicit cli
 | `ctx.ui.onTerminalInput()`         | terminal-owned input stream    | no native mapping                          | no-op unsubscribe in SDK sessions  |
 | `ctx.ui.setTitle()`                | title notification             | extension surface heading                  | terminal window/tab title          |
 | `ctx.ui.setStatus()`               | status text fields             | generic status projection/chips            | text status                        |
-| `ctx.ui.setWidget(string[])`       | `widgetLines`                  | extension line card                        | styled line card                   |
-| `ctx.ui.setWidget(component)`      | `renderNative()` if present    | surface panel blocks                       | terminal snapshot                  |
+| `ctx.ui.setWidget(string[])`       | `widgetLines`                  | terminal strip/drawer fallback             | styled line card                   |
+| `ctx.ui.setWidget(component)`      | `renderNative()` if present    | native strip/drawer blocks                 | terminal snapshot                  |
 | `ctx.ui.custom()`                  | TUI component                  | no native mapping                          | resolves undefined in SDK sessions |
 | `ctx.ui.setFooter()`               | terminal-owned/footer text     | no native mapping                          | ignored in SDK sessions            |
 | `ctx.ui.setHeader()`               | terminal-owned/header text     | no native mapping                          | ignored in SDK sessions            |
@@ -532,7 +562,7 @@ Design requirements:
 - preserve keyboard-safe layout
 - support text selection for read-only long content
 
-### Extension surface panel
+### Extension widget strips
 
 Use for persistent widgets and optional status projections:
 
@@ -543,9 +573,11 @@ Use for persistent widgets and optional status projections:
 
 Design requirements:
 
-- render as a generic extension card above the composer or in session chrome
-- support title, status rows/chips, activity rows, and terminal fallback blocks
-- keep the surface generic; do not add extension-specific Swift panels
+- render `aboveEditor` and `belowEditor` as separate composer-adjacent strips
+- keep the collapsed state to one pill row per strip with horizontal overflow
+- open one bounded drawer per strip; tapping another widget replaces drawer content instead of stacking cards
+- support title, status chips, activity rows, progress rows, and terminal fallback blocks
+- keep the renderer generic; do not add extension-specific Swift panels
 - keep streaming updates height-stable where practical
 
 ### Timeline row
@@ -711,14 +743,16 @@ Implementation should validate at least these fixtures:
 - `select`, `confirm`, and `input` mapped to AskCard-style UI, with `editor` mapped to the editor sheet
 - `setEditorText` and `pasteToEditor` mapped to native composer handoff
 - `setTitle`, `setStatus`, and `setWidget` displayed as persistent native surfaces and cleared by explicit Pi-style empty notifications
-- `setWidget(..., { placement })` mapped to native surfaces above and below the composer
+- `setWidget(..., { placement })` mapped to separate `aboveEditor` and `belowEditor` strips
+- collapsed strip height capped at one pill row, with horizontal overflow and hidden empty strips
+- one expanded drawer per placement, with tap-to-replace behavior across widgets in the same strip
 - working-row message, visibility, static indicator, animated indicator, hidden indicator, reset behavior, hidden-thinking source labels, and tool expansion state
 - display block mapping for text, markdown, progress, activity lists, terminal, and code
 - activity row links through generic `oppi://session/<id>` navigation
 - component widget with `renderNative()`
 - component widget without `renderNative()` terminal fallback
 - managed runtime and mirrored runtime paths
-- iPhone and iPad screenshots for native prompt, surface panel, and fallback terminal card
+- iPhone and iPad screenshots for native prompt, widget strips, expanded drawer, and fallback terminal content
 
 ## Recommended rollout and complexity budget
 
@@ -739,7 +773,7 @@ The contract is intentionally broader than the first implementation. Implement i
 
 ### Phase 3: persistent native surfaces
 
-- Render `section`, `text`, `markdown`, `progress`, `activityList`, and `terminal` in the generic extension surface panel.
+- Render `section`, `text`, `markdown`, `progress`, `activityList`, and `terminal` in the generic extension widget strips and drawers.
 - Update by replacement using stable widget IDs.
 - Throttle widget updates.
 
@@ -854,7 +888,7 @@ Apple implementations:
 - render supported blocks natively
 - render unsupported blocks with fallback content
 - keep AskCard as the reference for standard Pi prompt requests
-- keep persistent widgets in a generic extension surface panel
+- keep persistent widgets in generic extension strips and drawers
 - avoid extension-specific Swift UI for generic surfaces
 
 ## Acceptance criteria
@@ -864,8 +898,9 @@ Apple implementations:
 - A widget component with `renderNative()` renders native blocks in Oppi and terminal UI in Pi.
 - A widget component without `renderNative()` renders a terminal fallback and does not crash.
 - Widget rendering stays generic, and status text remains generic.
+- Persistent widgets are grouped by placement into bounded strips instead of unbounded stacked cards.
 - OSC-8 links survive fallback as tappable links when clients support links.
-- iPhone and iPad screenshots cover native prompt, native surface panel, and terminal fallback paths.
+- iPhone and iPad screenshots cover native prompt, widget strips, expanded drawers, and terminal fallback paths.
 
 ## Related files
 

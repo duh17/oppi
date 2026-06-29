@@ -341,6 +341,17 @@ struct ChatInputBar<ActionRow: View>: View {
         ) { result in
             ComposerShared.loadSelectedFiles(result, into: $pendingAttachments)
         }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    dismissKeyboard()
+                }
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("chat.keyboard.dismiss")
+                .accessibilityLabel("Dismiss keyboard")
+            }
+        }
     }
 
     // MARK: - Subviews
@@ -795,6 +806,15 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private func handleInputFocusChange(_ isFocused: Bool) {
         isInputFocused = isFocused
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
 
     static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {

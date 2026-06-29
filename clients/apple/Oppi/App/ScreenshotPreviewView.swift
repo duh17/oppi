@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import SwiftUI
+import UIKit
 
 // MARK: - Configuration
 
@@ -28,6 +29,8 @@ struct ScreenshotPreviewView: View {
             ChatFileBrowserPanelPreview()
         case "extension-widget":
             ExtensionSurfacePreview()
+        case "chat-input-attachment-containment":
+            ChatInputAttachmentContainmentPreview()
         case "extension-dock-stress":
             ExtensionDockStressPreview()
         case "extension-dock-review-combined":
@@ -363,6 +366,98 @@ private struct ExtensionSurfacePreview: View {
             .padding(.top, 24)
         }
         .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Chat Input Attachment Preview
+
+private struct ChatInputAttachmentContainmentPreview: View {
+    @State private var text = "let’s remove this full screen text but keep the double tap to full screen also"
+    @State private var textBeforeRecording: String?
+    @State private var attachments: [PendingAttachment] = [Self.previewAttachment()]
+    @State private var repoPointers: [PendingFileReference] = []
+    @State private var busyBehavior: StreamingBehavior = .followUp
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.themeBg
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Composer attachment containment")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("The pending image and typed text should both live inside one composer capsule.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                Spacer()
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            ChatInputBar(
+                text: $text,
+                textBeforeRecording: $textBeforeRecording,
+                pendingAttachments: $attachments,
+                pendingRepoPointers: $repoPointers,
+                isBusy: false,
+                busyStreamingBehavior: $busyBehavior,
+                isSending: false,
+                sendProgressText: nil,
+                isStopping: false,
+                showForceStop: false,
+                isForceStopInFlight: false,
+                slashCommands: [],
+                fileSuggestions: [],
+                onFileSuggestionQuery: nil,
+                onSend: {},
+                onStop: {},
+                onForceStop: {},
+                onExpand: {},
+                externalFocusRequestID: 0,
+                appliesOuterPadding: false,
+                alwaysShowActionRow: true
+            ) {
+                HStack(spacing: 6) {
+                    Text("gpt-5.5")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassEffect(.regular, in: Capsule())
+                    Text("max")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themePurple)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassEffect(.regular, in: Capsule())
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private static func previewAttachment() -> PendingAttachment {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 112, height: 112)).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 112, height: 112))
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 18, y: 18, width: 76, height: 76))
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 30, y: 48, width: 52, height: 16))
+        }
+        let data = image.pngData() ?? Data()
+        return PendingAttachment(
+            id: "preview-image",
+            source: .image,
+            displayName: "Preview image",
+            thumbnail: image,
+            imageAttachment: ImageAttachment(data: data.base64EncodedString(), mimeType: "image/png"),
+            localFileData: nil,
+            localMimeType: nil
+        )
     }
 }
 
