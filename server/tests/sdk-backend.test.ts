@@ -13,6 +13,7 @@ import {
   SdkBackend,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
+import type { AgentDefinition } from "../src/agent-launch-service.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 
 afterEach(() => {
@@ -347,6 +348,55 @@ describe("SdkBackend host extensions", () => {
       expect(
         extensions.some((ext) => ext.path.startsWith("<inline:") && ext.tools.has("ask")),
       ).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SdkBackend saved Agent definitions", () => {
+  it("injects saved Agent instructions, virtual context files, and tool defaults into the runtime", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-definition-runtime-"));
+    const agentDefinition: AgentDefinition = {
+      name: "Runtime Agent",
+      instructions: { mode: "append", text: "Always answer with OPPI_AGENT_RUNTIME_OK." },
+      resources: {
+        agentsFiles: [{ path: "AGENTS.saved.md", content: "Saved context code: CTX-42" }],
+        noContextFiles: true,
+      },
+      sessionDefaults: {
+        noTools: "all",
+      },
+    };
+
+    const backend = await SdkBackend.create({
+      session: makeSession({ launch: { status: "launching", requestedAt: 1, agentId: "agent-1" } }),
+      workspace: {
+        id: "w1",
+        name: "Agent Definition Runtime Test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      agentDefinition,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+
+      expect(resourceLoader.getAppendSystemPrompt()).toContain(
+        "Always answer with OPPI_AGENT_RUNTIME_OK.",
+      );
+      expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([
+        { path: "AGENTS.saved.md", content: "Saved context code: CTX-42" },
+      ]);
+      expect(backend.session.getActiveToolNames()).toEqual([]);
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });

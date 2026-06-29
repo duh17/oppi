@@ -35,6 +35,9 @@ export interface AgentLaunchTarget {
 
 export interface AgentLaunchRequest {
   agent: AgentDefinition;
+  agentId?: string;
+  agentVersion?: number;
+  parentSessionId?: string;
   target: AgentLaunchTarget;
   prompt?: string;
   attachments?: ChatAttachmentRef[];
@@ -66,7 +69,11 @@ export type AgentLaunchResult =
 export interface AgentLaunchServiceDeps {
   storage: Pick<
     Storage,
-    "createSession" | "findSessionByLaunchIdempotencyKey" | "listSessions" | "saveSession"
+    | "claimSessionLaunchRecovery"
+    | "createSession"
+    | "findSessionByLaunchIdempotencyKey"
+    | "listSessions"
+    | "saveSession"
   >;
   sessions: {
     startSession(sessionId: string, workspace?: Workspace): Promise<Session>;
@@ -101,7 +108,14 @@ export class AgentLaunchService {
     if (idempotencyKey) {
       const existing = this.findSessionByIdempotencyKey(idempotencyKey);
       if (existing) {
-        return this.resultForExistingLaunch(existing, leaseOwner, now);
+        const existingResult = this.resultForExistingLaunch(existing, now);
+        if (
+          existingResult.kind === "existing" &&
+          this.shouldRecoverExistingLaunch(existing, request, now)
+        ) {
+          return this.recoverExistingLaunch(existing, request, leaseOwner, now);
+        }
+        return existingResult;
       }
     }
 
@@ -113,7 +127,7 @@ export class AgentLaunchService {
         ? this.findSessionByIdempotencyKey(idempotencyKey)
         : undefined;
       if (existing) {
-        return this.resultForExistingLaunch(existing, leaseOwner, now);
+        return this.resultForExistingLaunch(existing, now);
       }
       throw error;
     }
@@ -199,32 +213,37 @@ export class AgentLaunchService {
     if (defaults.thinkingLevel) {
       session.thinkingLevel = defaults.thinkingLevel;
     }
-    if (idempotencyKey) {
-      session.launch = {
-        source: request.source ?? "workspace-wrapper",
-        idempotencyKey,
-        schedule: request.schedule,
-        target: {
-          workspaceId: request.target.workspace.id,
-          ...(request.target.worktreeId ? { worktreeId: request.target.worktreeId } : {}),
-          runtime: request.target.workspace.runtime === "sandbox" ? "sandbox" : "host",
-        },
-        model: modelSelection.model,
-        thinkingLevel: defaults.thinkingLevel,
-        tools: {
-          ...(defaults.tools ? { allowed: defaults.tools } : {}),
-          ...(defaults.excludeTools ? { excluded: defaults.excludeTools } : {}),
-          ...(defaults.noTools ? { noTools: defaults.noTools } : {}),
-        },
-        status: "launching",
-        requestedAt: now,
-        lease: {
-          owner: leaseOwner,
-          acquiredAt: now,
-          expiresAt: now + this.leaseTtlMs,
-        },
-      };
-    }
+    session.launch = {
+      source: request.source ?? "workspace-wrapper",
+      agentId: request.agentId,
+      agentVersion: request.agentVersion,
+      parentSessionId: request.parentSessionId,
+      idempotencyKey,
+      schedule: request.schedule,
+      target: {
+        workspaceId: request.target.workspace.id,
+        ...(request.target.worktreeId ? { worktreeId: request.target.worktreeId } : {}),
+        runtime: request.target.workspace.runtime === "sandbox" ? "sandbox" : "host",
+      },
+      model: modelSelection.model,
+      thinkingLevel: defaults.thinkingLevel,
+      tools: {
+        ...(defaults.tools ? { allowed: defaults.tools } : {}),
+        ...(defaults.excludeTools ? { excluded: defaults.excludeTools } : {}),
+        ...(defaults.noTools ? { noTools: defaults.noTools } : {}),
+      },
+      status: "launching",
+      requestedAt: now,
+      ...(idempotencyKey
+        ? {
+            lease: {
+              owner: leaseOwner,
+              acquiredAt: now,
+              expiresAt: now + this.leaseTtlMs,
+            },
+          }
+        : {}),
+    };
 
     return session;
   }
@@ -235,8 +254,9 @@ export class AgentLaunchService {
     promptError?: string,
   ): void {
     if (session.launch) {
+      const { promptError: _previousPromptError, ...launch } = session.launch;
       session.launch = {
-        ...session.launch,
+        ...launch,
         status: promptDispatch === "delivered" || !promptError ? "accepted" : "failed",
         completedAt: this.nowMs(),
         promptDispatch,
@@ -251,18 +271,9 @@ export class AgentLaunchService {
     }
   }
 
-  private resultForExistingLaunch(
-    existing: Session,
-    leaseOwner: string,
-    now: number,
-  ): AgentLaunchResult {
+  private resultForExistingLaunch(existing: Session, now: number): AgentLaunchResult {
     const lease = existing.launch?.lease;
-    if (
-      existing.launch?.status === "launching" &&
-      lease &&
-      lease.owner !== leaseOwner &&
-      lease.expiresAt > now
-    ) {
+    if (existing.launch?.status === "launching" && lease && lease.expiresAt > now) {
       return {
         kind: "launch_in_progress",
         retryable: true,
@@ -278,6 +289,96 @@ export class AgentLaunchService {
       promptDispatch:
         existing.launch?.promptDispatch ?? (existing.firstMessage ? "delivered" : "not_sent"),
     };
+  }
+
+  private shouldRecoverExistingLaunch(
+    existing: Session,
+    request: AgentLaunchRequest,
+    now: number,
+  ): boolean {
+    const launch = existing.launch;
+    if (!launch) return false;
+    if (launch.promptDispatch === "delivered") return false;
+    if (!this.launchTargetMatchesRequest(existing, request)) return false;
+    if (launch.status === "failed") return true;
+    if (launch.status !== "launching") return false;
+    const lease = launch.lease;
+    return !lease || lease.expiresAt <= now;
+  }
+
+  private launchTargetMatchesRequest(existing: Session, request: AgentLaunchRequest): boolean {
+    const target = existing.launch?.target;
+    const expectedWorkspaceId = target?.workspaceId ?? existing.workspaceId;
+    if (expectedWorkspaceId && expectedWorkspaceId !== request.target.workspace.id) {
+      return false;
+    }
+
+    const expectedWorktreeId = target?.worktreeId ?? existing.worktreeId;
+    if (expectedWorktreeId !== undefined && expectedWorktreeId !== request.target.worktreeId) {
+      return false;
+    }
+
+    const requestedRuntime = request.target.workspace.runtime === "sandbox" ? "sandbox" : "host";
+    if (target?.runtime && target.runtime !== requestedRuntime) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private async recoverExistingLaunch(
+    existing: Session,
+    request: AgentLaunchRequest,
+    leaseOwner: string,
+    now: number,
+  ): Promise<AgentLaunchResult> {
+    if (!existing.launch) {
+      return this.resultForExistingLaunch(existing, now);
+    }
+
+    const recovered = this.deps.storage.claimSessionLaunchRecovery(
+      existing,
+      leaseOwner,
+      now,
+      this.leaseTtlMs,
+    );
+    if (!recovered) {
+      return {
+        kind: "launch_in_progress",
+        retryable: true,
+        session: this.hydratedSnapshot(existing),
+        retryAfterMs: Math.max(
+          0,
+          existing.launch.lease ? existing.launch.lease.expiresAt - now : 0,
+        ),
+      };
+    }
+
+    const prompt = request.prompt?.trim();
+    if (!prompt) {
+      this.markLaunchComplete(recovered, "not_sent");
+      const session = this.hydratedSnapshot(recovered);
+      return { kind: "existing", session, createdSession: session, promptDispatch: "not_sent" };
+    }
+
+    try {
+      await this.deps.sessions.startSession(recovered.id, request.target.workspace);
+      await this.deps.sessions.sendPrompt(recovered.id, prompt, {
+        ...(request.attachments ? { attachments: request.attachments } : {}),
+      });
+      recovered.firstMessage = prompt.slice(0, 200);
+      this.markLaunchComplete(recovered, "delivered");
+      const session = this.hydratedSnapshot(recovered);
+      return { kind: "existing", session, createdSession: session, promptDispatch: "delivered" };
+    } catch (error: unknown) {
+      this.markLaunchComplete(
+        recovered,
+        "not_sent",
+        error instanceof Error ? error.message : String(error),
+      );
+      const session = this.hydratedSnapshot(recovered);
+      return { kind: "existing", session, createdSession: session, promptDispatch: "not_sent" };
+    }
   }
 
   private findSessionByIdempotencyKey(idempotencyKey: string): Session | undefined {

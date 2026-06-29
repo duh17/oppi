@@ -86,6 +86,7 @@ export class SessionLifecycleError extends Error {
 export interface SessionLifecycleServiceDeps {
   storage: Pick<
     Storage,
+    | "claimSessionLaunchRecovery"
     | "createSession"
     | "deleteSession"
     | "getDataDir"

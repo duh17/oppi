@@ -1,0 +1,446 @@
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+import { generateId } from "./id.js";
+import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
+import type { AgentDefinition, ThinkingLevel } from "./agent-launch-service.js";
+
+export type AgentDefinitionStatus = "active" | "archived";
+
+export interface StoredAgentDefinition {
+  id: string;
+  name: string;
+  status: AgentDefinitionStatus;
+  version: number;
+  definition: AgentDefinition;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+}
+
+export interface AgentDefinitionSummary {
+  id: string;
+  name: string;
+  description?: string;
+  status: AgentDefinitionStatus;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+}
+
+export interface StoredAgentDefinitionVersion {
+  id: string;
+  version: number;
+  definition: AgentDefinition;
+  createdAt: number;
+}
+
+interface AgentRow {
+  id: string;
+  name: string;
+  status: AgentDefinitionStatus;
+  version: number;
+  definition_json: string;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+}
+
+interface AgentVersionRow {
+  id: string;
+  version: number;
+  definition_json: string;
+  created_at: number;
+}
+
+const THINKING_LEVELS = new Set<ThinkingLevel>([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+
+const INSTRUCTION_MODES = new Set(["append", "replace"]);
+const NO_TOOLS_VALUES = new Set(["all", "builtin"]);
+const FORBIDDEN_AGENT_DEFINITION_KEYS = new Set([
+  "target",
+  "workspaceId",
+  "worktreeId",
+  "cwd",
+  "schedule",
+  "attachments",
+  "images",
+]);
+
+export class AgentDefinitionStore {
+  private readonly db: SqliteDatabase;
+
+  constructor(dataDir: string, dbPath?: string) {
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    }
+    const resolvedDbPath = resolve(dbPath ?? join(dataDir, "session-state.db"));
+    this.db = openDatabase(resolvedDbPath);
+    chmodSync(resolvedDbPath, 0o600);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA synchronous = NORMAL");
+    this.ensureSchema();
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  createAgent(input: unknown, now = Date.now()): StoredAgentDefinition {
+    const definition = validateAgentDefinition(input);
+    const agent: StoredAgentDefinition = {
+      id: generateId(8),
+      name: definition.name,
+      status: "active",
+      version: 1,
+      definition,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO agent_definitions
+           (id, name, status, version, definition_json, created_at, updated_at, archived_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+        )
+        .run(
+          agent.id,
+          agent.name,
+          agent.status,
+          agent.version,
+          JSON.stringify(agent.definition),
+          agent.createdAt,
+          agent.updatedAt,
+        );
+      this.insertAgentVersion(agent.id, agent.version, agent.definition, now);
+    })();
+    return agent;
+  }
+
+  updateAgent(
+    agentId: string,
+    patch: unknown,
+    now = Date.now(),
+  ): StoredAgentDefinition | undefined {
+    const current = this.getAgent(agentId);
+    if (!current || current.status === "archived") return undefined;
+    const nextDefinition = validateAgentDefinition(mergeAgentDefinition(current.definition, patch));
+    const nextVersion = current.version + 1;
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE agent_definitions
+           SET name = ?, version = ?, definition_json = ?, updated_at = ?
+           WHERE id = ? AND status <> 'archived'`,
+        )
+        .run(nextDefinition.name, nextVersion, JSON.stringify(nextDefinition), now, current.id);
+      this.insertAgentVersion(current.id, nextVersion, nextDefinition, now);
+    })();
+    return this.getAgent(current.id);
+  }
+
+  archiveAgent(agentId: string, now = Date.now()): StoredAgentDefinition | undefined {
+    const current = this.getAgent(agentId);
+    if (!current) return undefined;
+    this.db
+      .prepare(
+        `UPDATE agent_definitions
+         SET status = 'archived', updated_at = ?, archived_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, now, current.id);
+    return this.getAgent(current.id);
+  }
+
+  getAgent(agentId: string): StoredAgentDefinition | undefined {
+    const row = this.db.prepare("SELECT * FROM agent_definitions WHERE id = ?").get(agentId) as
+      | AgentRow
+      | undefined;
+    return row ? agentFromRow(row) : undefined;
+  }
+
+  getAgentVersion(agentId: string, version: number): StoredAgentDefinitionVersion | undefined {
+    if (!Number.isInteger(version) || version < 1) return undefined;
+    const row = this.db
+      .prepare("SELECT * FROM agent_definition_versions WHERE id = ? AND version = ?")
+      .get(agentId, version) as AgentVersionRow | undefined;
+    return row ? agentVersionFromRow(row) : undefined;
+  }
+
+  resolveAgent(reference: string): StoredAgentDefinition | undefined {
+    const trimmed = reference.trim();
+    if (!trimmed) return undefined;
+    const direct = this.getAgent(trimmed);
+    if (direct) return direct;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM agent_definitions
+         WHERE name = ? AND status <> 'archived'
+         ORDER BY updated_at DESC, id ASC`,
+      )
+      .all(trimmed) as AgentRow[];
+    return rows.length === 1 ? agentFromRow(rows[0]) : undefined;
+  }
+
+  listAgents(options: { includeArchived?: boolean } = {}): StoredAgentDefinition[] {
+    const rows = (
+      options.includeArchived
+        ? this.db.prepare("SELECT * FROM agent_definitions ORDER BY updated_at DESC, id ASC").all()
+        : this.db
+            .prepare(
+              "SELECT * FROM agent_definitions WHERE status <> 'archived' ORDER BY updated_at DESC, id ASC",
+            )
+            .all()
+    ) as AgentRow[];
+    return rows.map(agentFromRow);
+  }
+
+  listAgentSummaries(options: { includeArchived?: boolean } = {}): AgentDefinitionSummary[] {
+    return this.listAgents(options).map(agentSummary);
+  }
+
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_definitions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        version INTEGER NOT NULL DEFAULT 1,
+        definition_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        archived_at INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS agent_definitions_active_name_idx
+        ON agent_definitions (name)
+        WHERE archived_at IS NULL;
+      CREATE INDEX IF NOT EXISTS agent_definitions_status_updated_idx
+        ON agent_definitions (status, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS agent_definition_versions (
+        id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        definition_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (id, version)
+      );
+      INSERT OR IGNORE INTO agent_definition_versions (id, version, definition_json, created_at)
+        SELECT id, version, definition_json, updated_at FROM agent_definitions;
+    `);
+  }
+
+  private insertAgentVersion(
+    agentId: string,
+    version: number,
+    definition: AgentDefinition,
+    createdAt: number,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_definition_versions (id, version, definition_json, created_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(agentId, version, JSON.stringify(definition), createdAt);
+  }
+}
+
+export function agentSummary(agent: StoredAgentDefinition): AgentDefinitionSummary {
+  return {
+    id: agent.id,
+    name: agent.name,
+    ...(agent.definition.description ? { description: agent.definition.description } : {}),
+    status: agent.status,
+    version: agent.version,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+    ...(agent.archivedAt !== undefined ? { archivedAt: agent.archivedAt } : {}),
+  };
+}
+
+function agentFromRow(row: AgentRow): StoredAgentDefinition {
+  const definition = JSON.parse(row.definition_json) as AgentDefinition;
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    version: row.version,
+    definition,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.archived_at !== null ? { archivedAt: row.archived_at } : {}),
+  };
+}
+
+function agentVersionFromRow(row: AgentVersionRow): StoredAgentDefinitionVersion {
+  return {
+    id: row.id,
+    version: row.version,
+    definition: JSON.parse(row.definition_json) as AgentDefinition,
+    createdAt: row.created_at,
+  };
+}
+
+export function validateAgentDefinition(input: unknown): AgentDefinition {
+  if (!isRecord(input)) {
+    throw new Error("Agent definition must be an object");
+  }
+  for (const key of Object.keys(input)) {
+    if (FORBIDDEN_AGENT_DEFINITION_KEYS.has(key)) {
+      throw new Error(`Agent definitions cannot include ${key}`);
+    }
+  }
+
+  const name = requireString(input.name, "name");
+  const description = validateString(input.description, "description");
+  const instructions = validateInstructions(input.instructions);
+  const resources = validateResources(input.resources);
+  const sessionDefaults = validateSessionDefaults(input.sessionDefaults);
+
+  return {
+    name,
+    ...(description !== undefined ? { description } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+    ...(resources !== undefined ? { resources } : {}),
+    ...(sessionDefaults !== undefined ? { sessionDefaults } : {}),
+  };
+}
+
+function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDefinition {
+  if (!isRecord(patch)) {
+    throw new Error("Agent update must be an object");
+  }
+  return {
+    ...current,
+    ...patch,
+    ...(isRecord(patch.resources)
+      ? { resources: { ...(current.resources ?? {}), ...patch.resources } }
+      : {}),
+    ...(isRecord(patch.sessionDefaults)
+      ? { sessionDefaults: { ...(current.sessionDefaults ?? {}), ...patch.sessionDefaults } }
+      : {}),
+  } as AgentDefinition;
+}
+
+function validateInstructions(value: unknown): AgentDefinition["instructions"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("instructions must be an object");
+  const mode = value.mode === undefined ? "append" : requireString(value.mode, "instructions.mode");
+  if (!INSTRUCTION_MODES.has(mode)) {
+    throw new Error("instructions.mode must be append or replace");
+  }
+  const text = requireString(value.text, "instructions.text");
+  return { mode: mode as "append" | "replace", text };
+}
+
+function validateResources(value: unknown): AgentDefinition["resources"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("resources must be an object");
+  return {
+    ...(value.agentsFiles !== undefined
+      ? { agentsFiles: validateAgentsFiles(value.agentsFiles) }
+      : {}),
+    ...(value.noContextFiles !== undefined
+      ? { noContextFiles: validateBoolean(value.noContextFiles, "resources.noContextFiles") }
+      : {}),
+    ...(value.skillIds !== undefined
+      ? { skillIds: validateStringArray(value.skillIds, "resources.skillIds") }
+      : {}),
+    ...(value.promptTemplateIds !== undefined
+      ? {
+          promptTemplateIds: validateStringArray(
+            value.promptTemplateIds,
+            "resources.promptTemplateIds",
+          ),
+        }
+      : {}),
+    ...(value.extensionIds !== undefined
+      ? { extensionIds: validateStringArray(value.extensionIds, "resources.extensionIds") }
+      : {}),
+  };
+}
+
+function validateAgentsFiles(value: unknown): Array<{ path: string; content: string }> {
+  if (!Array.isArray(value)) throw new Error("resources.agentsFiles must be an array");
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) throw new Error(`resources.agentsFiles[${index}] must be an object`);
+    const path = requireString(entry.path, `resources.agentsFiles[${index}].path`);
+    if (path.startsWith("/") || path.includes("..")) {
+      throw new Error(`resources.agentsFiles[${index}].path must be a relative virtual path`);
+    }
+    const content = requireString(entry.content, `resources.agentsFiles[${index}].content`, {
+      allowEmpty: true,
+    });
+    return { path, content };
+  });
+}
+
+function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaults"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("sessionDefaults must be an object");
+  const thinkingLevel = validateString(value.thinkingLevel, "sessionDefaults.thinkingLevel");
+  if (thinkingLevel !== undefined && !THINKING_LEVELS.has(thinkingLevel as ThinkingLevel)) {
+    throw new Error("sessionDefaults.thinkingLevel is invalid");
+  }
+  const noTools = validateString(value.noTools, "sessionDefaults.noTools");
+  if (noTools !== undefined && !NO_TOOLS_VALUES.has(noTools)) {
+    throw new Error("sessionDefaults.noTools must be all or builtin");
+  }
+  return {
+    ...(value.model !== undefined
+      ? { model: requireString(value.model, "sessionDefaults.model") }
+      : {}),
+    ...(thinkingLevel !== undefined ? { thinkingLevel: thinkingLevel as ThinkingLevel } : {}),
+    ...(value.tools !== undefined
+      ? { tools: validateStringArray(value.tools, "sessionDefaults.tools") }
+      : {}),
+    ...(value.excludeTools !== undefined
+      ? { excludeTools: validateStringArray(value.excludeTools, "sessionDefaults.excludeTools") }
+      : {}),
+    ...(noTools !== undefined ? { noTools: noTools as "all" | "builtin" } : {}),
+  };
+}
+
+function requireString(
+  value: unknown,
+  label: string,
+  options: { allowEmpty?: boolean } = {},
+): string {
+  return validateString(value, label, { ...options, required: true }) as string;
+}
+
+function validateString(
+  value: unknown,
+  label: string,
+  options: { required?: boolean; allowEmpty?: boolean } = {},
+): string | undefined {
+  if (value === undefined) {
+    if (options.required) throw new Error(`${label} required`);
+    return undefined;
+  }
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  const trimmed = value.trim();
+  if (!options.allowEmpty && !trimmed) throw new Error(`${label} must not be empty`);
+  return options.allowEmpty ? value : trimmed;
+}
+
+function validateBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
+  return value;
+}
+
+function validateStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value.map((entry, index) => requireString(entry, `${label}[${index}]`));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}

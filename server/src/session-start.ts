@@ -1,3 +1,4 @@
+import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import {
@@ -53,6 +54,7 @@ export class SessionStartCoordinator {
         const sdkBackend = await SdkBackend.create({
           session,
           workspace,
+          agentDefinition: this.resolveAgentDefinition(session),
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
           dataDir: this.deps.storage.getDataDir(),
@@ -91,6 +93,18 @@ export class SessionStartCoordinator {
         throw err;
       }
     });
+  }
+
+  private resolveAgentDefinition(session: Session): AgentDefinition | undefined {
+    const agentId = session.launch?.agentId;
+    if (!agentId) return undefined;
+    const store = this.deps.storage.getAgentDefinitionStore();
+    const agentVersion = session.launch?.agentVersion;
+    if (agentVersion !== undefined) {
+      const versioned = store.getAgentVersion(agentId, agentVersion);
+      if (versioned) return versioned.definition;
+    }
+    return store.getAgent(agentId)?.definition;
   }
 
   buildWorkspaceIdentity(session: Session, workspace?: Workspace): WorkspaceSessionIdentity {
