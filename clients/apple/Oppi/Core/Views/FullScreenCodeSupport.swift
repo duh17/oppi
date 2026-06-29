@@ -29,6 +29,37 @@ enum FullScreenViewerChrome {
     // Grep for `FullScreenViewerChrome` to find all adopters.
 }
 
+enum FullScreenFloatingControlChrome {
+    static let bottomPadding: CGFloat = 22
+    static let trailingPadding: CGFloat = 16
+    static let controlSize: CGFloat = 56
+    static let groupedButtonSize: CGFloat = 36
+    static let groupHorizontalPadding: CGFloat = 14
+    static let groupVerticalPadding: CGFloat = (controlSize - groupedButtonSize) / 2
+    static let symbolPointSize: CGFloat = 20
+    static let standaloneContentPadding: CGFloat = (controlSize - symbolPointSize) / 2
+    static let backgroundOpacity: CGFloat = 0.64
+
+    static func applyGlassBackground(
+        to config: inout UIButton.Configuration,
+        palette: ThemePalette
+    ) {
+        config.cornerStyle = .capsule
+        config.background.backgroundColor = UIColor(palette.bgDark).withAlphaComponent(backgroundOpacity)
+        config.baseForegroundColor = UIColor(palette.fg)
+    }
+}
+
+extension View {
+    func fullScreenFloatingControlGlass<S: Shape>(in shape: S) -> some View {
+        background(
+            Color.themeBgDark.opacity(Double(FullScreenFloatingControlChrome.backgroundOpacity)),
+            in: shape
+        )
+        .glassEffect(.regular, in: shape)
+    }
+}
+
 /// Shared policy for the app-wide horizontal back gesture.
 ///
 /// Left-to-right swipes must mean exactly one thing in Oppi: leave the current

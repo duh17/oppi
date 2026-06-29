@@ -119,7 +119,7 @@ struct FileBrowserContentView: View {
             .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe, navigateBackToFileList)
             .overlay(alignment: .bottom) {
                 fileNavigatorControls
-                    .padding(.bottom, 22)
+                    .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
             }
         .navigationTitle(shouldHideHostNavigationBar ? "" : currentFileName)
         .navigationBarTitleDisplayMode(.inline)
@@ -514,10 +514,9 @@ struct AdjacentFileNavigatorControls: View {
                     action: onNext
                 )
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.themeBgDark.opacity(0.64), in: Capsule())
-            .glassEffect(.regular, in: Capsule())
+            .padding(.horizontal, FullScreenFloatingControlChrome.groupHorizontalPadding)
+            .padding(.vertical, FullScreenFloatingControlChrome.groupVerticalPadding)
+            .fullScreenFloatingControlGlass(in: Capsule())
             .accessibilityElement(children: .contain)
         }
     }
@@ -532,7 +531,10 @@ struct AdjacentFileNavigatorControls: View {
             Image(systemName: systemImage)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(isEnabled ? Color.themeFg : Color.themeComment)
-                .frame(width: 36, height: 36)
+                .frame(
+                    width: FullScreenFloatingControlChrome.groupedButtonSize,
+                    height: FullScreenFloatingControlChrome.groupedButtonSize
+                )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

@@ -888,6 +888,11 @@ struct FullScreenReviewCommentSelectionTests {
         let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
         #expect(buttonFrame.midX > controller.view.bounds.midX)
         #expect(buttonFrame.midY > controller.view.bounds.midY)
+        #expect(abs(buttonFrame.width - FullScreenFloatingControlChrome.controlSize) <= 0.5)
+        #expect(abs(buttonFrame.height - FullScreenFloatingControlChrome.controlSize) <= 0.5)
+        #expect(
+            abs(controller.view.bounds.maxY - buttonFrame.maxY - FullScreenFloatingControlChrome.bottomPadding) <= 0.5
+        )
 
         let options = try #require(controller.makeViewingOptionsControllerForTesting())
         #expect(options.preferredContentSize.width == 340)

@@ -81,7 +81,7 @@ struct SessionTouchedFileContentView: View {
             .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe) { dismiss() }
             .overlay(alignment: .bottom) {
                 fileNavigatorControls
-                    .padding(.bottom, 22)
+                    .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
             }
         .navigationTitle(isUsingFileViewer ? "" : currentFileName)
         .navigationBarTitleDisplayMode(.inline)
