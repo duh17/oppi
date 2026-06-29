@@ -27,6 +27,14 @@ server/scripts/manual/*
 .pi/
 .imagen/
 .claude/
+/.build/
+/.claude-plugin/
+/config.json
+/events.jsonl
+/labels/
+/sessions/
+/statuses/
+/views.json
 
 # Local Apple config
 clients/apple/.env.testflight.local

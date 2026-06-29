@@ -421,15 +421,21 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  async function handleSessionCommand(
-    workspaceId: string,
-    sessionId: string,
+  function requireSession(sessionId: string, res: ServerResponse): Session | null {
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return null;
+    }
+
+    return session;
+  }
+
+  async function dispatchSessionCommand(
+    session: Session,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
     const body = await helpers.parseBody<unknown>(req);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       helpers.error(res, 400, "Command body must be an object");
@@ -455,6 +461,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     helpers.json(res, { messages });
+  }
+
+  async function handleSessionCommand(
+    workspaceId: string,
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!session) return;
+    await dispatchSessionCommand(session, req, res);
   }
 
   async function handleResumeWorkspaceSession(
@@ -554,14 +571,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  async function handleStopSession(
-    workspaceId: string,
-    sessionId: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
+  async function stopKnownSession(session: Session, res: ServerResponse): Promise<void> {
     try {
       const result = await lifecycle.stopSession(session);
       if (result.storedStopOnly && result.session) {
@@ -571,6 +581,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     } catch (error: unknown) {
       helpers.error(res, 500, safeErrorMessage(error));
     }
+  }
+
+  async function handleStopSession(
+    workspaceId: string,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!session) return;
+    await stopKnownSession(session, res);
   }
 
   // ─── Tool Output by ID ───
@@ -741,6 +761,201 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.compressedJson(req, res, result);
   }
 
+  function handleGenericSessionCollection(url: URL, res: ServerResponse): void {
+    const byId = new Map<string, Session>();
+    for (const session of ctx.storage.listSessions()) {
+      byId.set(session.id, session);
+    }
+    for (const activeSessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
+      const active = ctx.sessionRuntimes.getActiveSession(activeSessionId);
+      if (active) byId.set(active.id, active);
+    }
+
+    const workspaceId = url.searchParams.get("workspaceId")?.trim();
+    const worktreeId = url.searchParams.get("worktreeId")?.trim();
+    const agentId = url.searchParams.get("agentId")?.trim();
+    const statusFilter = url.searchParams
+      .get("status")
+      ?.split(",")
+      .map((status) => status.trim())
+      .filter(Boolean);
+    const limitRaw = url.searchParams.get("limit")?.trim();
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+    if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+      helpers.error(res, 400, "limit must be a positive integer");
+      return;
+    }
+
+    let sessions = Array.from(byId.values());
+    if (workspaceId) {
+      sessions = sessions.filter((session) => session.workspaceId === workspaceId);
+    }
+    if (worktreeId) {
+      sessions = sessions.filter((session) => (session.worktreeId ?? "main") === worktreeId);
+    }
+    if (agentId) {
+      sessions = sessions.filter((session) => session.launch?.agentId === agentId);
+    }
+    if (statusFilter && statusFilter.length > 0) {
+      sessions = sessions.filter((session) =>
+        statusFilter.some((status) => {
+          if (status === "active") return session.status !== "stopped";
+          if (status === "stopped") return session.status === "stopped";
+          return session.status === status;
+        }),
+      );
+    }
+
+    sessions = sessions
+      .map((session) => ctx.ensureSessionContextWindow(session))
+      .sort((lhs, rhs) => (rhs.lastActivity ?? 0) - (lhs.lastActivity ?? 0));
+    if (limit !== undefined) {
+      sessions = sessions.slice(0, limit);
+    }
+
+    helpers.json(res, { sessions, serverNow: Date.now() });
+  }
+
+  async function handleGenericGetSession(sessionId: string, res: ServerResponse): Promise<void> {
+    const session = requireSession(sessionId, res);
+    if (!session) return;
+    helpers.json(res, { session: ctx.ensureSessionContextWindow(session) });
+  }
+
+  function traceTailFor(url: URL): { tail?: number; error?: string } {
+    const raw = url.searchParams.get("tail")?.trim();
+    if (!raw) return {};
+    const tail = Number.parseInt(raw, 10);
+    if (!Number.isFinite(tail) || tail < 0) {
+      return { error: "tail must be a non-negative integer" };
+    }
+    return { tail };
+  }
+
+  type GenericTraceIncludePart = "all" | "messages" | "summary" | "system" | "thinking" | "tools";
+
+  const genericTraceIncludeParts = new Set<GenericTraceIncludePart>([
+    "all",
+    "messages",
+    "summary",
+    "system",
+    "thinking",
+    "tools",
+  ]);
+
+  function traceIncludeFor(url: URL): { parts?: Set<GenericTraceIncludePart>; error?: string } {
+    const raw = url.searchParams.get("include")?.trim();
+    if (!raw) return {};
+
+    const parts = new Set<GenericTraceIncludePart>();
+    const invalid: string[] = [];
+    for (const part of raw.split(",").map((value) => value.trim()).filter(Boolean)) {
+      if (genericTraceIncludeParts.has(part as GenericTraceIncludePart)) {
+        parts.add(part as GenericTraceIncludePart);
+      } else {
+        invalid.push(part);
+      }
+    }
+
+    if (invalid.length > 0) {
+      return {
+        error: `include must contain only all, messages, summary, system, thinking, or tools`,
+      };
+    }
+    if (parts.size === 0 || parts.has("all")) return {};
+    return { parts };
+  }
+
+  function filterTraceByInclude<T extends { type?: string }>(
+    trace: T[],
+    parts: Set<GenericTraceIncludePart> | undefined,
+  ): T[] {
+    if (!parts) return trace;
+    return trace.filter((event) => {
+      if (parts.has("messages") && (event.type === "user" || event.type === "assistant")) {
+        return true;
+      }
+      if (parts.has("summary") && event.type === "compaction") return true;
+      if (parts.has("system") && event.type === "system") return true;
+      if (parts.has("thinking") && event.type === "thinking") return true;
+      if (parts.has("tools") && (event.type === "toolCall" || event.type === "toolResult")) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  async function handleGenericGetSessionTrace(
+    req: IncomingMessage,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireSession(sessionId, res);
+    if (!session) return;
+    const tail = traceTailFor(url);
+    if (tail.error) {
+      helpers.error(res, 400, tail.error);
+      return;
+    }
+    const include = traceIncludeFor(url);
+    if (include.error) {
+      helpers.error(res, 400, include.error);
+      return;
+    }
+
+    const result = await traceService.getSessionWithTrace({ session, traceView: "full" });
+    const includedTrace = filterTraceByInclude(result.trace, include.parts);
+    const trace =
+      tail.tail === undefined
+        ? includedTrace
+        : tail.tail === 0
+          ? []
+          : includedTrace.slice(-tail.tail);
+    helpers.compressedJson(req, res, { ...result, trace });
+  }
+
+  function handleGenericGetSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
+    const session = requireSession(sessionId, res);
+    if (!session) return;
+
+    const sinceParam = url.searchParams.get("since");
+    const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
+    if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
+      helpers.error(res, 400, "since must be a non-negative integer");
+      return;
+    }
+
+    const catchUp = ctx.sessionRuntimes.getCatchUp(sessionId, sinceSeq);
+    if (!catchUp) {
+      helpers.error(res, 404, "Session not active");
+      return;
+    }
+
+    helpers.json(res, {
+      events: catchUp.events,
+      currentSeq: catchUp.currentSeq,
+      session: ctx.ensureSessionContextWindow(catchUp.session),
+      catchUpComplete: catchUp.catchUpComplete,
+    });
+  }
+
+  async function handleGenericSessionCommand(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = requireSession(sessionId, res);
+    if (!session) return;
+    await dispatchSessionCommand(session, req, res);
+  }
+
+  async function handleGenericStopSession(sessionId: string, res: ServerResponse): Promise<void> {
+    const session = requireSession(sessionId, res);
+    if (!session) return;
+    await stopKnownSession(session, res);
+  }
+
   async function handleDeleteSession(
     workspaceId: string,
     sessionId: string,
@@ -771,6 +986,47 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     if (path === "/sessions/recent" && method === "GET") {
       handleListRecentWorkspaceSessionSummaries(req, res);
+      return true;
+    }
+
+    if (path === "/sessions" && method === "GET") {
+      handleGenericSessionCollection(url, res);
+      return true;
+    }
+
+    const sessionCommandMatch = path.match(/^\/sessions\/([^/]+)\/command$/);
+    if (sessionCommandMatch && method === "POST") {
+      await handleGenericSessionCommand(sessionCommandMatch[1], req, res);
+      return true;
+    }
+
+    const sessionStopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
+    if (sessionStopMatch && method === "POST") {
+      await handleGenericStopSession(sessionStopMatch[1], res);
+      return true;
+    }
+
+    const sessionEventsMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
+    if (sessionEventsMatch && method === "GET") {
+      handleGenericGetSessionEvents(sessionEventsMatch[1], url, res);
+      return true;
+    }
+
+    const sessionReadMatch = path.match(/^\/sessions\/([^/]+)\/read$/);
+    if (sessionReadMatch && method === "GET") {
+      await handleGenericGetSessionTrace(req, sessionReadMatch[1], url, res);
+      return true;
+    }
+
+    const sessionTraceMatch = path.match(/^\/sessions\/([^/]+)\/trace$/);
+    if (sessionTraceMatch && method === "GET") {
+      await handleGenericGetSessionTrace(req, sessionTraceMatch[1], url, res);
+      return true;
+    }
+
+    const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
+    if (sessionMatch && method === "GET") {
+      await handleGenericGetSession(sessionMatch[1], res);
       return true;
     }
 
