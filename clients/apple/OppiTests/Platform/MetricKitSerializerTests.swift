@@ -7,7 +7,7 @@ import Testing
 /// We can't create real MXMetricPayload/MXDiagnosticPayload in tests — those come
 /// from the system. But the core pipeline is: dictionary -> MetricKitPayloadItem.
 /// That's what we test here, using dictionaries that match real jsonRepresentation() output.
-@Suite("MetricKit serializer")
+@Suite("MetricKit serializer", .serialized)
 struct MetricKitSerializerTests {
 
     // MARK: - Metric payloads
@@ -151,6 +151,39 @@ struct MetricKitSerializerTests {
         #expect(metadata["lastTimelinePayloadBytes"] == "14500000")
         #expect(metadata["lastTimelinePayloadEventCount"] == "1")
         #expect(metadata["lastTimelinePayloadLargestEventBytes"] == "14500000")
+    }
+
+    @Test func appCoalescerTelemetryRecordsFlushesAndCrashBreadcrumbs() async {
+        MetricKitCrashContextStore.record(
+            sessionId: "session-coalescer",
+            workspaceId: "workspace-telemetry",
+            streamState: "streaming"
+        )
+
+        await DeltaCoalescerTelemetry.appMetrics.recordFlushWindow(
+            DeltaCoalescerFlushWindow(
+                sessionId: "session-coalescer",
+                eventCount: 3,
+                byteCount: 1_024,
+                flushCount: 2
+            )
+        )
+        DeltaCoalescerTelemetry.appMetrics.recordLargeTimelinePayload(
+            DeltaCoalescerLargeTimelinePayload(
+                sessionId: "session-coalescer",
+                eventCount: 3,
+                byteCount: 1_024,
+                largestEventByteCount: 512
+            )
+        )
+
+        let metadata = MetricKitCrashContextStore.snapshotMetadata()
+
+        #expect(metadata["lastSessionId"] == "session-coalescer")
+        #expect(metadata["lastWorkspaceId"] == "workspace-telemetry")
+        #expect(metadata["lastTimelinePayloadBytes"] == "1024")
+        #expect(metadata["lastTimelinePayloadEventCount"] == "3")
+        #expect(metadata["lastTimelinePayloadLargestEventBytes"] == "512")
     }
 
     // MARK: - Empty/broken payloads (the old bug)
