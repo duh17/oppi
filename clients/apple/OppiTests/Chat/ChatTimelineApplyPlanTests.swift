@@ -27,6 +27,21 @@ struct ChatTimelineApplyPlanTests {
         #expect(plan.nextItemByID["middle"] == middle)
     }
 
+    @Test func planKeepsLoadMoreAvailableWhenOnlyServerPagesRemain() {
+        let plan = ChatTimelineApplyPlan.build(
+            items: [.assistantMessage(id: "assistant-1", text: "hi", timestamp: Date())],
+            hiddenCount: 0,
+            hasOlderServerPage: true,
+            isBusy: false,
+            streamingAssistantID: nil
+        )
+
+        #expect(plan.nextIDs == [
+            ChatTimelineCollectionHost.loadMoreID,
+            "assistant-1",
+        ])
+    }
+
     @Test func planIncludesWorkingIndicatorWhileAssistantIsStreaming() {
         let plan = ChatTimelineApplyPlan.build(
             items: [.assistantMessage(id: "assistant-1", text: "hi", timestamp: Date())],

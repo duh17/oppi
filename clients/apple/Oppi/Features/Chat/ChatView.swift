@@ -1621,7 +1621,19 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             onSelect: { targetID in
-                scrollController.scrollTargetID = targetID
+                if reducer.items.contains(where: { $0.id == targetID }) {
+                    scrollController.scrollTargetID = targetID
+                    return
+                }
+
+                Task { @MainActor in
+                    _ = await sessionManager.loadTracePageAround(
+                        entryId: targetID,
+                        connection: connection,
+                        sessionStore: sessionStore
+                    )
+                    scrollController.scrollTargetID = targetID
+                }
             },
             onFork: forkFromMessage,
             onNavigateTreeNode: { request in
@@ -1629,6 +1641,18 @@ struct ChatView: View {
             },
             loadTree: { filterMode in
                 try await connection.getSessionTree(filterMode: filterMode)
+            },
+            loadOutline: {
+                guard let workspaceId = session?.workspaceId else {
+                    throw CommandRequestError.rejected(
+                        command: "trace_outline",
+                        reason: "Missing workspace context"
+                    )
+                }
+                return try await connection.getSessionTraceOutline(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId
+                )
             }
         )
     }

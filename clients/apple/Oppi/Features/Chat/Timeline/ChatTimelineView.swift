@@ -1,6 +1,12 @@
 import SwiftUI
 
 enum TimelineRenderWindowPolicy {
+    enum ShowEarlierAction: Equatable {
+        case revealLocal(newWindow: Int)
+        case fetchOlderPage
+        case none
+    }
+
     static let standardWindow = 80
     static let renderWindowStep = 60
 
@@ -9,6 +15,24 @@ enum TimelineRenderWindowPolicy {
         let clampedCurrent = min(max(0, currentWindow), clampedTotal)
         let baseline = min(clampedTotal, standardWindow)
         return max(clampedCurrent, baseline)
+    }
+
+    static func showsShowEarlierControl(hiddenCount: Int, hasOlderServerPage: Bool) -> Bool {
+        hiddenCount > 0 || hasOlderServerPage
+    }
+
+    static func showEarlierAction(
+        currentWindow: Int,
+        totalItems: Int,
+        step: Int,
+        hasOlderServerPage: Bool
+    ) -> ShowEarlierAction {
+        let clampedTotal = max(0, totalItems)
+        let clampedCurrent = min(max(0, currentWindow), clampedTotal)
+        if clampedCurrent < clampedTotal {
+            return .revealLocal(newWindow: min(clampedTotal, clampedCurrent + max(1, step)))
+        }
+        return hasOlderServerPage ? .fetchOlderPage : .none
     }
 }
 
@@ -87,6 +111,7 @@ struct ChatTimelineView: View {
             configuration: .init(
                 items: Array(visibleItems),
                 hiddenCount: hiddenCount,
+                hasOlderServerPage: sessionManager.hasOlderTracePage,
                 renderWindowStep: Self.renderWindowStep,
                 isBusy: isBusy,
                 showsWorkingIndicator: showsWorkingIndicator,
@@ -96,7 +121,27 @@ struct ChatTimelineView: View {
                 onFork: onFork,
                 onBackSwipe: onBackSwipe,
                 onShowEarlier: {
-                    renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
+                    switch TimelineRenderWindowPolicy.showEarlierAction(
+                        currentWindow: renderWindow,
+                        totalItems: reducer.items.count,
+                        step: Self.renderWindowStep,
+                        hasOlderServerPage: sessionManager.hasOlderTracePage
+                    ) {
+                    case .revealLocal(let newWindow):
+                        renderWindow = newWindow
+                    case .fetchOlderPage:
+                        Task { @MainActor in
+                            let didLoadOlder = await sessionManager.loadOlderTracePage(
+                                connection: connection,
+                                sessionStore: connection.sessionStore
+                            )
+                            if didLoadOlder {
+                                renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
+                            }
+                        }
+                    case .none:
+                        break
+                    }
                 },
                 scrollCommand: pendingScrollCommand,
                 scrollController: scrollController,

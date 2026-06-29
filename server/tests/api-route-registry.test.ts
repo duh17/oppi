@@ -47,6 +47,8 @@ const sessionOperationIds = [
   "putSessionAttachmentContent",
   "createWorkspaceSession",
   "getWorkspaceSession",
+  "getWorkspaceSessionTracePage",
+  "getWorkspaceSessionTraceOutline",
   "deleteWorkspaceSession",
   "stopWorkspaceSession",
   "resumeWorkspaceSession",
@@ -143,6 +145,9 @@ describe("api route registry", () => {
     );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/diff")).toBe(
       "/workspaces/:workspaceId/sessions/:sessionId/diff",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/trace-page")).toBe(
+      "/workspaces/:workspaceId/sessions/:sessionId/trace-page",
     );
     expect(
       normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/tool-output/tc_abc123"),

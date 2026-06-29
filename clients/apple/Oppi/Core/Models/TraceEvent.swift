@@ -18,6 +18,9 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
 
     // Tool result fields
     let output: String?
+    let outputTruncated: Bool?
+    let outputPreviewBytes: Int?
+    let outputTotalBytes: Int?
     let toolCallId: String?
     let toolName: String?
     let isError: Bool?
@@ -39,6 +42,9 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         tool: String? = nil,
         args: [String: JSONValue]? = nil,
         output: String? = nil,
+        outputTruncated: Bool? = nil,
+        outputPreviewBytes: Int? = nil,
+        outputTotalBytes: Int? = nil,
         toolCallId: String? = nil,
         toolName: String? = nil,
         isError: Bool? = nil,
@@ -53,6 +59,9 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.tool = tool
         self.args = args
         self.output = output
+        self.outputTruncated = outputTruncated
+        self.outputPreviewBytes = outputPreviewBytes
+        self.outputTotalBytes = outputTotalBytes
         self.toolCallId = toolCallId
         self.toolName = toolName
         self.isError = isError
@@ -60,6 +69,31 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.thinking = thinking
         self.presentation = presentation
     }
+}
+
+struct TracePageMetadata: Codable, Equatable, Sendable {
+    let hasOlder: Bool
+    let olderCursor: String?
+    let traceVersion: String
+    let previewBytes: Int
+    let staleCursor: Bool
+}
+
+struct TracePageMetrics: Codable, Equatable, Sendable {
+    let rawEntryCount: Int
+    let traceEventCount: Int
+    let selectedRawEntryCount: Int
+    let jsonlBytes: Int
+    let scannedBytes: Int
+    let readMs: Double
+    let parseMs: Double
+    let selectMs: Double
+    let formatMs: Double
+    let previewMs: Double
+    let jsonBytes: Int?
+    let gzipBytes: Int?
+    let stringifyMs: Double?
+    let gzipMs: Double?
 }
 
 struct TraceEventPresentation: Codable, Equatable, Sendable {

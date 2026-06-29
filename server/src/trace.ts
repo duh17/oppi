@@ -132,6 +132,12 @@ export interface TraceEvent {
   args?: Record<string, unknown>;
   /** For toolResult: the tool's output */
   output?: string;
+  /** For paged trace previews: true when output contains only an initial preview. */
+  outputTruncated?: boolean;
+  /** For paged trace previews: UTF-8 bytes included in output. */
+  outputPreviewBytes?: number;
+  /** For paged trace previews: full UTF-8 byte count before preview truncation. */
+  outputTotalBytes?: number;
   /** For toolResult: the tool call ID it responds to */
   toolCallId?: string;
   /** For toolResult: the tool name */
@@ -163,7 +169,7 @@ export interface TraceEventPresentation {
 
 // ─── Raw JSONL Entry (matches pi's session file format) ───
 
-interface SessionEntry {
+export interface SessionEntry {
   type: string;
   id: string;
   parentId?: string | null;
@@ -698,25 +704,27 @@ export function parseJsonl(content: string, options: TraceReadOptions = {}): Tra
  * Layout:
  *   <traceBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/*.jsonl
  */
+export function collectSessionTraceJsonlPaths(
+  traceBaseDir: string,
+  sessionId: string,
+  workspaceId?: string,
+): string[] {
+  if (!workspaceId) return [];
+
+  return collectTraceDirJsonlPaths(
+    join(traceBaseDir, workspaceId, "sessions", sessionId, "agent", "sessions", "--work--"),
+  );
+}
+
 export function readSessionTrace(
   traceBaseDir: string,
   sessionId: string,
   workspaceId?: string,
   options: TraceReadOptions = {},
 ): TraceEvent[] | null {
-  if (!workspaceId) return null;
+  const files = collectSessionTraceJsonlPaths(traceBaseDir, sessionId, workspaceId);
 
-  const sessionsDir = join(
-    traceBaseDir,
-    workspaceId,
-    "sessions",
-    sessionId,
-    "agent",
-    "sessions",
-    "--work--",
-  );
-
-  const trace = readTraceFromDir(sessionsDir, {
+  const trace = readTraceFromFiles(files, {
     ...options,
     attachmentDataDir: options.attachmentDataDir ?? traceBaseDir,
     attachmentSessionId: options.attachmentSessionId ?? sessionId,
@@ -801,6 +809,22 @@ export function readSessionTraceFromFiles(
   jsonlPaths: string[],
   options: TraceReadOptions = {},
 ): TraceEvent[] | null {
+  return readTraceFromFiles(jsonlPaths, options);
+}
+
+function collectTraceDirJsonlPaths(sessionsDir: string): string[] {
+  if (!existsSync(sessionsDir)) return [];
+
+  return readdirSync(sessionsDir)
+    .filter((file) => file.endsWith(".jsonl"))
+    .sort() // timestamp prefix => chronological order
+    .map((file) => join(sessionsDir, file));
+}
+
+function readTraceFromFiles(
+  jsonlPaths: string[],
+  options: TraceReadOptions = {},
+): TraceEvent[] | null {
   const uniqueSorted = Array.from(new Set(jsonlPaths)).sort();
   const allEntries: SessionEntry[] = [];
 
@@ -808,35 +832,6 @@ export function readSessionTraceFromFiles(
     if (!existsSync(path)) continue;
     try {
       const content = readFileSync(path, "utf-8");
-      const entries = parseEntries(content);
-      allEntries.push(...entries);
-    } catch {
-      // Skip unreadable files
-    }
-  }
-
-  if (allEntries.length === 0) return null;
-  const events = buildSessionContext(allEntries, options);
-  return events.length > 0 ? events : null;
-}
-
-function readTraceFromDir(
-  sessionsDir: string,
-  options: TraceReadOptions = {},
-): TraceEvent[] | null {
-  if (!existsSync(sessionsDir)) return null;
-
-  const files = readdirSync(sessionsDir)
-    .filter((f) => f.endsWith(".jsonl"))
-    .sort(); // timestamp prefix => chronological order
-
-  if (files.length === 0) return null;
-
-  // Collect all entries across files, then build context once
-  const allEntries: SessionEntry[] = [];
-  for (const file of files) {
-    try {
-      const content = readFileSync(join(sessionsDir, file), "utf-8");
       const entries = parseEntries(content);
       allEntries.push(...entries);
     } catch {

@@ -231,6 +231,72 @@ struct TimelineReducerLoadTests {
         #expect(tailText == "Incremental tail")
     }
 
+    @Test func prependTracePageMergesOlderEventsWithoutDuplicates() {
+        let reducer = TimelineReducer()
+        let latest = [
+            TraceEvent(id: "u2", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Second", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a2", type: .assistant, timestamp: "2025-01-01T00:00:03.000Z",
+                       text: "Second answer", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        let older = [
+            TraceEvent(id: "u1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "First", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a1", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "First answer", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "u2", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Second", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(latest, preserveOrphans: false)
+        reducer.prependTracePage(older, finalizeOpenTools: true)
+
+        #expect(reducer.items.count == 4)
+        #expect(reducer.items.map(\.id) == ["u1", "a1", "u2", "a2"])
+    }
+
+    @Test func prependTracePageRefusesDirtyTimelineAndPreservesLiveItems() {
+        let reducer = TimelineReducer()
+        let latest = [
+            TraceEvent(id: "u2", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Second", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a2", type: .assistant, timestamp: "2025-01-01T00:00:03.000Z",
+                       text: "Second answer", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        let older = [
+            TraceEvent(id: "u1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "First", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a1", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "First answer", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(latest, preserveOrphans: false, finalizeOpenTools: false)
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "live tail"),
+        ])
+        let itemsBeforePrepend = reducer.items
+
+        let didPrepend = reducer.prependTracePage(older, finalizeOpenTools: false)
+
+        #expect(!didPrepend)
+        #expect(reducer.items == itemsBeforePrepend)
+        guard case .assistantMessage(_, let text, _) = reducer.items.last else {
+            Issue.record("Expected live assistant item to remain at tail")
+            return
+        }
+        #expect(text == "live tail")
+    }
+
     @Test func loadSessionForcesFullRebuildAfterOutOfBandMutation() {
         let reducer = TimelineReducer()
         let base = [

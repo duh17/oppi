@@ -25,6 +25,8 @@ struct SessionOutlineView: View {
     var onNavigateTreeNode: ((TreeNavigationRequest) async throws -> Void)? = nil
     var initialTreeSnapshot: SessionTreeSnapshot? = nil
     var loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = nil
+    var initialOutlineSnapshot: SessionOutlineSnapshot? = nil
+    var loadOutline: (() async throws -> SessionOutlineSnapshot)? = nil
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
@@ -35,9 +37,13 @@ struct SessionOutlineView: View {
     @State private var debouncedSearchText = ""
     @State private var filter: OutlineFilter = .all
 
-    // Pre-computed outline entries — built once on appear.
+    // Pre-computed outline entries — built once on appear, then replaced by
+    // the server's lightweight full-session outline when available.
     @State private var allEntries: [OutlineEntry] = []
     @State private var displayedEntries: [OutlineEntry] = []
+    @State private var outlineSnapshot: SessionOutlineSnapshot?
+    @State private var isLoadingOutline = false
+    @State private var outlineLoadErrorMessage: String?
 
     // Session tree (for /tree-style navigation surface)
     @State private var treeFilter: SessionTreeFilterMode = .standard
@@ -98,16 +104,19 @@ struct SessionOutlineView: View {
                 }
             }
             .task {
+                if outlineSnapshot == nil, let initialOutlineSnapshot {
+                    outlineSnapshot = initialOutlineSnapshot
+                }
                 buildIndex()
                 applyFilter()
+
+                await loadOutlineIfNeeded()
 
                 if treeSnapshot == nil, let initialTreeSnapshot {
                     treeSnapshot = initialTreeSnapshot
                     treeSnapshotFilter = .standard
+                    applyTreeFilter()
                 }
-
-                await loadTreeIfNeeded()
-                applyTreeFilter()
             }
             .onChange(of: searchText) { _, newValue in
                 searchDebounceTask?.cancel()
@@ -199,14 +208,16 @@ struct SessionOutlineView: View {
 
     // MARK: - Index Building
 
-    /// Build pre-computed entries for all items. O(n) once on appear.
+    /// Build pre-computed entries for the local timeline or full-session outline.
     private func buildIndex() {
         guard allEntries.isEmpty else { return }
 
-        var entries: [OutlineEntry] = []
-        entries.reserveCapacity(items.count)
+        if let outlineSnapshot {
+            allEntries = outlineSnapshot.entries.map(Self.outlineEntry(from:))
+            return
+        }
 
-        for item in items {
+        allEntries = items.map { item in
             let isCompaction = Self.isCompactionEvent(item)
             let summary = outlineSummary(for: item)
             let diffStats = outlineDiffStats(for: item)
@@ -241,20 +252,22 @@ struct SessionOutlineView: View {
                 isForkable = false
             }
 
-            entries.append(OutlineEntry(
+            return OutlineEntry(
                 id: item.id,
                 item: item,
+                kind: Self.outlineKind(for: item, isCompaction: isCompaction),
+                tool: Self.outlineTool(for: item),
+                timestamp: item.timestamp,
                 summary: summary,
                 diffStats: diffStats,
                 isCompaction: isCompaction,
                 isForkable: isForkable,
                 passesAllFilter: passesAllFilter,
                 isMessage: isMessage,
-                isTool: isTool
-            ))
+                isTool: isTool,
+                isError: Self.outlineIsError(for: item)
+            )
         }
-
-        allEntries = entries
     }
 
     /// Filter pre-computed entries by current filter and search text.
@@ -294,6 +307,90 @@ struct SessionOutlineView: View {
 
         displayedEntries = filtered
         renderWindow = Self.initialRenderWindow
+    }
+
+    private func loadOutlineIfNeeded() async {
+        guard let loadOutline else { return }
+        guard !isLoadingOutline else { return }
+        guard outlineSnapshot == nil else { return }
+
+        isLoadingOutline = true
+        defer { isLoadingOutline = false }
+
+        do {
+            let snapshot = try await loadOutline()
+            let projectedEntries = snapshot.entries.map(Self.outlineEntry(from:))
+            if projectedEntries.isEmpty, !items.isEmpty {
+                outlineLoadErrorMessage = nil
+                return
+            }
+            outlineSnapshot = snapshot
+            allEntries = projectedEntries
+            outlineLoadErrorMessage = nil
+            applyFilter()
+        } catch {
+            outlineLoadErrorMessage = error.localizedDescription
+        }
+    }
+
+    private static func outlineEntry(from snapshot: SessionOutlineEntrySnapshot) -> OutlineEntry {
+        OutlineEntry(
+            id: snapshot.id,
+            item: nil,
+            kind: OutlineEntryKind(rawValue: snapshot.kind) ?? .system,
+            tool: snapshot.tool,
+            timestamp: outlineTimestamp(snapshot.timestamp),
+            summary: snapshot.summary,
+            diffStats: nil,
+            isCompaction: snapshot.kind == OutlineEntryKind.compaction.rawValue,
+            isForkable: snapshot.isForkable == true,
+            passesAllFilter: snapshot.passesAllFilter,
+            isMessage: snapshot.isMessage,
+            isTool: snapshot.isTool,
+            isError: snapshot.isError == true
+        )
+    }
+
+    private static func outlineTimestamp(_ timestamp: String) -> Date? {
+        guard !timestamp.isEmpty else { return nil }
+        return FastISO8601Parser.parse(timestamp, fallback: outlineDateFormatter)
+    }
+
+    nonisolated(unsafe) private static let outlineDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static func outlineKind(for item: ChatItem, isCompaction: Bool) -> OutlineEntryKind {
+        if isCompaction { return .compaction }
+        switch item {
+        case .userMessage: return .user
+        case .assistantMessage: return .assistant
+        case .audioClip: return .assistant
+        case .thinking: return .thinking
+        case .toolCall: return .tool
+        case .systemEvent: return .system
+        case .customEvent: return .custom
+        case .error: return .error
+        }
+    }
+
+    private static func outlineTool(for item: ChatItem) -> String? {
+        if case .toolCall(_, let tool, _, _, _, _, _) = item {
+            return tool
+        }
+        return nil
+    }
+
+    private static func outlineIsError(for item: ChatItem) -> Bool {
+        if case .toolCall(_, _, _, _, _, let isError, _) = item {
+            return isError
+        }
+        if case .error = item {
+            return true
+        }
+        return false
     }
 
     private func loadTreeIfNeeded() async {
@@ -664,6 +761,11 @@ struct SessionOutlineView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                if isLoadingOutline {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
                 Text("\(displayedEntries.count) items")
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
@@ -676,6 +778,32 @@ struct SessionOutlineView: View {
 
             // Outline list with render window
             ScrollView {
+                if let outlineLoadErrorMessage,
+                   outlineSnapshot == nil,
+                   !outlineLoadErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.themeOrange)
+                            .font(.caption)
+
+                        Text("Full outline unavailable: \(outlineLoadErrorMessage)")
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.themeOrange.opacity(0.35), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+
                 LazyVStack(spacing: 0) {
                     ForEach(0..<visibleCount, id: \.self) { index in
                         let entry = displayedEntries[index]
@@ -685,10 +813,14 @@ struct SessionOutlineView: View {
                         } label: {
                             OutlineRow(
                                 item: entry.item,
+                                kind: entry.kind,
+                                tool: entry.tool,
+                                timestamp: entry.timestamp,
                                 summary: entry.summary,
                                 matchPositions: entry.matchPositions,
                                 diffStats: entry.diffStats,
                                 isCompaction: entry.isCompaction,
+                                isError: entry.isError,
                                 showDivider: index < visibleCount - 1
                             )
                         }
@@ -946,11 +1078,25 @@ struct SessionOutlineView: View {
 
 // MARK: - Pre-computed Outline Entry
 
+private enum OutlineEntryKind: String {
+    case user
+    case assistant
+    case thinking
+    case tool
+    case system
+    case compaction
+    case custom
+    case error
+}
+
 /// Holds pre-computed summary, search text, and classification for each item.
 /// Built once on view appear so filtering is cheap.
 private struct OutlineEntry: Identifiable {
     let id: String
-    let item: ChatItem
+    let item: ChatItem?
+    let kind: OutlineEntryKind
+    let tool: String?
+    let timestamp: Date?
     let summary: String
     let diffStats: ToolCallFormatting.DiffStats?
     let isCompaction: Bool
@@ -960,6 +1106,7 @@ private struct OutlineEntry: Identifiable {
     let passesAllFilter: Bool
     let isMessage: Bool
     let isTool: Bool
+    let isError: Bool
 
     /// Unicode scalar positions of literal search matches (populated during search).
     var matchPositions: [Int] = []
@@ -968,11 +1115,15 @@ private struct OutlineEntry: Identifiable {
 // MARK: - Outline Row
 
 private struct OutlineRow: View {
-    let item: ChatItem
+    let item: ChatItem?
+    let kind: OutlineEntryKind
+    let tool: String?
+    let timestamp: Date?
     let summary: String
     var matchPositions: [Int] = []
     var diffStats: ToolCallFormatting.DiffStats?
     let isCompaction: Bool
+    let isError: Bool
     let showDivider: Bool
 
     var body: some View {
@@ -1026,8 +1177,8 @@ private struct OutlineRow: View {
                 }
 
                 // Timestamp (if available)
-                if let ts = item.timestamp {
-                    Text(ts, style: .time)
+                if let timestamp {
+                    Text(timestamp, style: .time)
                         .font(.caption2)
                         .foregroundStyle(.themeComment)
                 }
@@ -1076,15 +1227,15 @@ private struct OutlineRow: View {
             return "arrow.trianglehead.2.clockwise.rotate.90"
         }
 
-        switch item {
-        case .userMessage: return "person.fill"
-        case .assistantMessage: return "cpu"
-        case .audioClip: return "waveform"
+        switch kind {
+        case .user: return "person.fill"
+        case .assistant: return itemAudioIcon ?? "cpu"
         case .thinking: return "sparkle"
-        case .toolCall(_, let tool, _, _, _, _, _):
-            return ToolCallFormatting.sfSymbolName(for: tool) ?? "wrench"
-        case .systemEvent: return "info.circle"
-        case .customEvent: return "info.circle.fill"
+        case .tool:
+            return ToolCallFormatting.sfSymbolName(for: tool ?? "") ?? "wrench"
+        case .system: return "info.circle"
+        case .compaction: return "arrow.trianglehead.2.clockwise.rotate.90"
+        case .custom: return "info.circle.fill"
         case .error: return "exclamationmark.triangle"
         }
     }
@@ -1094,15 +1245,13 @@ private struct OutlineRow: View {
             return .themeOrange
         }
 
-        switch item {
-        case .userMessage: return .themeBlue
-        case .assistantMessage: return .themePurple
-        case .audioClip: return .themePurple
-        case .thinking: return .themePurple
-        case .toolCall(_, _, _, _, _, let isError, _):
-            return isError ? .themeRed : .themeCyan
-        case .systemEvent: return .themeComment
-        case .customEvent: return .themeBlue
+        switch kind {
+        case .user: return .themeBlue
+        case .assistant, .thinking: return .themePurple
+        case .tool: return isError ? .themeRed : .themeCyan
+        case .system: return .themeComment
+        case .compaction: return .themeOrange
+        case .custom: return .themeBlue
         case .error: return .themeRed
         }
     }
@@ -1112,14 +1261,19 @@ private struct OutlineRow: View {
             return .themeFg
         }
 
-        switch item {
-        case .userMessage: return .themeFg
-        case .assistantMessage: return .themeFgDim
-        case .audioClip: return .themeFgDim
+        switch kind {
+        case .user: return .themeFg
+        case .assistant: return .themeFgDim
         case .thinking: return .themeComment
-        case .toolCall: return .themeFgDim
+        case .tool: return .themeFgDim
+        case .compaction: return .themeFg
         default: return .themeComment
         }
+    }
+
+    private var itemAudioIcon: String? {
+        if let item, case .audioClip = item { return "waveform" }
+        return nil
     }
 }
 

@@ -121,6 +121,29 @@ struct TimelineCacheTests {
         #expect(loaded?.events.map(\.text) == ["old", "new"])
     }
 
+    @Test func saveTracePersistsPartialPageMetadata() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        let page = TracePageMetadata(
+            hasOlder: true,
+            olderCursor: "cursor-1",
+            traceVersion: "123:456",
+            previewBytes: 4096,
+            staleCursor: false
+        )
+
+        await cache.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")], page: page)
+        let loaded = await cache.loadTrace("session-1")
+
+        #expect(loaded?.page == page)
+        #expect(loaded?.isPartial == true)
+    }
+
     @Test func saveTraceAllowsLargePayloadsAndReliesOnTotalBudget() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")

@@ -471,6 +471,76 @@ struct APIClientTests {
         #expect(trace.count == 1)
     }
 
+    @Test func getSessionTracePageDecodesPageMetadataAndPreviewFields() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
+            #expect(request.url?.query == "cursor=older-1&previewBytes=4096&targetEvents=180")
+            return self.mockResponse(json: """
+            {
+                "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "trace":[
+                    {"id":"tc1","type":"toolCall","timestamp":"2025-01-01T00:00:00Z","tool":"bash","args":{"command":"echo hi"}},
+                    {"id":"result-r1","type":"toolResult","timestamp":"2025-01-01T00:00:01Z","toolCallId":"tc1","toolName":"bash","output":"preview","outputTruncated":true,"outputPreviewBytes":4096,"outputTotalBytes":9000}
+                ],
+                "page":{"hasOlder":true,"olderCursor":"older-2","traceVersion":"123:456","previewBytes":4096,"staleCursor":false},
+                "metrics":{"rawEntryCount":10,"traceEventCount":2,"selectedRawEntryCount":2,"jsonlBytes":123,"scannedBytes":123,"readMs":1,"parseMs":2,"selectMs":3,"formatMs":4,"previewMs":5,"jsonBytes":456,"gzipBytes":78,"stringifyMs":1,"gzipMs":2}
+            }
+            """)
+        }
+
+        let response = try await client.getWorkspaceSessionTracePage(
+            workspaceId: "w1",
+            sessionId: "s1",
+            cursor: "older-1",
+            targetEvents: 180,
+            previewBytes: 4096
+        )
+
+        #expect(response.session.id == "s1")
+        #expect(response.trace.map(\.id) == ["tc1", "result-r1"])
+        #expect(response.trace[1].outputTruncated == true)
+        #expect(response.trace[1].outputPreviewBytes == 4096)
+        #expect(response.trace[1].outputTotalBytes == 9000)
+        #expect(response.page.hasOlder)
+        #expect(response.page.olderCursor == "older-2")
+        #expect(response.metrics.traceEventCount == 2)
+        #expect(response.metrics.scannedBytes == 123)
+    }
+
+    @Test func getSessionTracePageCanRequestEntryCenteredPage() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
+            #expect(request.url?.query == "aroundEntryId=a1-text-0&previewBytes=4096&targetEvents=180")
+            return self.mockResponse(json: """
+            {
+                "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "trace":[
+                    {"id":"a1-text-0","type":"assistant","timestamp":"2025-01-01T00:00:00Z","text":"Found it"}
+                ],
+                "page":{"hasOlder":true,"olderCursor":"older-1","traceVersion":"123:456","previewBytes":4096,"staleCursor":false},
+                "metrics":{"rawEntryCount":3,"traceEventCount":1,"selectedRawEntryCount":1,"jsonlBytes":123,"scannedBytes":123,"readMs":1,"parseMs":2,"selectMs":3,"formatMs":4,"previewMs":5,"jsonBytes":456,"gzipBytes":78,"stringifyMs":1,"gzipMs":2}
+            }
+            """)
+        }
+
+        let response = try await client.getWorkspaceSessionTracePage(
+            workspaceId: "w1",
+            sessionId: "s1",
+            aroundEntryId: "a1-text-0",
+            targetEvents: 180,
+            previewBytes: 4096
+        )
+
+        #expect(response.trace.map(\.id) == ["a1-text-0"])
+        #expect(response.page.olderCursor == "older-1")
+    }
+
     @Test func getSessionEventsDecodesSequencedCatchUp() async throws {
         let client = makeClient()
         defer { cleanup() }

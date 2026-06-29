@@ -135,6 +135,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
     }
 
+    /// Trace events from the last successful history load.
+    /// Used for paged prepend and append-only reload detection.
+    private var loadedTraceEvents: [TraceEvent] = []
+
     /// Trace event IDs from the last successful history load.
     /// Used to detect append-only reloads and avoid full rebuilds.
     private var loadedTraceEventIDs: [String] = []
@@ -247,6 +251,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolElapsedSeconds.removeAll()
         askToolEventIDs.removeAll()
         retryMergeCandidate = nil
+        loadedTraceEvents.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         loadedTraceFinalizeOpenTools = nil
@@ -280,8 +285,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
         }
 
-        // Drop trace event IDs — forces full rebuild on next loadSession
-        // instead of incremental append, freeing the ID array.
+        // Drop trace events — forces full rebuild on next loadSession
+        // instead of incremental append, freeing the ID array and page source.
+        loadedTraceEvents.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         loadedTraceFinalizeOpenTools = nil
@@ -318,6 +324,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         switch loadSessionMode(events: events, finalizeOpenTools: finalizeOpenTools) {
         case .noOp:
             _lastLoadWasIncrementalForTesting = true
+            if loadedTraceEvents.isEmpty {
+                loadedTraceEvents = events
+            }
             loadedTraceFinalizeOpenTools = finalizeOpenTools
             if finalizeOpenTools, closeAllOrphanedTools() {
                 timelineMatchesTrace = false
@@ -339,6 +348,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 }
             }
 
+            loadedTraceEvents.append(contentsOf: events[appendStart...])
             loadedTraceEventIDs.append(contentsOf: events[appendStart...].map(\.id))
             let closedOpenTools = finalizeOpenTools && closeAllOrphanedTools()
             loadedTraceFinalizeOpenTools = finalizeOpenTools
@@ -353,6 +363,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .fullRebuild:
             _lastLoadWasIncrementalForTesting = false
         }
+
+        loadedTraceEvents = events
 
         // Preserve locally-added user messages that aren't yet in the trace.
         // Race condition: user sends a message (appendUserMessage adds it locally),
@@ -437,6 +449,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items\(orphanInfo)")
 
         markdownPrewarmer.prewarm(assistantTexts: assistantTextsToCache)
+    }
+
+    @discardableResult
+    func prependTracePage(_ olderEvents: [TraceEvent], finalizeOpenTools: Bool = true) -> Bool {
+        guard !olderEvents.isEmpty else { return false }
+        guard canPrependTracePage else { return false }
+
+        let existingIDs = Set(loadedTraceEvents.map(\.id))
+        let dedupedOlderEvents = olderEvents.filter { !existingIDs.contains($0.id) }
+        guard !dedupedOlderEvents.isEmpty else { return false }
+
+        let combinedEvents = dedupedOlderEvents + loadedTraceEvents
+        loadSession(combinedEvents, preserveOrphans: false, finalizeOpenTools: finalizeOpenTools)
+        return true
+    }
+
+    func traceEventsForCache() -> [TraceEvent] {
+        loadedTraceEvents
     }
 
     @discardableResult
@@ -539,7 +569,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 return nil
             }
 
-            toolOutputStore.append(output, to: matchId)
+            let outputByteCount = event.outputTotalBytes ?? output.utf8.count
+            if event.outputTruncated == true {
+                toolOutputStore.replace(
+                    output,
+                    for: matchId,
+                    previewOnly: true,
+                    totalBytes: outputByteCount
+                )
+            } else {
+                toolOutputStore.append(output, to: matchId)
+            }
             // Store structured details so catch-up rendering matches streaming.
             if let details = event.details {
                 toolDetailsStore.set(details, for: matchId)
@@ -551,7 +591,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 updateToolCallPreviewDirect(
                     id: matchId,
                     output: output,
-                    outputByteCount: output.utf8.count,
+                    outputByteCount: outputByteCount,
                     isError: event.isError ?? false
                 )
             } else {
@@ -628,6 +668,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case noOp
         case incremental(appendStart: Int)
         case fullRebuild
+    }
+
+    var canPrependTracePage: Bool {
+        timelineMatchesTrace
     }
 
     func needsTraceProjectionRefresh(finalizeOpenTools: Bool) -> Bool {

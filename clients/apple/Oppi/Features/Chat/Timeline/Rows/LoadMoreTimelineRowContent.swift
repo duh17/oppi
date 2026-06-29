@@ -2,6 +2,7 @@ import UIKit
 
 struct LoadMoreTimelineRowConfiguration: UIContentConfiguration {
     let hiddenCount: Int
+    let hasOlderServerPage: Bool
     let renderWindowStep: Int
     let onTap: () -> Void
 
@@ -61,11 +62,16 @@ final class LoadMoreTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: LoadMoreTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let revealCount = min(configuration.renderWindowStep, configuration.hiddenCount)
-        button.setTitle(
-            "Show \(revealCount) earlier messages (\(configuration.hiddenCount) hidden)",
-            for: .normal
-        )
+        let title: String
+        if configuration.hiddenCount > 0 {
+            let revealCount = min(configuration.renderWindowStep, configuration.hiddenCount)
+            title = "Show \(revealCount) earlier messages (\(configuration.hiddenCount) hidden)"
+        } else if configuration.hasOlderServerPage {
+            title = "Load earlier messages"
+        } else {
+            title = "No earlier messages"
+        }
+        button.setTitle(title, for: .normal)
         button.setTitleColor(UIColor(ThemeRuntimeState.currentPalette().blue), for: .normal)
     }
 
