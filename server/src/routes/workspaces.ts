@@ -605,6 +605,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const session = ctx.storage.createSession(launch.sessionName, modelSelection.model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
+    if (selectedSession?.worktreeId) {
+      session.worktreeId = selectedSession.worktreeId;
+    }
     ctx.storage.saveSession(session);
 
     try {

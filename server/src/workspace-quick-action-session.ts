@@ -12,6 +12,7 @@ import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { buildWorkspaceReviewFilesResponse } from "./workspace-review.js";
+import { resolveWorkspaceWorktree } from "./worktrees.js";
 import type { Session, Workspace, WorkspaceQuickActionOption } from "./types.js";
 
 export class WorkspaceQuickActionSessionError extends Error {
@@ -117,6 +118,23 @@ function uniqueNormalizedPaths(paths: string[]): string[] {
   );
 }
 
+function resolveQuickActionReviewWorkspace(
+  workspace: Workspace,
+  selectedSession: Session | undefined,
+): Workspace {
+  const worktreeId = selectedSession?.worktreeId?.trim();
+  if (!worktreeId) {
+    return workspace;
+  }
+
+  const worktree = resolveWorkspaceWorktree(workspace, worktreeId);
+  if (!worktree?.path) {
+    throw new WorkspaceQuickActionSessionError(409, "Workspace worktree unavailable");
+  }
+
+  return { ...workspace, hostMount: worktree.path };
+}
+
 export async function loadWorkspaceQuickActionOptions(
   workspace: Workspace,
 ): Promise<WorkspaceQuickActionOption[]> {
@@ -155,9 +173,14 @@ export async function prepareWorkspaceQuickActionSession(args: {
     throw new WorkspaceQuickActionSessionError(404, "Workspace quick actions unavailable");
   }
 
+  const reviewWorkspace = resolveQuickActionReviewWorkspace(workspace, selectedSession);
+  if (!reviewWorkspace.hostMount) {
+    throw new WorkspaceQuickActionSessionError(404, "Workspace quick actions unavailable");
+  }
+
   let workspaceGitStatus: Awaited<ReturnType<typeof getGitStatus>> | undefined;
   if (!commitSha) {
-    workspaceGitStatus = await getGitStatus(workspace.hostMount);
+    workspaceGitStatus = await getGitStatus(reviewWorkspace.hostMount);
     if (!workspaceGitStatus.isGitRepo) {
       throw new WorkspaceQuickActionSessionError(409, "Workspace is not a git repository");
     }
@@ -184,7 +207,7 @@ export async function prepareWorkspaceQuickActionSession(args: {
   if (commitSha) {
     let commitDetail: Awaited<ReturnType<typeof getCommitDetail>>;
     try {
-      commitDetail = await getCommitDetail(workspace.hostMount, commitSha);
+      commitDetail = await getCommitDetail(reviewWorkspace.hostMount, commitSha);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Commit not found";
       const status = message === "Invalid commit SHA" ? 400 : 404;
@@ -225,7 +248,7 @@ export async function prepareWorkspaceQuickActionSession(args: {
       workspaceId: args.workspaceId,
       gitStatus: workspaceGitStatus,
       selectedSession,
-      workspaceRoot: workspace.hostMount,
+      workspaceRoot: reviewWorkspace.hostMount,
     });
 
     const reviewFilesByPath = new Map(

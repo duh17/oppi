@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
+import { listWorkspaceWorktrees } from "../src/worktrees.js";
 import type {
   Session,
   Workspace,
@@ -503,6 +504,92 @@ describe("workspace prompt-template quick actions", () => {
       );
       expect(body.visiblePrompt).toBe("Inspect the selected files:\n\nreview.swift");
       expect(body.filePaths).toEqual(["review.swift"]);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the selected session worktree for prompt-template quick actions", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-worktree-quick-action-"));
+
+    try {
+      initRepo(repoDir);
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
+      gitIn(repoDir, "add review.swift");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      mkdirSync(join(repoDir, ".pi", "worktrees"), { recursive: true });
+      gitIn(repoDir, "worktree add .pi/worktrees/repo-feature -b feature/worktree");
+
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Inspect the worktree selection:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
+
+      const workspace = { ...makeWorkspace(repoDir), defaultModel: "ds4/deepseek-v4-flash" };
+      const worktree = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain);
+      expect(worktree).toBeDefined();
+
+      writeFileSync(
+        join(repoDir, ".pi", "worktrees", "repo-feature", "review.swift"),
+        "let value = worktreeName\n",
+        "utf8",
+      );
+
+      const sourceSession: Session = {
+        ...makeSession("source-session", "w1", ["review.swift"]),
+        worktreeId: worktree!.id,
+      };
+      const createdSession = makeSession("new-session", "w1");
+      let savedSession: Session | undefined;
+      const startSession = vi.fn(async () => createdSession);
+      const getActiveSession = vi.fn(() => createdSession);
+      const createSession = vi.fn(() => createdSession);
+
+      const routes = new RouteHandler(
+        makeQuickActionContext(repoDir, {
+          storage: {
+            getWorkspace: (workspaceId: string) => (workspaceId === "w1" ? workspace : undefined),
+            getSession: (sessionId: string) =>
+              sessionId === sourceSession.id ? sourceSession : undefined,
+            createSession,
+            saveSession: (session: Session) => {
+              savedSession = session;
+            },
+            deleteSession: vi.fn(),
+          },
+          sessions: {
+            setPendingExtensionFactories: vi.fn(),
+            startSession,
+            getActiveSession,
+            stopSession: vi.fn(async () => undefined),
+          },
+        }),
+      );
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
+        makeRequest({
+          paths: ["review.swift"],
+          selectedSessionId: sourceSession.id,
+          promptTemplateName: "grill-me",
+        }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
+
+      expect(body.visiblePrompt).toBe("Inspect the worktree selection:\n\nreview.swift");
+      expect(body.filePaths).toEqual(["review.swift"]);
+      expect(savedSession?.worktreeId).toBe(worktree!.id);
+      expect(body.session.worktreeId).toBe(worktree!.id);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
