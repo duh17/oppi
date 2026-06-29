@@ -1,7 +1,29 @@
 import Foundation
-import OSLog
 
-private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "FileIndexStore")
+protocol WorkspaceFileIndexFetching: Sendable {
+    func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse
+}
+
+struct FileIndexStoreEnvironment: Sendable {
+    let loadCachedFileIndex: @Sendable (_ workspaceId: String) async -> [String]?
+    let cacheFileIndex: @Sendable (_ paths: [String], _ workspaceId: String) async -> Void
+    let logDebug: @Sendable (_ message: String) -> Void
+    let logWarning: @Sendable (_ message: String) -> Void
+
+    init(
+        loadCachedFileIndex: @escaping @Sendable (_ workspaceId: String) async -> [String]? = { _ in nil },
+        cacheFileIndex: @escaping @Sendable (_ paths: [String], _ workspaceId: String) async -> Void = { _, _ in },
+        logDebug: @escaping @Sendable (_ message: String) -> Void = { _ in },
+        logWarning: @escaping @Sendable (_ message: String) -> Void = { _ in }
+    ) {
+        self.loadCachedFileIndex = loadCachedFileIndex
+        self.cacheFileIndex = cacheFileIndex
+        self.logDebug = logDebug
+        self.logWarning = logWarning
+    }
+
+    static let none = FileIndexStoreEnvironment()
+}
 
 /// Shared workspace file index for local fuzzy search.
 ///
@@ -12,6 +34,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "File
 /// on next access.
 @MainActor @Observable
 final class FileIndexStore {
+    private let environment: FileIndexStoreEnvironment
 
     /// Cached file paths for the current workspace. Nil until first load.
     private(set) var paths: [String]?
@@ -25,11 +48,15 @@ final class FileIndexStore {
     private var loadTask: Task<Void, Never>?
     private var dirty = false
 
+    init(environment: FileIndexStoreEnvironment = .none) {
+        self.environment = environment
+    }
+
     // MARK: - Public API
 
     /// Ensure the file index is loaded for a workspace.
     /// No-op if already cached and clean. Re-fetches if dirty or different workspace.
-    func ensureLoaded(workspaceId: String, apiClient: APIClient) {
+    func ensureLoaded(workspaceId: String, apiClient: any WorkspaceFileIndexFetching) {
         if self.workspaceId == workspaceId, paths != nil, !dirty {
             return
         }
@@ -65,18 +92,19 @@ final class FileIndexStore {
 
     // MARK: - Internals
 
-    private func load(workspaceId: String, apiClient: APIClient) {
+    private func load(workspaceId: String, apiClient: any WorkspaceFileIndexFetching) {
         loadTask?.cancel()
         dirty = false
 
         // Show disk-cached index immediately while fetching fresh
         if paths == nil {
-            Task {
-                if let cached = await FileBrowserCache.shared.fileIndex(workspaceId: workspaceId) {
+            Task { [weak self] in
+                guard let self else { return }
+                if let cached = await self.environment.loadCachedFileIndex(workspaceId) {
                     if self.workspaceId == workspaceId, self.paths == nil {
                         self.paths = cached
                         self.isLoading = false
-                        logger.debug("File index loaded from cache: \(cached.count) paths")
+                        self.environment.logDebug("File index loaded from cache: \(cached.count) paths")
                     }
                 }
             }
@@ -90,16 +118,16 @@ final class FileIndexStore {
                 guard let self, !Task.isCancelled, self.workspaceId == workspaceId else { return }
                 self.paths = response.paths
                 self.isLoading = false
-                // Persist to disk for next app launch
-                await FileBrowserCache.shared.cacheFileIndex(response.paths, workspaceId: workspaceId)
-                logger.debug("File index loaded: \(response.paths.count) paths for workspace \(workspaceId)")
+                // Persist to disk for next app launch.
+                await self.environment.cacheFileIndex(response.paths, workspaceId)
+                self.environment.logDebug("File index loaded: \(response.paths.count) paths for workspace \(workspaceId)")
             } catch {
                 guard let self, !Task.isCancelled, self.workspaceId == workspaceId else { return }
                 if self.paths == nil {
                     self.paths = []
                 }
                 self.isLoading = false
-                logger.warning("Failed to load file index: \(error.localizedDescription)")
+                self.environment.logWarning("Failed to load file index: \(error.localizedDescription)")
             }
         }
     }

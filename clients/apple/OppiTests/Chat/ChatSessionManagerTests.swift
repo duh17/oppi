@@ -1751,7 +1751,10 @@ struct ChatSessionManagerTests {
         // History reload should complete (not be cancelled).
         #expect(await tracker.waitForCalls(1), "Nil currentSeq must preserve history reload as safety net")
         #expect(!catchUpCalled, "Catch-up should not run when currentSeq is nil")
-        #expect(manager.entryState == .streaming)
+        let reachedStreaming = await waitForMainActorCondition {
+            manager.entryState == .streaming
+        }
+        #expect(reachedStreaming, "Connected stream should enter streaming after the history reload safety net completes")
 
         streams.finish(index: 0)
         await connectTask.value

@@ -41,9 +41,23 @@ const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
   "server/src/ws-message-handler.ts",
 ]);
 
+const APPLE_SHARED_CORE_ROOT = "clients/apple/OppiCore/";
+const APPLE_SHARED_CORE_PLATFORM_ADAPTER_PREFIXES = [`${APPLE_SHARED_CORE_ROOT}PlatformAdapters/`];
+const APPLE_SHARED_CORE_FORBIDDEN_IMPORTS = new Set([
+  "UIKit",
+  "AppKit",
+  "SwiftUI",
+  "ActivityKit",
+  "UserNotifications",
+  "Speech",
+  "AVFoundation",
+  "WebKit",
+  "MetricKit",
+]);
+
 const IOS_RUNTIME_UI_FREE_FILES = [
-  "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift",
-  "clients/apple/Oppi/Core/Runtime/DeltaCoalescer.swift",
+  "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
+  "clients/apple/OppiCore/Runtime/DeltaCoalescer.swift",
 ];
 
 const IOS_VIEW_LAYER_PATH_PREFIXES = [
@@ -86,8 +100,24 @@ const IOS_ISOLATED_STORES = [
   { file: "clients/apple/Oppi/Core/Services/SessionStore.swift", typeName: "SessionStore" },
   { file: "clients/apple/Oppi/Core/Services/WorkspaceStore.swift", typeName: "WorkspaceStore" },
   {
-    file: "clients/apple/Oppi/Core/Services/MessageQueueStore.swift",
+    file: "clients/apple/OppiCore/Stores/AskRequestStore.swift",
+    typeName: "AskRequestStore",
+  },
+  {
+    file: "clients/apple/OppiCore/Stores/MessageQueueStore.swift",
     typeName: "MessageQueueStore",
+  },
+  {
+    file: "clients/apple/OppiCore/Stores/ReviewCommentStore.swift",
+    typeName: "ReviewCommentStore",
+  },
+  {
+    file: "clients/apple/OppiCore/Stores/FileIndexStore.swift",
+    typeName: "FileIndexStore",
+  },
+  {
+    file: "clients/apple/OppiCore/Stores/GitStatusStore.swift",
+    typeName: "GitStatusStore",
   },
 ];
 
@@ -889,17 +919,22 @@ function makeIosViolation({ rule, file, line, column, reason, remediation }) {
   };
 }
 
+function isAppleClientSwiftFile(filePath) {
+  return (
+    (filePath.startsWith("clients/apple/Oppi/") || filePath.startsWith(APPLE_SHARED_CORE_ROOT)) &&
+    filePath.endsWith(".swift")
+  );
+}
+
 function collectIosSwiftFiles(repoRoot, files = undefined) {
   if (files) {
-    return files
-      .map(normalizeRepoPath)
-      .filter(
-        (filePath) => filePath.startsWith("clients/apple/Oppi/") && filePath.endsWith(".swift"),
-      )
-      .sort();
+    return files.map(normalizeRepoPath).filter(isAppleClientSwiftFile).sort();
   }
 
-  return listFilesRecursively(path.join(repoRoot, "clients", "apple", "Oppi"), ".swift")
+  return [
+    ...listFilesRecursively(path.join(repoRoot, "clients", "apple", "Oppi"), ".swift"),
+    ...listFilesRecursively(path.join(repoRoot, "clients", "apple", "OppiCore"), ".swift"),
+  ]
     .map((absolutePath) => normalizeRepoPath(path.relative(repoRoot, absolutePath)))
     .sort();
 }
@@ -934,6 +969,44 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
   const candidateFiles = collectIosSwiftFiles(repoRoot, files);
   const candidateSet = new Set(candidateFiles);
   const violations = [];
+
+  for (const file of candidateFiles) {
+    if (!file.startsWith(APPLE_SHARED_CORE_ROOT)) {
+      continue;
+    }
+
+    if (APPLE_SHARED_CORE_PLATFORM_ADAPTER_PREFIXES.some((prefix) => file.startsWith(prefix))) {
+      continue;
+    }
+
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+
+    for (const framework of APPLE_SHARED_CORE_FORBIDDEN_IMPORTS) {
+      const match = findFirstMatch(
+        parsed.stripped,
+        new RegExp(`^\\s*import\\s+${framework}\\b`, "m"),
+      );
+      if (!match) {
+        continue;
+      }
+
+      const location = lineAndColumnForIndex(parsed.stripped, match.index);
+      violations.push(
+        makeIosViolation({
+          rule: "apple-shared-core-platform-import",
+          file,
+          line: location.line,
+          column: location.column,
+          reason: `OppiCore non-adapter files must not import ${framework}.`,
+          remediation:
+            "Move UI, device, trust-delegate, notification, audio, or rendering code into OppiCore/PlatformAdapters/** or an app-specific adapter under Oppi/** or OppiMac/**.",
+        }),
+      );
+    }
+  }
 
   for (const runtimeFile of IOS_RUNTIME_UI_FREE_FILES) {
     if (!candidateSet.has(runtimeFile)) {

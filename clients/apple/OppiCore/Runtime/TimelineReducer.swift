@@ -1,8 +1,43 @@
 // swiftlint:disable file_length
 import Foundation
-import os.log
 
-private let loadSessionLog = Logger(subsystem: AppIdentifiers.subsystem, category: "LoadSession")
+@MainActor
+struct TimelineMarkdownPrewarmer {
+    let cachePurgeItemThreshold: Int
+    let cancel: () -> Void
+    let clearCache: () -> Void
+    let prewarm: ([String]) -> Void
+
+    init(
+        cachePurgeItemThreshold: Int = .max,
+        cancel: @escaping () -> Void = {},
+        clearCache: @escaping () -> Void = {},
+        prewarm: @escaping ([String]) -> Void = { _ in }
+    ) {
+        self.cachePurgeItemThreshold = cachePurgeItemThreshold
+        self.cancel = cancel
+        self.clearCache = clearCache
+        self.prewarm = prewarm
+    }
+
+    static let none = TimelineMarkdownPrewarmer()
+}
+
+@MainActor
+struct TimelineReducerEnvironment {
+    let markdownPrewarmer: TimelineMarkdownPrewarmer
+    let logLoadSession: (String) -> Void
+
+    init(
+        markdownPrewarmer: TimelineMarkdownPrewarmer = .none,
+        logLoadSession: @escaping (String) -> Void = { _ in }
+    ) {
+        self.markdownPrewarmer = markdownPrewarmer
+        self.logLoadSession = logLoadSession
+    }
+
+    static let none = TimelineReducerEnvironment()
+}
 
 /// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
 ///
@@ -223,18 +258,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return true
     }
 
-    /// Asynchronous markdown cache prewarmer for history loads.
-    private let markdownPrewarmer = MarkdownPrewarmer()
+    private let environment: TimelineReducerEnvironment
+
+    init(environment: TimelineReducerEnvironment = .none) {
+        self.environment = environment
+    }
 
     // MARK: - Reset
 
     /// Clear all state — call when switching sessions.
     func reset() {
-        markdownPrewarmer.cancel()
+        environment.markdownPrewarmer.cancel()
 
         let previousItemCount = items.count
-        if previousItemCount >= MarkdownPrewarmer.cachePurgeItemThreshold {
-            MarkdownSegmentCache.shared.clearAll()
+        if previousItemCount >= environment.markdownPrewarmer.cachePurgeItemThreshold {
+            environment.markdownPrewarmer.clearCache()
         }
 
         items.removeAll()
@@ -264,7 +302,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // and strips heavy data (base64 images) from retained items.
     // swiftlint:disable:next large_tuple
     func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int, imagesStripped: Int) {
-        markdownPrewarmer.cancel()
+        environment.markdownPrewarmer.cancel()
 
         let clearedBytes = toolOutputStore.totalBytes
         toolOutputStore.clearAll()
@@ -317,7 +355,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///   false when loading an authoritative fresh trace (e.g., from
     ///   `loadHistory`) to avoid "ghost" user messages at the bottom.
     func loadSession(_ events: [TraceEvent], preserveOrphans: Bool = true, finalizeOpenTools: Bool = true) {
-        markdownPrewarmer.cancel()
+        environment.markdownPrewarmer.cancel()
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
@@ -355,9 +393,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             bumpRenderVersion()
             timelineMatchesTrace = !closedOpenTools
 
-            loadSessionLog.info("[loadSession] incremental: +\(events.count - appendStart) events → \(self.items.count) items")
+            environment.logLoadSession("[loadSession] incremental: +\(events.count - appendStart) events → \(self.items.count) items")
 
-            markdownPrewarmer.prewarm(assistantTexts: assistantTextsToCache)
+            environment.markdownPrewarmer.prewarm(assistantTextsToCache)
             return
 
         case .fullRebuild:
@@ -392,7 +430,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             } else {
                 let traceUserTexts: Set<String> = Set(events.compactMap { event in
                     guard event.type == .user else { return nil }
-                    return UserMessageImageExtractor.extractImagesFromText(event.text ?? "").0
+                    return UserMessageTextProjection.comparableText(
+                        UserMessageImageExtractor.extractImagesFromText(event.text ?? "").0
+                    )
                 })
                 orphanedUserMessages = existingUserMessages.filter { item in
                     guard case .userMessage(_, let text, _, _) = item else { return false }
@@ -446,9 +486,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         timelineMatchesTrace = orphanedUserMessages.isEmpty && !closedOpenTools
 
         let orphanInfo = orphanedUserMessages.isEmpty ? "" : " (preserved \(orphanedUserMessages.count) local user msgs)"
-        loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items\(orphanInfo)")
+        environment.logLoadSession("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items\(orphanInfo)")
 
-        markdownPrewarmer.prewarm(assistantTexts: assistantTextsToCache)
+        environment.markdownPrewarmer.prewarm(assistantTextsToCache)
     }
 
     @discardableResult
@@ -1239,10 +1279,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Check if a user message with the given text already exists in the timeline.
     /// Used to avoid duplicating the user bubble when a server-side prompt is echoed back.
     func hasUserMessage(matching text: String) -> Bool {
-        let comparable = UserMessageAttachmentPresentation.comparableText(text)
+        let comparable = UserMessageTextProjection.comparableText(text)
         return items.contains { item in
             if case .userMessage(_, let existingText, _, _) = item {
-                return UserMessageAttachmentPresentation.comparableText(existingText) == comparable
+                return UserMessageTextProjection.comparableText(existingText) == comparable
             }
             return false
         }

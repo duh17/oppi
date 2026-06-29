@@ -92,13 +92,20 @@ graph TD
 | `APIClient`                              | authenticated HTTP requests and response decoding                                                                           | UI decisions or store mutation policy |
 | `WebSocketClient`                        | focused session WebSocket transport, reconnect policy, inbound metadata                                                     | protocol side effects                 |
 | `AppEventStreamClient` + coordinator     | app-event WebSocket consumption                                                                                             | focused timeline replay               |
-| `SessionStreamCoordinator`               | per-session stream continuations and sequence tracking                                                                      | timeline rendering                    |
+| `SessionStreamCoordinator`               | per-session stream continuations, queue sync, and focused transport lifecycle                                               | timeline rendering                    |
+| `SessionStreamCatchUpTracker`            | platform-neutral durable event sequence tracking for focused stream repair                                                  | transport opening or telemetry        |
 | `MessageSender`                          | command request IDs, acks, retries, command result waiters                                                                  | session list rendering                |
 | `ChatSessionManager`                     | per-session connection loop, cached/fresh trace loading, catch-up, reducer/coalescer ownership                              | global app-event routing              |
 | `SessionStore`                           | full session cache, cold list projection, per-server partitions, unread completion state                                    | workspace catalog                     |
 | `WorkspaceStore`                         | workspace catalog, skill catalog, workspace summaries, per-server freshness                                                 | full session lifecycle                |
 | `AskRequestStore` and extension UI state | pending asks, sheet dialogs, status/widget/native-surface state                                                             | server-side permission policy         |
 | `TimelineReducer` + `DeltaCoalescer`     | timeline model and live delta coalescing                                                                                    | UIKit rendering and network           |
+
+## Shared Apple client core
+
+`clients/apple/OppiCore/**` is the source-group boundary for Apple client/data code that should compile into both iOS/iPadOS and macOS targets. It holds protocol DTOs, client-environment values, transport identifiers, reducer support state, stream sequence state, ask/message queue state, review-comment state, file-index state, git status state, freshness/health state, media/diff/date/session/error formatting, and other helpers that need no UI or device framework.
+
+Non-adapter files in `OppiCore` must stay platform-neutral. UI/device work belongs in `clients/apple/OppiCore/PlatformAdapters/**`, the iOS app under `clients/apple/Oppi/**`, or the Mac app under `clients/apple/OppiMac/**`. `OppiCore/PlatformAdapters` is excluded from the shared source group until each adapter is added to the correct target explicitly. Mac local server ownership, owner-token loading, certificate trust delegates, notifications, TCC, and process lifecycle are adapters around this shared core, not part of the core itself.
 
 ## Transport lanes
 
@@ -197,7 +204,7 @@ Extension UI is extension-agnostic. Generic client code renders semantic protoco
 
 Main client owners:
 
-- `AskRequestStore` stores question/confirmation/input requests that render as ask cards.
+- `clients/apple/OppiCore/Stores/AskRequestStore.swift` stores question/confirmation/input requests that render as ask cards.
 - `pendingExtensionDialogQueues` stores sheet-backed generic extension dialogs per session.
 - `extensionSurfaceBySession` stores status rows, widgets, working messages, hidden-thinking labels, and native surfaces.
 - `ServerConnection+Ask.swift` sends responses over the focused stream or the HTTP session command route for non-focused sessions.
@@ -219,10 +226,11 @@ File previews and media playback use authenticated HTTP routes. The focused sess
 
 These rules are enforced by `server/scripts/check-architecture-boundaries.ts` during server checks and the Apple build phase:
 
-- `TimelineReducer.swift` and `DeltaCoalescer.swift` must remain UIKit-free.
+- `clients/apple/OppiCore/Runtime/TimelineReducer.swift` and `DeltaCoalescer.swift` must stay platform-neutral under the shared-core import rule.
+- `clients/apple/OppiCore/**` non-adapter files must not import UIKit, AppKit, SwiftUI, ActivityKit, UserNotifications, Speech, AVFoundation, WebKit, or MetricKit. Put platform-specific code under `OppiCore/PlatformAdapters/**` or an app-specific adapter.
 - `clients/apple/Oppi/Core/Views/**` and `clients/apple/Oppi/Features/Chat/Timeline/**` must not reference `APIClient` or `WebSocketClient` directly.
 - Workspace and quick-session list views must read `SessionStore.listProjectionSessions` or `listProjectionSessions(workspaceId:)`, not full `SessionStore.sessions`.
-- `SessionStore`, `WorkspaceStore`, and `MessageQueueStore` must not depend on each other. Cross-store workflows belong in `ServerConnection` or a small service.
+- `SessionStore`, `WorkspaceStore`, and shared stores under `clients/apple/OppiCore/Stores/**` must not depend on each other. Cross-store workflows belong in `ServerConnection` or a small service.
 - Generic extension UI rendering and routing must not branch on concrete tool names, extension names, status keys, widget keys, or display names. Add semantic protocol metadata at the producer boundary instead.
 
 ## Client cleanup targets
@@ -241,14 +249,14 @@ Keep these high-churn client modules small and explicit:
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Connection composition      | `clients/apple/Oppi/Core/Networking/ServerConnection.swift`, `ServerConnection+*.swift`                                                                               |
 | HTTP API                    | `clients/apple/Oppi/Core/Networking/APIClient.swift`                                                                                                                  |
-| Focused WebSocket transport | `clients/apple/Oppi/Core/Networking/WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `MessageSender.swift`                                                   |
+| Focused WebSocket transport | `clients/apple/Oppi/Core/Networking/WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `MessageSender.swift`; shared state in `clients/apple/OppiCore/Runtime/FocusedSessionStore.swift` and `SessionStreamCatchUpTracker.swift` |
 | App event stream            | `clients/apple/Oppi/Core/Networking/AppEventStreamClient.swift`, `AppEventStreamCoordinator.swift`, `ServerConnection+AppEvents.swift`                                |
-| Workspace catalog           | `clients/apple/Oppi/Core/Services/WorkspaceStore.swift`, `WorkspaceHomeView.swift`                                                                                    |
+| Workspace catalog           | `clients/apple/Oppi/Core/Services/WorkspaceStore.swift`, shared file index and freshness/health state in `clients/apple/OppiCore/Stores/**`, `WorkspaceHomeView.swift` |
 | Workspace detail list       | `clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift`, `WorkspaceStoppedSessionsSection.swift`                                                           |
-| Session store               | `clients/apple/Oppi/Core/Services/SessionStore.swift`                                                                                                                 |
+| Session store               | `clients/apple/Oppi/Core/Services/SessionStore.swift`; shared ask/queue/review state in `clients/apple/OppiCore/Stores/**`                                             |
 | Chat session lifecycle      | `clients/apple/Oppi/Features/Chat/Session/ChatSessionManager.swift`, `ChatActionHandler.swift`                                                                        |
-| Timeline model              | `clients/apple/Oppi/Core/Runtime/TimelineReducer.swift`, `DeltaCoalescer.swift`, `ToolOutputStore.swift`                                                              |
+| Timeline model              | `clients/apple/OppiCore/Runtime/TimelineReducer.swift`, `DeltaCoalescer.swift`, and shared support under `OppiCore/Runtime/**`                                      |
 | Timeline rendering          | `clients/apple/Oppi/Features/Chat/Timeline/**`, `ChatTimelineCollectionView.swift`                                                                                    |
-| Extension UI                | `ServerConnection+Ask.swift`, `ServerConnection+MessageRouter.swift`, `AskRequestStore.swift`, `ExtensionSurfacePanel.swift`, `ExtensionUINativeSurface.swift`        |
+| Extension UI                | `ServerConnection+Ask.swift`, `ServerConnection+MessageRouter.swift`, `clients/apple/OppiCore/Stores/AskRequestStore.swift`, `ExtensionSurfacePanel.swift`, `ExtensionUINativeSurface.swift` |
 | File browser and media      | `APIClient.swift`, `AuthenticatedMediaSource.swift`, `AuthenticatedMediaPlayback.swift`, `InlineMediaPlayback.swift`, `FileBrowserView.swift`, `RemoteFileView.swift` |
-| Protocol mirrors            | `ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`                                                                                                 |
+| Protocol mirrors            | `clients/apple/OppiCore/Models/ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`                                                                   |

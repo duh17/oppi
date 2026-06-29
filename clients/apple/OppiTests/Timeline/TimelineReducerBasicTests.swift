@@ -131,6 +131,50 @@ struct TimelineReducerBasicTests {
         #expect(msg == "Session force-stopped")
     }
 
+    @Test func loadSessionUsesInjectedEnvironmentForPrewarmAndLogging() {
+        var cancelCount = 0
+        var cacheClearCount = 0
+        var prewarmedTexts: [[String]] = []
+        var logMessages: [String] = []
+        let environment = TimelineReducerEnvironment(
+            markdownPrewarmer: TimelineMarkdownPrewarmer(
+                cachePurgeItemThreshold: 0,
+                cancel: { cancelCount += 1 },
+                clearCache: { cacheClearCount += 1 },
+                prewarm: { prewarmedTexts.append($0) }
+            ),
+            logLoadSession: { logMessages.append($0) }
+        )
+        let reducer = TimelineReducer(environment: environment)
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:00.000Z",
+                text: "hello"
+            )
+        ])
+        reducer.reset()
+
+        #expect(cancelCount == 2)
+        #expect(cacheClearCount == 1)
+        #expect(prewarmedTexts == [["hello"]])
+        #expect(logMessages.count == 1)
+        #expect(logMessages[0].contains("full rebuild"))
+    }
+
+    @Test func userMessageProjectionStripsAttachmentMetadataForComparison() {
+        let marked = "[[oppi-attachments:b:photos=1;p:repoFile=README.md]]\nhello"
+        #expect(UserMessageTextProjection.comparableText(marked) == "hello")
+
+        let withFiles = "hello\n\nAttached files:\n- report.pdf: .pi/attachments/report.pdf"
+        #expect(UserMessageTextProjection.comparableText(withFiles) == "hello")
+
+        let withReferences = "hello\n\nReferenced workspace files:\n- Sources/App.swift"
+        #expect(UserMessageTextProjection.comparableText(withReferences) == "hello")
+    }
+
     @Test func retryStartRendersAsError() {
         let reducer = TimelineReducer()
         reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "rate limit"))

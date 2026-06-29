@@ -1,5 +1,27 @@
+import Foundation
 import Testing
 @testable import Oppi
+
+private final class MessageQueueTelemetryRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedEvents: [MessageQueueStoreMetricEvent] = []
+
+    var telemetry: MessageQueueStoreTelemetry {
+        MessageQueueStoreTelemetry { [weak self] event in
+            self?.append(event)
+        }
+    }
+
+    var events: [MessageQueueStoreMetricEvent] {
+        lock.withLock { recordedEvents }
+    }
+
+    private func append(_ event: MessageQueueStoreMetricEvent) {
+        lock.withLock {
+            recordedEvents.append(event)
+        }
+    }
+}
 
 @Suite("MessageQueueStore")
 @MainActor
@@ -124,5 +146,59 @@ struct MessageQueueStoreTests {
         let queue = store.queue(for: "s1")
         #expect(queue.version == 10)
         #expect(queue.steering.isEmpty)
+    }
+
+    @Test func staleQueueStateRecordsTelemetryAndKeepsCurrentState() {
+        let recorder = MessageQueueTelemetryRecorder()
+        let store = MessageQueueStore(telemetry: recorder.telemetry)
+        store.apply(
+            MessageQueueState(version: 10, steering: [], followUp: []),
+            for: "s1"
+        )
+
+        store.apply(
+            MessageQueueState(version: 9, steering: [], followUp: []),
+            for: "s1"
+        )
+
+        #expect(store.queue(for: "s1").version == 10)
+        #expect(recorder.events == [
+            MessageQueueStoreMetricEvent(
+                name: .staleDrop,
+                sessionId: "s1",
+                tags: [
+                    "source": "queue_state",
+                    "incoming_version": "9",
+                    "current_version": "10",
+                ]
+            )
+        ])
+    }
+
+    @Test func queueItemStartedMissRecordsTelemetry() {
+        let recorder = MessageQueueTelemetryRecorder()
+        let store = MessageQueueStore(telemetry: recorder.telemetry)
+        store.apply(
+            MessageQueueState(version: 10, steering: [], followUp: []),
+            for: "s1"
+        )
+
+        store.applyQueueItemStarted(
+            for: "s1",
+            kind: .followUp,
+            item: MessageQueueItem(id: "server-1", message: "missing", createdAt: 2),
+            queueVersion: 10
+        )
+
+        #expect(recorder.events == [
+            MessageQueueStoreMetricEvent(
+                name: .startMiss,
+                sessionId: "s1",
+                tags: [
+                    "kind": "follow_up",
+                    "queue_version": "10",
+                ]
+            )
+        ])
     }
 }
