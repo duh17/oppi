@@ -828,6 +828,71 @@ export class SessionSqliteStore {
     return session ? stripInternalFields(session) : undefined;
   }
 
+  claimSessionLaunchRecovery(
+    session: Session,
+    leaseOwner: string,
+    nowMs: number,
+    leaseTtlMs: number,
+  ): Session | undefined {
+    const launch = session.launch;
+    if (!launch?.idempotencyKey) return undefined;
+
+    const recovered = normalizeDeclaredSession(
+      this.restoreInternalFields({
+        ...session,
+        launch: {
+          ...launch,
+          status: "launching",
+          lease: {
+            owner: leaseOwner,
+            acquiredAt: nowMs,
+            expiresAt: nowMs + leaseTtlMs,
+          },
+        },
+      }),
+    );
+    const json = JSON.stringify(recovered);
+    const expectedLeaseOwner = launch.lease?.owner ?? null;
+    const expectedLeaseExpiresAt = launch.lease?.expiresAt ?? null;
+
+    const result = this.db
+      .prepare(
+        `UPDATE session_state_sessions
+         SET launch_status = ?,
+             launch_lease_owner = ?,
+             launch_lease_until_ms = ?,
+             launch_metadata_json = ?,
+             session_json = ?,
+             updated_at = ?
+         WHERE id = ?
+           AND launch_idempotency_key = ?
+           AND launch_status = ?
+           AND ((? IS NULL AND launch_lease_owner IS NULL) OR launch_lease_owner = ?)
+           AND ((? IS NULL AND launch_lease_until_ms IS NULL) OR launch_lease_until_ms = ?)`,
+      )
+      .run(
+        recovered.launch?.status ?? null,
+        recovered.launch?.lease?.owner ?? null,
+        recovered.launch?.lease?.expiresAt ?? null,
+        recovered.launch ? JSON.stringify(recovered.launch) : null,
+        json,
+        Date.now(),
+        session.id,
+        launch.idempotencyKey,
+        launch.status,
+        expectedLeaseOwner,
+        expectedLeaseOwner,
+        expectedLeaseExpiresAt,
+        expectedLeaseExpiresAt,
+      ) as { changes?: number };
+
+    if (result.changes !== 1) return undefined;
+
+    const stripped = stripInternalFields(recovered);
+    this.cache?.set(recovered.id, stripped);
+    return stripped;
+  }
+
   private ensureCache(): Map<string, Session> {
     if (this.cache) {
       return this.cache;

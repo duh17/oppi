@@ -14,6 +14,7 @@ import { closeSync, existsSync, openSync, readSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createLogger } from "./logger.js";
+import { AgentDefinitionStore } from "./agent-definitions.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
 import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
@@ -80,6 +81,7 @@ export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
   private readonly sessionStore: SessionSqliteStore;
+  private readonly agentDefinitionStore: AgentDefinitionStore;
   private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
 
@@ -87,6 +89,7 @@ export class Storage {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
+    this.agentDefinitionStore = new AgentDefinitionStore(this.configStore.getDataDir());
     this.scheduleStore = new AgentScheduleStore(this.configStore.getDataDir());
     this.cleanupServerReviewCommentState();
     this.workspaceStore = new WorkspaceStore(this.configStore);
@@ -289,6 +292,15 @@ export class Storage {
     return this.sessionStore.findSessionByLaunchIdempotencyKey(idempotencyKey);
   }
 
+  claimSessionLaunchRecovery(
+    session: Session,
+    leaseOwner: string,
+    nowMs: number,
+    leaseTtlMs: number,
+  ): Session | undefined {
+    return this.sessionStore.claimSessionLaunchRecovery(session, leaseOwner, nowMs, leaseTtlMs);
+  }
+
   listSessions(): Session[] {
     return this.sessionStore.listSessions();
   }
@@ -385,6 +397,12 @@ export class Storage {
 
   deleteWorkspace(workspaceId: string): boolean {
     return this.workspaceStore.deleteWorkspace(workspaceId);
+  }
+
+  // ─── Agent definitions ───
+
+  getAgentDefinitionStore(): AgentDefinitionStore {
+    return this.agentDefinitionStore;
   }
 
   // ─── Agent schedules ───

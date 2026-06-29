@@ -506,9 +506,10 @@ describe("POST /workspaces/:id/sessions", () => {
 
     await dispatchCreate(mock, { name: "secret", ephemeral: true });
 
-    expect(mock.storage.saveSession).toHaveBeenCalledTimes(1);
-    const savedSession = mock.storage.saveSession.mock.calls[0]![0] as Session;
+    expect(mock.storage.saveSession).toHaveBeenCalledTimes(2);
+    const savedSession = mock.storage.saveSession.mock.calls.at(-1)?.[0] as Session;
     expect(savedSession.ephemeral).toBe(true);
+    expect(savedSession.launch).toMatchObject({ status: "accepted", promptDispatch: "not_sent" });
   });
 
   it("keeps incognito prompt flow working", async () => {

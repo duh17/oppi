@@ -106,6 +106,43 @@ describe("SessionStartCoordinator status persistence", () => {
     });
   });
 
+  it("uses the saved Agent definition version recorded on the session", async () => {
+    const session = makeSession({
+      status: "ready",
+      launch: {
+        status: "accepted",
+        source: "agent",
+        agentId: "agent-1",
+        agentVersion: 1,
+        requestedAt: 1,
+      },
+    });
+    const deps = makeDeps(session);
+    const getAgentVersion = vi.fn(() => ({
+      id: "agent-1",
+      version: 1,
+      definition: { name: "Reviewer v1", instructions: { mode: "append", text: "v1" } },
+      createdAt: 1,
+    }));
+    const getAgent = vi.fn(() => ({
+      definition: { name: "Reviewer v2", instructions: { mode: "append", text: "v2" } },
+    }));
+    Object.assign(deps.storage, {
+      getAgentDefinitionStore: () => ({ getAgentVersion, getAgent }),
+    });
+    const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
+
+    await new SessionStartCoordinator(deps).startSessionInner("key", session.id, makeWorkspace());
+
+    expect(getAgentVersion).toHaveBeenCalledWith("agent-1", 1);
+    expect(getAgent).not.toHaveBeenCalled();
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentDefinition: expect.objectContaining({ name: "Reviewer v1" }),
+      }),
+    );
+  });
+
   it("rolls old starting sessions back to ready when SDK startup fails", async () => {
     const session = makeSession({ status: "starting" });
     const deps = makeDeps(session);

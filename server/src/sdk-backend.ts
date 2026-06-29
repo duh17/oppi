@@ -35,6 +35,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
+import type { AgentDefinition } from "./agent-launch-service.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -246,6 +247,16 @@ function buildSdkAppendSystemPrompt(
   return prompts.length > 0 ? prompts : undefined;
 }
 
+function normalizeAgentContextFiles(
+  agentDefinition: AgentDefinition | undefined,
+  sandboxGuestCwd?: string,
+): AgentContextFile[] {
+  return (agentDefinition?.resources?.agentsFiles ?? []).map((file) => ({
+    path: sandboxGuestCwd ? posix.join(sandboxGuestCwd, file.path) : file.path,
+    content: file.content,
+  }));
+}
+
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
@@ -259,6 +270,8 @@ export interface SdkBackendConfig {
   dataDir?: string;
   /** Operational metrics collector for SDK timing. */
   metrics?: ServerMetricCollector;
+  /** Saved Agent definition used to configure this runtime. */
+  agentDefinition?: AgentDefinition;
   /** Server settings that affect Oppi-owned SDK sessions. */
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt">;
 }
@@ -390,6 +403,7 @@ export class SdkBackend {
     );
     syncSessionIdentityFromManager(session, initialSessionManager);
 
+    const agentDefinition = config.agentDefinition;
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
       cwd,
       agentDir: runtimeAgentDir,
@@ -400,6 +414,10 @@ export class SdkBackend {
       const guestCwd = sandboxMode && workspace ? resolveSandboxGuestCwd(workspace) : cwd;
       const sessionCwd = sandboxMode ? guestCwd : cwd;
       const sandboxReadonlyMounts = new Map<string, ReadonlyMount>();
+      const savedAgentFiles = normalizeAgentContextFiles(
+        agentDefinition,
+        sandboxMode ? sessionCwd : undefined,
+      );
       const authStorage = AuthStorage.create(join(runtimeAgentDir, "auth.json"));
       const modelRegistry = ModelRegistry.create(authStorage, join(runtimeAgentDir, "models.json"));
       const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
@@ -418,31 +436,47 @@ export class SdkBackend {
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
       // host sessions. Project/user Pi settings remain the source of truth.
+      const baseAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
+        includeOppiDocsHint:
+          !sandboxMode &&
+          (session.runtime ?? "oppi") !== "pi-tui" &&
+          isOppiDocsPromptEnabled(config.serverConfig),
+      });
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
         additionalSkillPaths: config.skillPaths ?? [],
-        appendSystemPrompt: buildSdkAppendSystemPrompt(workspace, {
-          includeOppiDocsHint:
-            !sandboxMode &&
-            (session.runtime ?? "oppi") !== "pi-tui" &&
-            isOppiDocsPromptEnabled(config.serverConfig),
-        }),
+        appendSystemPrompt: baseAppendSystemPrompt,
+        ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
+        ...(agentDefinition?.instructions?.mode === "replace"
+          ? { systemPromptOverride: () => agentDefinition.instructions?.text }
+          : {}),
+        ...(agentDefinition?.instructions?.mode === "append"
+          ? {
+              appendSystemPromptOverride: (base: string[]) =>
+                [...base, agentDefinition.instructions?.text ?? ""].filter(
+                  (prompt) => prompt.length > 0,
+                ),
+            }
+          : {}),
         ...(sandboxMode
           ? {
               systemPrompt: sandboxSystemPrompt(),
               agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
-                agentsFiles: base.agentsFiles.flatMap((file) => {
-                  const guestPath = hostWorkspacePathToGuest(hostCwd, guestCwd, file.path);
-                  if (!guestPath) return [];
-                  return [
-                    {
-                      path: guestPath,
-                      content: redactHostEnvironment(file.content, hostCwd, guestCwd),
-                    },
-                  ];
-                }),
+                agentsFiles: [
+                  ...base.agentsFiles.flatMap((file) => {
+                    const guestPath = hostWorkspacePathToGuest(hostCwd, guestCwd, file.path);
+                    if (!guestPath) return [];
+                    return [
+                      {
+                        path: guestPath,
+                        content: redactHostEnvironment(file.content, hostCwd, guestCwd),
+                      },
+                    ];
+                  }),
+                  ...savedAgentFiles,
+                ],
               }),
               skillsOverride: (base: SkillLoadResult): SkillLoadResult => ({
                 skills: base.skills.map((skill) => {
@@ -465,7 +499,11 @@ export class SdkBackend {
                 diagnostics: base.diagnostics,
               }),
             }
-          : {}),
+          : {
+              agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
+                agentsFiles: [...base.agentsFiles, ...savedAgentFiles],
+              }),
+            }),
       });
       await loader.reload();
 
@@ -533,6 +571,14 @@ export class SdkBackend {
       }
 
       const workspaceTools = sandboxTools && workspace?.tools?.length ? workspace.tools : undefined;
+      const agentDefaultToolPolicy = agentDefinition?.sessionDefaults
+        ? {
+            allowed: agentDefinition.sessionDefaults.tools,
+            excluded: agentDefinition.sessionDefaults.excludeTools,
+            noTools: agentDefinition.sessionDefaults.noTools,
+          }
+        : undefined;
+      const launchToolPolicy = session.launch?.tools ?? agentDefaultToolPolicy;
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
@@ -544,12 +590,18 @@ export class SdkBackend {
         settingsManager,
         resourceLoader: loader,
         sessionStartEvent,
-        // Sandbox: disable host-backed built-in tools and inject VM-backed
-        // implementations as customTools. Do not use `tools: []` here: in pi SDK
-        // that is an authoritative allowlist, so it filters out custom and
-        // extension tools too, leaving the model with no tool-call capability.
-        ...(sandboxTools ? { noTools: "builtin" as const, customTools: sandboxTools } : {}),
-        ...(workspaceTools ? { tools: workspaceTools } : {}),
+        ...(sandboxTools ? { customTools: sandboxTools } : {}),
+        ...(launchToolPolicy?.noTools
+          ? { noTools: launchToolPolicy.noTools }
+          : sandboxTools
+            ? { noTools: "builtin" as const }
+            : {}),
+        ...(launchToolPolicy?.allowed
+          ? { tools: launchToolPolicy.allowed }
+          : workspaceTools
+            ? { tools: workspaceTools }
+            : {}),
+        ...(launchToolPolicy?.excluded ? { excludeTools: launchToolPolicy.excluded } : {}),
       });
 
       SdkBackend.applyDefaultQueueModes(createResult.session);

@@ -5,6 +5,7 @@ import type { RouteContext, RouteDispatcher } from "./types.js";
 import { createIdentityRoutes } from "./identity.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
+import { createAgentRoutes } from "./agents.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createUploadRoutes } from "./uploads.js";
 import { createThemeRoutes } from "./themes.js";
@@ -25,6 +26,7 @@ export class RouteHandler {
       createIdentityRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
+      createAgentRoutes(this.ctx, this.helpers),
       createUploadRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),
       createTelemetryRoutes(this.ctx, this.helpers),

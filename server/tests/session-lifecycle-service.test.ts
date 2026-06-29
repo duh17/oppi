@@ -165,16 +165,15 @@ describe("SessionLifecycleService", () => {
       });
 
       expect(createSession).toHaveBeenCalledWith("New session", "openai/gpt-5.4");
-      expect(saveSession).toHaveBeenCalledOnce();
-      expect(saveSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: "created-1",
-          workspaceId: "ws-1",
-          workspaceName: "Project",
-          thinkingLevel: "high",
-          ephemeral: true,
-        }),
-      );
+      expect(saveSession).toHaveBeenCalledTimes(2);
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        id: "created-1",
+        workspaceId: "ws-1",
+        workspaceName: "Project",
+        thinkingLevel: "high",
+        ephemeral: true,
+        launch: { status: "accepted", promptDispatch: "not_sent" },
+      });
       expect(startSession).not.toHaveBeenCalled();
       expect(sendPrompt).not.toHaveBeenCalled();
       expect(result.prompted).toBeUndefined();
@@ -241,7 +240,11 @@ describe("SessionLifecycleService", () => {
       });
 
       expect(sendPrompt).toHaveBeenCalledWith("created-1", "hello", {});
-      expect(saveSession).toHaveBeenCalledOnce();
+      expect(saveSession).toHaveBeenCalledTimes(2);
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        id: "created-1",
+        launch: { status: "failed", promptDispatch: "not_sent", promptError: "pi not ready" },
+      });
       expect(result.prompted).toBe(false);
       expect(result.summarySession).toBeUndefined();
       expect(result.session).toMatchObject({ id: "created-1" });
