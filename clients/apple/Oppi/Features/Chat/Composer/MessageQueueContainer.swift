@@ -1,5 +1,37 @@
 import SwiftUI
 
+private extension View {
+    func messageQueuePanelChrome(cornerRadius: CGFloat = 18) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .background(Color.themeBgDark.opacity(0.78), in: shape)
+            .overlay {
+                shape.stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
+            }
+            .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
+    }
+}
+
+struct MessageQueueSurfaceConfiguration {
+    let queue: MessageQueueState
+    let busyStreamingBehavior: Binding<StreamingBehavior>
+    let editorState: Binding<MessageQueueEditorState>
+    let onApply: (_ baseVersion: Int, _ steering: [MessageQueueDraftItem], _ followUp: [MessageQueueDraftItem]) async throws -> Void
+    let onRefresh: () async -> Void
+
+    var hasVisibleEntry: Bool {
+        !queue.steering.isEmpty
+            || !queue.followUp.isEmpty
+            || editorState.wrappedValue.isDraftMode
+            || editorState.wrappedValue.hasStashedDraft
+    }
+}
+
+enum MessageQueueContainerPresentation {
+    case standalone
+    case drawer
+}
+
 struct MessageQueueContainer: View {
     private struct StatusBannerModel {
         let title: String
@@ -11,9 +43,10 @@ struct MessageQueueContainer: View {
     @Binding var busyStreamingBehavior: StreamingBehavior
     let onApply: (_ baseVersion: Int, _ steering: [MessageQueueDraftItem], _ followUp: [MessageQueueDraftItem]) async throws -> Void
     let onRefresh: () async -> Void
+    let presentation: MessageQueueContainerPresentation
 
     @State private var isExpanded = false
-    @State private var editorState: MessageQueueEditorState
+    @Binding private var editorState: MessageQueueEditorState
     @State private var isApplying = false
     @State private var isRefreshing = false
     @State private var errorText: String?
@@ -21,14 +54,31 @@ struct MessageQueueContainer: View {
     init(
         queue: MessageQueueState,
         busyStreamingBehavior: Binding<StreamingBehavior>,
+        editorState: Binding<MessageQueueEditorState>,
         onApply: @escaping (_ baseVersion: Int, _ steering: [MessageQueueDraftItem], _ followUp: [MessageQueueDraftItem]) async throws -> Void,
-        onRefresh: @escaping () async -> Void
+        onRefresh: @escaping () async -> Void,
+        presentation: MessageQueueContainerPresentation = .standalone
     ) {
         self.queue = queue
         _busyStreamingBehavior = busyStreamingBehavior
+        _editorState = editorState
         self.onApply = onApply
         self.onRefresh = onRefresh
-        _editorState = State(initialValue: MessageQueueEditorState(queue: queue))
+        self.presentation = presentation
+    }
+
+    init(
+        configuration: MessageQueueSurfaceConfiguration,
+        presentation: MessageQueueContainerPresentation = .standalone
+    ) {
+        self.init(
+            queue: configuration.queue,
+            busyStreamingBehavior: configuration.busyStreamingBehavior,
+            editorState: configuration.editorState,
+            onApply: configuration.onApply,
+            onRefresh: configuration.onRefresh,
+            presentation: presentation
+        )
     }
 
     private var displayedQueue: MessageQueueState {
@@ -68,79 +118,103 @@ struct MessageQueueContainer: View {
         displayedQueue.steering.isEmpty && displayedQueue.followUp.isEmpty
     }
 
+    private var showsExpandedContent: Bool {
+        presentation == .drawer || isExpanded
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-
-            if isExpanded {
-                busyModePicker
-
-                if let banner = statusBannerModel {
-                    statusBanner(title: banner.title, message: banner.message, color: banner.color)
-                }
-
-                if let errorText, !errorText.isEmpty {
-                    statusBanner(title: "Queue update failed", message: errorText, color: .themeRed)
-                }
-
-                if isQueueEmpty {
-                    Text("Queue is empty")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 4)
-                } else {
-                    queueSection(
-                        title: "Steering Queue",
-                        kind: .steer,
-                        items: displayedQueue.steering
-                    )
-                    queueSection(
-                        title: "Follow-up Queue",
-                        kind: .followUp,
-                        items: displayedQueue.followUp
-                    )
-                }
-
-                footerActions
+        Group {
+            if presentation == .standalone {
+                content
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, isExpanded ? 10 : 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .messageQueuePanelChrome(cornerRadius: 18)
+            } else {
+                content
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
-        }
-        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 2)
         .accessibilityElement(children: .contain)
         .onAppear {
-            editorState = MessageQueueEditorState(queue: queue)
+            editorState.receiveServerQueue(queue, isExpanded: showsExpandedContent)
         }
         .onChange(of: queue) { _, latestQueue in
-            editorState.receiveServerQueue(latestQueue, isExpanded: isExpanded)
+            editorState.receiveServerQueue(latestQueue, isExpanded: showsExpandedContent)
         }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if presentation == .standalone {
+                header
+            }
+
+            if showsExpandedContent {
+                expandedContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        busyModePicker
+
+        if let banner = statusBannerModel {
+            statusBanner(title: banner.title, message: banner.message, color: banner.color)
+        }
+
+        if let errorText, !errorText.isEmpty {
+            statusBanner(title: "Queue update failed", message: errorText, color: .themeRed)
+        }
+
+        if isQueueEmpty {
+            Text("Queue is empty")
+                .font(.caption)
+                .foregroundStyle(.themeComment)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+        } else {
+            queueSection(
+                title: "Steering Queue",
+                kind: .steer,
+                items: displayedQueue.steering
+            )
+            queueSection(
+                title: "Follow-up Queue",
+                kind: .followUp,
+                items: displayedQueue.followUp
+            )
+        }
+
+        footerActions
     }
 
     private var header: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(.easeOut(duration: 0.10)) {
                 isExpanded.toggle()
             }
         } label: {
             HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(messageQueueStatusColor)
+                        .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+
                     Text("Message Queue")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.themeFg)
-
-                    Text("\(displayedQueue.steering.count) steering • \(displayedQueue.followUp.count) follow-up")
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: 8)
+                HStack(spacing: 6) {
+                    countPill(count: displayedQueue.steering.count, label: "steering", tint: .themeBlue)
+                    countPill(count: displayedQueue.followUp.count, label: "follow-up", tint: .themePurple)
+                }
+                .fixedSize(horizontal: true, vertical: false)
 
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -148,12 +222,31 @@ struct MessageQueueContainer: View {
                     .frame(width: 28, height: 28)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(minHeight: 40)
+            .frame(minHeight: 36)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.messageQueue.toggle")
         .accessibilityLabel(isExpanded ? "Collapse message queue" : "Expand message queue")
+        .accessibilityValue("\(displayedQueue.steering.count) steering, \(displayedQueue.followUp.count) follow-up")
+    }
+
+    private var messageQueueStatusColor: Color {
+        isQueueEmpty ? .themeComment : .themeGreen
+    }
+
+    private func countPill(count: Int, label: String, tint: Color) -> some View {
+        Text("\(count) \(label)")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(count > 0 ? Color.themeFg : Color.themeComment)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.themeFg.opacity(count > 0 ? 0.075 : 0.04), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(count > 0 ? tint.opacity(0.35) : Color.themeFg.opacity(0.08), lineWidth: 1)
+            }
     }
 
     private var busyModePicker: some View {

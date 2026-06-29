@@ -11,6 +11,9 @@ import UniformTypeIdentifiers
 /// static functions instead of maintaining their own copies.
 @MainActor
 enum ComposerShared {
+    private static let attachmentThumbnailSize: CGFloat = 56
+    private static let attachmentTileSize: CGFloat = 64
+
     enum VoiceInputOwner: String, Sendable {
         case inlineComposer = "inline_mic_tap"
         case expandedComposer = "expanded_mic_tap"
@@ -203,6 +206,8 @@ enum ComposerShared {
                 attachmentRow(pendingAttachments: pendingAttachments)
             }
         }
+        .frame(height: attachmentTileSize)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     static func filePillStrip(
@@ -222,19 +227,20 @@ enum ComposerShared {
     private static func attachmentRow(
         pendingAttachments: Binding<[PendingAttachment]>
     ) -> some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             ForEach(pendingAttachments.wrappedValue) { attachment in
                 if attachment.source == .image, let thumbnail = attachment.thumbnail {
                     ZStack(alignment: .topTrailing) {
                         Image(uiImage: thumbnail)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: 56, height: 56)
+                            .frame(width: attachmentThumbnailSize, height: attachmentThumbnailSize)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
                             )
+                            .frame(width: attachmentTileSize, height: attachmentTileSize, alignment: .bottomLeading)
 
                         Button {
                             removeAttachment(attachment.id, from: pendingAttachments)
@@ -244,8 +250,9 @@ enum ComposerShared {
                                 .foregroundStyle(.themeFg)
                                 .background(Circle().fill(.themeScrim))
                         }
-                        .offset(x: 4, y: -4)
                     }
+                    .frame(width: attachmentTileSize, height: attachmentTileSize)
+                    .accessibilityIdentifier("chat.attachment.image.\(attachment.id)")
                 } else {
                     ComposerAttachmentPill(name: attachment.displayName) {
                         removeAttachment(attachment.id, from: pendingAttachments)
@@ -253,6 +260,7 @@ enum ComposerShared {
                 }
             }
         }
+        .frame(height: attachmentTileSize, alignment: .center)
     }
 
     private static func filePillRow(

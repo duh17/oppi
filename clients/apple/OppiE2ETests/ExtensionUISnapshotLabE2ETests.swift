@@ -1469,14 +1469,33 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
     }
 
     private func expandNativeSurface(title: String, timeout: TimeInterval = 10) {
-        let collapsePredicate = NSPredicate(format: "label CONTAINS[c] %@", "Collapse \(title) preview")
+        let collapsePredicate = NSPredicate(
+            format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@",
+            "Collapse \(title) surface",
+            "Collapse \(title) preview"
+        )
         let collapseToggle = app.descendants(matching: .any).matching(collapsePredicate).firstMatch
         if collapseToggle.waitForExistence(timeout: 0.5) {
             return
         }
 
-        let expandPredicate = NSPredicate(format: "label CONTAINS[c] %@", "Expand \(title) preview")
+        let expandPredicate = NSPredicate(
+            format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@",
+            "Expand \(title) surface",
+            "Expand \(title) preview"
+        )
         let expandToggle = app.descendants(matching: .any).matching(expandPredicate).firstMatch
+        XCTAssertTrue(
+            expandToggle.waitForExistence(timeout: timeout),
+            "Native surface \(title) expand toggle did not appear"
+        )
+
+        let strip = app.descendants(matching: .any)["extension-strip-aboveEditor-collapsed"]
+        for _ in 0..<4 where !expandToggle.isHittable && strip.exists {
+            strip.swipeLeft()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+
         tap(expandToggle, named: "native surface \(title) expand toggle", timeout: timeout)
         XCTAssertTrue(
             collapseToggle.waitForExistence(timeout: timeout),

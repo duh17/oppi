@@ -589,6 +589,7 @@ struct UIHangHarnessView: View {
 
     @State private var queueStates: [HarnessSession: MessageQueueState] = [:]
     @State private var queueBusyStreamingBehavior: StreamingBehavior = .steer
+    @State private var queueEditorState = MessageQueueEditorState(queue: .empty)
     @State private var queueSystemEventSerial = 0
     @State private var assistantOverlapPhaseBySession: [HarnessSession: Int] = [:]
     @State private var assistantOverlapReadySnapshot = 0
@@ -787,6 +788,7 @@ struct UIHangHarnessView: View {
                 MessageQueueContainer(
                     queue: currentQueueState,
                     busyStreamingBehavior: $queueBusyStreamingBehavior,
+                    editorState: $queueEditorState,
                     onApply: { baseVersion, steering, followUp in
                         try applyQueueDraft(baseVersion: baseVersion, steering: steering, followUp: followUp)
                     },

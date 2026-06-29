@@ -82,6 +82,7 @@ struct ChatView: View {
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
+    @State private var messageQueueEditorState = MessageQueueEditorState(queue: .empty)
     @State private var isPreparingAttachments = false
     @State private var attachmentPreparationText: String?
 
@@ -214,6 +215,29 @@ struct ChatView: View {
 
     private var showsMessageQueue: Bool {
         !messageQueueState.steering.isEmpty || !messageQueueState.followUp.isEmpty
+    }
+
+    private var hasMessageQueueDraft: Bool {
+        messageQueueEditorState.isDraftMode || messageQueueEditorState.hasStashedDraft
+    }
+
+    private var messageQueueSurfaceConfiguration: MessageQueueSurfaceConfiguration {
+        MessageQueueSurfaceConfiguration(
+            queue: messageQueueState,
+            busyStreamingBehavior: $busyStreamingBehavior,
+            editorState: $messageQueueEditorState,
+            onApply: { baseVersion, steering, followUp in
+                try await connection.setMessageQueue(
+                    baseVersion: baseVersion,
+                    steering: steering,
+                    followUp: followUp,
+                    sessionIdOverride: sessionId
+                )
+            },
+            onRefresh: {
+                try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
+            }
+        )
     }
 
     private var extensionSurfaceState: ExtensionSurfaceState? {
@@ -478,6 +502,7 @@ struct ChatView: View {
                 showOutline = false
                 isFilePanelVisible = false
                 selectedFilePanelTab = ChatFileBrowserPanelTabStore.shared.tab(for: newId)
+                messageQueueEditorState = MessageQueueEditorState(queue: .empty)
                 showContextInspector = false
             }
             .onChange(of: selectedFilePanelTab) { _, newTab in
@@ -561,15 +586,20 @@ struct ChatView: View {
             }
         } else {
             VStack(spacing: 8) {
-                if !hasBlockingExtensionInput,
-                   let surface = extensionSurfaceState,
-                   surface.hasVisibleContent(in: .aboveEditor) {
-                    ExtensionSurfacePanel(
-                        surface: surface,
-                        placement: .aboveEditor,
-                        onOpenURL: openExtensionSurfaceURL
-                    )
+                if !hasBlockingExtensionInput {
+                    let surface = extensionSurfaceState ?? ExtensionSurfaceState()
+                    if surface.hasVisibleContent(in: .aboveEditor) || showsMessageQueue || hasMessageQueueDraft {
+                        ExtensionSurfacePanel(
+                            surface: surface,
+                            placement: .aboveEditor,
+                            messageQueue: (showsMessageQueue || hasMessageQueueDraft) ? messageQueueSurfaceConfiguration : nil,
+                            onOpenURL: openExtensionSurfaceURL,
+                            onExpandedEntryChange: { expanded in
+                                if expanded { dismissKeyboard() }
+                            }
+                        )
                         .padding(.horizontal, 16)
+                    }
                 }
 
                 if let reconnectFailureMessage = actionHandler.reconnectFailureMessage {
@@ -596,27 +626,6 @@ struct ChatView: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.themeRed.opacity(0.35), lineWidth: 1)
                     }
-                    .padding(.horizontal, 16)
-                }
-
-                // Floating Game of Life indicator — pinned above input bar.
-                // Visible while agent is working, hidden when scrolled up.
-                if showsMessageQueue {
-                    MessageQueueContainer(
-                        queue: messageQueueState,
-                        busyStreamingBehavior: $busyStreamingBehavior,
-                        onApply: { baseVersion, steering, followUp in
-                            try await connection.setMessageQueue(
-                                baseVersion: baseVersion,
-                                steering: steering,
-                                followUp: followUp,
-                                sessionIdOverride: sessionId
-                            )
-                        },
-                        onRefresh: {
-                            try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
-                        }
-                    )
                     .padding(.horizontal, 16)
                 }
 
@@ -1242,6 +1251,11 @@ struct ChatView: View {
 
         // Avoid overlap between expanded git context and composer when the
         // software keyboard is visible.
+        dismissKeyboard()
+    }
+
+    @MainActor
+    private func dismissKeyboard() {
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder),
             to: nil,

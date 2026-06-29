@@ -41,37 +41,66 @@ final class ScreenshotPreviewUITests: XCTestCase {
         let title = app.staticTexts["Extension surface"]
         XCTAssertTrue(title.waitForExistence(timeout: 5), "Extension surface title not found")
 
-        let textWidgetToggle = app.buttons["Collapse autoresearch widget"]
-        XCTAssertTrue(textWidgetToggle.waitForExistence(timeout: 5), "Text widget collapse toggle not visible")
+        let textWidgetPill = app.buttons["Expand autoresearch widget"]
+        XCTAssertTrue(textWidgetPill.waitForExistence(timeout: 5), "Collapsed text widget pill not visible")
 
-        let nativeSurfaceToggle = app.buttons["Collapse 1 of 5 tasks completed surface"]
-        XCTAssertTrue(nativeSurfaceToggle.waitForExistence(timeout: 5), "Native surface collapse toggle not visible")
+        let nativeSurfacePill = app.buttons["Expand 1 of 5 tasks completed surface"]
+        XCTAssertTrue(nativeSurfacePill.waitForExistence(timeout: 5), "Collapsed native surface pill not visible")
 
         let longMetricLine = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "streaming_max_us")).firstMatch
-        XCTAssertTrue(longMetricLine.waitForExistence(timeout: 5), "Long terminal-compatible widget line not visible")
+        XCTAssertFalse(longMetricLine.waitForExistence(timeout: 1), "Collapsed strip should hide terminal widget body lines")
+        saveScreenshot(name: "extension-widget-collapsed-strip")
+
+        textWidgetPill.tap()
+        XCTAssertTrue(app.buttons["Collapse autoresearch widget"].waitForExistence(timeout: 3), "Text widget did not expand into the shared drawer")
+        XCTAssertTrue(longMetricLine.waitForExistence(timeout: 3), "Long terminal-compatible widget line not visible after expansion")
         saveScreenshot(name: "extension-widget-expanded-left")
 
         longMetricLine.swipeLeft()
         saveScreenshot(name: "extension-widget-expanded-right")
 
-        textWidgetToggle.tap()
-        let bodyMetricLine = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "zero_change_max_us")).firstMatch
-        XCTAssertFalse(bodyMetricLine.waitForExistence(timeout: 1), "Collapsed text widget should hide body lines")
-        saveScreenshot(name: "extension-widget-text-collapsed")
+        longMetricLine.doubleTap()
+        let dismissFullScreen = app.buttons["fullscreen-code.dismiss"]
+        XCTAssertTrue(dismissFullScreen.waitForExistence(timeout: 5), "Terminal full-screen viewer did not open")
+        saveScreenshot(name: "extension-widget-terminal-fullscreen")
+        dismissFullScreen.tap()
 
-        let expandTextWidget = app.buttons["Expand autoresearch widget"]
-        XCTAssertTrue(expandTextWidget.waitForExistence(timeout: 3), "Collapsed text widget expand toggle not visible")
-        expandTextWidget.tap()
-
-        nativeSurfaceToggle.tap()
+        nativeSurfacePill.tap()
         let runningTask = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Read HTTP Range semantics")).firstMatch
-        XCTAssertFalse(runningTask.waitForExistence(timeout: 1), "Collapsed native surface should hide activity rows")
-        saveScreenshot(name: "extension-widget-native-collapsed")
+        XCTAssertTrue(runningTask.waitForExistence(timeout: 3), "Native surface content should open in the shared drawer")
+        XCTAssertFalse(longMetricLine.exists, "Expanding another pill should replace the drawer instead of stacking widget cards")
+        saveScreenshot(name: "extension-widget-native-expanded")
 
-        let expandNativeSurface = app.buttons["Expand 1 of 5 tasks completed surface"]
-        XCTAssertTrue(expandNativeSurface.waitForExistence(timeout: 3), "Collapsed native surface expand toggle not visible")
-        expandNativeSurface.tap()
-        XCTAssertTrue(runningTask.waitForExistence(timeout: 3), "Expanded native surface content should return")
+        let nativeViewport = app.descendants(matching: .any)["extension-native-surface-widget-tasks-viewport"]
+        XCTAssertTrue(nativeViewport.waitForExistence(timeout: 3), "Native drawer viewport not visible")
+        nativeViewport.doubleTap()
+        let nativeDone = app.buttons["Done"]
+        XCTAssertTrue(nativeDone.waitForExistence(timeout: 5), "Native surface full-screen detail did not open")
+        saveScreenshot(name: "extension-widget-native-fullscreen")
+        nativeDone.tap()
+    }
+
+    func testChatInputAttachmentContainmentPreview() throws {
+        launchPreview(screen: "chat-input-attachment-containment")
+
+        let attachment = app.descendants(matching: .any)["chat.attachment.image.preview-image"]
+        XCTAssertTrue(attachment.waitForExistence(timeout: 5), "Pending attachment thumbnail not visible")
+
+        let input = app.descendants(matching: .any)["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "Chat input not visible")
+
+        XCTAssertLessThan(
+            attachment.frame.minY,
+            input.frame.minY,
+            "Attachment strip should sit above the text row inside the composer"
+        )
+        XCTAssertLessThanOrEqual(
+            attachment.frame.maxY,
+            input.frame.minY + 2,
+            "Attachment strip should reserve layout height above the text row instead of overlapping it"
+        )
+
+        saveScreenshot(name: "chat-input-attachment-contained")
     }
 
     func testExtensionDockStressPreview() throws {
@@ -97,29 +126,37 @@ final class ScreenshotPreviewUITests: XCTestCase {
     func testExtensionDockReviewCombinedPreview() throws {
         launchPreview(screen: "extension-dock-review-combined")
 
-        let combinedWidget = app.buttons["Collapse Pi review open widget"]
-        XCTAssertTrue(combinedWidget.waitForExistence(timeout: 5), "Combined pi-review widget not visible")
+        let combinedWidget = app.buttons["Expand Pi review open widget"]
+        XCTAssertTrue(combinedWidget.waitForExistence(timeout: 5), "Collapsed pi-review widget pill not visible")
         XCTAssertTrue(app.staticTexts["Pi review open"].waitForExistence(timeout: 5), "Promoted status title not visible")
         XCTAssertFalse(app.staticTexts["pi-review"].exists, "Generated key label should be suppressed when status already names the surface")
-        saveScreenshot(name: "extension-dock-review-combined-expanded")
+        saveScreenshot(name: "extension-dock-review-combined-collapsed")
 
         combinedWidget.tap()
-        let collapsedWidget = app.buttons["Expand Pi review open widget"]
-        XCTAssertTrue(collapsedWidget.waitForExistence(timeout: 3), "Combined pi-review widget did not collapse")
-        XCTAssertFalse(app.staticTexts["pi-review"].exists, "Collapsed card should still suppress the generated key label")
-        saveScreenshot(name: "extension-dock-review-combined-collapsed")
+        XCTAssertTrue(app.buttons["Collapse Pi review open widget"].waitForExistence(timeout: 3), "Combined pi-review widget did not expand")
+        XCTAssertTrue(
+            app.staticTexts["Pi review — vs origin/main — use the native window"].waitForExistence(timeout: 3),
+            "Combined pi-review drawer content not visible"
+        )
+        XCTAssertFalse(app.staticTexts["pi-review"].exists, "Expanded drawer should still suppress the generated key label")
+        saveScreenshot(name: "extension-dock-review-combined-expanded")
     }
 
     func testExtensionDockScopedAgentsPreview() throws {
         launchPreview(screen: "extension-dock-scoped-agents")
 
-        let scopedWidget = app.buttons["Collapse Subagents widget"]
-        XCTAssertTrue(scopedWidget.waitForExistence(timeout: 5), "Scoped agents widget not visible")
+        let scopedWidget = app.buttons["Expand Subagents widget"]
+        XCTAssertTrue(scopedWidget.waitForExistence(timeout: 5), "Scoped agents widget pill not visible")
         XCTAssertTrue(app.staticTexts["Subagents"].waitForExistence(timeout: 5), "Extension scope title not visible")
         XCTAssertTrue(app.staticTexts["1 running agent"].waitForExistence(timeout: 5), "Scoped status not attached")
         XCTAssertFalse(app.staticTexts["subagents"].exists, "Status key should not render as a separate row")
         XCTAssertFalse(app.staticTexts["agents"].exists, "Widget key should not replace the extension scope title")
-        saveScreenshot(name: "extension-dock-scoped-agents")
+        saveScreenshot(name: "extension-dock-scoped-agents-collapsed")
+
+        scopedWidget.tap()
+        XCTAssertTrue(app.buttons["Collapse Subagents widget"].waitForExistence(timeout: 3), "Scoped agents widget did not expand")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Deep telemetry correlation")).firstMatch.waitForExistence(timeout: 3), "Scoped agents drawer content not visible")
+        saveScreenshot(name: "extension-dock-scoped-agents-expanded")
     }
 
     func testAskCardPreview() throws {

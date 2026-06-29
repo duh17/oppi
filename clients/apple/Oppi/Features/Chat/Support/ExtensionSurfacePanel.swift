@@ -6,17 +6,24 @@ private extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .glassEffect(.regular, in: shape)
+            .background(Color.themeBgDark.opacity(0.78), in: shape)
             .overlay {
                 shape.stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
             }
+            .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
+    }
+
+    func extensionStripGlassPanel(cornerRadius: CGFloat = 18) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .glassEffect(.regular, in: shape)
             .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
     }
 
     func extensionGlassInset(cornerRadius: CGFloat = 12) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .glassEffect(.regular, in: shape)
+            .background(Color.themeFg.opacity(0.04), in: shape)
             .overlay {
                 shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
             }
@@ -29,6 +36,20 @@ private extension View {
             .overlay {
                 shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
             }
+    }
+
+    @ViewBuilder
+    func extensionFullScreenAccessibilityAction(
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        if enabled {
+            accessibilityAction(named: Text("Open Full Screen")) {
+                action()
+            }
+        } else {
+            self
+        }
     }
 }
 
@@ -232,7 +253,7 @@ struct ExtensionNativeSurfaceView: View {
                     onOpenFullScreen: openDetail,
                     onOpenURL: onOpenURL
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
         }
         .highPriorityGesture(
@@ -268,7 +289,7 @@ struct ExtensionNativeSurfaceView: View {
     }
 
     private func toggleExpanded() {
-        withAnimation(.easeInOut(duration: 0.16)) {
+        withAnimation(.easeOut(duration: 0.10)) {
             isExpanded.toggle()
         }
     }
@@ -1641,7 +1662,7 @@ private struct ExtensionWidgetCard: View {
                     onOpenFullScreen: openDetail
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
         }
         .highPriorityGesture(
@@ -1675,7 +1696,7 @@ private struct ExtensionWidgetCard: View {
     }
 
     private func toggleExpanded() {
-        withAnimation(.easeInOut(duration: 0.16)) {
+        withAnimation(.easeOut(duration: 0.10)) {
             isExpanded.toggle()
         }
     }
@@ -1701,10 +1722,388 @@ private extension String {
     }
 }
 
+private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
+    case title(String)
+    case status(id: String, key: String, text: String)
+    case native(ExtensionNativeSurfaceState, statusText: String?)
+    case widget(ExtensionWidgetState, statusText: String?, titleOverride: String?)
+    case messageQueue(steeringCount: Int, followUpCount: Int)
+
+    var id: String {
+        switch self {
+        case .title: return "title"
+        case .status(let id, _, _): return "status:\(id)"
+        case .native(let nativeSurface, _): return "native:\(nativeSurface.identityKey)"
+        case .widget(let widget, _, _): return "widget:\(widget.identityKey)"
+        case .messageQueue: return "message-queue"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .title(let title):
+            return title
+        case .status(_, let key, _):
+            return key
+        case .native(let nativeSurface, _):
+            let title = nativeSurface.surface.presentation.title?.trimmedNonEmpty
+            return title ?? nativeSurface.key.trimmedNonEmpty ?? "Extension"
+        case .widget(let widget, let statusText, let titleOverride):
+            let rawTitle = titleOverride?.trimmedNonEmpty ?? widget.key.trimmedNonEmpty ?? "Extension widget"
+            return ExtensionSurfaceHeaderText(title: rawTitle, statusText: statusText).title
+        case .messageQueue:
+            return "Message Queue"
+        }
+    }
+
+    var subtitle: String? {
+        switch self {
+        case .title:
+            return nil
+        case .status(_, _, let text):
+            return text.trimmedNonEmpty
+        case .native(let nativeSurface, let statusText):
+            return statusText?.trimmedNonEmpty
+                ?? nativeSurface.surface.presentation.subtitle?.trimmedNonEmpty
+                ?? Self.nativePreviewText(nativeSurface.surface)
+        case .widget(let widget, let statusText, let titleOverride):
+            let rawTitle = titleOverride?.trimmedNonEmpty ?? widget.key.trimmedNonEmpty ?? "Extension widget"
+            let header = ExtensionSurfaceHeaderText(title: rawTitle, statusText: statusText)
+            if let subtitle = header.subtitle {
+                return subtitle
+            }
+            return widget.lines
+                .map { ANSIParser.strip($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty && $0 != header.title }
+        case .messageQueue(let steeringCount, let followUpCount):
+            return "\(steeringCount) steering • \(followUpCount) follow-up"
+        }
+    }
+
+    var kindLabel: String {
+        switch self {
+        case .title: return "title"
+        case .status: return "status"
+        case .native: return "surface"
+        case .widget: return "widget"
+        case .messageQueue: return "queue"
+        }
+    }
+
+    var identifierSuffix: String {
+        switch self {
+        case .title(let title): return "title-\(title.extensionAccessibilityIdentifierComponent)"
+        case .status(_, let key, _): return "status-\(key.extensionAccessibilityIdentifierComponent)"
+        case .native(let nativeSurface, _): return nativeSurface.surface.id.extensionAccessibilityIdentifierComponent
+        case .widget(let widget, _, _): return widget.key.extensionAccessibilityIdentifierComponent
+        case .messageQueue: return "message-queue"
+        }
+    }
+
+    var stateTone: ExtensionSurfaceStripTone {
+        switch self {
+        case .native(let nativeSurface, _):
+            return Self.nativeTone(nativeSurface.surface)
+        case .widget:
+            return .accent
+        case .messageQueue(let steeringCount, let followUpCount):
+            return steeringCount + followUpCount > 0 ? .success : .neutral
+        case .status:
+            return .accent
+        case .title:
+            return .neutral
+        }
+    }
+
+    var leadingSystemImage: String? {
+        switch self {
+        case .messageQueue:
+            return "list.bullet"
+        case .title, .status, .native, .widget:
+            return nil
+        }
+    }
+
+    private static func nativePreviewText(_ surface: ExtensionUINativeSurface) -> String? {
+        for block in surface.nativeDisplayBlocks {
+            switch block {
+            case .activityList(_, let rows):
+                if let row = rows.first {
+                    return row.subtitle?.trimmedNonEmpty ?? row.detail?.trimmedNonEmpty ?? row.title.trimmedNonEmpty
+                }
+            case .text(_, let spans):
+                let text = spans.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { return text }
+            case .markdown(_, let markdown):
+                if let text = markdown.trimmedNonEmpty { return text }
+            case .progress(_, let label, let value, let indeterminate):
+                if let label = label?.trimmedNonEmpty { return label }
+                if indeterminate == true { return "In progress" }
+                if let value, value.isFinite { return "\(Int(round(min(max(value, 0), 1) * 100)))%" }
+            case .section(_, let title, let subtitle, _):
+                if let subtitle = subtitle?.trimmedNonEmpty { return subtitle }
+                if let title = title?.trimmedNonEmpty { return title }
+            case .terminal(_, let lines):
+                let text = lines.first?.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                if let text, !text.isEmpty { return text }
+            case .code(_, let language, _):
+                return language?.trimmedNonEmpty ?? "Code"
+            case .divider, .spacer, .unsupported:
+                continue
+            }
+        }
+        return surface.fallbackDisplayLines.first?.trimmedNonEmpty
+    }
+
+    private static func nativeTone(_ surface: ExtensionUINativeSurface) -> ExtensionSurfaceStripTone {
+        let rows = surface.nativeDisplayBlocks.flatMap { block -> [ExtensionUIActivityRow] in
+            if case .activityList(_, let rows) = block { return rows }
+            return []
+        }
+        let states = Set(rows.compactMap(\.state))
+        if states.contains("error") { return .danger }
+        if states.contains("warning") { return .warning }
+        if states.contains("running") { return .running }
+        if states.contains("queued") { return .queued }
+        if states.contains("success") { return .success }
+        return .accent
+    }
+
+}
+
+private enum ExtensionSurfaceStripTone {
+    case neutral
+    case accent
+    case running
+    case queued
+    case success
+    case warning
+    case danger
+
+    var color: Color {
+        switch self {
+        case .neutral: return .themeComment
+        case .accent: return .themeCyan
+        case .running: return .themeBlue
+        case .queued: return .themePurple
+        case .success: return .themeGreen
+        case .warning: return .themeOrange
+        case .danger: return .themeRed
+        }
+    }
+}
+
+private struct ExtensionSurfaceStripPill: View {
+    let entry: ExtensionSurfaceStripEntry
+    let isActive: Bool
+    let placement: ExtensionSurfacePlacementGroup
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 7) {
+                if let leadingSystemImage = entry.leadingSystemImage {
+                    Image(systemName: leadingSystemImage)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(entry.stateTone.color)
+                        .accessibilityHidden(true)
+                } else {
+                    Circle()
+                        .fill(entry.stateTone.color)
+                        .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+                }
+
+                Text(entry.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 180, alignment: .leading)
+
+                if let subtitle = entry.subtitle?.trimmedNonEmpty {
+                    Text(subtitle)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 150, alignment: .leading)
+                }
+
+                Image(systemName: isActive ? "chevron.down" : "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.themeComment)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(minHeight: 36)
+            .background(
+                Color.themeFg.opacity(isActive ? 0.1 : 0.045),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(isActive ? entry.stateTone.color.opacity(0.45) : Color.themeFg.opacity(0.08), lineWidth: 1)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)")
+        .accessibilityLabel("\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)")
+        .accessibilityValue(entry.subtitle ?? (isActive ? "Expanded" : "Collapsed"))
+    }
+}
+
+private struct ExtensionSurfaceDrawer: View {
+    let entry: ExtensionSurfaceStripEntry
+    let placement: ExtensionSurfacePlacementGroup
+    var messageQueue: MessageQueueSurfaceConfiguration?
+    var onOpenURL: ((URL) -> Bool)?
+    let onCollapse: () -> Void
+
+    @State private var nativeDetailPresented = false
+    @State private var terminalDetailPresented = false
+
+    private var identifierSuffix: String {
+        entry.identifierSuffix
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                    if let subtitle = entry.subtitle?.trimmedNonEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: onCollapse) {
+                    Image(systemName: "chevron.up")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.themeComment)
+                        .frame(width: 32, height: 32)
+                        .background(Color.themeFg.opacity(0.04), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-drawer-collapse")
+                .accessibilityLabel("Collapse \(entry.title) \(entry.kindLabel)")
+            }
+
+            drawerContent
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .extensionGlassPanel(cornerRadius: 18)
+        .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-drawer-\(identifierSuffix)")
+        .fullScreenCover(isPresented: $nativeDetailPresented) {
+            if case .native(let nativeSurface, let statusText) = entry {
+                ExtensionNativeSurfaceDetailSheet(
+                    surface: nativeSurface.surface,
+                    identifierSuffix: identifierSuffix,
+                    title: entry.title,
+                    subtitle: entry.subtitle,
+                    statusText: statusText,
+                    onOpenURL: onOpenURL
+                )
+            }
+        }
+        .fullScreenViewer(
+            isPresented: $terminalDetailPresented,
+            content: terminalFullScreenContent,
+            sourceLabel: entry.title
+        )
+        .extensionFullScreenAccessibilityAction(enabled: supportsFullScreen) {
+            openFullScreen()
+        }
+    }
+
+    @ViewBuilder
+    private var drawerContent: some View {
+        switch entry {
+        case .title(let title):
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.themeFg)
+                .fixedSize(horizontal: false, vertical: true)
+        case .status(_, let key, let text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(key)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.themeFg)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(10)
+            .extensionSubtleInset(cornerRadius: 12)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(key), \(text)")
+        case .native(let nativeSurface, _):
+            ExtensionNativeSurfaceExpandedViewport(
+                surface: nativeSurface.surface,
+                identifierSuffix: identifierSuffix,
+                maxHeight: 260,
+                onOpenFullScreen: { nativeDetailPresented = true },
+                onOpenURL: onOpenURL
+            )
+        case .widget(let widget, _, _):
+            ExtensionWidgetLinesView(
+                lines: widget.lines,
+                scrollIdentifier: "extension-strip-\(placement.accessibilityIdentifierComponent)-terminal-\(identifierSuffix)",
+                onOpenFullScreen: { terminalDetailPresented = true }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .messageQueue:
+            if let messageQueue {
+                MessageQueueContainer(configuration: messageQueue, presentation: .drawer)
+            }
+        }
+    }
+
+    private var supportsFullScreen: Bool {
+        switch entry {
+        case .native, .widget: return true
+        case .title, .status, .messageQueue: return false
+        }
+    }
+
+    private var terminalFullScreenContent: FullScreenCodeContent {
+        guard case .widget(let widget, _, _) = entry else {
+            return .terminal(content: "", command: nil)
+        }
+        return .terminal(content: widget.lines.joined(separator: "\n"), command: nil)
+    }
+
+    private func openFullScreen() {
+        switch entry {
+        case .native:
+            nativeDetailPresented = true
+        case .widget:
+            terminalDetailPresented = true
+        case .title, .status, .messageQueue:
+            break
+        }
+    }
+}
+
 struct ExtensionSurfacePanel: View {
     let surface: ExtensionSurfaceState
     let placement: ExtensionSurfacePlacementGroup
+    var messageQueue: MessageQueueSurfaceConfiguration? = nil
     var onOpenURL: ((URL) -> Bool)? = nil
+    var onExpandedEntryChange: ((Bool) -> Void)? = nil
+
+    @State private var expandedEntryID: String?
 
     private var sortedStatuses: [(id: String, key: String, text: String)] {
         surface.standaloneStatusEntries()
@@ -1714,41 +2113,112 @@ struct ExtensionSurfacePanel: View {
         surface.widgetEntries(in: placement)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if surface.hasVisibleMetadata(in: placement) {
-                ExtensionSurfaceMetadataCard(
-                    title: surface.title,
-                    statuses: sortedStatuses
+    private var stripEntries: [ExtensionSurfaceStripEntry] {
+        var result: [ExtensionSurfaceStripEntry] = []
+        if placement.showsChrome,
+           let title = surface.title?.trimmedNonEmpty {
+            result.append(.title(title))
+        }
+        if placement.showsChrome {
+            result.append(contentsOf: sortedStatuses.map { .status(id: $0.id, key: $0.key, text: $0.text) })
+        }
+        result.append(contentsOf: entries.map { entry in
+            switch entry {
+            case .native(let nativeSurface):
+                return .native(
+                    nativeSurface,
+                    statusText: surface.attachedStatusText(
+                        for: nativeSurface.key,
+                        extensionScopeId: nativeSurface.extensionScopeId
+                    )
+                )
+            case .widget(let widget):
+                return .widget(
+                    widget,
+                    statusText: surface.attachedStatusText(
+                        for: widget.key,
+                        extensionScopeId: widget.extensionScopeId
+                    ),
+                    titleOverride: surface.displayTitle(for: widget)
                 )
             }
+        })
+        if let messageQueue, messageQueue.hasVisibleEntry {
+            result.append(.messageQueue(
+                steeringCount: messageQueue.queue.steering.count,
+                followUpCount: messageQueue.queue.followUp.count
+            ))
+        }
+        return result
+    }
 
-            ForEach(entries) { entry in
-                switch entry {
-                case .native(let nativeSurface):
-                    ExtensionNativeSurfaceView(
-                        surface: nativeSurface.surface,
-                        statusText: surface.attachedStatusText(
-                            for: nativeSurface.key,
-                            extensionScopeId: nativeSurface.extensionScopeId
-                        ),
-                        onOpenURL: onOpenURL
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .extensionGlassPanel(cornerRadius: 18)
-                case .widget(let widget):
-                    ExtensionWidgetCard(
-                        widget: widget,
-                        statusText: surface.attachedStatusText(
-                            for: widget.key,
-                            extensionScopeId: widget.extensionScopeId
-                        ),
-                        titleOverride: surface.displayTitle(for: widget)
-                    )
+    private var activeEntry: ExtensionSurfaceStripEntry? {
+        guard let expandedEntryID else { return nil }
+        return stripEntries.first { $0.id == expandedEntryID }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !stripEntries.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(stripEntries) { entry in
+                            ExtensionSurfaceStripPill(
+                                entry: entry,
+                                isActive: activeEntry?.id == entry.id,
+                                placement: placement,
+                                onTap: { toggle(entry) }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
                 }
+                .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+                .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-collapsed")
+                .extensionStripGlassPanel(cornerRadius: 18)
             }
+
+            if let activeEntry {
+                ExtensionSurfaceDrawer(
+                    entry: activeEntry,
+                    placement: placement,
+                    messageQueue: messageQueue,
+                    onOpenURL: onOpenURL,
+                    onCollapse: collapseActiveEntry
+                )
+                .id(activeEntry.id)
+                .transition(.opacity)
+            }
+        }
+        .onChange(of: stripEntries.map(\.id)) { _, ids in
+            if let expandedEntryID, !ids.contains(expandedEntryID) {
+                self.expandedEntryID = nil
+                onExpandedEntryChange?(false)
+            }
+        }
+    }
+
+    private func toggle(_ entry: ExtensionSurfaceStripEntry) {
+        withAnimation(.easeOut(duration: 0.10)) {
+            expandedEntryID = expandedEntryID == entry.id ? nil : entry.id
+        }
+        onExpandedEntryChange?(expandedEntryID != nil)
+    }
+
+    private func collapseActiveEntry() {
+        withAnimation(.easeOut(duration: 0.10)) {
+            expandedEntryID = nil
+        }
+        onExpandedEntryChange?(false)
+    }
+}
+
+private extension ExtensionSurfacePlacementGroup {
+    var accessibilityIdentifierComponent: String {
+        switch self {
+        case .aboveEditor: return "aboveEditor"
+        case .belowEditor: return "belowEditor"
         }
     }
 }

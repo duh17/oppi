@@ -22,13 +22,13 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 
 ## Extension surfaces
 
-| Surface                  | Enabled by                                                  | Declared in                              | Loaded by          | Notes                                                                                                      |
-| ------------------------ | ----------------------------------------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
-| Host pi extensions       | User/project pi settings, `pi install`, or `.pi/extensions` | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                     |
+| Surface                  | Enabled by                                                    | Declared in                              | Loaded by          | Notes                                                                                                      |
+| ------------------------ | ------------------------------------------------------------- | ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Host pi extensions       | User/project pi settings, `pi install`, or `.pi/extensions`   | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                     |
 | Ask extension example    | Pi package/settings install or auto-discovered extension path | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs    |
 | Goal extension prototype | Pi package/settings install or auto-discovered extension path | `pi-extensions/goal`                     | pi resource loader | Pi-only prototype for durable goals, model goal tools, and extension-owned continuation turns              |
 | Browser video example    | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available    |
-| Mobile UI compatibility  | Native Oppi client + server bridge                          | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
+| Mobile UI compatibility  | Native Oppi client + server bridge                            | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md) |
 
 This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
 
@@ -103,21 +103,21 @@ Build the extension as a normal Pi extension first. Then make the user-facing pa
 
 ### What translates to mobile
 
-| Pi / Oppi extension API | Use it for | Oppi mobile behavior |
-| --- | --- | --- |
-| `ctx.ui.ask()` | multi-question prompts, multi-select, optional custom answers | native AskCard; portable extensions need a Pi fallback because `ask` is Oppi-defined |
-| `ctx.ui.select()` | one choice from a short list | native prompt card |
-| `ctx.ui.confirm()` | yes/no decisions such as approval gates | native confirmation card |
-| `ctx.ui.input()` | one short text answer | native text prompt |
-| `ctx.ui.editor()` | longer text input | native editor sheet |
-| `ctx.ui.notify()` | non-blocking status | toast, banner, or notification-style UI |
-| `ctx.ui.setTitle()` | session or extension heading | extension surface heading |
-| `ctx.ui.setStatus()` | persistent status text | status row or chip |
-| `ctx.ui.setWidget(string[])` | compact persistent widget text | monospaced widget card |
-| `ctx.ui.setWidget(component)` with `renderNative()` | structured persistent widget | native surface panel with fallback |
-| `ctx.ui.setWorkingMessage()` / `setWorkingVisible()` / `setWorkingIndicator()` | working-row customization | native timeline working row |
-| `ctx.ui.setEditorText()` / `pasteToEditor()` | hand text to the composer | one-shot composer text handoff |
-| `ctx.ui.setToolsExpanded()` / `getToolsExpanded()` | default tool expansion state | native tool-row expansion state |
+| Pi / Oppi extension API                                                        | Use it for                                                    | Oppi mobile behavior                                                                 |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `ctx.ui.ask()`                                                                 | multi-question prompts, multi-select, optional custom answers | native AskCard; portable extensions need a Pi fallback because `ask` is Oppi-defined |
+| `ctx.ui.select()`                                                              | one choice from a short list                                  | native prompt card                                                                   |
+| `ctx.ui.confirm()`                                                             | yes/no decisions such as approval gates                       | native confirmation card                                                             |
+| `ctx.ui.input()`                                                               | one short text answer                                         | native text prompt                                                                   |
+| `ctx.ui.editor()`                                                              | longer text input                                             | native editor sheet                                                                  |
+| `ctx.ui.notify()`                                                              | non-blocking status                                           | toast, banner, or notification-style UI                                              |
+| `ctx.ui.setTitle()`                                                            | session or extension heading                                  | extension surface heading                                                            |
+| `ctx.ui.setStatus()`                                                           | persistent status text                                        | status row or chip                                                                   |
+| `ctx.ui.setWidget(string[])`                                                   | compact persistent widget text                                | terminal strip/drawer fallback                                                       |
+| `ctx.ui.setWidget(component)` with `renderNative()`                            | structured persistent widget                                  | native strip/drawer with fallback                                                    |
+| `ctx.ui.setWorkingMessage()` / `setWorkingVisible()` / `setWorkingIndicator()` | working-row customization                                     | native timeline working row                                                          |
+| `ctx.ui.setEditorText()` / `pasteToEditor()`                                   | hand text to the composer                                     | one-shot composer text handoff                                                       |
+| `ctx.ui.setToolsExpanded()` / `getToolsExpanded()`                             | default tool expansion state                                  | native tool-row expansion state                                                      |
 
 Terminal-first APIs such as `ctx.ui.custom()`, `setFooter`, `setHeader`, `setEditorComponent`, and raw terminal input remain terminal-owned unless the extension also provides a semantic native surface or a standard blocking prompt. Do not use those APIs for a decision the user must answer from the phone.
 
@@ -157,15 +157,15 @@ return {
 
 Use these fields when they apply:
 
-| Details field | Mobile behavior |
-| --- | --- |
-| `expandedText` | text shown when the user expands the tool row |
-| `presentationFormat: "markdown"` | render `expandedText` as markdown |
-| `presentationFormat: "json"` | render structured output as formatted JSON |
-| `presentationFormat: "code"` with `language` or `filePath` | render code with syntax highlighting |
-| `presentationFormat: "diff"` | render a unified diff |
-| `startLine` | set the first code line number |
-| `media` | render stored image and video attachment rows; see [`attachment-rendering.md`](attachment-rendering.md) |
+| Details field                                              | Mobile behavior                                                                                         |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `expandedText`                                             | text shown when the user expands the tool row                                                           |
+| `presentationFormat: "markdown"`                           | render `expandedText` as markdown                                                                       |
+| `presentationFormat: "json"`                               | render structured output as formatted JSON                                                              |
+| `presentationFormat: "code"` with `language` or `filePath` | render code with syntax highlighting                                                                    |
+| `presentationFormat: "diff"`                               | render a unified diff                                                                                   |
+| `startLine`                                                | set the first code line number                                                                          |
+| `media`                                                    | render stored image and video attachment rows; see [`attachment-rendering.md`](attachment-rendering.md) |
 
 For generated images or video, prefer Oppi's attachment helper when it is available:
 
@@ -197,6 +197,16 @@ A widget component that works well in both places has:
 - `fallback.lines` or `fallback.text` for clients that do not understand a native block
 - stable IDs for rows that update over time
 
+On mobile, Oppi groups widgets by Pi placement instead of rendering every widget as a separate vertical card:
+
+- `aboveEditor` widgets appear in a strip above the composer.
+- `belowEditor` widgets appear in a strip below the composer.
+- Each collapsed strip uses one row of pills; overflow scrolls horizontally.
+- Tapping a pill opens that widget in the placement's shared drawer. Tapping another pill replaces the drawer content.
+- The expanded drawer is height-bounded and scrolls internally. Long content can open full screen.
+
+If a widget does not provide `renderNative()`, Oppi uses the sanitized terminal snapshot from `render(width)` as the fallback drawer content. That keeps terminal-first extensions readable on iPhone, but row-level native behavior such as activity-row links requires `renderNative()`.
+
 Keep native widgets generic. They are data rendered by Oppi, not downloaded Swift views. If the user needs to click a row, use a normal app link such as `oppi://session/<id>` and let Oppi route it.
 
 ### Common mistakes
@@ -207,6 +217,7 @@ Keep native widgets generic. They are data rendered by Oppi, not downloaded Swif
 - Embedding base64 video/audio or local file paths in markdown.
 - Assuming installing Oppi installs or enables your extension in standalone Pi.
 - Depending on raw ANSI colors instead of semantic roles or plain fallback text.
+- Assuming a persistent widget owns unbounded vertical space in the collapsed mobile composer area.
 
 ## Approval prompts
 
@@ -270,9 +281,9 @@ The picker response:
 
 ## Native extension UI contract
 
-Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract keeps blocking prompts Pi-shaped, maps standard `select`, `confirm`, `input`, and `editor` requests to native iOS prompt presentations, projects Pi UI state such as working rows, hidden thinking labels, and tool expansion, and defines display-only widget `ExtensionUINativeSurface` panels with blocks such as `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, and `code`.
+Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract keeps blocking prompts Pi-shaped, maps standard `select`, `confirm`, `input`, and `editor` requests to native iOS prompt presentations, projects Pi UI state such as working rows, hidden thinking labels, and tool expansion, and defines display-only widget `ExtensionUINativeSurface` snapshots with blocks such as `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, and `code`.
 
-The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components.
+The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components. Persistent widgets are grouped into bounded `aboveEditor` and `belowEditor` strips on mobile, with one expanded drawer per placement.
 
 ## Mobile rendering fallback
 
