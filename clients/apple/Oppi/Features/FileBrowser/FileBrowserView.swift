@@ -831,12 +831,12 @@ struct FileBrowserView: View {
                 Button {
                     openDirectory(path: dirPath)
                 } label: {
-                    label
+                    compactListRowContent { label }
                 }
                 .buttonStyle(.plain)
             } else if let serverId {
                 NavigationLink(value: FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, path: dirPath)) {
-                    label
+                    compactListRowContent { label }
                 }
             } else {
                 NavigationLink {
@@ -847,7 +847,7 @@ struct FileBrowserView: View {
                         contentChromeMode: contentChromeMode
                     )
                 } label: {
-                    label
+                    compactListRowContent { label }
                 }
             }
         } else {
@@ -891,7 +891,7 @@ struct FileBrowserView: View {
     ) -> some View {
         if let target = linkedFileTarget(path: path, name: name, navigationContext: navigationContext) {
             NavigationLink(value: target) {
-                label()
+                compactListRowContent { label() }
             }
         } else {
             NavigationLink {
@@ -904,9 +904,15 @@ struct FileBrowserView: View {
                     navigationContext: navigationContext
                 )
             } label: {
-                label()
+                compactListRowContent { label() }
             }
         }
+    }
+
+    private func compactListRowContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 
     private func linkedFileTarget(
