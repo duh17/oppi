@@ -2,7 +2,9 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { generateId } from "./id.js";
+import { decideScheduledMutation, liveAcceptedApprovalRefAuditIds } from "./schedule-approval.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
+import type { ScheduleApprovalRef } from "./types/schedules.js";
 
 export type AgentScheduleStatus = "active" | "paused" | "archived";
 export type AgentScheduleRunStatus = "pending" | "claimed" | "running" | "completed" | "failed";
@@ -13,7 +15,7 @@ export type AgentScheduleTrigger =
   | { type: "every"; intervalMs: number; timeZone: string }
   | { type: "cron"; expression: string; timeZone: string };
 
-export type ApprovalRefs = readonly unknown[];
+export type ApprovalRefs = readonly ScheduleApprovalRef[];
 
 export type AgentScheduleAction =
   | {
@@ -119,6 +121,10 @@ export interface AgentScheduleClaimOptions {
   runIds?: readonly string[];
 }
 
+export interface AgentScheduleListRunOptions {
+  limit?: number;
+}
+
 export interface NewSessionDispatchInput {
   run: AgentScheduleRun;
   schedule: AgentSchedule;
@@ -136,6 +142,11 @@ export interface AgentScheduleDispatchHooks {
   launchNewSession(input: NewSessionDispatchInput): Promise<unknown>;
   /** Existing-session input must use run.idempotencyKey as the request/client idempotency key. */
   sendExistingSessionInput(input: ExistingSessionDispatchInput): Promise<unknown>;
+}
+
+export interface AgentScheduleDispatchOptions {
+  leaseOwner: string;
+  now?: number;
 }
 
 interface ScheduleRow {
@@ -314,16 +325,22 @@ export class AgentScheduleStore {
     return row ? runFromRow(row) : undefined;
   }
 
-  listRuns(scheduleId: string): AgentScheduleRun[] {
-    return (
-      this.db
-        .prepare("SELECT * FROM agent_schedule_runs WHERE schedule_id = ? ORDER BY created_at, id")
-        .all(scheduleId) as RunRow[]
-    ).map(runFromRow);
+  listRuns(scheduleId: string, options: AgentScheduleListRunOptions = {}): AgentScheduleRun[] {
+    const limit = validateListLimit(options.limit);
+    const sql = "SELECT * FROM agent_schedule_runs WHERE schedule_id = ? ORDER BY created_at, id";
+    const rows = (
+      limit === undefined
+        ? this.db.prepare(sql).all(scheduleId)
+        : this.db.prepare(`${sql} LIMIT ?`).all(scheduleId, limit)
+    ) as RunRow[];
+    return rows.map(runFromRow);
   }
 
-  listRunSummaries(scheduleId: string): AgentScheduleRunSummary[] {
-    return this.listRuns(scheduleId).map(runSummary);
+  listRunSummaries(
+    scheduleId: string,
+    options: AgentScheduleListRunOptions = {},
+  ): AgentScheduleRunSummary[] {
+    return this.listRuns(scheduleId, options).map(runSummary);
   }
 
   claimReadyRuns(options: AgentScheduleClaimOptions): AgentScheduleRun[] {
@@ -333,7 +350,7 @@ export class AgentScheduleStore {
     const candidates = this.db
       .prepare(
         `SELECT * FROM agent_schedule_runs
-         WHERE status IN ('pending', 'claimed')
+         WHERE status IN ('pending', 'claimed', 'running')
            AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
            ${idClause}
          ORDER BY created_at, id
@@ -348,7 +365,7 @@ export class AgentScheduleStore {
           `UPDATE agent_schedule_runs
            SET status = 'claimed', claimed_at = ?, lease_owner = ?, lease_expires_at = ?, updated_at = ?
            WHERE id = ?
-             AND status IN ('pending', 'claimed')
+             AND status IN ('pending', 'claimed', 'running')
              AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
         )
         .run(
@@ -373,19 +390,66 @@ export class AgentScheduleStore {
   async dispatchClaimedRun(
     runId: string,
     hooks: AgentScheduleDispatchHooks,
-    now = Date.now(),
+    options: AgentScheduleDispatchOptions,
   ): Promise<AgentScheduleRun> {
+    const now = options.now ?? Date.now();
     const run = this.getRun(runId);
     if (!run) throw new Error(`Schedule run not found: ${runId}`);
     if (run.status !== "claimed") throw new Error(`Schedule run is not claimed: ${runId}`);
+    if (run.leaseOwner !== options.leaseOwner) {
+      throw new Error(`Schedule run lease is not held by ${options.leaseOwner}: ${runId}`);
+    }
+    if (run.leaseExpiresAt !== undefined && run.leaseExpiresAt <= now) {
+      throw new Error(`Schedule run lease expired: ${runId}`);
+    }
     const schedule = this.getSchedule(run.scheduleId);
     if (!schedule) throw new Error(`Schedule not found: ${run.scheduleId}`);
 
-    this.db
+    const approvalDecision = decideScheduledMutation({
+      origin: run.kind === "manual" ? "interactive" : "scheduled",
+      approvalRefs: run.approvalRefs,
+      nowMs: now,
+    });
+    if (!approvalDecision.allowed) {
+      const error =
+        approvalDecision.reason === "expired_approval_ref"
+          ? `approval_required_noninteractive:${approvalDecision.reason}:${approvalDecision.approvalRefId}`
+          : `approval_required_noninteractive:${approvalDecision.reason}`;
+      this.failClaimedRunBeforeStart(run, options.leaseOwner, now, error, { approvalDecision });
+      throw new Error(error);
+    }
+    if (run.kind !== "manual") {
+      const approvalRefIds = liveAcceptedApprovalRefAuditIds(run.approvalRefs, now);
+      const hasAcceptedProvenance = this.hasAcceptedApprovalProvenance(
+        run,
+        schedule,
+        approvalRefIds,
+      );
+      if (!hasAcceptedProvenance) {
+        const error = "approval_required_noninteractive:missing_accepted_approval_provenance";
+        this.failClaimedRunBeforeStart(run, options.leaseOwner, now, error, {
+          approvalDecision,
+          approvalProvenance: {
+            allowed: false,
+            reason: "missing_accepted_audit_event",
+            approvalRefIds,
+          },
+        });
+        throw new Error(error);
+      }
+    }
+
+    const started = this.db
       .prepare(
-        "UPDATE agent_schedule_runs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?",
+        `UPDATE agent_schedule_runs
+         SET status = 'running', started_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND lease_owner = ?
+           AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
       )
-      .run(now, now, run.id);
+      .run(now, now, run.id, options.leaseOwner, now) as { changes?: number };
+    if (started.changes !== undefined && started.changes !== 1) {
+      throw new Error(`Schedule run lease is not held: ${runId}`);
+    }
 
     try {
       const action = run.actionSnapshot;
@@ -393,22 +457,36 @@ export class AgentScheduleStore {
         action.type === "new_session"
           ? await hooks.launchNewSession({ run, schedule, action })
           : await hooks.sendExistingSessionInput({ run, schedule, action });
-      this.db
+      const completed = this.db
         .prepare(
           `UPDATE agent_schedule_runs
            SET status = 'completed', completed_at = ?, updated_at = ?, result_json = ?
-           WHERE id = ?`,
+           WHERE id = ? AND status = 'running' AND lease_owner = ?
+             AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
         )
-        .run(now, now, JSON.stringify(result ?? null), run.id);
+        .run(now, now, JSON.stringify(result ?? null), run.id, options.leaseOwner, now) as {
+        changes?: number;
+      };
+      if (completed.changes !== undefined && completed.changes !== 1) {
+        throw new Error(`Schedule run lease was lost: ${run.id}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.db
+      const failed = this.db
         .prepare(
           `UPDATE agent_schedule_runs
            SET status = 'failed', completed_at = ?, updated_at = ?, error = ?
-           WHERE id = ?`,
+           WHERE id = ? AND status = 'running' AND lease_owner = ?
+             AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
         )
-        .run(now, now, message, run.id);
+        .run(now, now, message, run.id, options.leaseOwner, now) as { changes?: number };
+      if (
+        failed.changes !== undefined &&
+        failed.changes !== 1 &&
+        !message.startsWith("Schedule run lease was lost:")
+      ) {
+        throw new Error(`Schedule run lease was lost: ${run.id}`);
+      }
       throw error;
     }
 
@@ -469,6 +547,45 @@ export class AgentScheduleStore {
     return this.getSchedule(scheduleId);
   }
 
+  private failClaimedRunBeforeStart(
+    run: AgentScheduleRun,
+    leaseOwner: string,
+    now: number,
+    error: string,
+    result: unknown,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE agent_schedule_runs
+         SET status = 'failed', completed_at = ?, updated_at = ?, error = ?, result_json = ?
+         WHERE id = ? AND status = 'claimed' AND lease_owner = ?`,
+      )
+      .run(now, now, error, JSON.stringify(result), run.id, leaseOwner);
+  }
+
+  private hasAcceptedApprovalProvenance(
+    run: AgentScheduleRun,
+    schedule: AgentSchedule,
+    approvalRefIds: readonly string[],
+  ): boolean {
+    if (approvalRefIds.length === 0) return false;
+    const placeholders = approvalRefIds.map(() => "?").join(",");
+    const row = this.db
+      .prepare(
+        `SELECT id
+         FROM server_agent_extension_audit_events
+         WHERE event_type = 'approval_ref.accepted'
+           AND approval_ref_id IN (${placeholders})
+           AND workspace_id = ?
+           AND (schedule_id = ? OR run_id = ?)
+         LIMIT 1`,
+      )
+      .get(...approvalRefIds, run.actionSnapshot.workspaceId, schedule.id, run.id) as
+      | { id: string }
+      | undefined;
+    return row !== undefined;
+  }
+
   private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent_schedules (
@@ -510,6 +627,37 @@ export class AgentScheduleStore {
         ON agent_schedule_runs(status, lease_expires_at, created_at);
       CREATE INDEX IF NOT EXISTS agent_schedule_runs_schedule_idx
         ON agent_schedule_runs(schedule_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS server_agent_extension_audit_events (
+        id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        workspace_id TEXT,
+        schedule_id TEXT,
+        run_id TEXT,
+        session_id TEXT,
+        event_type TEXT NOT NULL,
+        approval_ref_id TEXT,
+        extension_scope_id TEXT,
+        extension_display_name TEXT,
+        display_json TEXT,
+        provenance_json TEXT,
+        envelope_json TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_schedule_idx
+        ON server_agent_extension_audit_events (schedule_id, created_at ASC, id ASC);
+
+      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_run_idx
+        ON server_agent_extension_audit_events (run_id, created_at ASC, id ASC);
+
+      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_approval_ref_idx
+        ON server_agent_extension_audit_events (
+          approval_ref_id,
+          event_type,
+          workspace_id,
+          schedule_id,
+          run_id
+        );
     `);
   }
 }
@@ -646,6 +794,14 @@ function validateKeyPart(value: string, label: string): string {
   const clean = value.trim();
   if (!clean) throw new Error(`${label} is required`);
   return clean;
+}
+
+function validateListLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error("Run history limit must be a positive integer");
+  }
+  return limit;
 }
 
 function parseJson<T>(raw: string): T {
