@@ -63,6 +63,12 @@ const sessionOperationIds = [
   "openDictationStream",
   "searchSessions",
   "listSessions",
+  "getSession",
+  "readSessionTrace",
+  "getSessionTrace",
+  "getGenericSessionEvents",
+  "sendSessionCommand",
+  "stopSession",
   "listRecentSessions",
   "getWorkspaceGitStatus",
   "listWorkspaceGitChanges",
@@ -141,6 +147,17 @@ describe("api route registry", () => {
     expect(
       normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/tool-output/tc_abc123"),
     ).toBe("/workspaces/:workspaceId/sessions/:sessionId/tool-output/:toolCallId");
+    expect(normalizeRegisteredPathPattern("/sessions/recent")).toBe("/sessions/recent");
+    expect(normalizeRegisteredPathPattern("/sessions/s1")).toBe("/sessions/:sessionId");
+    expect(normalizeRegisteredPathPattern("/sessions/s1/read")).toBe("/sessions/:sessionId/read");
+    expect(normalizeRegisteredPathPattern("/sessions/s1/trace")).toBe("/sessions/:sessionId/trace");
+    expect(normalizeRegisteredPathPattern("/sessions/s1/events")).toBe(
+      "/sessions/:sessionId/events",
+    );
+    expect(normalizeRegisteredPathPattern("/sessions/s1/command")).toBe(
+      "/sessions/:sessionId/command",
+    );
+    expect(normalizeRegisteredPathPattern("/sessions/s1/stop")).toBe("/sessions/:sessionId/stop");
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/status")).toBe(
       "/workspaces/:workspaceId/git/status",
     );

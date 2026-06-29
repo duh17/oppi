@@ -5,7 +5,8 @@
  * Each test uses a temp data dir via OPPI_DATA_DIR to avoid touching real config.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync, execSync } from "node:child_process";
+import { execFile, execFileSync, execSync } from "node:child_process";
+import { createServer as createHttpServer } from "node:http";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -55,6 +56,33 @@ function runBin(
     const e = err as { stdout?: string; status?: number };
     return { stdout: e.stdout ?? "", exitCode: e.status ?? 1 };
   }
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+async function runAsync(
+  args: string[],
+  env?: Record<string, string>,
+  timeoutMs = 5000,
+): Promise<{ stdout: string; exitCode: number }> {
+  return await new Promise((resolveRun) => {
+    execFile(
+      "node",
+      [CLI, ...args],
+      {
+        encoding: "utf-8",
+        env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+        timeout: timeoutMs,
+      },
+      (error, stdout) => {
+        const exitCode =
+          error && typeof error === "object" && "code" in error ? Number(error.code) : 0;
+        resolveRun({ stdout, exitCode: Number.isFinite(exitCode) ? exitCode : 1 });
+      },
+    );
+  });
 }
 
 async function getFreePort(): Promise<number> {
@@ -122,6 +150,303 @@ describe("oppi help", () => {
     const { stdout, exitCode } = runBin(["--help"]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("serve");
+  });
+
+  it("keeps top-level help focused on nouns and common flows", () => {
+    const { stdout, exitCode } = run(["help"]);
+    const text = stripAnsi(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(text).toContain("Common flows");
+    expect(text).toContain("serve/start");
+    expect(text).toContain("workspace");
+    expect(text).toContain("worktree");
+    expect(text).toContain("agent");
+    expect(text).toContain("wait");
+    expect(text).toContain("schedule help");
+    expect(text).toContain("session create --help");
+    expect(text).not.toContain("--workspace <id>");
+    expect(text).not.toContain("--prompt <text>");
+  });
+
+  it("prints schedule concept, subcommands, and examples with 'schedule help'", () => {
+    const { stdout, exitCode } = run(["schedule", "help"]);
+    const text = stripAnsi(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(text).toContain("Schedules run Oppi actions");
+    expect(text).toContain("Subcommands");
+    expect(text).toContain("create");
+    expect(text).toContain("runs");
+    expect(text).toContain("oppi schedule create");
+  });
+
+  it("prints exact schedule create flags, run-history notes, and examples", () => {
+    const { stdout, exitCode } = run(["schedule", "create", "--help"]);
+    const text = stripAnsi(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(text).toContain("Usage: oppi schedule create");
+    expect(text).toContain("--workspace <workspace>");
+    expect(text).toContain("--prompt <text>");
+    expect(text).toContain("--at <iso>");
+    expect(text).toContain("--every <duration>");
+    expect(text).toContain("--cron <expr>");
+    expect(text).toContain("Run history");
+    expect(text).toContain("idempotent");
+  });
+
+  it("prints exact session create flags and launch idempotency behavior", () => {
+    const { stdout, exitCode } = run(["session", "create", "--help"]);
+    const text = stripAnsi(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(text).toContain("Usage: oppi session create");
+    expect(text).toContain("--workspace <workspace>");
+    expect(text).toContain("--prompt <text>");
+    expect(text).toContain("--idempotency-key <key>");
+    expect(text).toContain("reuses the existing launch");
+  });
+
+  it("documents the implemented session app-control commands", () => {
+    const { stdout, exitCode } = run(["session", "help"]);
+    const text = stripAnsi(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(text).toContain("Subcommands");
+    for (const implemented of [
+      "list",
+      "get",
+      "create",
+      "send",
+      "read",
+      "events",
+      "trace",
+      "stop",
+    ]) {
+      expect(text).toContain(implemented);
+    }
+    expect(text).not.toContain("Not implemented in the CLI yet");
+  });
+
+  it("documents the implemented saved Agent commands", () => {
+    const { stdout, exitCode } = run(["agent", "help"]);
+    const text = stripAnsi(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(text).toContain("Saved Agents");
+    for (const implemented of ["list", "get", "create", "update", "archive"]) {
+      expect(text).toContain(implemented);
+    }
+    expect(text).toContain("session create --agent");
+  });
+
+  it("prints agent-readable help with '--json'", () => {
+    const { stdout, exitCode } = run(["help", "--json"]);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        help: {
+          path: [],
+          subcommands: expect.arrayContaining([
+            expect.objectContaining({ name: "schedule" }),
+            expect.objectContaining({ name: "session" }),
+            expect.objectContaining({ name: "agent" }),
+          ]),
+        },
+      },
+    });
+  });
+
+  it("prints command-specific help for every top-level command noun", () => {
+    const cases: Array<{ args: string[]; expected: string[] }> = [
+      { args: ["init", "--help"], expected: ["Usage: oppi init", "--data-dir <path>"] },
+      { args: ["serve", "--help"], expected: ["Usage: oppi serve", "--host <host>"] },
+      { args: ["pair", "--help"], expected: ["Usage: oppi pair", "--show-token"] },
+      { args: ["status", "--help"], expected: ["Usage: oppi status", "Local Network"] },
+      { args: ["doctor", "--help"], expected: ["Usage: oppi doctor", "diagnostics"] },
+      { args: ["update", "--help"], expected: ["Usage: oppi update", "--self"] },
+      { args: ["token", "help"], expected: ["Usage: oppi token rotate", "Existing clients"] },
+      { args: ["config", "help"], expected: ["Usage: oppi config", "Subcommands"] },
+      { args: ["server", "help"], expected: ["Usage: oppi server", "LaunchAgent"] },
+      { args: ["workspace", "help"], expected: ["Usage: oppi workspace", "list", "get"] },
+      { args: ["worktree", "help"], expected: ["Usage: oppi worktree", "--workspace <workspace>"] },
+      { args: ["wait", "help"], expected: ["Usage: oppi wait", "session"] },
+      { args: ["version", "--help"], expected: ["Usage: oppi version", "package version"] },
+    ];
+
+    for (const testCase of cases) {
+      const { stdout, exitCode } = run(testCase.args);
+      const text = stripAnsi(stdout);
+
+      expect(exitCode).toBe(0);
+      for (const expected of testCase.expected) {
+        expect(text).toContain(expected);
+      }
+    }
+  });
+
+  it("prints useful help for nested utility subcommands", () => {
+    const cases: Array<{ args: string[]; expected: string[] }> = [
+      {
+        args: ["config", "set", "--help"],
+        expected: ["Usage: oppi config set <key> <value>", "runtimeEnv.<NAME>", "tls.mode"],
+      },
+      {
+        args: ["config", "validate", "--help"],
+        expected: ["Usage: oppi config validate", "--config-file <path>"],
+      },
+      {
+        args: ["server", "install", "--help"],
+        expected: ["Usage: oppi server install", "--data-dir <path>"],
+      },
+      {
+        args: ["server", "restart", "--help"],
+        expected: ["Usage: oppi server restart", "background server"],
+      },
+      {
+        args: ["schedule", "list", "--help"],
+        expected: ["Usage: oppi schedule list", "--json"],
+      },
+      {
+        args: ["schedule", "get", "--help"],
+        expected: ["Usage: oppi schedule get <id>", "schedule id", "--json"],
+      },
+      {
+        args: ["schedule", "run", "--help"],
+        expected: ["Usage: oppi schedule run <id>", "--request-id <key>", "idempotent"],
+      },
+      {
+        args: ["schedule", "runs", "--help"],
+        expected: ["Usage: oppi schedule runs <id>", "run history", "--json"],
+      },
+      {
+        args: ["schedule", "pause", "--help"],
+        expected: ["Usage: oppi schedule pause <id>", "automatic runs", "--json"],
+      },
+      {
+        args: ["schedule", "resume", "--help"],
+        expected: ["Usage: oppi schedule resume <id>", "automatic runs", "--json"],
+      },
+      {
+        args: ["schedule", "archive", "--help"],
+        expected: ["Usage: oppi schedule archive <id>", "no longer runs automatically", "--json"],
+      },
+      {
+        args: ["schedule", "update", "--help"],
+        expected: ["Usage: oppi schedule update <id>", "--definition <file>", "--json"],
+      },
+      {
+        args: ["workspace", "list", "--help"],
+        expected: ["Usage: oppi workspace list", "--json"],
+      },
+      {
+        args: ["workspace", "get", "--help"],
+        expected: ["Usage: oppi workspace get <workspace>", "workspace id or unique name"],
+      },
+      {
+        args: ["worktree", "list", "--help"],
+        expected: ["Usage: oppi worktree list", "--workspace <workspace>"],
+      },
+      {
+        args: ["worktree", "get", "--help"],
+        expected: ["Usage: oppi worktree get <worktree>", "main"],
+      },
+      {
+        args: ["session", "list", "--help"],
+        expected: ["Usage: oppi session list", "--workspace <workspace>", "--json"],
+      },
+      {
+        args: ["session", "get", "--help"],
+        expected: ["Usage: oppi session get <id>", "metadata"],
+      },
+      {
+        args: ["session", "send", "--help"],
+        expected: ["Usage: oppi session send <id>", "--text <text>"],
+      },
+      {
+        args: ["session", "read", "--help"],
+        expected: ["Usage: oppi session read <id>", "--tail <count>"],
+      },
+      {
+        args: ["session", "events", "--help"],
+        expected: ["Usage: oppi session events <id>", "--since <cursor>"],
+      },
+      {
+        args: ["session", "trace", "--help"],
+        expected: ["Usage: oppi session trace <id>", "--include <parts>"],
+      },
+      {
+        args: ["session", "stop", "--help"],
+        expected: ["Usage: oppi session stop <id>", "--json"],
+      },
+      {
+        args: ["agent", "list", "--help"],
+        expected: ["Usage: oppi agent list", "--json"],
+      },
+      {
+        args: ["agent", "get", "--help"],
+        expected: ["Usage: oppi agent get <agent>", "agent id or unique name"],
+      },
+      {
+        args: ["agent", "create", "--help"],
+        expected: ["Usage: oppi agent create", "--definition <file>", "--name <name>"],
+      },
+      {
+        args: ["agent", "update", "--help"],
+        expected: ["Usage: oppi agent update <agent>", "--definition <file>"],
+      },
+      {
+        args: ["agent", "archive", "--help"],
+        expected: ["Usage: oppi agent archive <agent>", "--json"],
+      },
+      {
+        args: ["wait", "session", "--help"],
+        expected: ["Usage: oppi wait session <id>", "--status <status>"],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { stdout, exitCode } = run(testCase.args);
+      const text = stripAnsi(stdout);
+
+      expect(exitCode).toBe(0);
+      for (const expected of testCase.expected) {
+        expect(text).toContain(expected);
+      }
+    }
+  }, 30_000);
+
+  it("prints agent-readable JSON help for agent namespace", () => {
+    const { stdout, exitCode } = run(["agent", "help", "--json"]);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        help: {
+          path: ["agent"],
+          subcommands: expect.arrayContaining([expect.objectContaining({ name: "create" })]),
+        },
+      },
+    });
+  });
+
+  it("prints agent-readable JSON help for nested utility subcommands", () => {
+    const { stdout, exitCode } = run(["config", "set", "--help", "--json"]);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        help: {
+          path: ["config", "set"],
+          keys: expect.arrayContaining([expect.objectContaining({ name: "runtimeEnv.<NAME>" })]),
+        },
+      },
+    });
   });
 });
 
@@ -205,6 +530,370 @@ describe("oppi session", () => {
       ok: false,
       error: { message: "--workspace and --prompt are required" },
     });
+  });
+});
+
+// ── Wait ──
+
+describe("oppi wait", () => {
+  it("rejects a zero poll interval before polling the local API", () => {
+    const { stdout, exitCode } = run([
+      "wait",
+      "session",
+      "sess-1",
+      "--poll",
+      "0ms",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toEqual({
+      ok: false,
+      error: { message: "--poll must be a positive duration" },
+    });
+  });
+});
+
+// ── Local API CLI ──
+
+describe("oppi local API commands", () => {
+  it("implements the spec-backed app-control CLI over local API routes", async () => {
+    const requests: Array<{ method: string; path: string; body?: unknown }> = [];
+    const api = createHttpServer((req, res) => {
+      void (async () => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+        }
+        const rawBody = Buffer.concat(chunks).toString("utf8");
+        const body = rawBody ? JSON.parse(rawBody) : undefined;
+        const url = new URL(req.url ?? "/", "http://127.0.0.1");
+        const method = req.method ?? "GET";
+        requests.push({ method, path: `${url.pathname}${url.search}`, ...(body ? { body } : {}) });
+
+        function json(payload: unknown): void {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(payload));
+        }
+
+        if (method === "GET" && url.pathname === "/workspaces") {
+          json({
+            workspaces: [{ id: "ws-1", name: "Oppi", hostMount: "/tmp/oppi" }],
+            summaries: [],
+            serverNow: 1,
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1") {
+          json({ workspace: { id: "ws-1", name: "Oppi", hostMount: "/tmp/oppi" } });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1/worktrees") {
+          json({
+            workspaceId: "ws-1",
+            worktrees: [{ id: "main", name: "main", path: "/tmp/oppi" }],
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions") {
+          json({
+            sessions: [
+              {
+                id: "sess-1",
+                workspaceId: "ws-1",
+                worktreeId: "main",
+                status: "stopped",
+                name: "Demo",
+              },
+            ],
+            serverNow: 2,
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/sess-1") {
+          json({ session: { id: "sess-1", workspaceId: "ws-1", status: "stopped" } });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/agents") {
+          json({ agents: [{ id: "agent-1", name: "Reviewer", status: "active", version: 1 }] });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/agents/agent-1") {
+          json({
+            agent: {
+              id: "agent-1",
+              name: "Reviewer",
+              status: "active",
+              version: 1,
+              definition: { name: "Reviewer" },
+            },
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/agents") {
+          json({
+            agent: {
+              id: "agent-created",
+              name: body?.name ?? "Created",
+              status: "active",
+              version: 1,
+              definition: body,
+            },
+          });
+          return;
+        }
+        if (method === "PATCH" && url.pathname === "/agents/agent-1") {
+          json({
+            agent: {
+              id: "agent-1",
+              name: "Reviewer",
+              status: "active",
+              version: 2,
+              definition: body,
+            },
+          });
+          return;
+        }
+        if (method === "DELETE" && url.pathname === "/agents/agent-1") {
+          json({ agent: { id: "agent-1", name: "Reviewer", status: "archived", version: 2 } });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/agents/agent-1/sessions") {
+          json({
+            receipt: {
+              accepted: true,
+              agentId: "agent-1",
+              agentVersion: 1,
+              sessionId: "sess-agent-1",
+              promptDispatch: "delivered",
+            },
+            session: { id: "sess-agent-1", workspaceId: "ws-1", status: "ready" },
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/sess-1/read") {
+          json({
+            session: { id: "sess-1", workspaceId: "ws-1", status: "stopped" },
+            trace: [
+              { type: "user", text: "hello" },
+              { type: "assistant", text: "hi" },
+            ],
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/sess-1/events") {
+          json({
+            events: [{ seq: 5, type: "session_updated" }],
+            currentSeq: 5,
+            catchUpComplete: true,
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/sess-1/trace") {
+          json({
+            session: { id: "sess-1", workspaceId: "ws-1", status: "stopped" },
+            trace: [{ type: "assistant", text: "trace" }],
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/sessions/sess-1/command") {
+          json({ messages: [{ type: "command_result", success: true }] });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/sessions/sess-1/stop") {
+          json({ ok: true, session: { id: "sess-1", status: "stopped" } });
+          return;
+        }
+        if (method === "PATCH" && url.pathname === "/schedules/sch-1") {
+          json({ schedule: { id: "sch-1", status: "active", name: "Updated" } });
+          return;
+        }
+
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `${method} ${url.pathname} not handled` }));
+      })().catch((error: unknown) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      });
+    });
+    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
+    const address = api.address();
+    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
+    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-app-control-"));
+    const definitionPath = join(cliDir, "schedule.json");
+    const agentDefinitionPath = join(cliDir, "agent.json");
+    const agentUpdatePath = join(cliDir, "agent-update.json");
+    writeFileSync(definitionPath, JSON.stringify({ name: "Updated" }));
+    writeFileSync(
+      agentDefinitionPath,
+      JSON.stringify({ description: "Reviews diffs", sessionDefaults: { model: "agent-model" } }),
+    );
+    writeFileSync(agentUpdatePath, JSON.stringify({ description: "Reviews risky diffs" }));
+
+    try {
+      expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
+      expect(
+        run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
+      ).toBe(0);
+      expect(
+        run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
+      ).toBe(0);
+
+      const cases: Array<{ args: string[]; expected: string[] }> = [
+        { args: ["workspace", "list", "--json"], expected: ["GET /workspaces"] },
+        { args: ["workspace", "get", "ws-1", "--json"], expected: ["GET /workspaces/ws-1"] },
+        {
+          args: ["worktree", "list", "--workspace", "ws-1", "--json"],
+          expected: ["GET /workspaces/ws-1/worktrees"],
+        },
+        {
+          args: ["worktree", "get", "main", "--workspace", "ws-1", "--json"],
+          expected: ["GET /workspaces/ws-1/worktrees"],
+        },
+        { args: ["agent", "list", "--json"], expected: ["GET /agents"] },
+        { args: ["agent", "get", "agent-1", "--json"], expected: ["GET /agents/agent-1"] },
+        {
+          args: [
+            "agent",
+            "create",
+            "--name",
+            "Reviewer",
+            "--definition",
+            agentDefinitionPath,
+            "--json",
+          ],
+          expected: ["POST /agents"],
+        },
+        {
+          args: ["agent", "update", "agent-1", "--definition", agentUpdatePath, "--json"],
+          expected: ["PATCH /agents/agent-1"],
+        },
+        { args: ["agent", "archive", "agent-1", "--json"], expected: ["DELETE /agents/agent-1"] },
+        {
+          args: ["session", "list", "--workspace", "ws-1", "--json"],
+          expected: ["GET /sessions?workspaceId=ws-1"],
+        },
+        { args: ["session", "get", "sess-1", "--json"], expected: ["GET /sessions/sess-1"] },
+        {
+          args: ["session", "read", "sess-1", "--tail", "1", "--json"],
+          expected: ["GET /sessions/sess-1/read?tail=1"],
+        },
+        {
+          args: ["session", "events", "sess-1", "--since", "4", "--json"],
+          expected: ["GET /sessions/sess-1/events?since=4"],
+        },
+        {
+          args: ["session", "trace", "sess-1", "--include", "summary,tools", "--json"],
+          expected: ["GET /sessions/sess-1/trace?include=summary%2Ctools"],
+        },
+        {
+          args: ["session", "send", "sess-1", "--text", "hello", "--json"],
+          expected: ["POST /sessions/sess-1/command"],
+        },
+        { args: ["session", "stop", "sess-1", "--json"], expected: ["POST /sessions/sess-1/stop"] },
+        {
+          args: [
+            "session",
+            "create",
+            "--agent",
+            "agent-1",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "hello from agent",
+            "--idempotency-key",
+            "agent-cli-1",
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "POST /agents/agent-1/sessions"],
+        },
+        {
+          args: ["schedule", "update", "sch-1", "--definition", definitionPath, "--json"],
+          expected: ["PATCH /schedules/sch-1"],
+        },
+        {
+          args: ["wait", "session", "sess-1", "--status", "stopped", "--json"],
+          expected: ["GET /sessions/sess-1"],
+        },
+      ];
+
+      for (const testCase of cases) {
+        const before = requests.length;
+        const { stdout, exitCode } = await runAsync(testCase.args, { OPPI_DATA_DIR: cliDir });
+        expect(exitCode, testCase.args.join(" ")).toBe(0);
+        expect(JSON.parse(stdout), testCase.args.join(" ")).toMatchObject({ ok: true });
+        const seen = requests.slice(before).map((request) => `${request.method} ${request.path}`);
+        for (const expected of testCase.expected) {
+          expect(seen, testCase.args.join(" ")).toContain(expected);
+        }
+      }
+
+      const agentCreateRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/agents",
+      );
+      expect(agentCreateRequest?.body).toMatchObject({
+        name: "Reviewer",
+        description: "Reviews diffs",
+        sessionDefaults: { model: "agent-model" },
+      });
+      const agentSessionRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/agents/agent-1/sessions",
+      );
+      expect(agentSessionRequest?.body).toMatchObject({
+        prompt: { text: "hello from agent" },
+        target: { workspaceId: "ws-1" },
+        idempotencyKey: "agent-cli-1",
+      });
+      const sendRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/sessions/sess-1/command",
+      );
+      expect(sendRequest?.body).toMatchObject({ type: "prompt", message: "hello" });
+      const updateRequest = requests.find(
+        (request) => request.method === "PATCH" && request.path === "/schedules/sch-1",
+      );
+      expect(updateRequest?.body).toEqual({ name: "Updated" });
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) =>
+        api.close((error) => (error ? rejectClose(error) : resolveClose())),
+      );
+      rmSync(cliDir, { recursive: true, force: true });
+    }
+  }, 45_000);
+
+  it("schedule list --json fails fast on malformed successful API JSON", async () => {
+    const api = createHttpServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("not-json");
+    });
+    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
+    const address = api.address();
+    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
+    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-local-api-"));
+
+    try {
+      expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
+      expect(
+        run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
+      ).toBe(0);
+      expect(
+        run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
+      ).toBe(0);
+
+      const { stdout, exitCode } = await runAsync(["schedule", "list", "--json"], {
+        OPPI_DATA_DIR: cliDir,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout)).toEqual({
+        ok: false,
+        error: { message: "Invalid JSON response from local API" },
+      });
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) =>
+        api.close((error) => (error ? rejectClose(error) : resolveClose())),
+      );
+      rmSync(cliDir, { recursive: true, force: true });
+    }
   });
 });
 

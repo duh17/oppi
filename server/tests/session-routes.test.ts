@@ -587,6 +587,260 @@ describe("sessions module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "since must be a non-negative integer" });
   });
 
+  it("lists sessions on the generic app-control route with workspace/worktree filters", async () => {
+    const storedSession = {
+      id: "s1",
+      workspaceId: "ws-1",
+      worktreeId: "main",
+      status: "stopped",
+      createdAt: 0,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const activeSession = {
+      id: "s2",
+      workspaceId: "ws-1",
+      worktreeId: "main",
+      status: "busy",
+      createdAt: 0,
+      lastActivity: 20,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const ctx = {
+      storage: {
+        listSessions: vi.fn(() => [storedSession]),
+      },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set(["s2"])),
+        getActiveSession: vi.fn(() => activeSession),
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "GET",
+      path: "/sessions",
+      url: new URL("http://localhost/sessions?workspaceId=ws-1&worktreeId=main&status=active"),
+      req: { url: "/sessions?workspaceId=ws-1&worktreeId=main&status=active" } as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).sessions.map((session: { id: string }) => session.id)).toEqual([
+      "s2",
+    ]);
+  });
+
+  it("exposes generic session get/read/events/command/stop routes for CLI use", async () => {
+    const session = {
+      id: "s1",
+      workspaceId: "ws-1",
+      status: "busy",
+      createdAt: 0,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const sendSteer = vi.fn(async () => undefined);
+    const stopSession = vi.fn(async () => ({ session, storedStopOnly: true }));
+    const ctx = {
+      storage: {
+        getSession: vi.fn(() => session),
+      },
+      sessionRuntimes: {
+        sendSteer,
+        refreshSessionState: vi.fn(async () => undefined),
+        getCatchUp: vi.fn(() => ({
+          events: [{ seq: 1, type: "session_updated" }],
+          currentSeq: 1,
+          session,
+          catchUpComplete: true,
+        })),
+        isSessionConnected: vi.fn(() => true),
+        isSessionLive: vi.fn(() => true),
+        stopSession: vi.fn(async () => undefined),
+      },
+      sessions: {
+        stopSession,
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+      appEvents: { emitStopConfirmed: vi.fn() },
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+
+    const getRes = makeResponse();
+    expect(
+      await dispatch({
+        method: "GET",
+        path: "/sessions/s1",
+        url: new URL("http://localhost/sessions/s1"),
+        req: {} as never,
+        res: getRes as never,
+      }),
+    ).toBe(true);
+    expect(JSON.parse(getRes.body)).toEqual({ session });
+
+    const readRes = makeResponse();
+    expect(
+      await dispatch({
+        method: "GET",
+        path: "/sessions/s1/read",
+        url: new URL("http://localhost/sessions/s1/read?tail=50"),
+        req: {} as never,
+        res: readRes as never,
+      }),
+    ).toBe(true);
+    expect(JSON.parse(readRes.body)).toMatchObject({ session, trace: [] });
+
+    const eventsRes = makeResponse();
+    expect(
+      await dispatch({
+        method: "GET",
+        path: "/sessions/s1/events",
+        url: new URL("http://localhost/sessions/s1/events?since=1"),
+        req: {} as never,
+        res: eventsRes as never,
+      }),
+    ).toBe(true);
+    expect(JSON.parse(eventsRes.body).currentSeq).toBe(1);
+
+    const commandRes = makeResponse();
+    expect(
+      await dispatch({
+        method: "POST",
+        path: "/sessions/s1/command",
+        url: new URL("http://localhost/sessions/s1/command"),
+        req: makeRequest({ type: "steer", message: "hello" }) as never,
+        res: commandRes as never,
+      }),
+    ).toBe(true);
+    expect(sendSteer).toHaveBeenCalledWith("s1", "hello", {
+      attachments: undefined,
+      clientTurnId: undefined,
+      requestId: undefined,
+    });
+
+    const stopRes = makeResponse();
+    expect(
+      await dispatch({
+        method: "POST",
+        path: "/sessions/s1/stop",
+        url: new URL("http://localhost/sessions/s1/stop"),
+        req: {} as never,
+        res: stopRes as never,
+      }),
+    ).toBe(true);
+    expect(JSON.parse(stopRes.body)).toMatchObject({ ok: true, session });
+  });
+
+  it("filters generic session trace entries by include parts", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-generic-trace-include-"));
+    try {
+      const tracePath = join(dataDir, "trace.jsonl");
+      writeFileSync(
+        tracePath,
+        [
+          JSON.stringify({ type: "session", id: "pi-1", cwd: dataDir }),
+          JSON.stringify({
+            type: "message",
+            id: "u1",
+            message: { role: "user", content: [{ type: "text", text: "hello" }] },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "a1",
+            parentId: "u1",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "hi" },
+                { type: "toolCall", id: "tc-1", name: "bash", arguments: { command: "pwd" } },
+              ],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "tr1",
+            parentId: "a1",
+            message: {
+              role: "toolResult",
+              toolCallId: "tc-1",
+              toolName: "bash",
+              content: [{ type: "text", text: dataDir }],
+            },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const session = {
+        id: "s1",
+        workspaceId: "ws-1",
+        status: "stopped",
+        createdAt: 0,
+        lastActivity: 10,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionFile: tracePath,
+      };
+      const ctx = {
+        storage: {
+          getSession: vi.fn(() => session),
+          getDataDir: vi.fn(() => dataDir),
+        },
+        sessionRuntimes: {
+          refreshSessionState: vi.fn(async () => undefined),
+        },
+        ensureSessionContextWindow: vi.fn((s: unknown) => s),
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      expect(
+        await dispatch({
+          method: "GET",
+          path: "/sessions/s1/trace",
+          url: new URL("http://localhost/sessions/s1/trace?include=tools"),
+          req: {} as never,
+          res: res as never,
+        }),
+      ).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).trace.map((event: { type: string }) => event.type)).toEqual([
+        "toolCall",
+        "toolResult",
+      ]);
+
+      const invalidRes = makeResponse();
+      expect(
+        await dispatch({
+          method: "GET",
+          path: "/sessions/s1/trace",
+          url: new URL("http://localhost/sessions/s1/trace?include=everything"),
+          req: {} as never,
+          res: invalidRes as never,
+        }),
+      ).toBe(true);
+      expect(invalidRes.statusCode).toBe(400);
+      expect(JSON.parse(invalidRes.body)).toEqual({
+        error: "include must contain only all, messages, summary, system, thinking, or tools",
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns false for unrelated routes", async () => {
     const dispatch = createSessionRoutes({} as RouteContext, createRouteHelpers());
 

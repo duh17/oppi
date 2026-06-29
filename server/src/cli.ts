@@ -34,7 +34,7 @@ import {
   resolveTlsConfig,
   tlsSchemeForConfig,
 } from "./tls.js";
-import type { ServerConfig, Session } from "./types.js";
+import type { ServerConfig } from "./types.js";
 import { generateInvite } from "./invite.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
 import { getPackageInfo } from "./version.js";
@@ -46,6 +46,14 @@ import {
   stopService,
   uninstallService,
 } from "./launchd.js";
+import { isHelpFlag, parseCliArgs } from "./cli/args.js";
+import { cmdAgent } from "./cli/commands/agent.js";
+import { cmdSchedule } from "./cli/commands/schedule.js";
+import { cmdSession } from "./cli/commands/session.js";
+import { cmdWait } from "./cli/commands/wait.js";
+import { cmdWorkspace } from "./cli/commands/workspace.js";
+import { cmdWorktree } from "./cli/commands/worktree.js";
+import { helpTopicToJson, renderHelpTopic, resolveHelpTopic } from "./cli/help.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -1085,285 +1093,6 @@ function cmdConfig(
   process.exit(1);
 }
 
-type CliJsonEnvelope =
-  | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: { message: string; status?: number } };
-
-function writeJsonEnvelope(envelope: CliJsonEnvelope): void {
-  process.stdout.write(JSON.stringify(envelope, null, 2) + "\n");
-}
-
-function localApiBaseUrl(storage: Storage): string {
-  const config = storage.getConfig();
-  const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host;
-  return `${tlsSchemeForConfig(config)}://${host}:${config.port}`;
-}
-
-async function localApiRequest<T>(
-  storage: Storage,
-  path: string,
-  options: { method?: string; body?: Record<string, unknown> } = {},
-): Promise<T> {
-  const token = storage.getToken();
-  if (!token) {
-    throw new Error("No owner bearer token configured. Run 'oppi init' or 'oppi pair' first.");
-  }
-
-  const response = await fetch(`${localApiBaseUrl(storage)}${path}`, {
-    method: options.method ?? "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-
-  const payload = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) {
-    const message =
-      isRecord(payload) && typeof payload.error === "string"
-        ? payload.error
-        : `HTTP ${response.status}`;
-    const error = new Error(message) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload as T;
-}
-
-function parseDurationMs(value: string): number {
-  const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/);
-  if (!match) throw new Error("Duration must look like 15m, 1h, or 1d");
-  const amountText = match[1];
-  const unit = match[2];
-  if (!amountText || !unit) throw new Error("Duration must look like 15m, 1h, or 1d");
-  const amount = Number.parseInt(amountText, 10);
-  const multiplier =
-    unit === "ms"
-      ? 1
-      : unit === "s"
-        ? 1_000
-        : unit === "m"
-          ? 60_000
-          : unit === "h"
-            ? 3_600_000
-            : 86_400_000;
-  return amount * multiplier;
-}
-
-function scheduleTriggerFromFlags(flags: Record<string, string>): Record<string, unknown> {
-  const timeZone = flags.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  if (flags.at) {
-    const at = Date.parse(flags.at);
-    if (!Number.isFinite(at)) throw new Error("--at must be an ISO timestamp");
-    return { type: "at", at, timeZone };
-  }
-  if (flags.every) {
-    return { type: "every", intervalMs: parseDurationMs(flags.every), timeZone };
-  }
-  if (flags.cron) {
-    return { type: "cron", expression: flags.cron, timeZone };
-  }
-  throw new Error("one of --at, --every, or --cron is required");
-}
-
-async function cmdSchedule(
-  storage: Storage,
-  action: string | undefined,
-  positional: string[],
-  flags: Record<string, string>,
-): Promise<void> {
-  const mode = action || "list";
-  const jsonOutput = flags.json === "true";
-
-  async function call<T>(
-    path: string,
-    options?: { method?: string; body?: Record<string, unknown> },
-  ): Promise<T> {
-    return localApiRequest<T>(storage, path, options);
-  }
-
-  function output(data: Record<string, unknown>, human: () => void): void {
-    if (jsonOutput) writeJsonEnvelope({ ok: true, data });
-    else human();
-  }
-
-  try {
-    if (mode === "list") {
-      const result = await call<Record<string, unknown>>("/schedules");
-      output(result, () => {
-        const schedules = Array.isArray(result.schedules) ? result.schedules : [];
-        console.log(c.bold(`  Schedules (${schedules.length})`));
-        for (const schedule of schedules as Array<{
-          id?: string;
-          name?: string;
-          status?: string;
-        }>) {
-          console.log(
-            `  ${c.cyan(schedule.id ?? "?")}  ${schedule.status ?? "?"}  ${schedule.name ?? "(unnamed)"}`,
-          );
-        }
-        console.log("");
-      });
-      return;
-    }
-
-    if (mode === "get") {
-      const id = positional[0];
-      if (!id) throw new Error("schedule id is required");
-      const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`);
-      output(result, () => {
-        const schedule = result.schedule as
-          | { id?: string; name?: string; status?: string }
-          | undefined;
-        console.log(c.green("  Schedule"));
-        console.log(`  ID:     ${c.cyan(schedule?.id ?? id)}`);
-        console.log(`  Name:   ${schedule?.name ?? "(unnamed)"}`);
-        console.log(`  Status: ${schedule?.status ?? "?"}`);
-        console.log("");
-      });
-      return;
-    }
-
-    if (mode === "create") {
-      const workspaceId = flags.workspace?.trim();
-      const prompt = flags.prompt;
-      if (!workspaceId || !prompt?.trim()) throw new Error("--workspace and --prompt are required");
-      const name = flags.name || `Schedule ${new Date().toISOString()}`;
-      const body = {
-        name,
-        trigger: scheduleTriggerFromFlags(flags),
-        action: {
-          type: "new_session",
-          workspaceId,
-          prompt,
-          ...(flags.model ? { model: flags.model } : {}),
-          ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
-          ...(flags.name ? { name: flags.name } : {}),
-        },
-      };
-      const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });
-      output(result, () => {
-        const schedule = result.schedule as { id?: string } | undefined;
-        console.log(c.green("  ✓ Schedule created"));
-        console.log(`  Schedule: ${c.cyan(schedule?.id ?? "?")}`);
-        console.log("");
-        console.log(c.bold("  Next commands:"));
-        console.log(`    ${c.dim(`oppi schedule run ${schedule?.id ?? "<id>"}`)}`);
-        console.log(`    ${c.dim(`oppi schedule runs ${schedule?.id ?? "<id>"}`)}`);
-        console.log("");
-      });
-      return;
-    }
-
-    if (["run", "runs", "pause", "resume", "archive"].includes(mode)) {
-      const id = positional[0];
-      if (!id) throw new Error("schedule id is required");
-      if (mode === "runs") {
-        const result = await call<Record<string, unknown>>(
-          `/schedules/${encodeURIComponent(id)}/runs`,
-        );
-        output(result, () => {
-          const runs = Array.isArray(result.runs) ? result.runs : [];
-          console.log(c.bold(`  Runs for ${id} (${runs.length})`));
-          for (const run of runs as Array<{ id?: string; status?: string; sessionId?: string }>) {
-            console.log(`  ${c.cyan(run.id ?? "?")}  ${run.status ?? "?"}  ${run.sessionId ?? ""}`);
-          }
-          console.log("");
-        });
-        return;
-      }
-      const requestId = flags["request-id"] || `${Date.now()}`;
-      const result = await call<Record<string, unknown>>(
-        `/schedules/${encodeURIComponent(id)}/${mode}`,
-        { method: "POST", body: mode === "run" ? { requestId } : undefined },
-      );
-      output(result, () => {
-        console.log(c.green(`  ✓ schedule ${mode}`));
-        if ((result.run as { id?: string; sessionId?: string } | undefined)?.id) {
-          const run = result.run as { id?: string; sessionId?: string };
-          console.log(`  Run:     ${c.cyan(run.id ?? "?")}`);
-          if (run.sessionId) console.log(`  Session: ${c.cyan(run.sessionId)}`);
-        }
-        console.log("");
-      });
-      return;
-    }
-
-    throw new Error("Usage: oppi schedule list|get|create|run|runs|pause|resume|archive");
-  } catch (err: unknown) {
-    const status =
-      typeof (err as { status?: unknown }).status === "number"
-        ? (err as { status: number }).status
-        : undefined;
-    const message = err instanceof Error ? err.message : String(err);
-    if (jsonOutput)
-      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
-    else console.log(c.red(`  Error: ${message}`));
-    process.exit(1);
-  }
-}
-
-async function cmdSession(
-  storage: Storage,
-  action: string | undefined,
-  flags: Record<string, string>,
-): Promise<void> {
-  const mode = action || "help";
-  const jsonOutput = flags.json === "true";
-
-  if (mode !== "create") {
-    const message = "Usage: oppi session create --workspace <id> --prompt <text> [--json]";
-    if (jsonOutput) writeJsonEnvelope({ ok: false, error: { message } });
-    else console.log(c.red(`  ${message}`));
-    process.exit(1);
-  }
-
-  const workspaceId = flags.workspace?.trim();
-  const promptText = flags.prompt;
-  if (!workspaceId || promptText === undefined || promptText.trim() === "") {
-    const message = "--workspace and --prompt are required";
-    if (jsonOutput) writeJsonEnvelope({ ok: false, error: { message } });
-    else {
-      console.log(c.red(`  Error: ${message}`));
-      console.log(c.dim("  Usage: oppi session create --workspace <id> --prompt <text> [--json]"));
-    }
-    process.exit(1);
-  }
-
-  try {
-    const result = await localApiRequest<{ session: Session; prompted?: boolean }>(
-      storage,
-      `/workspaces/${encodeURIComponent(workspaceId)}/sessions`,
-      { method: "POST", body: { prompt: promptText } },
-    );
-    if (jsonOutput) {
-      writeJsonEnvelope({ ok: true, data: result as unknown as Record<string, unknown> });
-      return;
-    }
-
-    console.log(c.green("  ✓ Session created"));
-    console.log(`  Workspace: ${c.cyan(workspaceId)}`);
-    console.log(`  Session:   ${c.cyan(result.session.id)}`);
-    console.log("");
-    console.log(c.bold("  Next commands:"));
-    console.log(`    ${c.dim(`oppi session create --workspace ${workspaceId} --prompt "..."`)}`);
-    console.log("");
-  } catch (err: unknown) {
-    const status =
-      typeof (err as { status?: unknown }).status === "number"
-        ? (err as { status: number }).status
-        : undefined;
-    const message = err instanceof Error ? err.message : String(err);
-    if (jsonOutput) {
-      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
-    } else {
-      console.log(c.red(`  Error: ${message}`));
-    }
-    process.exit(1);
-  }
-}
-
 function cmdServer(action: string | undefined, flags: Record<string, string>): void {
   printHeader();
 
@@ -1700,102 +1429,60 @@ async function cmdUpdate(flags: Record<string, string>): Promise<void> {
   console.log("");
 }
 
-function cmdHelp(): void {
+function cmdHelp(path: string[] = [], jsonOutput = false): void {
+  const topic = resolveHelpTopic(path);
+  if (!topic) {
+    const label = path.length > 0 ? path.join(" ") : "help";
+    if (jsonOutput) {
+      process.stdout.write(
+        JSON.stringify({ ok: false, error: { message: `No help topic for ${label}` } }, null, 2) +
+          "\n",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    console.log(c.red(`No help topic for ${label}`));
+    console.log(c.dim("Run 'oppi help' for top-level usage."));
+    process.exit(1);
+  }
+
+  if (jsonOutput) {
+    process.stdout.write(
+      JSON.stringify({ ok: true, data: { help: helpTopicToJson(topic) } }, null, 2) + "\n",
+    );
+    return;
+  }
+
   printHeader();
+  console.log(renderHelpTopic(topic));
+}
 
-  console.log("  " + c.bold("Getting Started:"));
-  console.log("");
-  console.log(`    ${c.cyan("init")}                       Interactive first-time setup`);
-  console.log(`    ${c.cyan("serve")}                      Start the server`);
-  console.log(`    ${c.cyan("pair")}                       Generate pairing QR for server owner`);
-  console.log("");
+function isNestedHelpRequest(
+  command: string,
+  positional: string[],
+  flags: Record<string, string>,
+): boolean {
+  if (command === "help" || command === "--help" || command === "-h") return true;
+  return isHelpFlag(flags) || positional[0] === "help";
+}
 
-  console.log("  " + c.bold("Server:"));
-  console.log("");
-  console.log(`    ${c.cyan("status")}                     Show server status`);
-  console.log(`    ${c.cyan("doctor")}                     Security + environment diagnostics`);
-  console.log(
-    `    ${c.cyan("update")}                     Check for and install runtime dependency updates`,
-  );
-  console.log(`    ${c.cyan("update --self")}              Show how to update Oppi server itself`);
-  console.log(`    ${c.cyan("token rotate")}               Rotate owner bearer token`);
-  console.log("");
+function helpPathFor(command: string, positional: string[]): string[] {
+  if (command === "help" || command === "--help" || command === "-h") {
+    return positional.filter((part) => part !== "help");
+  }
 
-  console.log("  " + c.bold("Background Service:"));
-  console.log("");
-  console.log(
-    `    ${c.cyan("server install")}             Install LaunchAgent (auto-start on login)`,
-  );
-  console.log(`    ${c.cyan("server uninstall")}           Remove LaunchAgent`);
-  console.log(`    ${c.cyan("server status")}              Check LaunchAgent status`);
-  console.log(`    ${c.cyan("server restart")}             Restart the background server`);
-  console.log(`    ${c.cyan("server stop")}                Stop the background server`);
-  console.log("");
-
-  console.log("  " + c.bold("Configuration:"));
-  console.log("");
-  console.log(`    ${c.cyan("config show")}                Show current config`);
-  console.log(`    ${c.cyan("config set")} <key> <value>   Update a config value`);
-  console.log(`    ${c.cyan("config get")} <key>           Get a config value`);
-  console.log(`    ${c.cyan("config validate")}            Validate config file`);
-  console.log("");
-
-  console.log("  " + c.bold("Sessions:"));
-  console.log("");
-  console.log(
-    `    ${c.cyan("session create")}             Create a workspace session via local server API`,
-  );
-  console.log("");
-
-  console.log("  " + c.bold("Schedules:"));
-  console.log("");
-  console.log(`    ${c.cyan("schedule list")}              List Agent schedules`);
-  console.log(`    ${c.cyan("schedule create")}            Create an Agent schedule`);
-  console.log(`    ${c.cyan("schedule run")}               Run a schedule now`);
-  console.log("");
-
-  console.log("  " + c.bold("Options:"));
-  console.log("");
-  console.log(`    ${c.dim("--host <host>")}      Hostname/IP encoded in pairing QR`);
-  console.log(`    ${c.dim("--json")}             Output invite as JSON (pair command)`);
-  console.log(`    ${c.dim("--show-token")}       Print owner token in pair output (unsafe)`);
-  console.log(`    ${c.dim("--config-file <p>")}  Config path for 'config validate'`);
-  console.log(`    ${c.dim("--check")}            Check runtime update status without installing`);
-  console.log("");
-
-  console.log("  " + c.bold("Examples:"));
-  console.log("");
-  console.log(`    ${c.dim("oppi init")}`);
-  console.log(`    ${c.dim("oppi serve")}`);
-  console.log(
-    `    ${c.dim("pi /settings   # configure defaultProvider/defaultModel/defaultThinkingLevel")}`,
-  );
-  console.log(`    ${c.dim("oppi config set port 8080")}`);
-  console.log(`    ${c.dim("oppi config set asr.sttEndpoint http://127.0.0.1:7936")}`);
-  console.log(`    ${c.dim("oppi config set images.autoResize false")}`);
-  console.log(`    ${c.dim("oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937")}`);
-  console.log(`    ${c.dim('oppi config set tls \'{"mode":"self-signed"}\'')}`);
-  console.log("");
+  if (positional[0] === "help") return [command, ...positional.slice(1)];
+  return [command, ...positional.filter((part) => part !== "help")];
 }
 
 // ─── Main ───
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const command = args[0] || "help";
+  const { command, flags, positional } = parseCliArgs(process.argv.slice(2));
 
-  // Parse flags
-  const flags: Record<string, string> = {};
-  const positional: string[] = [];
-
-  for (let i = 1; i < args.length; i++) {
-    if (args[i].startsWith("--")) {
-      const key = args[i].slice(2);
-      const value = args[i + 1] && !args[i + 1].startsWith("--") ? args[++i] : "true";
-      flags[key] = value;
-    } else {
-      positional.push(args[i]);
-    }
+  if (isNestedHelpRequest(command, positional, flags)) {
+    cmdHelp(helpPathFor(command, positional), flags.json === "true");
+    return;
   }
 
   // These commands run before Storage to avoid creating default config prematurely
@@ -1811,17 +1498,16 @@ async function main(): Promise<void> {
     cmdServer(positional[0], flags);
     return;
   }
-  if (command === "help" || command === "--help" || command === "-h") {
-    cmdHelp();
-    return;
-  }
   if (command === "version" || command === "--version" || command === "-v") {
     const info = getPackageInfo();
     console.log(`${info.name} ${info.version}`);
     return;
   }
-
   const storage = new Storage(process.env.OPPI_DATA_DIR || undefined);
+  const localApiHostResolvers = {
+    tailscaleHostname: getTailscaleHostname,
+    tailscaleIp: getTailscaleIp,
+  };
 
   switch (command) {
     case "serve":
@@ -1855,12 +1541,28 @@ async function main(): Promise<void> {
       cmdConfig(storage, positional[0], positional.slice(1), flags);
       break;
 
+    case "agent":
+      await cmdAgent(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      break;
+
+    case "workspace":
+      await cmdWorkspace(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      break;
+
+    case "worktree":
+      await cmdWorktree(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      break;
+
     case "session":
-      await cmdSession(storage, positional[0], flags);
+      await cmdSession(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
       break;
 
     case "schedule":
-      await cmdSchedule(storage, positional[0], positional.slice(1), flags);
+      await cmdSchedule(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      break;
+
+    case "wait":
+      await cmdWait(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
       break;
 
     default:

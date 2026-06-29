@@ -1116,9 +1116,12 @@ describe("error handling", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns 404 for removed GET /sessions list route", async () => {
+  it("GET /sessions lists generic app-control sessions", async () => {
     const res = await get("/sessions");
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sessions?: unknown; serverNow?: unknown };
+    expect(Array.isArray(body.sessions)).toBe(true);
+    expect(body.serverNow).toBeTypeOf("number");
   });
 
   it("GET /sessions/search returns empty results for unmatched query", async () => {

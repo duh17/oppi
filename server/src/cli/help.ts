@@ -1,0 +1,1013 @@
+import * as c from "../ansi.js";
+
+export type CliHelpPath = readonly string[];
+
+type HelpItem = {
+  name: string;
+  summary: string;
+};
+
+type HelpFlag = {
+  name: string;
+  value?: string;
+  summary: string;
+  required?: boolean;
+};
+
+type HelpExample = {
+  command: string;
+  summary?: string;
+};
+
+export type HelpTopic = {
+  path: string[];
+  title: string;
+  summary: string;
+  usage?: string;
+  description?: string[];
+  commonFlows?: HelpExample[];
+  subcommands?: HelpItem[];
+  arguments?: HelpItem[];
+  keys?: HelpItem[];
+  flags?: HelpFlag[];
+  notes?: string[];
+  examples?: HelpExample[];
+};
+
+type HelpJsonTopic = Omit<HelpTopic, "path"> & { path: string[] };
+
+const HELP_TOPICS: HelpTopic[] = [
+  {
+    path: [],
+    title: "Oppi CLI",
+    summary: "Run and manage a local Oppi server.",
+    commonFlows: [
+      {
+        command: "oppi init → oppi serve → oppi pair",
+        summary: "first run, local server, iPhone pairing",
+      },
+      {
+        command: "oppi server install → oppi server status",
+        summary: "run the server in the background with launchd",
+      },
+      {
+        command: "oppi schedule help",
+        summary: "schedule future or repeated agent work",
+      },
+      {
+        command: "oppi session create --help",
+        summary: "launch a session from scripts or automation",
+      },
+    ],
+    subcommands: [
+      { name: "init", summary: "write first-time config and owner credentials" },
+      { name: "serve/start", summary: "start the local server in this terminal" },
+      { name: "pair", summary: "show a signed pairing QR/link for the iOS app" },
+      { name: "status", summary: "show server, network, and pairing status" },
+      { name: "doctor", summary: "run security and environment diagnostics" },
+      { name: "server", summary: "install, restart, stop, or inspect the launchd service" },
+      { name: "config", summary: "show, get, set, or validate server config" },
+      { name: "workspace", summary: "list and inspect configured workspaces" },
+      { name: "worktree", summary: "list and inspect discovered workspace worktrees" },
+      { name: "session", summary: "list, launch, inspect, message, and stop sessions" },
+      { name: "schedule", summary: "create and run scheduled agent work" },
+      { name: "agent", summary: "create, inspect, update, archive, and launch saved Agents" },
+      { name: "wait", summary: "poll session state until a condition is true" },
+      { name: "token", summary: "rotate the owner bearer token" },
+      { name: "update", summary: "check or install runtime dependency updates" },
+      { name: "version", summary: "print the installed package version" },
+    ],
+    notes: [
+      "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
+      "Use '--json' with help for an agent-readable description of the same topic.",
+    ],
+    examples: [
+      { command: "oppi config set port 8080" },
+      { command: "oppi config set asr.sttEndpoint http://127.0.0.1:7936" },
+      { command: 'oppi config set tls \'{"mode":"self-signed"}\'' },
+    ],
+  },
+  {
+    path: ["init"],
+    title: "Initialize Oppi",
+    summary: "Write first-time config, generate owner credentials, and set TLS defaults.",
+    usage: "oppi init [flags]",
+    flags: [
+      { name: "--data-dir", value: "<path>", summary: "config/data directory to initialize" },
+      { name: "--port", value: "<number>", summary: "server port; defaults to 7749" },
+      {
+        name: "--max-sessions",
+        value: "<count>",
+        summary: "global concurrent session limit; defaults to 40",
+      },
+      { name: "--yes", summary: "non-interactive setup with defaults" },
+      { name: "--force", summary: "continue when config already exists" },
+    ],
+    notes: [
+      "Without --yes, init prompts when stdin is interactive.",
+      "Init writes config.json, rotates the owner token, and generates identity keys.",
+    ],
+    examples: [{ command: "oppi init" }, { command: "oppi init --yes --data-dir ~/.config/oppi" }],
+  },
+  {
+    path: ["serve"],
+    title: "Serve",
+    summary: "Start the Oppi server in the foreground.",
+    usage: "oppi serve [--host <host>]",
+    flags: [
+      { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
+    ],
+    notes: [
+      "On first run, serve creates owner credentials, enables self-signed TLS, and prints a pairing QR.",
+      "Press Ctrl+C to stop the foreground server.",
+    ],
+    examples: [{ command: "oppi serve" }, { command: "oppi serve --host mac-studio.local" }],
+  },
+  {
+    path: ["start"],
+    title: "Start",
+    summary: "Alias for 'oppi serve'.",
+    usage: "oppi start [--host <host>]",
+    flags: [
+      { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
+    ],
+    examples: [{ command: "oppi start" }],
+  },
+  {
+    path: ["pair"],
+    title: "Pair",
+    summary: "Generate a signed pairing QR/link for the Oppi iOS app.",
+    usage: "oppi pair [name] [flags]",
+    arguments: [{ name: "name", summary: "optional display name for the pairing invite" }],
+    flags: [
+      { name: "--host", value: "<host>", summary: "hostname/IP encoded in the invite" },
+      { name: "--json", summary: "write the invite payload as JSON" },
+      { name: "--show-token", summary: "print the owner bearer token in human output; unsafe" },
+    ],
+    notes: [
+      "The QR and link carry the same signed invite.",
+      "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
+    ],
+    examples: [
+      { command: 'oppi pair "Chen"' },
+      { command: "oppi pair --host mac-studio.local" },
+      { command: "oppi pair --json" },
+    ],
+  },
+  {
+    path: ["status"],
+    title: "Status",
+    summary: "Show server config, Local Network addresses, Tailscale status, and pairing state.",
+    usage: "oppi status",
+    notes: ["This reads local config and host network state; it does not contact the server API."],
+    examples: [{ command: "oppi status" }],
+  },
+  {
+    path: ["doctor"],
+    title: "Doctor",
+    summary: "Run security, TLS, launchd, runtime, and environment diagnostics.",
+    usage: "oppi doctor",
+    notes: [
+      "Doctor exits non-zero for critical failures.",
+      "It inspects TLS files but does not generate missing certificate material.",
+    ],
+    examples: [{ command: "oppi doctor" }],
+  },
+  {
+    path: ["update"],
+    title: "Update",
+    summary: "Check or install Oppi server runtime dependency updates.",
+    usage: "oppi update [flags]",
+    flags: [
+      { name: "--check", summary: "check update status without installing" },
+      { name: "--dry", summary: "show what would happen without installing" },
+      { name: "--self", summary: "check/update the globally installed oppi-server package" },
+    ],
+    notes: [
+      "Without --self, update targets the server runtime under ~/.config/oppi/server-runtime.",
+      "After installing runtime updates, restart the running server process.",
+    ],
+    examples: [
+      { command: "oppi update --check" },
+      { command: "oppi update" },
+      { command: "oppi update --self --check" },
+    ],
+  },
+  {
+    path: ["token"],
+    title: "Token",
+    summary: "Rotate the owner bearer token.",
+    usage: "oppi token rotate",
+    subcommands: [{ name: "rotate", summary: "generate a new owner token" }],
+    notes: [
+      "Existing clients become unauthorized after rotation and must be paired again.",
+      "The server must already be paired before token rotation can run.",
+    ],
+    examples: [{ command: "oppi token rotate" }],
+  },
+  {
+    path: ["token", "rotate"],
+    title: "Rotate owner token",
+    summary: "Generate a new owner bearer token and invalidate existing clients.",
+    usage: "oppi token rotate",
+    notes: ["Existing clients must be re-paired with 'oppi pair' after rotation."],
+    examples: [{ command: "oppi token rotate" }],
+  },
+  {
+    path: ["config"],
+    title: "Config",
+    summary: "Show, read, update, or validate local Oppi server config.",
+    usage: "oppi config <subcommand> [args] [flags]",
+    subcommands: [
+      { name: "show", summary: "print current config as formatted JSON" },
+      { name: "get <key>", summary: "print one config value" },
+      { name: "set <key> <value>", summary: "update one supported config value" },
+      { name: "validate", summary: "validate a config file" },
+    ],
+    notes: [
+      "Config paths use dot notation, for example tls.mode or runtimeEnv.TTS_BASE_URL.",
+      "Run 'oppi config set --help' for common keys and value formats.",
+    ],
+    examples: [
+      { command: "oppi config show" },
+      { command: "oppi config get port" },
+      { command: "oppi config set asr.sttEndpoint http://127.0.0.1:7936" },
+    ],
+  },
+  {
+    path: ["config", "show"],
+    title: "Show config",
+    summary: "Print current or default config as formatted JSON.",
+    usage: "oppi config show [--default]",
+    flags: [{ name: "--default", summary: "show built-in defaults instead of current config" }],
+    examples: [{ command: "oppi config show" }, { command: "oppi config show --default" }],
+  },
+  {
+    path: ["config", "get"],
+    title: "Get config",
+    summary: "Print one config value.",
+    usage: "oppi config get <key>",
+    arguments: [
+      { name: "<key>", summary: "config path such as port, tls.mode, or runtimeEnv.NAME" },
+    ],
+    notes: ["The output is intentionally plain so scripts can read it."],
+    examples: [{ command: "oppi config get port" }, { command: "oppi config get tls.mode" }],
+  },
+  {
+    path: ["config", "set"],
+    title: "Set config",
+    summary: "Update one supported config value.",
+    usage: "oppi config set <key> <value>",
+    arguments: [
+      { name: "<key>", summary: "supported config key or runtimeEnv.<NAME>" },
+      { name: "<value>", summary: "string, number, boolean, or JSON depending on the key" },
+    ],
+    keys: [
+      { name: "port", summary: "number; server port" },
+      { name: "host", summary: "string; bind address" },
+      { name: "maxSessionsGlobal", summary: "number; global concurrent session limit" },
+      { name: "runtimePathEntries", summary: "JSON array; runtime PATH entries" },
+      { name: "runtimeEnv.<NAME>", summary: "string; one runtime environment variable" },
+      { name: "tls.mode", summary: "string; disabled, self-signed, tailscale, or manual" },
+      { name: "tls.certPath", summary: "string; manual TLS certificate path" },
+      { name: "asr.sttEndpoint", summary: "string; STT backend base URL" },
+      { name: "images.autoResize", summary: "boolean; resize large image uploads" },
+      { name: "extensions.voice.defaultVoiceId", summary: "string; saved voice id" },
+    ],
+    notes: [
+      'JSON-valued keys must receive valid JSON, for example \'{"mode":"self-signed"}\'.',
+      "Run 'oppi config set' without enough arguments to print the complete supported-key list with current values.",
+    ],
+    examples: [
+      { command: "oppi config set port 8080" },
+      { command: "oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937" },
+      { command: "oppi config set tls.mode self-signed" },
+    ],
+  },
+  {
+    path: ["config", "validate"],
+    title: "Validate config",
+    summary: "Validate a config file and report errors or warnings.",
+    usage: "oppi config validate [--config-file <path>]",
+    flags: [
+      {
+        name: "--config-file",
+        value: "<path>",
+        summary: "config file to validate; defaults to current config",
+      },
+    ],
+    examples: [
+      { command: "oppi config validate" },
+      { command: "oppi config validate --config-file /tmp/config.json" },
+    ],
+  },
+  {
+    path: ["server"],
+    title: "Background server",
+    summary: "Manage the macOS LaunchAgent background server.",
+    usage: "oppi server <subcommand> [flags]",
+    subcommands: [
+      { name: "install", summary: "install the LaunchAgent" },
+      { name: "uninstall", summary: "remove the LaunchAgent" },
+      { name: "status", summary: "show LaunchAgent status" },
+      { name: "restart", summary: "restart the background server" },
+      { name: "stop", summary: "stop the background server" },
+    ],
+    notes: ["The LaunchAgent starts Oppi automatically on login and restarts it after crashes."],
+    examples: [
+      { command: "oppi server install" },
+      { command: "oppi server status" },
+      { command: "oppi server restart" },
+    ],
+  },
+  {
+    path: ["server", "install"],
+    title: "Install background server",
+    summary: "Install the LaunchAgent that starts Oppi on login.",
+    usage: "oppi server install [--data-dir <path>]",
+    flags: [
+      { name: "--data-dir", value: "<path>", summary: "data directory for the installed service" },
+    ],
+    examples: [
+      { command: "oppi server install" },
+      { command: "oppi server install --data-dir ~/.config/oppi" },
+    ],
+  },
+  {
+    path: ["server", "uninstall"],
+    title: "Uninstall background server",
+    summary: "Remove the Oppi LaunchAgent.",
+    usage: "oppi server uninstall",
+    examples: [{ command: "oppi server uninstall" }],
+  },
+  {
+    path: ["server", "status"],
+    title: "Background server status",
+    summary: "Show LaunchAgent installation, PID, runtime path, CLI path, and data dir.",
+    usage: "oppi server status",
+    examples: [{ command: "oppi server status" }],
+  },
+  {
+    path: ["server", "restart"],
+    title: "Restart background server",
+    summary: "Restart the background server through launchd.",
+    usage: "oppi server restart",
+    notes: ["Use this after config or runtime changes when Oppi is running as a LaunchAgent."],
+    examples: [{ command: "oppi server restart" }],
+  },
+  {
+    path: ["server", "stop"],
+    title: "Stop background server",
+    summary: "Stop the background server through launchd.",
+    usage: "oppi server stop",
+    examples: [{ command: "oppi server stop" }],
+  },
+  {
+    path: ["version"],
+    title: "Version",
+    summary: "Print the installed oppi-server package version.",
+    usage: "oppi version",
+    notes: ["Aliases: oppi --version, oppi -v."],
+    examples: [{ command: "oppi version" }],
+  },
+  {
+    path: ["workspace"],
+    title: "Workspaces",
+    summary: "List and inspect configured Oppi workspaces through the local API.",
+    usage: "oppi workspace <subcommand> [flags]",
+    subcommands: [
+      { name: "list", summary: "list configured workspaces" },
+      { name: "get <workspace>", summary: "show one workspace by id or unique name" },
+    ],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi workspace list" }, { command: "oppi workspace get oppi --json" }],
+  },
+  {
+    path: ["workspace", "list"],
+    title: "List workspaces",
+    summary: "List configured workspaces.",
+    usage: "oppi workspace list [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi workspace list" }, { command: "oppi workspace list --json" }],
+  },
+  {
+    path: ["workspace", "get"],
+    title: "Get workspace",
+    summary: "Show one workspace by workspace id or unique name.",
+    usage: "oppi workspace get <workspace> [--json]",
+    arguments: [{ name: "<workspace>", summary: "workspace id or unique name" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [
+      { command: "oppi workspace get ws_123" },
+      { command: "oppi workspace get oppi --json" },
+    ],
+  },
+  {
+    path: ["worktree"],
+    title: "Worktrees",
+    summary: "List and inspect discovered git worktrees for a workspace.",
+    usage: "oppi worktree <subcommand> --workspace <workspace> [flags]",
+    subcommands: [
+      { name: "list", summary: "list discovered worktrees for a workspace" },
+      {
+        name: "get <worktree>",
+        summary: "show one worktree by id or name; main is the default checkout",
+      },
+    ],
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Worktrees are discovered from the workspace checkout; managed worktree lifecycle commands are not implemented yet.",
+    ],
+    examples: [
+      { command: "oppi worktree list --workspace ws_123" },
+      { command: "oppi worktree get main --workspace ws_123 --json" },
+    ],
+  },
+  {
+    path: ["worktree", "list"],
+    title: "List worktrees",
+    summary: "List discovered worktrees for one workspace.",
+    usage: "oppi worktree list --workspace <workspace> [--json]",
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi worktree list --workspace ws_123" }],
+  },
+  {
+    path: ["worktree", "get"],
+    title: "Get worktree",
+    summary: "Show one discovered worktree by id or name.",
+    usage: "oppi worktree get <worktree> --workspace <workspace> [--json]",
+    arguments: [
+      { name: "<worktree>", summary: "worktree id or name; main is the primary checkout" },
+    ],
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi worktree get main --workspace ws_123 --json" }],
+  },
+  {
+    path: ["wait"],
+    title: "Wait",
+    summary: "Poll session state until a condition is true.",
+    usage: "oppi wait session <id> --status <status> [flags]",
+    subcommands: [{ name: "session <id>", summary: "wait for a session status" }],
+    flags: [
+      { name: "--status", value: "<status>", summary: "target status; defaults to stopped" },
+      { name: "--timeout", value: "<duration>", summary: "maximum wait such as 30s, 5m, or 1h" },
+      { name: "--poll", value: "<duration>", summary: "poll interval; defaults to 1s" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi wait session sess_123 --status stopped --json" }],
+  },
+  {
+    path: ["wait", "session"],
+    title: "Wait for a session",
+    summary: "Poll one session until its status matches.",
+    usage: "oppi wait session <id> --status <status> [--timeout <duration>] [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      { name: "--status", value: "<status>", summary: "target status; defaults to stopped" },
+      { name: "--timeout", value: "<duration>", summary: "maximum wait such as 30s, 5m, or 1h" },
+      { name: "--poll", value: "<duration>", summary: "poll interval; defaults to 1s" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi wait session sess_123 --status stopped --timeout 10m --json" }],
+  },
+  {
+    path: ["schedule"],
+    title: "Schedules",
+    summary: "Schedules run Oppi actions later, repeatedly, or from a cron expression.",
+    usage: "oppi schedule <subcommand> [flags]",
+    description: [
+      "A schedule stores a trigger plus an action. The current CLI creates new-session actions for a workspace.",
+      "Manual and automatic runs are recorded, so automation can inspect what happened after the fact.",
+    ],
+    subcommands: [
+      { name: "list", summary: "list schedules" },
+      { name: "get <id>", summary: "show one schedule" },
+      { name: "create", summary: "create a new-session or existing-session schedule" },
+      { name: "update <id>", summary: "patch a schedule from a JSON definition file" },
+      { name: "run <id>", summary: "run a schedule now" },
+      { name: "runs <id>", summary: "show run history for a schedule" },
+      { name: "pause <id>", summary: "pause future automatic runs" },
+      { name: "resume <id>", summary: "resume automatic runs" },
+      { name: "archive <id>", summary: "archive a schedule" },
+    ],
+    notes: ["Run 'oppi schedule create --help' for exact creation flags."],
+    examples: [
+      {
+        command: 'oppi schedule create --workspace ws_123 --prompt "Check tests" --every 1h',
+      },
+      { command: "oppi schedule run sch_123 --request-id retry-001" },
+      { command: "oppi schedule runs sch_123 --json" },
+    ],
+  },
+  {
+    path: ["schedule", "create"],
+    title: "Create a schedule",
+    summary: "Create a schedule that launches a new workspace session when its trigger fires.",
+    usage:
+      "oppi schedule create (--workspace <workspace> | --session <session>) --prompt <text> (--at <iso> | --every <duration> | --cron <expr>) [flags]",
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name to launch in",
+      },
+      {
+        name: "--session",
+        value: "<session>",
+        summary: "existing session id to send future prompts to",
+      },
+      {
+        name: "--prompt",
+        value: "<text>",
+        summary: "prompt sent when the schedule runs",
+        required: true,
+      },
+      { name: "--at", value: "<iso>", summary: "run once at an ISO timestamp" },
+      { name: "--every", value: "<duration>", summary: "repeat interval such as 15m, 1h, or 1d" },
+      { name: "--cron", value: "<expr>", summary: "cron expression for repeated runs" },
+      { name: "--tz", value: "<zone>", summary: "IANA time zone; defaults to the local zone" },
+      { name: "--name", value: "<text>", summary: "schedule and launched-session name" },
+      { name: "--model", value: "<model>", summary: "model override for launched sessions" },
+      { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Choose exactly one trigger flag: --at, --every, or --cron.",
+      "Choose exactly one target flag: --workspace or --session.",
+      "Server default Agent schedules are not implemented yet.",
+      "Run history is available with 'oppi schedule runs <id>'.",
+      "Manual runs are idempotent when you reuse 'oppi schedule run <id> --request-id <key>'; automatic runs use their schedule slot as the idempotency key.",
+    ],
+    examples: [
+      {
+        command:
+          'oppi schedule create --workspace ws_123 --prompt "Summarize overnight failures" --at 2026-06-29T09:00:00Z',
+      },
+      {
+        command:
+          'oppi schedule create --workspace ws_123 --prompt "Run npm test" --every 1h --name "Hourly test check"',
+      },
+      {
+        command:
+          'oppi schedule create --workspace ws_123 --prompt "Prepare Monday status" --cron "0 9 * * 1" --tz America/Los_Angeles',
+      },
+    ],
+  },
+  {
+    path: ["schedule", "list"],
+    title: "List schedules",
+    summary: "List configured schedules.",
+    usage: "oppi schedule list [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule list" }, { command: "oppi schedule list --json" }],
+  },
+  {
+    path: ["schedule", "get"],
+    title: "Get schedule",
+    summary: "Show one schedule by id.",
+    usage: "oppi schedule get <id> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule get sch_123" }],
+  },
+  {
+    path: ["schedule", "update"],
+    title: "Update schedule",
+    summary: "Patch a schedule from a JSON definition file.",
+    usage: "oppi schedule update <id> --definition <file> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [
+      {
+        name: "--definition",
+        value: "<file>",
+        summary: "JSON object with schedule fields to patch",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi schedule update sch_123 --definition ./schedule.json --json" }],
+  },
+  {
+    path: ["schedule", "run"],
+    title: "Run schedule",
+    summary: "Create or reuse a manual run for a schedule and dispatch it now.",
+    usage: "oppi schedule run <id> [--request-id <key>] [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [
+      {
+        name: "--request-id",
+        value: "<key>",
+        summary: "manual-run idempotency key; defaults to the current timestamp",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Manual runs are idempotent by schedule id plus --request-id.",
+      "Reuse the same --request-id when retrying after a timeout or network failure.",
+    ],
+    examples: [
+      { command: "oppi schedule run sch_123" },
+      { command: "oppi schedule run sch_123 --request-id deploy-check-001 --json" },
+    ],
+  },
+  {
+    path: ["schedule", "runs"],
+    title: "Schedule run history",
+    summary: "Show run history for a schedule.",
+    usage: "oppi schedule runs <id> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule runs sch_123" }],
+  },
+  {
+    path: ["schedule", "pause"],
+    title: "Pause schedule",
+    summary: "Pause future automatic runs for a schedule.",
+    usage: "oppi schedule pause <id> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule pause sch_123" }],
+  },
+  {
+    path: ["schedule", "resume"],
+    title: "Resume schedule",
+    summary: "Resume automatic runs for a paused schedule.",
+    usage: "oppi schedule resume <id> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule resume sch_123" }],
+  },
+  {
+    path: ["schedule", "archive"],
+    title: "Archive schedule",
+    summary: "Archive a schedule so it no longer runs automatically.",
+    usage: "oppi schedule archive <id> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule archive sch_123" }],
+  },
+  {
+    path: ["session"],
+    title: "Sessions",
+    summary: "List, launch, inspect, message, and stop Oppi sessions through the local server API.",
+    usage: "oppi session <subcommand> [flags]",
+    subcommands: [
+      { name: "list", summary: "list sessions" },
+      { name: "get <id>", summary: "show session metadata" },
+      { name: "create", summary: "launch a workspace session" },
+      { name: "send <id>", summary: "send text to a session" },
+      { name: "read <id>", summary: "show transcript-style trace entries" },
+      { name: "events <id>", summary: "read live catch-up events" },
+      { name: "trace <id>", summary: "show raw trace entries" },
+      { name: "stop <id>", summary: "stop a session" },
+    ],
+    notes: [
+      "Saved Agent definitions are not implemented; --agent only accepts default/workspace_default where supported.",
+      "Use 'oppi session read' for transcript-like output; 'oppi session get' returns metadata only.",
+    ],
+    examples: [
+      { command: "oppi session list --workspace ws_123" },
+      { command: "oppi session create --help" },
+      { command: "oppi session read sess_123 --tail 50" },
+    ],
+  },
+  {
+    path: ["session", "list"],
+    title: "List sessions",
+    summary: "List sessions, optionally filtered by workspace, worktree, status, or limit.",
+    usage: "oppi session list [--workspace <workspace>] [--worktree <worktree>] [--json]",
+    flags: [
+      { name: "--workspace", value: "<workspace>", summary: "workspace id or unique name" },
+      { name: "--worktree", value: "<worktree>", summary: "worktree id" },
+      {
+        name: "--status",
+        value: "<status>",
+        summary: "active, stopped, or a concrete session status",
+      },
+      { name: "--limit", value: "<count>", summary: "maximum sessions to return" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi session list --workspace ws_123 --json" }],
+  },
+  {
+    path: ["session", "get"],
+    title: "Get session",
+    summary: "Show session metadata without dumping transcript or trace entries.",
+    usage: "oppi session get <id> [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi session get sess_123 --json" }],
+  },
+  {
+    path: ["session", "send"],
+    title: "Send to session",
+    summary: "Send text to a session as a prompt command.",
+    usage: "oppi session send <id> --text <text> [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      { name: "--text", value: "<text>", summary: "message text to send", required: true },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: 'oppi session send sess_123 --text "Run tests" --json' }],
+  },
+  {
+    path: ["session", "read"],
+    title: "Read session transcript",
+    summary: "Read transcript-style trace entries for a session.",
+    usage: "oppi session read <id> [--tail <count>] [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      { name: "--tail", value: "<count>", summary: "return only the last trace entries" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi session read sess_123 --tail 50 --json" }],
+  },
+  {
+    path: ["session", "events"],
+    title: "Session events",
+    summary: "Read live catch-up events for an active session.",
+    usage: "oppi session events <id> [--since <cursor>] [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      { name: "--since", value: "<cursor>", summary: "event sequence cursor" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi session events sess_123 --since 42 --json" }],
+  },
+  {
+    path: ["session", "trace"],
+    title: "Session trace",
+    summary: "Read raw trace entries for a session.",
+    usage: "oppi session trace <id> [--include <parts>] [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      { name: "--include", value: "<parts>", summary: "trace parts such as summary,tools" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi session trace sess_123 --include summary,tools --json" }],
+  },
+  {
+    path: ["session", "stop"],
+    title: "Stop session",
+    summary: "Stop a session through the local API.",
+    usage: "oppi session stop <id> [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi session stop sess_123 --json" }],
+  },
+  {
+    path: ["agent"],
+    title: "Saved Agents",
+    summary: "Create, inspect, update, archive, and launch reusable Agent definitions.",
+    usage: "oppi agent <subcommand> [flags]",
+    subcommands: [
+      { name: "list", summary: "list saved Agents" },
+      { name: "get <agent>", summary: "show one saved Agent by id or unique name" },
+      {
+        name: "create",
+        summary: "create a saved Agent from flags and an optional JSON definition",
+      },
+      { name: "update <agent>", summary: "patch a saved Agent from a JSON definition" },
+      { name: "archive <agent>", summary: "archive a saved Agent" },
+    ],
+    notes: [
+      "Agent definitions are target-agnostic; workspace/worktree/cwd are launch inputs, not stored Agent fields.",
+      "Use 'oppi session create --agent <agent> --workspace <workspace> --prompt <text>' to launch a saved Agent.",
+      "Server-default Agent launches and self-management extensions are separate from public saved Agent definitions.",
+    ],
+    examples: [
+      { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },
+      { command: 'oppi session create --agent Reviewer --workspace ws_123 --prompt "Review this"' },
+    ],
+  },
+  {
+    path: ["agent", "list"],
+    title: "List saved Agents",
+    summary: "List active saved Agent definitions.",
+    usage: "oppi agent list [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi agent list --json" }],
+  },
+  {
+    path: ["agent", "get"],
+    title: "Get saved Agent",
+    summary: "Show one saved Agent by agent id or unique name.",
+    usage: "oppi agent get <agent> [--json]",
+    arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi agent get Reviewer --json" }],
+  },
+  {
+    path: ["agent", "create"],
+    title: "Create saved Agent",
+    summary: "Create a saved Agent from --name and an optional JSON definition file.",
+    usage: "oppi agent create --name <name> [--definition <file>] [--json]",
+    flags: [
+      {
+        name: "--name",
+        value: "<name>",
+        summary: "Agent display name; overrides definition.name",
+        required: true,
+      },
+      { name: "--definition", value: "<file>", summary: "JSON AgentDefinition fields" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Definitions cannot include workspace, worktree, schedule, attachments, or other launch-only fields.",
+    ],
+    examples: [{ command: "oppi agent create --name Reviewer --definition ./agent.json --json" }],
+  },
+  {
+    path: ["agent", "update"],
+    title: "Update saved Agent",
+    summary: "Patch a saved Agent from a JSON definition file.",
+    usage: "oppi agent update <agent> --definition <file> [--json]",
+    arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
+    flags: [
+      {
+        name: "--definition",
+        value: "<file>",
+        summary: "JSON AgentDefinition fields to patch",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi agent update Reviewer --definition ./agent-update.json --json" }],
+  },
+  {
+    path: ["agent", "archive"],
+    title: "Archive saved Agent",
+    summary: "Archive a saved Agent so it is hidden from normal list and launch flows.",
+    usage: "oppi agent archive <agent> [--json]",
+    arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi agent archive Reviewer --json" }],
+  },
+  {
+    path: ["session", "create"],
+    title: "Create a session",
+    summary: "Launch a workspace session and optionally send its first prompt.",
+    usage: "oppi session create --workspace <workspace> --prompt <text> [flags]",
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name to launch in",
+        required: true,
+      },
+      {
+        name: "--prompt",
+        value: "<text>",
+        summary: "first prompt sent to the session",
+        required: true,
+      },
+      { name: "--name", value: "<text>", summary: "session name" },
+      { name: "--model", value: "<model>", summary: "model override" },
+      { name: "--thinking", value: "<level>", summary: "thinking level override" },
+      { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
+      {
+        name: "--agent",
+        value: "<agent>",
+        summary: "saved Agent id/name; omit or use workspace_default for workspace defaults",
+      },
+      {
+        name: "--idempotency-key",
+        value: "<key>",
+        summary: "reuse one launch/session across retries of the same request",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
+      "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
+    ],
+    examples: [
+      {
+        command:
+          'oppi session create --workspace ws_123 --prompt "Inspect the failing CLI test" --idempotency-key cli-test-001',
+      },
+      {
+        command:
+          'oppi session create --agent Reviewer --workspace ws_123 --prompt "Review this" --json',
+      },
+    ],
+  },
+];
+
+export function resolveHelpTopic(path: CliHelpPath): HelpTopic | undefined {
+  const normalized = [...path].map((part) => part.toLowerCase()).filter(Boolean);
+  return HELP_TOPICS.find((topic) => samePath(topic.path, normalized));
+}
+
+export function helpTopicToJson(topic: HelpTopic): HelpJsonTopic {
+  return JSON.parse(JSON.stringify(topic)) as HelpJsonTopic;
+}
+
+export function renderHelpTopic(topic: HelpTopic): string {
+  const lines: string[] = [];
+
+  lines.push(`  ${c.bold(topic.title)}`);
+  lines.push("");
+  lines.push(`  ${topic.summary}`);
+  lines.push("");
+
+  if (topic.usage) {
+    lines.push(`  ${c.bold("Usage:")} ${topic.usage}`);
+    lines.push("");
+  }
+
+  appendParagraphs(lines, topic.description);
+  appendExamples(lines, "Common flows", topic.commonFlows);
+  appendItems(lines, "Subcommands", topic.subcommands);
+  appendItems(lines, "Arguments", topic.arguments);
+  appendItems(lines, "Common keys", topic.keys);
+  appendFlags(lines, topic.flags);
+  appendParagraphs(lines, topic.notes, "Notes");
+  appendExamples(lines, "Examples", topic.examples);
+
+  return lines.join("\n");
+}
+
+function samePath(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((part, index) => part === b[index]);
+}
+
+function appendParagraphs(
+  lines: string[],
+  paragraphs: string[] | undefined,
+  heading?: string,
+): void {
+  if (!paragraphs || paragraphs.length === 0) return;
+  if (heading) {
+    lines.push(`  ${c.bold(`${heading}:`)}`);
+    lines.push("");
+  }
+  for (const paragraph of paragraphs) {
+    lines.push(`  ${paragraph}`);
+  }
+  lines.push("");
+}
+
+function appendItems(lines: string[], heading: string, items: HelpItem[] | undefined): void {
+  if (!items || items.length === 0) return;
+  lines.push(`  ${c.bold(`${heading}:`)}`);
+  lines.push("");
+  const width = Math.max(...items.map((item) => item.name.length));
+  for (const item of items) {
+    lines.push(`    ${c.cyan(item.name.padEnd(width))}  ${item.summary}`);
+  }
+  lines.push("");
+}
+
+function appendFlags(lines: string[], flags: HelpFlag[] | undefined): void {
+  if (!flags || flags.length === 0) return;
+  lines.push(`  ${c.bold("Flags:")}`);
+  lines.push("");
+  const labels = flags.map((flag) => `${flag.name}${flag.value ? ` ${flag.value}` : ""}`);
+  const width = Math.max(...labels.map((label) => label.length));
+  flags.forEach((flag, index) => {
+    const label = labels[index] ?? flag.name;
+    const required = flag.required ? c.yellow(" required") : "";
+    lines.push(`    ${c.cyan(label.padEnd(width))}  ${flag.summary}${required}`);
+  });
+  lines.push("");
+}
+
+function appendExamples(
+  lines: string[],
+  heading: string,
+  examples: HelpExample[] | undefined,
+): void {
+  if (!examples || examples.length === 0) return;
+  lines.push(`  ${c.bold(`${heading}:`)}`);
+  lines.push("");
+  for (const example of examples) {
+    lines.push(`    ${c.dim(example.command)}`);
+    if (example.summary) lines.push(`      ${c.dim(example.summary)}`);
+  }
+  lines.push("");
+}
