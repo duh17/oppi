@@ -183,6 +183,64 @@ struct ToolExpandedSurfaceHostTests {
         #expect(abs(fitted.height - expectedHeight) < 2)
     }
 
+    @Test func readMediaAttachmentImageFetchSurvivesPreviewRecreation() async throws {
+        let imageData = try #require(makeTallReadToolTestImage().pngData())
+        let fetchGate = AttachmentFetchGate(data: imageData)
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: "att-recreated-preview-image",
+            mimeType: "image/png",
+            fileName: "recreated.png",
+            sizeBytes: imageData.count,
+            width: 80,
+            height: 220
+        )
+
+        do {
+            let firstPreview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+            firstPreview.apply(
+                attachment: attachment,
+                fetcher: { attachmentId in
+                    #expect(attachmentId == "att-recreated-preview-image")
+                    return await fetchGate.fetch()
+                }
+            )
+        }
+
+        let firstFetchStarted = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await fetchGate.fetchCount == 1
+        }
+        #expect(firstFetchStarted)
+
+        let secondPreview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 900))
+        secondPreview.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(secondPreview)
+        NSLayoutConstraint.activate([
+            secondPreview.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            secondPreview.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            secondPreview.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        secondPreview.apply(
+            attachment: attachment,
+            fetcher: { attachmentId in
+                #expect(attachmentId == "att-recreated-preview-image")
+                return await fetchGate.fetch()
+            }
+        )
+
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(await fetchGate.fetchCount == 1, "Recreating an expanded image row should attach to the in-flight attachment fetch instead of starting a second request")
+
+        await fetchGate.release()
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            return readMediaContentImageView(in: secondPreview) != nil
+        }
+        #expect(decoded)
+    }
+
     @Test func readMediaImageAttachmentHidesReadToolBoilerplate() async throws {
         let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
         let attachment = ToolPresentationBuilder.ToolMediaAttachment(
@@ -992,6 +1050,31 @@ struct ToolExpandedSurfaceHostTests {
             if let match = firstToolSubview(ofType: type, in: subview) { return match }
         }
         return nil
+    }
+
+    private actor AttachmentFetchGate {
+        let data: Data
+        private(set) var fetchCount = 0
+        private var continuations: [CheckedContinuation<Data, Never>] = []
+
+        init(data: Data) {
+            self.data = data
+        }
+
+        func fetch() async -> Data {
+            fetchCount += 1
+            return await withCheckedContinuation { continuation in
+                continuations.append(continuation)
+            }
+        }
+
+        func release() {
+            let waiting = continuations
+            continuations.removeAll()
+            for continuation in waiting {
+                continuation.resume(returning: data)
+            }
+        }
     }
 
     // Exact regression fixture copied from `/tmp/brent.svg` after the reported SVG preview failure.

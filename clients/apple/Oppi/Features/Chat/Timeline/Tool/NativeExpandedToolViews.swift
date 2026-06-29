@@ -859,6 +859,87 @@ private enum ToolAudioAttachmentCache {
     }
 }
 
+@MainActor
+private enum ToolImageAttachmentDataCache {
+    private static let maxCachedEntryBytes = 8 * 1024 * 1024
+    private static let maxCachedBytes = 32 * 1024 * 1024
+    private static let maxCachedEntries = 32
+
+    private static var cachedData: [String: Data] = [:]
+    private static var cacheOrder: [String] = []
+    private static var cachedBytes = 0
+    private static var inFlight: [String: Task<Data, Error>] = [:]
+
+    static func key(for attachment: ToolPresentationBuilder.ToolMediaAttachment) -> String {
+        [
+            attachment.id,
+            attachment.mimeType,
+            attachment.fileName ?? "",
+            attachment.sizeBytes.map(String.init) ?? "",
+        ].joined(separator: "|")
+    }
+
+    static func data(
+        for key: String,
+        fetch: @escaping () async throws -> Data
+    ) async throws -> Data {
+        if let data = cachedData[key] {
+            touch(key)
+            return data
+        }
+        if let task = inFlight[key] {
+            return try await task.value
+        }
+
+        let task = Task<Data, Error> {
+            do {
+                let data = try await fetch()
+                await store(data, for: key)
+                return data
+            } catch {
+                await removeInFlight(for: key)
+                throw error
+            }
+        }
+        inFlight[key] = task
+        return try await task.value
+    }
+
+    private static func store(_ data: Data, for key: String) {
+        inFlight[key] = nil
+        guard data.count <= maxCachedEntryBytes else { return }
+
+        if let existing = cachedData[key] {
+            cachedBytes -= existing.count
+        } else {
+            cacheOrder.append(key)
+        }
+        cachedData[key] = data
+        cachedBytes += data.count
+        touch(key)
+        pruneIfNeeded()
+    }
+
+    private static func removeInFlight(for key: String) {
+        inFlight[key] = nil
+    }
+
+    private static func touch(_ key: String) {
+        cacheOrder.removeAll { $0 == key }
+        cacheOrder.append(key)
+    }
+
+    private static func pruneIfNeeded() {
+        while cachedBytes > maxCachedBytes || cacheOrder.count > maxCachedEntries {
+            guard !cacheOrder.isEmpty else { return }
+            let key = cacheOrder.removeFirst()
+            if let data = cachedData.removeValue(forKey: key) {
+                cachedBytes -= data.count
+            }
+        }
+    }
+}
+
 final class NativeExpandedInlineImageView: UIView {
     private static let minPreviewHeight = ImageViewportSizing.policy(
         for: .primaryMedia,
@@ -957,9 +1038,12 @@ final class NativeExpandedInlineImageView: UIView {
         }
 
         let maxPixelSize = self.maxPixelSize
+        let attachmentCacheKey = ToolImageAttachmentDataCache.key(for: attachment)
         decodeTask = Task { [weak self] in
             do {
-                let data = try await fetcher(attachment.id)
+                let data = try await ToolImageAttachmentDataCache.data(for: attachmentCacheKey) {
+                    try await fetcher(attachment.id)
+                }
                 await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
             } catch {
                 await MainActor.run { [weak self] in
