@@ -15,15 +15,39 @@ actor APIClient: ClientLogUploading {
 
     let baseURL: URL
     let token: String
+    let environment: OppiClientEnvironment
     private let tlsCertFingerprint: String?
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
+    init(environment: OppiClientEnvironment) {
+        self.environment = environment
+        self.baseURL = environment.baseURL
+        self.token = environment.bearerToken
+        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        session = URLSession(
+            configuration: config,
+            delegate: trustDelegate,
+            delegateQueue: nil
+        )
+    }
+
     init(baseURL: URL, token: String, tlsCertFingerprint: String? = nil) {
-        self.baseURL = baseURL
-        self.token = token
-        self.tlsCertFingerprint = tlsCertFingerprint
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
+        let environment = OppiClientEnvironment(
+            baseURL: baseURL,
+            bearerToken: token,
+            pinnedCertificateFingerprint: tlsCertFingerprint
+        )
+        self.environment = environment
+        self.baseURL = environment.baseURL
+        self.token = environment.bearerToken
+        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
@@ -38,15 +62,39 @@ actor APIClient: ClientLogUploading {
     // periphery:ignore - used by APIClientTests via @testable import
     /// Test-only init with custom URLSessionConfiguration.
     init(
+        environment: OppiClientEnvironment,
+        configuration: URLSessionConfiguration
+    ) {
+        self.environment = environment
+        self.baseURL = environment.baseURL
+        self.token = environment.bearerToken
+        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
+        session = URLSession(
+            configuration: configuration,
+            delegate: trustDelegate,
+            delegateQueue: nil
+        )
+    }
+
+    // periphery:ignore - used by APIClientTests via @testable import
+    /// Test-only init with custom URLSessionConfiguration.
+    init(
         baseURL: URL,
         token: String,
         configuration: URLSessionConfiguration,
         tlsCertFingerprint: String? = nil
     ) {
-        self.baseURL = baseURL
-        self.token = token
-        self.tlsCertFingerprint = tlsCertFingerprint
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
+        let environment = OppiClientEnvironment(
+            baseURL: baseURL,
+            bearerToken: token,
+            pinnedCertificateFingerprint: tlsCertFingerprint
+        )
+        self.environment = environment
+        self.baseURL = environment.baseURL
+        self.token = environment.bearerToken
+        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
         session = URLSession(
             configuration: configuration,
             delegate: trustDelegate,

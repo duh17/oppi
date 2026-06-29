@@ -1,5 +1,34 @@
 import Foundation
 
+struct DeltaCoalescerFlushWindow: Equatable, Sendable {
+    let sessionId: String?
+    let eventCount: Int
+    let byteCount: Int
+    let flushCount: Int
+}
+
+struct DeltaCoalescerLargeTimelinePayload: Equatable, Sendable {
+    let sessionId: String?
+    let eventCount: Int
+    let byteCount: Int
+    let largestEventByteCount: Int
+}
+
+struct DeltaCoalescerTelemetry: Sendable {
+    let recordFlushWindow: @Sendable (DeltaCoalescerFlushWindow) async -> Void
+    let recordLargeTimelinePayload: @Sendable (DeltaCoalescerLargeTimelinePayload) -> Void
+
+    init(
+        recordFlushWindow: @escaping @Sendable (DeltaCoalescerFlushWindow) async -> Void = { _ in },
+        recordLargeTimelinePayload: @escaping @Sendable (DeltaCoalescerLargeTimelinePayload) -> Void = { _ in }
+    ) {
+        self.recordFlushWindow = recordFlushWindow
+        self.recordLargeTimelinePayload = recordLargeTimelinePayload
+    }
+
+    static let none = DeltaCoalescerTelemetry()
+}
+
 /// Batches high-frequency stream deltas for smooth rendering.
 ///
 /// Rules:
@@ -54,8 +83,14 @@ final class DeltaCoalescer {
     /// Active session ID for metric attribution. Set by SessionStreamCoordinator.
     var sessionId: String?
 
+    private let telemetry: DeltaCoalescerTelemetry
+
     /// Called when coalesced events should be delivered.
     var onFlush: (([AgentEvent]) -> Void)?
+
+    init(telemetry: DeltaCoalescerTelemetry = .none) {
+        self.telemetry = telemetry
+    }
 
     /// Pause flush timer (call on app background). Buffer accumulates
     /// but no timer fires, saving CPU/battery while screen is off.
@@ -192,21 +227,15 @@ final class DeltaCoalescer {
             flushes: windowFlushes
         ) else { return }
 
+        let telemetry = telemetry
+        let flushWindow = DeltaCoalescerFlushWindow(
+            sessionId: sid,
+            eventCount: windowEvents,
+            byteCount: windowBytes,
+            flushCount: windowFlushes
+        )
         Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .coalescerFlushEvents,
-                value: Double(windowEvents),
-                unit: .count,
-                sessionId: sid,
-                tags: ["flushes": String(windowFlushes)]
-            )
-            await ChatMetricsService.shared.record(
-                metric: .coalescerFlushBytes,
-                value: Double(windowBytes),
-                unit: .count,
-                sessionId: sid,
-                tags: ["flushes": String(windowFlushes)]
-            )
+            await telemetry.recordFlushWindow(flushWindow)
         }
     }
 
@@ -261,12 +290,12 @@ final class DeltaCoalescer {
 
     private func recordOversizedTimelinePayloadIfNeeded(sessionId: String?, eventCount: Int, bytes: Int) {
         guard bytes > Self.maxBufferedBytes else { return }
-        MetricKitCrashContextStore.recordLargeTimelinePayload(
+        telemetry.recordLargeTimelinePayload(DeltaCoalescerLargeTimelinePayload(
             sessionId: sessionId,
             eventCount: eventCount,
-            bytes: bytes,
-            largestEventBytes: bytes
-        )
+            byteCount: bytes,
+            largestEventByteCount: bytes
+        ))
     }
 
     private func appendChunkedText(_ text: String, makeEvent: (String) -> AgentEvent) {

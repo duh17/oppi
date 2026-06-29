@@ -116,9 +116,9 @@ final class ServerConnection {
     let sessionStore = SessionStore()
     let askRequestStore = AskRequestStore()
     let workspaceStore = WorkspaceStore()
-    let gitStatusStore = GitStatusStore()
-    let fileIndexStore = FileIndexStore()
-    let messageQueueStore = MessageQueueStore()
+    let gitStatusStore = GitStatusStore(environment: .app)
+    let fileIndexStore = FileIndexStore(environment: .app)
+    let messageQueueStore = MessageQueueStore(telemetry: .appMetrics)
 
     // Audio
     let audioPlayer = AudioPlayerService()
@@ -326,9 +326,7 @@ final class ServerConnection {
         self.transportPath = selection.transportPath
 
         self.apiClient = APIClient(
-            baseURL: selection.baseURL,
-            token: credentials.token,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+            environment: makeClientEnvironment(selection: selection, credentials: credentials)
         )
         self.wsClient = WebSocketClient(
             credentials: credentials,
@@ -342,6 +340,18 @@ final class ServerConnection {
         }
 
         return true
+    }
+
+    private func makeClientEnvironment(
+        selection: EndpointSelection,
+        credentials: ServerCredentials
+    ) -> OppiClientEnvironment {
+        OppiClientEnvironment(
+            baseURL: selection.baseURL,
+            bearerToken: credentials.token,
+            pinnedCertificateFingerprint: credentials.normalizedTLSCertFingerprint,
+            processOwnership: .clientOnly
+        )
     }
 
     func setDiscoveredLANEndpoint(_ endpoint: LANDiscoveredEndpoint?) {
@@ -393,9 +403,7 @@ final class ServerConnection {
 
         if previousSelection?.baseURL != selection.baseURL {
             apiClient = APIClient(
-                baseURL: selection.baseURL,
-                token: credentials.token,
-                tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+                environment: makeClientEnvironment(selection: selection, credentials: credentials)
             )
             if appEventStreamAvailable {
                 disconnectAppEventStream()

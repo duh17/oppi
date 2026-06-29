@@ -385,7 +385,7 @@ private struct TimelineComplexityBudget {
 
 private let timelineComplexityBudgets: [TimelineComplexityBudget] = [
     .init(
-        path: "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift",
+        path: "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
         maxCyclomaticDisables: 1
     ),
     .init(
@@ -412,7 +412,7 @@ private func findProjectRoot(startingFrom url: URL) throws -> URL {
     var candidate = url.deletingLastPathComponent()
 
     while candidate.path != "/" {
-        let probe = candidate.appending(path: "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift")
+        let probe = candidate.appending(path: "clients/apple/OppiCore/Runtime/TimelineReducer.swift")
         if FileManager.default.fileExists(atPath: probe.path) {
             return candidate
         }
