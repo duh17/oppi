@@ -15,9 +15,12 @@ struct APIClientTests {
     private func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
-        return APIClient(
+        let environment = OppiClientEnvironment(
             baseURL: URL(string: "http://localhost:7749")!,
-            token: "sk_test",
+            bearerToken: "sk_test"
+        )
+        return APIClient(
+            environment: environment,
             configuration: config
         )
     }

@@ -159,7 +159,7 @@ enum ToolCallFormatting {
     }
 
     private static func normalizedDisplayPath(_ rawPath: String) -> String {
-        var normalized = rawPath.shortenedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        var normalized = shortenedPath(rawPath).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return rawPath }
 
         while normalized.count > 1 && normalized.hasSuffix("/") {
@@ -167,6 +167,13 @@ enum ToolCallFormatting {
         }
 
         return normalized
+    }
+
+    private static func shortenedPath(_ rawPath: String) -> String {
+        guard rawPath.hasPrefix("/Users/") else { return rawPath }
+        let parts = rawPath.split(separator: "/", maxSplits: 3)
+        guard parts.count > 2 else { return rawPath }
+        return "~/" + parts.dropFirst(2).joined(separator: "/")
     }
 
     /// Parse a value from the flat argsSummary string.

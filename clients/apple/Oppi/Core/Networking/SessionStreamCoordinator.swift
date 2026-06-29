@@ -8,24 +8,9 @@ private let streamCoordinatorLogger = Logger(
 
 @MainActor
 final class SessionStreamCoordinator {
-    enum StreamState: Equatable {
-        case idle
-        case connectingTransport(sessionId: String)
-        case queueSync(sessionId: String, phase: QueueSyncPhase)
-        case streaming(sessionId: String)
-        case resubscribing(sessionId: String)
-    }
-
-    enum QueueSyncPhase: String, Equatable {
-        case initial
-        case retry
-    }
-
-    enum CatchUpDecision: Equatable {
-        case noGap
-        case fetchSince(Int)
-        case seqRegression(resetTo: Int)
-    }
+    typealias StreamState = SessionStreamState
+    typealias QueueSyncPhase = SessionStreamQueueSyncPhase
+    typealias CatchUpDecision = SessionStreamCatchUpTracker.CatchUpDecision
 
     private enum StateKind: String {
         case idle
@@ -53,7 +38,7 @@ final class SessionStreamCoordinator {
     ]
 
     private(set) var state: StreamState = .idle
-    private var lastSeenSeqBySession: [String: Int] = [:]
+    private var catchUpTracker = SessionStreamCatchUpTracker()
     private var activeWorkspaceId: String?
 
     func hasFullSubscription(sessionId: String) -> Bool {
@@ -181,40 +166,23 @@ final class SessionStreamCoordinator {
     // MARK: - Catch-up state
 
     func seedLastSeenSeq(sessionId: String, value: Int) {
-        lastSeenSeqBySession[sessionId] = value
+        catchUpTracker.seedLastSeenSeq(sessionId: sessionId, value: value)
     }
 
     func lastSeenSeq(sessionId: String) -> Int {
-        lastSeenSeqBySession[sessionId] ?? 0
+        catchUpTracker.lastSeenSeq(sessionId: sessionId)
     }
 
     func consumeLiveSeq(sessionId: String, seq: Int) -> Bool {
-        let current = lastSeenSeqBySession[sessionId] ?? 0
-        guard seq > current else { return false }
-        lastSeenSeqBySession[sessionId] = seq
-        return true
+        catchUpTracker.consumeLiveSeq(sessionId: sessionId, seq: seq)
     }
 
     func catchUpDecision(sessionId: String, currentSeq: Int) -> CatchUpDecision {
-        let lastSeen = lastSeenSeqBySession[sessionId] ?? 0
-
-        if currentSeq < lastSeen {
-            lastSeenSeqBySession[sessionId] = currentSeq
-            return .seqRegression(resetTo: currentSeq)
-        }
-
-        if currentSeq == lastSeen {
-            return .noGap
-        }
-
-        return .fetchSince(lastSeen)
+        catchUpTracker.catchUpDecision(sessionId: sessionId, currentSeq: currentSeq)
     }
 
     func applyCatchUpProgress(sessionId: String, seq: Int) {
-        let current = lastSeenSeqBySession[sessionId] ?? 0
-        if seq > current {
-            lastSeenSeqBySession[sessionId] = seq
-        }
+        catchUpTracker.applyCatchUpProgress(sessionId: sessionId, seq: seq)
     }
 
     // MARK: - Queue sync

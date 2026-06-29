@@ -3,12 +3,6 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "LANSelect")
 
-/// Preferred transport path selected for a server connection.
-enum ConnectionTransportPath: String, Sendable, Equatable {
-    case paired
-    case lan
-}
-
 /// Bonjour-discovered LAN endpoint candidate for a paired server.
 struct LANDiscoveredEndpoint: Sendable, Equatable {
     let host: String

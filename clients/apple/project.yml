@@ -53,6 +53,10 @@ targets:
       - path: Oppi/Resources/AppIcon.icon
         type: file
         buildPhase: resources
+      - path: OppiCore
+        type: group
+        excludes:
+          - "PlatformAdapters"
       - path: Shared
         type: group
     settings:
@@ -132,6 +136,7 @@ targets:
           STAMP_FILE="$DERIVED_FILE_DIR/swiftlint.stamp"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
+            "$SRCROOT/OppiCore"
             "$SRCROOT/Shared"
             "$SRCROOT/OppiActivityExtension"
             "$SRCROOT/OppiControlWidget"
@@ -181,6 +186,7 @@ targets:
           ARCH_RULES="$SRCROOT/../../docs/architecture-client.md"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
+            "$SRCROOT/OppiCore"
             "$SRCROOT/Shared"
             "$SRCROOT/OppiActivityExtension"
             "$SRCROOT/OppiControlWidget"
@@ -245,6 +251,8 @@ targets:
         type: group
         excludes:
           - "ModelColorHelpers.swift"
+      - path: OppiCore/Formatting/SessionFormatting.swift
+        type: file
     entitlements:
       path: OppiActivityExtension/OppiActivityExtension.entitlements
       properties:
@@ -279,8 +287,6 @@ targets:
           - "NearbyPairing"
           - "Renderers"
           - "Models"
-          - "SessionFormatting.swift"
-          - "UserFacingErrorText.swift"
     entitlements:
       path: OppiShareExtension/OppiShareExtension.entitlements
       properties:
@@ -321,6 +327,8 @@ targets:
         type: group
         excludes:
           - "ModelColorHelpers.swift"
+      - path: OppiCore/Formatting/SessionFormatting.swift
+        type: file
     entitlements:
       path: OppiControlWidget/OppiControlWidget.entitlements
       properties:
@@ -423,6 +431,10 @@ targets:
     sources:
       - path: OppiMac
         type: group
+      - path: OppiCore
+        type: group
+        excludes:
+          - "PlatformAdapters"
       - path: Shared
         type: group
         excludes:

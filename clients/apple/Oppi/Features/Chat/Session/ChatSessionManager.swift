@@ -47,8 +47,8 @@ final class ChatSessionManager {
     /// Per-session timeline pipeline — each ChatSessionManager owns its own
     /// reducer, coalescer, and correlator so sessions maintain independent
     /// timeline state across NavigationStack back-navigation.
-    let reducer = TimelineReducer()
-    let coalescer = DeltaCoalescer()
+    let reducer = TimelineReducer(environment: .app())
+    let coalescer = DeltaCoalescer(telemetry: .appMetrics)
     let toolCallCorrelator = ToolCallCorrelator()
 
     /// Bumped to restart the `.task(id:)` connection loop.
