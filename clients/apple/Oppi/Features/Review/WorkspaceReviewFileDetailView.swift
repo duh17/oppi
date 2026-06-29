@@ -20,6 +20,25 @@ enum WorkspaceReviewFileDetailPhase: Equatable {
     }
 }
 
+struct WorkspaceReviewFileDetailToolbarState: Equatable {
+    let showsShare: Bool
+    let showsPromptTemplates: Bool
+    let promptTemplatesDisabled: Bool
+    let promptTemplatesAccessibilityLabel: String
+
+    static func make(
+        hasShareableContent: Bool,
+        launchActionInFlightTitle: String?
+    ) -> Self {
+        Self(
+            showsShare: hasShareableContent,
+            showsPromptTemplates: true,
+            promptTemplatesDisabled: launchActionInFlightTitle != nil,
+            promptTemplatesAccessibilityLabel: String(localized: "Prompt templates")
+        )
+    }
+}
+
 struct WorkspaceReviewFileDetailView: View {
     let workspaceId: String
     let selectedSessionId: String?
@@ -107,7 +126,7 @@ struct WorkspaceReviewFileDetailView: View {
         .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe) { dismiss() }
         .overlay(alignment: .bottom) {
             reviewNavigatorControls
-                .padding(.bottom, 22)
+                .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
         }
         .navigationTitle(currentFile.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
@@ -140,34 +159,14 @@ struct WorkspaceReviewFileDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if let diff, let shareable = shareableContentForReview(diff: diff) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if toolbarState.showsShare, let shareable = toolbarShareableContent {
                     FileShareButton(content: shareable, style: .icon)
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    if isLoadingQuickActions && quickActionOptions.isEmpty {
-                        Button("Loading templates…") {}
-                            .disabled(true)
-                    } else if sortedQuickActionOptions.isEmpty {
-                        Button("No prompt templates") {}
-                            .disabled(true)
-                    } else {
-                        ForEach(sortedQuickActionOptions) { option in
-                            Button {
-                                Task {
-                                    await createQuickActionSession(option: option)
-                                }
-                            } label: {
-                                Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+
+                if toolbarState.showsPromptTemplates {
+                    quickActionMenu
                 }
-                .disabled(launchActionInFlightTitle != nil)
             }
         }
         .alert(
@@ -187,6 +186,47 @@ struct WorkspaceReviewFileDetailView: View {
                 if !isPresented { launchError = nil }
             }
         )
+    }
+
+    private var toolbarShareableContent: FileShareService.ShareableContent? {
+        guard let diff else { return nil }
+        return shareableContentForReview(diff: diff)
+    }
+
+    private var toolbarState: WorkspaceReviewFileDetailToolbarState {
+        WorkspaceReviewFileDetailToolbarState.make(
+            hasShareableContent: toolbarShareableContent != nil,
+            launchActionInFlightTitle: launchActionInFlightTitle
+        )
+    }
+
+    private var quickActionMenu: some View {
+        Menu {
+            Section("Prompt Templates") {
+                if isLoadingQuickActions && quickActionOptions.isEmpty {
+                    Button("Loading templates…") {}
+                        .disabled(true)
+                } else if sortedQuickActionOptions.isEmpty {
+                    Button("No prompt templates") {}
+                        .disabled(true)
+                } else {
+                    ForEach(sortedQuickActionOptions) { option in
+                        Button {
+                            Task {
+                                await createQuickActionSession(option: option)
+                            }
+                        } label: {
+                            Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .disabled(toolbarState.promptTemplatesDisabled)
+        .accessibilityLabel(toolbarState.promptTemplatesAccessibilityLabel)
+        .accessibilityIdentifier("review-file.prompt-templates")
     }
 
     private var parentOwnsBackSwipe: Bool {

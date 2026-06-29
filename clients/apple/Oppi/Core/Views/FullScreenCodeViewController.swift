@@ -342,14 +342,14 @@ final class FullScreenCodeViewController: UIViewController {
             NSLayoutConstraint.activate([
                 button.trailingAnchor.constraint(
                     equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor,
-                    constant: -16
+                    constant: -FullScreenFloatingControlChrome.trailingPadding
                 ),
                 button.bottomAnchor.constraint(
                     equalTo: viewController.view.safeAreaLayoutGuide.bottomAnchor,
-                    constant: -16
+                    constant: -FullScreenFloatingControlChrome.bottomPadding
                 ),
-                button.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
-                button.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+                button.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
+                button.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
             ])
         }
 
@@ -361,10 +361,18 @@ final class FullScreenCodeViewController: UIViewController {
     private func makeFloatingViewingOptionsButton(palette: ThemePalette) -> UIButton {
         var config = UIButton.Configuration.glass()
         config.image = UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
-        config.preferredSymbolConfigurationForImage = .init(pointSize: 20, weight: .semibold)
-        config.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)
-        config.cornerStyle = .capsule
-        config.baseForegroundColor = UIColor(palette.fg)
+        config.preferredSymbolConfigurationForImage = .init(
+            pointSize: FullScreenFloatingControlChrome.symbolPointSize,
+            weight: .semibold
+        )
+        let contentPadding = FullScreenFloatingControlChrome.standaloneContentPadding
+        config.contentInsets = NSDirectionalEdgeInsets(
+            top: contentPadding,
+            leading: contentPadding,
+            bottom: contentPadding,
+            trailing: contentPadding
+        )
+        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
 
         let button = UIButton(configuration: config)
         button.accessibilityLabel = String(localized: "Viewing Options")
@@ -379,7 +387,7 @@ final class FullScreenCodeViewController: UIViewController {
         preferences: FullScreenReaderPreferences
     ) {
         var config = button.configuration ?? .plain()
-        config.baseForegroundColor = UIColor(palette.fg)
+        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
         button.configuration = config
         button.accessibilityValue = String(
             localized: "Text size \(Int(round(preferences.textScale * 100))) percent"

@@ -370,8 +370,7 @@ final class RenderableDocumentView: UIView {
             return attrs
         }
         config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
-        config.cornerStyle = .capsule
-        config.baseForegroundColor = UIColor(palette.fg)
+        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
 
         let button = UIButton(configuration: config)
         button.addAction(UIAction { [weak self] _ in self?.toggleSource() }, for: .touchUpInside)
