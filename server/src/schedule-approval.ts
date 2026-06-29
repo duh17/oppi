@@ -10,7 +10,7 @@ export type ScheduledMutationDecision =
 
 export interface ScheduledMutationPolicyInput {
   origin: ScheduledMutationOrigin;
-  approvalRefs?: ScheduleApprovalRef[];
+  approvalRefs?: readonly ScheduleApprovalRef[];
   nowMs?: number;
 }
 
@@ -49,6 +49,15 @@ export function decideScheduledMutation(
   return { allowed: false, reason: "missing_accepted_approval_ref" };
 }
 
+export function liveAcceptedApprovalRefAuditIds(
+  approvalRefs: readonly ScheduleApprovalRef[] | undefined,
+  nowMs = Date.now(),
+): string[] {
+  return (approvalRefs ?? [])
+    .filter((ref) => isAcceptedApprovalRef(ref) && !isExpiredApprovalRef(ref, nowMs))
+    .map(approvalRefAuditId);
+}
+
 function isAcceptedApprovalRef(ref: ScheduleApprovalRef): boolean {
   if (typeof ref === "string") return ref.trim().length > 0;
   if (!ref || typeof ref !== "object") return false;
@@ -61,7 +70,7 @@ function isExpiredApprovalRef(ref: ScheduleApprovalRef, nowMs: number): boolean 
   return ref.status === "expired" || (ref.expiresAt !== undefined && ref.expiresAt <= nowMs);
 }
 
-function approvalRefAuditId(ref: ScheduleApprovalRef): string {
+export function approvalRefAuditId(ref: ScheduleApprovalRef): string {
   if (typeof ref === "string") return ref;
   if (typeof ref.id === "string" && ref.id.length > 0) return ref.id;
   if (typeof ref.ref === "string" && ref.ref.length > 0) return ref.ref;

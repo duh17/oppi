@@ -54,8 +54,12 @@ describe("schedule routes", () => {
 
     const storage = {
       getAgentScheduleStore: () => store,
-      getWorkspace: vi.fn((workspaceId: string) => (workspaceId === workspace.id ? workspace : undefined)),
-      getSession: vi.fn((sessionId: string) => sessions.find((session) => session.id === sessionId)),
+      getWorkspace: vi.fn((workspaceId: string) =>
+        workspaceId === workspace.id ? workspace : undefined,
+      ),
+      getSession: vi.fn((sessionId: string) =>
+        sessions.find((session) => session.id === sessionId),
+      ),
       createSession: vi.fn((name?: string, model?: string) => {
         const session = makeSession({ id: `sess-${sessions.length + 1}`, name, model });
         sessions.push(session);
@@ -151,5 +155,67 @@ describe("schedule routes", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe(firstRun?.sessionId);
     expect(sessions[0]?.launch?.idempotencyKey).toBe(`schedule:${schedule.id}:manual:button-1`);
+  });
+
+  it("rejects malformed run history limits", async () => {
+    const schedule = store.createSchedule({
+      name: "Morning check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: {
+        type: "new_session",
+        workspaceId: workspace.id,
+        prompt: "Run the checks",
+      },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}/runs`;
+
+    for (const limit of ["2x", "1.5"] as const) {
+      await dispatch({
+        method: "GET",
+        path,
+        url: new URL(`https://localhost${path}?limit=${limit}`),
+        req: requestBody({}),
+        res: {} as ServerResponse,
+      });
+    }
+
+    expect(responses).toEqual([]);
+    expect(errors).toEqual([
+      { status: 400, message: "limit must be a positive integer" },
+      { status: 400, message: "limit must be a positive integer" },
+    ]);
+  });
+
+  it("fails a schedule run when new-session prompt dispatch is not delivered", async () => {
+    sendPrompt.mockRejectedValueOnce(new Error("transport down"));
+    const schedule = store.createSchedule({
+      name: "Morning check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: {
+        type: "new_session",
+        workspaceId: workspace.id,
+        prompt: "Run the checks",
+      },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}/run`;
+
+    await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ requestId: "button-fail" }),
+      res: {} as ServerResponse,
+    });
+
+    expect(responses).toEqual([]);
+    expect(errors).toEqual([{ status: 400, message: "prompt_not_sent" }]);
+    expect(store.listRunSummaries(schedule.id)).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        error: "prompt_not_sent",
+      }),
+    ]);
   });
 });

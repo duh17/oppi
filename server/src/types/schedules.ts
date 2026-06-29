@@ -35,27 +35,22 @@ export interface ScheduleApprovalProvenanceMetadata {
   recordedAt?: number;
 }
 
-export interface AgentSchedule {
-  id: string;
-  workspaceId: string;
-  name?: string;
-  prompt: string;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-  approvalRefs: ScheduleApprovalRef[];
-}
-
-export interface AgentScheduleRun {
-  id: string;
-  scheduleId: string;
-  workspaceId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "blocked";
-  createdAt: number;
-  updatedAt: number;
-  sessionId?: string;
-  approvalRefs: ScheduleApprovalRef[];
-}
+export type {
+  AgentSchedule,
+  AgentScheduleAction,
+  AgentScheduleClaimOptions,
+  AgentScheduleDispatchOptions,
+  AgentScheduleListRunOptions,
+  AgentScheduleRun,
+  AgentScheduleRunKind,
+  AgentScheduleRunStatus,
+  AgentScheduleRunSummary,
+  AgentScheduleStatus,
+  AgentScheduleSummary,
+  AgentScheduleTrigger,
+  ApprovalRefs,
+  CreateAgentScheduleRequest,
+} from "../agent-schedules.js";
 
 export interface ServerAgentExtensionAuditEventEnvelope {
   id: string;

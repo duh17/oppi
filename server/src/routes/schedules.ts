@@ -4,6 +4,7 @@ import { AgentLaunchService } from "../agent-launch-service.js";
 import type {
   AgentScheduleRun,
   AgentScheduleStore,
+  AgentScheduleSummary,
   CreateAgentScheduleRequest,
 } from "../agent-schedules.js";
 import { safeErrorMessage } from "../log-utils.js";
@@ -19,12 +20,15 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
   async function handleScheduleCollection(
     method: string,
+    url: URL,
     req: Parameters<RouteDispatcher>[0]["req"],
     res: ServerResponse,
   ): Promise<boolean> {
     if (method === "GET") {
       const schedules = getSchedules();
-      helpers.json(res, { schedules: schedules.listScheduleSummaries() });
+      helpers.json(res, {
+        schedules: filterScheduleSummaries(schedules.listScheduleSummaries(), url),
+      });
       return true;
     }
 
@@ -51,12 +55,8 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     res: ServerResponse,
   ): Promise<boolean> {
     if (method === "GET") {
-      const schedules = getSchedules();
-      const schedule = schedules.getScheduleSummary(scheduleId);
-      if (!schedule) {
-        helpers.error(res, 404, "Schedule not found");
-        return true;
-      }
+      const schedule = resolveScheduleSummary(scheduleId, res);
+      if (!schedule) return true;
       helpers.json(res, { schedule });
       return true;
     }
@@ -64,20 +64,22 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     if (method === "PATCH") {
       try {
         const schedules = getSchedules();
+        const schedule = resolveScheduleSummary(scheduleId, res);
+        if (!schedule) return true;
         const body = await helpers.parseBody<Partial<CreateAgentScheduleRequest>>(req);
         if (body.action || body.trigger || body.name) {
           validateScheduleTargets({
             name: body.name ?? "schedule",
             trigger: body.trigger ?? { type: "at", at: Date.now(), timeZone: "UTC" },
-            action: body.action ?? schedules.getSchedule(scheduleId)?.action,
+            action: body.action ?? schedules.getSchedule(schedule.id)?.action,
           });
         }
-        const schedule = schedules.updateSchedule(scheduleId, body);
-        if (!schedule) {
+        const updated = schedules.updateSchedule(schedule.id, body);
+        if (!updated) {
           helpers.error(res, 404, "Schedule not found");
           return true;
         }
-        helpers.json(res, { schedule: schedules.getScheduleSummary(schedule.id) });
+        helpers.json(res, { schedule: schedules.getScheduleSummary(updated.id) });
       } catch (error) {
         helpers.error(res, 400, safeErrorMessage(error));
       }
@@ -95,12 +97,14 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   ): boolean {
     if (method !== "POST") return false;
     const schedules = getSchedules();
+    const resolved = resolveScheduleSummary(scheduleId, res);
+    if (!resolved) return true;
     const schedule =
       action === "pause"
-        ? schedules.pauseSchedule(scheduleId)
+        ? schedules.pauseSchedule(resolved.id)
         : action === "resume"
-          ? schedules.resumeSchedule(scheduleId)
-          : schedules.archiveSchedule(scheduleId);
+          ? schedules.resumeSchedule(resolved.id)
+          : schedules.archiveSchedule(resolved.id);
     if (!schedule) {
       helpers.error(res, 404, "Schedule not found");
       return true;
@@ -118,17 +122,19 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     if (method !== "POST") return false;
     try {
       const schedules = getSchedules();
+      const resolved = resolveScheduleSummary(scheduleId, res);
+      if (!resolved) return true;
       const body = await helpers.parseBody<{ requestId?: unknown }>(req);
       if (typeof body.requestId !== "string" || body.requestId.trim().length === 0) {
         helpers.error(res, 400, "requestId is required");
         return true;
       }
-      const run = schedules.createManualRun(scheduleId, body.requestId);
+      const run = schedules.createManualRun(resolved.id, body.requestId);
       const dispatchable = run.status === "pending" || run.status === "claimed";
-      const completedRun = dispatchable ? await claimAndDispatchRun(scheduleId, run) : run;
+      const completedRun = dispatchable ? await claimAndDispatchRun(resolved.id, run) : run;
       helpers.json(
         res,
-        { run: summarizeRun(scheduleId, completedRun) },
+        { run: summarizeRun(resolved.id, completedRun) },
         run === completedRun ? 200 : 201,
       );
     } catch (error) {
@@ -186,6 +192,9 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           if (result.kind === "launch_in_progress") {
             throw new Error("launch_in_progress");
           }
+          if (action.prompt.trim().length > 0 && result.promptDispatch !== "delivered") {
+            throw new Error("prompt_not_sent");
+          }
           ctx.appEvents?.emitSessionCreated(result.createdSession);
           if (result.summarySession) ctx.appEvents?.emitSessionSummary(result.summarySession);
           return {
@@ -207,13 +216,13 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           return { sessionId: action.sessionId, promptDispatch: "delivered" };
         },
       },
-      now,
+      { leaseOwner: MANUAL_RUN_OWNER, now },
     );
   }
 
-  return async ({ method, path, req, res }) => {
+  return async ({ method, path, url, req, res }) => {
     if (path === "/schedules") {
-      return handleScheduleCollection(method, req, res);
+      return handleScheduleCollection(method, url, req, res);
     }
 
     const member = path.match(/^\/schedules\/([^/]+)$/);
@@ -224,13 +233,14 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const runs = path.match(/^\/schedules\/([^/]+)\/runs$/);
     if (runs?.[1]) {
       if (method !== "GET") return false;
-      const scheduleId = decodeURIComponent(runs[1]);
+      const schedule = resolveScheduleSummary(decodeURIComponent(runs[1]), res);
+      if (!schedule) return true;
       const schedules = getSchedules();
-      if (!schedules.getSchedule(scheduleId)) {
-        helpers.error(res, 404, "Schedule not found");
-        return true;
-      }
-      helpers.json(res, { runs: schedules.listRunSummaries(scheduleId) });
+      const limit = parsePositiveIntegerQueryParam(url.searchParams.get("limit"), res);
+      if (limit === null) return true;
+      helpers.json(res, {
+        runs: schedules.listRunSummaries(schedule.id, limit === undefined ? undefined : { limit }),
+      });
       return true;
     }
 
@@ -251,6 +261,60 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     return false;
   };
+
+  function filterScheduleSummaries(
+    schedules: AgentScheduleSummary[],
+    url: URL,
+  ): AgentScheduleSummary[] {
+    const workspaceId = url.searchParams.get("workspaceId")?.trim();
+    const sessionId = url.searchParams.get("sessionId")?.trim();
+    const status = url.searchParams.get("status")?.trim();
+    return schedules.filter((schedule) => {
+      if (workspaceId && schedule.action.workspaceId !== workspaceId) return false;
+      if (sessionId && schedule.action.sessionId !== sessionId) return false;
+      if (status && schedule.status !== status) return false;
+      return true;
+    });
+  }
+
+  function resolveScheduleSummary(
+    reference: string,
+    res: ServerResponse,
+  ): AgentScheduleSummary | null {
+    const schedules = getSchedules();
+    const direct = schedules.getScheduleSummary(reference);
+    if (direct) return direct;
+
+    const matches = schedules
+      .listScheduleSummaries()
+      .filter((schedule) => schedule.name === reference);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      helpers.error(res, 409, "Schedule name is ambiguous");
+      return null;
+    }
+    helpers.error(res, 404, "Schedule not found");
+    return null;
+  }
+
+  function parsePositiveIntegerQueryParam(
+    raw: string | null,
+    res: ServerResponse,
+  ): number | undefined | null {
+    if (raw === null) return undefined;
+    const value = raw.trim();
+    if (!value) return undefined;
+    if (!/^[1-9]\d*$/.test(value)) {
+      helpers.error(res, 400, "limit must be a positive integer");
+      return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) {
+      helpers.error(res, 400, "limit must be a positive integer");
+      return null;
+    }
+    return parsed;
+  }
 
   function validateScheduleTargets(request: Partial<CreateAgentScheduleRequest>): void {
     const action = request.action;
