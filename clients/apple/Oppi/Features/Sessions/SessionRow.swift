@@ -52,6 +52,24 @@ enum SessionModelSummaryBuilder {
     }
 }
 
+struct SessionWorktreeIndicatorPresentation: Equatable, Sendable {
+    let worktreeId: String
+    let accessibilityLabel: String
+
+    init?(session: Session) {
+        guard let worktreeId = Self.normalizedWorktreeId(session.worktreeId) else { return nil }
+        self.worktreeId = worktreeId
+        accessibilityLabel = "Worktree session"
+    }
+
+    private static func normalizedWorktreeId(_ rawWorktreeId: String?) -> String? {
+        guard let rawWorktreeId else { return nil }
+        let trimmed = rawWorktreeId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != WorkspaceWorktree.mainId else { return nil }
+        return trimmed
+    }
+}
+
 // MARK: - Session Row
 
 /// Unified session row used in both active and stopped sections.
@@ -59,7 +77,7 @@ enum SessionModelSummaryBuilder {
 /// Three-line layout:
 /// ```
 /// Title (bold if needs attention)                [time]
-/// model summary question prompt
+/// model summary [compactions] [worktree] question prompt
 /// ▬ 25% · $27.45 · [doc] 4  [status pill]
 /// ```
 ///
@@ -126,6 +144,10 @@ struct SessionRow: View {
         session.ephemeral == true
     }
 
+    private var worktreeIndicator: SessionWorktreeIndicatorPresentation? {
+        SessionWorktreeIndicatorPresentation(session: session)
+    }
+
     private var terminalMirrorIndicator: TerminalMirrorIndicatorPresentation? {
         TerminalMirrorIndicatorPresentation(session: session)
     }
@@ -184,6 +206,10 @@ struct SessionRow: View {
 
                 if displayCompactionCount > 0 {
                     compactionBadgeView(displayCompactionCount)
+                }
+
+                if let worktreeIndicator {
+                    worktreeIndicatorView(worktreeIndicator)
                 }
 
                 if let attentionText, !attentionText.isEmpty {
@@ -322,6 +348,16 @@ struct SessionRow: View {
         .foregroundStyle(.themeComment)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(SessionRowMetricsFormatting.compactionAccessibilityLabel(compactionCount))
+    }
+
+    @ViewBuilder
+    private func worktreeIndicatorView(_ presentation: SessionWorktreeIndicatorPresentation) -> some View {
+        Image(systemName: "arrow.triangle.branch")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.themePurple)
+            .frame(width: 16, height: 16)
+            .accessibilityLabel(presentation.accessibilityLabel)
+            .accessibilityValue(presentation.worktreeId)
     }
 
     private func changeSummaryColor(filesChanged: Int) -> Color {
