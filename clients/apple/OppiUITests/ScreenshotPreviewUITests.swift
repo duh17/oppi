@@ -238,10 +238,13 @@ final class ScreenshotPreviewUITests: XCTestCase {
         sleep(1)
         saveScreenshot(name: "chat-file-panel-portrait-all")
 
-        clientsDirectory.tap()
+        let trailingX = min(app.frame.maxX - 48, clientsDirectory.frame.maxX + 220)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: trailingX, dy: clientsDirectory.frame.midY))
+            .tap()
         XCTAssertTrue(
             app.buttons["fileBrowser.inlineBack"].waitForExistence(timeout: 3),
-            "Inline file browser directory should show a Back button"
+            "Tapping the trailing side of a folder row should navigate into the directory"
         )
         sleep(1)
         saveScreenshot(name: "chat-file-panel-portrait-all-back")
