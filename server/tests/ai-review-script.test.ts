@@ -71,7 +71,7 @@ describe("ai-review script", () => {
     expect(protocolCheck?.status).toBe("fail");
     expect(protocolCheck?.details).toEqual({
       touched: ["server/src/types/protocol.ts"],
-      missing: ["clients/apple/Oppi/Core/Models/ServerMessage.swift"],
+      missing: ["clients/apple/OppiCore/Models/ServerMessage.swift"],
     });
   });
 
@@ -85,13 +85,13 @@ describe("ai-review script", () => {
     expect(protocolCheck?.status).toBe("fail");
     expect(protocolCheck?.details).toEqual({
       touched: ["server/src/types/protocol.ts"],
-      missing: ["clients/apple/Oppi/Core/Models/ClientMessage.swift"],
+      missing: ["clients/apple/OppiCore/Models/ClientMessage.swift"],
     });
   });
 
   it("passes protocol lockstep for server-to-client changes with ServerMessage.swift", () => {
     const checks = buildChecks(
-      ["server/src/types/protocol.ts", "clients/apple/Oppi/Core/Models/ServerMessage.swift"],
+      ["server/src/types/protocol.ts", "clients/apple/OppiCore/Models/ServerMessage.swift"],
       [],
       "",
       { serverMessageChanged: true, clientMessageChanged: false },
@@ -102,12 +102,12 @@ describe("ai-review script", () => {
   });
 
   it("fails protocol lockstep for Apple protocol model changes without server contract", () => {
-    const checks = buildChecks(["clients/apple/Oppi/Core/Models/ServerMessage.swift"], [], "");
+    const checks = buildChecks(["clients/apple/OppiCore/Models/ServerMessage.swift"], [], "");
 
     const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
     expect(protocolCheck?.status).toBe("fail");
     expect(protocolCheck?.details).toEqual({
-      touched: ["clients/apple/Oppi/Core/Models/ServerMessage.swift"],
+      touched: ["clients/apple/OppiCore/Models/ServerMessage.swift"],
       missing: ["server/src/types/protocol.ts"],
     });
   });
