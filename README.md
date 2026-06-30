@@ -123,12 +123,21 @@ oppi config show             current config
 oppi config set <k> <v>      update config value
 oppi config validate         validate config file
 oppi token rotate            rotate owner auth token
+oppi agent list              list saved Agent definitions
+oppi agent create            create a saved Agent from flags or JSON
+oppi session create --agent  launch a saved Agent in a workspace
+oppi schedule list           list saved schedules
+oppi schedule create         create an at/every/cron schedule
+oppi schedule run <id>       run a schedule now
+oppi schedule runs <id>      inspect schedule run history
 oppi server install          install LaunchAgent (macOS)
 oppi server uninstall        remove LaunchAgent
 oppi server status           check background service
 oppi server restart          restart background server
 oppi server stop             stop background server
 ```
+
+Saved Agents and schedules are server CLI/API features. Saved Agents hold reusable Agent definitions; schedules store at/every/cron triggers plus an action and keep run history for manual or approved automatic runs.
 
 ## Mac app shell (experimental)
 

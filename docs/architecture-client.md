@@ -95,7 +95,7 @@ graph TD
 | `SessionStreamCoordinator`               | per-session stream continuations, queue sync, and focused transport lifecycle                                               | timeline rendering                    |
 | `SessionStreamCatchUpTracker`            | platform-neutral durable event sequence tracking for focused stream repair                                                  | transport opening or telemetry        |
 | `MessageSender`                          | command request IDs, acks, retries, command result waiters                                                                  | session list rendering                |
-| `ChatSessionManager`                     | per-session connection loop, cached/fresh trace loading, catch-up, reducer/coalescer ownership                              | global app-event routing              |
+| `ChatSessionManager`                     | per-session connection loop, cached/paged trace loading, catch-up, reducer/coalescer ownership                              | global app-event routing              |
 | `SessionStore`                           | full session cache, cold list projection, per-server partitions, unread completion state                                    | workspace catalog                     |
 | `WorkspaceStore`                         | workspace catalog, skill catalog, workspace summaries, per-server freshness                                                 | full session lifecycle                |
 | `AskRequestStore` and extension UI state | pending asks, sheet dialogs, status/widget/native-surface state                                                             | server-side permission policy         |
@@ -167,7 +167,7 @@ graph TD
   Stream[ServerConnection.streamSession]
   Manager[ChatSessionManager.connect]
   Cache[TimelineCache cached trace]
-  Fresh[APIClient.getWorkspaceSession full trace]
+  Fresh[APIClient.getWorkspaceSessionTracePage]
   Catchup[APIClient.getSessionEvents]
   Coalescer[DeltaCoalescer]
   Reducer[TimelineReducer]
@@ -184,7 +184,7 @@ graph TD
   Reducer --> UIKit
 ```
 
-The manager loads cached trace first for immediate display, then fetches fresh trace in the background. On first WebSocket connect it seeds sequence tracking from the server. On reconnect it uses focused-session catch-up; if the server ring cannot serve the gap, it schedules a full trace reload.
+The manager loads cached trace first for immediate display, then fetches the latest trace page in the background. On first WebSocket connect it seeds sequence tracking from the server. On reconnect it uses focused-session catch-up; if the server ring cannot serve the gap, it repairs from paged trace history instead of loading the entire trace at once.
 
 Stopped sessions load history without opening the focused WebSocket. Opening the WebSocket can resume server-owned execution, so explicit resume stays a user action.
 

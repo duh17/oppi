@@ -133,6 +133,17 @@ struct InviteBootstrapServiceTests {
 @Suite("WhatsNewManager")
 @MainActor
 struct WhatsNewManagerTests {
+    @Test func releaseIdentifierIncludesBuildNumber() {
+        #expect(
+            WhatsNewManager.releaseIdentifier(marketingVersion: "1.1.0", buildNumber: "40")
+                == "1.1.0 (40)"
+        )
+        #expect(
+            WhatsNewManager.releaseIdentifier(marketingVersion: "1.1.0", buildNumber: "")
+                == "1.1.0"
+        )
+    }
+
     @Test func markSeenSuppressesPromptForCurrentVersion() {
         let key = "\(AppIdentifiers.subsystem).whatsNew.lastSeenVersion"
         UserDefaults.standard.removeObject(forKey: key)

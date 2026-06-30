@@ -1,6 +1,6 @@
 # Oppi architecture
 
-Oppi is an Apple client plus an Oppi server for viewing, prompting, and steering Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror a live terminal-owned Pi TUI session through the Oppi Mirror extension, and exposes HTTP plus scoped WebSocket transports to Apple clients and the mirror bridge.
+Oppi is an Apple client plus an Oppi server for viewing, prompting, and steering Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror a live terminal-owned Pi TUI session through the Oppi Mirror extension, stores saved Agent and schedule state, and exposes HTTP plus scoped WebSocket transports to Apple clients and the mirror bridge.
 
 ## Audience and scope
 
@@ -15,7 +15,7 @@ This page does not document every source file or operational runbook.
 
 ## Runtime topology
 
-The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing session projection. Execution can be owned either by the server's Pi SDK runtime or by a terminal Pi TUI process connected through the mirror extension.
+The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, runtime configuration, saved Agent and schedule state, and the mobile-facing session projection. Execution can be owned either by the server's Pi SDK runtime or by a terminal Pi TUI process connected through the mirror extension.
 
 ```mermaid
 graph TD
@@ -34,6 +34,7 @@ graph TD
     Mirror[Pi TUI mirror runtime]
     Bridge[Mirror bridge WebSocket]
     ExtensionUI[Pi extension UI relay]
+    Automations[Saved Agents and schedule runner]
     Storage[SQLite session store and local-session catalog]
     Project[Shared Pi session projection]
     Pi[Pi SDK AgentSession]
@@ -48,11 +49,13 @@ graph TD
   App --> HTTP
   App --> Streams
   HTTP --> Router
+  HTTP --> Automations
   HTTP --> Storage
   Streams --> Router
   Router --> Sessions
   Router --> Mirror
   Bridge --> Mirror
+  Automations --> Sessions
   Sessions --> ExtensionUI
   Sessions --> Pi
   Sessions --> Project
@@ -102,6 +105,7 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 | Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                          |
 | Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                  |
 | Workspace quick actions and review comments | HTTP                        | Prompt-template options, selected-file preparation, review comments                    |
+| Saved Agents and schedules                  | HTTP                        | Agent definitions, Agent launches, schedule definitions, manual runs, run history      |
 | Global app event stream                     | Server-to-client WebSocket  | Session row updates, extension UI attention, workspace invalidation                    |
 | Focused session stream                      | Bidirectional WebSocket     | Timeline events, prompts, commands, queue sync, focused session summaries              |
 | Focused session catch-up                    | HTTP GET                    | Missed durable focused-session events after reconnect                                  |
@@ -149,7 +153,7 @@ graph TD
   Reduce --> Render
 ```
 
-Durable session events get per-session sequence numbers and can be replayed through focused-session catch-up. High-frequency deltas such as token text, thinking deltas, and tool output are hot live traffic. If a reconnect misses them, the client resumes the live stream or reloads the full trace.
+Durable session events get per-session sequence numbers and can be replayed through focused-session catch-up. High-frequency deltas such as token text, thinking deltas, and tool output are hot live traffic. If a reconnect misses them, the client resumes the live stream or repairs from paged trace history instead of loading the entire trace at once.
 
 ## Cross-system invariants
 
@@ -163,7 +167,8 @@ Durable session events get per-session sequence numbers and can be replayed thro
 - The global app event stream is store-level only. It must not carry timeline deltas, full state, queue state, command results, dictation/audio, or raw `GitStatus` payloads.
 - Reconnect repair for the global app event stream comes from HTTP snapshots, not app-event replay.
 - File previews, attachments, and media playback stay on authenticated HTTP routes with byte-range support.
-- Workspace quick-action discovery, selected-file prompt-template preparation, and review comments stay on HTTP routes. Only the created or focused session uses the session stream.
+- Workspace quick-action discovery, selected-file prompt-template preparation, review comments, saved Agents, and schedules stay on HTTP routes. Only the created or focused session uses the session stream.
+- Automatic schedule runs use the server schedule runner and managed-session launch path; they do not create a separate runtime adapter.
 - Shared store updates apply exactly once per inbound live session event on the client.
 - Reducers and coalescers stay UI-framework-free. UIKit-specific rendering lives under the timeline package.
 - Imported TUI sessions remain resumable without mutating original JSONL traces.

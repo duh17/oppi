@@ -15,6 +15,7 @@ The server owns:
 - authenticated HTTP and WebSocket boundaries,
 - workspace CRUD, workspace file access, review comments, quick actions, and provider auth,
 - managed Pi SDK session lifecycle,
+- saved Agent definitions and schedule-runner state,
 - terminal Pi TUI mirror registration and command proxying,
 - session event projection into durable sequence numbers, summaries, media, search, and SQLite read models,
 - extension UI relay and attention state,
@@ -45,6 +46,8 @@ graph TD
     Lists[SessionListService]
     Trace[SessionTraceService]
     PiModel[PiModelAuthService]
+    AgentLaunch[AgentLaunchService]
+    ScheduleRunner[AgentScheduleRunner]
   end
 
   subgraph Runtime[Session runtime]
@@ -76,6 +79,8 @@ graph TD
   REST --> Lists
   REST --> Trace
   REST --> AppEvents
+  REST --> AgentLaunch
+  ScheduleRunner --> AgentLaunch
   Live --> Lifecycle
   Lifecycle --> Router
   Lifecycle --> Sessions
@@ -92,6 +97,8 @@ graph TD
   Flow --> Project
   Mirror --> Project
   Flow --> Pi
+  AgentLaunch --> Sessions
+  AgentLaunch --> AppEvents
   Sessions --> AppEvents
   Mirror --> AppEvents
   Sessions --> ExtensionRelay
@@ -108,6 +115,8 @@ graph TD
 | `session-list-service.ts`                       | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
 | `session-trace-service.ts`                      | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
 | `pi-model-auth-service.ts`                      | Pi model/auth compatibility calls for title generation and token pricing                                             | session lifecycle or route behavior        |
+| `agent-launch-service.ts`                       | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
+| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, run history, and approval provenance | Apple UI routing                           |
 | `app-event-stream.ts`                           | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
 | `stream.ts` + `ws-message-handler.ts`           | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
 | `runtime-router.ts`                             | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
@@ -122,8 +131,10 @@ graph TD
 `RouteHandler` owns route dispatch across domain files:
 
 - `routes/identity.ts` — user, server info, pairing, stats, runtime status, provider-auth helpers.
-- `routes/workspaces.ts` — workspace catalog, CRUD, Git status, quick actions, review comments.
+- `routes/workspaces.ts` — workspace catalog, CRUD, Git status, worktrees, quick actions, review comments.
 - `routes/sessions.ts` — session HTTP boundary for workspace lists, create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
+- `routes/agents.ts` — saved Agent definitions and saved-Agent session launches.
+- `routes/schedules.ts` — schedule CRUD, manual runs, run history, pause/resume/archive, and route-owned approval provenance.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.
@@ -164,6 +175,12 @@ A stopped, disconnected mirror session with a canonical session file can be prom
 
 `sdk-backend.ts` wraps Pi's `AgentSession`. It resolves workspace cwd, configures sandbox tools when requested, binds extensions through `SdkUiBridge`, injects session attachment helpers, forwards SDK commands, and emits Pi events back into the session projection pipeline.
 
+## Saved Agents and schedules
+
+Saved Agent routes persist reusable definitions. Launch-time inputs such as workspace, worktree, prompt, model override, and session name flow through `AgentLaunchService`, which owns idempotency, launch recovery, and prompt dispatch into managed sessions.
+
+Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches approved automatic runs through the same launch hooks used by manual schedule runs. Automatic runs fail closed unless the schedule action carries a live accepted approval reference; the schedule store records approval provenance in the extension-audit table.
+
 ## Terminal mirror runtime
 
 `PiTuiMirrorRuntime` owns `/mirror/v1/bridge` and implements the same `AgentRuntimeTransport` interface as the managed runtime. It registers terminal bridges, resolves the workspace, coalesces sessions by Pi identity, handles takeover confirmation, forwards remote commands, proxies extension UI, mirrors queue state, and projects terminal Pi events through the shared session event pipeline.
@@ -194,9 +211,9 @@ graph TD
 
 The recent lane is time-bounded with `sinceMs` and `untilMs`. Older stopped sessions and importable local sessions are summarized into archive buckets and loaded lazily.
 
-`SessionTraceService` owns trace and file-read policy for session detail, recovery, tool output, overall diffs, changed-file summaries, and raw changed-file previews.
+`SessionTraceService` owns trace paging, outline snapshots, recovery, tool output lookup, overall diffs, changed-file summaries, and raw changed-file previews.
 
-Full traces are loaded only for session detail and recovery paths:
+Session detail uses bounded trace pages and lightweight outline data where possible. Full trace reads remain behind recovery and compatibility paths:
 
 - `readSessionTrace(...)` for server-owned persisted traces,
 - `readSessionTraceFromFile(...)` and `readSessionTraceFromFiles(...)` for Pi JSONL files,
@@ -264,6 +281,8 @@ Keep these high-churn modules small and explicit:
 | Workspace home summaries                    | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                                              |
 | Workspace detail recent list                | `server/src/routes/sessions.ts`, `server/src/session-list-service.ts`, `server/src/local-sessions.ts`                                                                        |
 | Session lifecycle HTTP actions              | `server/src/routes/sessions.ts`, `server/src/session-lifecycle-service.ts`                                                                                                   |
+| Saved Agent definitions and launches        | `server/src/routes/agents.ts`, `server/src/agent-definitions.ts`, `server/src/agent-launch-service.ts`                                                                       |
+| Schedule definitions and automatic runs     | `server/src/routes/schedules.ts`, `server/src/agent-schedules.ts`, `server/src/agent-schedule-runner.ts`, `server/src/agent-schedule-dispatch.ts`, `server/src/agent-schedule-cron.ts` |
 | Session trace, diff, and changed-file reads | `server/src/routes/sessions.ts`, `server/src/routes/session-files.ts`, `server/src/session-trace-service.ts`                                                                 |
 | Focused session stream                      | `server/src/stream.ts`, `server/src/ws-message-handler.ts`                                                                                                                   |
 | Global app event stream                     | `server/src/app-event-stream.ts`, `server/src/session-broadcast.ts`                                                                                                          |

@@ -160,12 +160,25 @@ oppi config get <key>        # get a config value, including nested paths
 oppi config set <key> <val>  # update config, e.g. asr.sttEndpoint
 oppi config validate         # validate config file
 oppi token rotate            # rotate owner bearer token
+oppi agent list              # list saved Agent definitions
+oppi agent create            # create a saved Agent from flags or JSON
+oppi session create --agent  # launch a saved Agent into a workspace
+oppi schedule list           # list saved schedules
+oppi schedule create         # create an at/every/cron schedule
+oppi schedule run <id>       # run a schedule now
+oppi schedule runs <id>      # inspect schedule run history
 oppi server install          # install LaunchAgent (macOS)
 oppi server uninstall        # remove LaunchAgent
 oppi server status           # check background service
 oppi server restart          # restart background server
 oppi server stop             # stop background server
 ```
+
+### Saved Agents and schedules
+
+Saved Agents store reusable Agent definitions. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
+
+Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs and records run history. Automatic runs require accepted approval references; pass `--approval-ref <ref>` when creating a non-interactive schedule that is allowed to run automatically.
 
 ### Install and update modes
 

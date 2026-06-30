@@ -1,22 +1,38 @@
 import SwiftUI
 
-/// Tracks which app version the user has seen the What's New screen for.
+/// Tracks which app build the user has seen the What's New screen for.
 enum WhatsNewManager {
     private static let lastSeenVersionKey = "\(AppIdentifiers.subsystem).whatsNew.lastSeenVersion"
 
-    /// Current marketing version from the bundle.
+    /// Current marketing version plus build number from the bundle.
     static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+        releaseIdentifier(
+            marketingVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        )
+    }
+
+    static func releaseIdentifier(marketingVersion: String?, buildNumber: String?) -> String {
+        let version = marketingVersion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = buildNumber?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanVersion: String
+        if let version, !version.isEmpty {
+            cleanVersion = version
+        } else {
+            cleanVersion = "1.0.0"
+        }
+        guard let build, !build.isEmpty else { return cleanVersion }
+        return "\(cleanVersion) (\(build))"
     }
 
     /// Whether the What's New screen should be shown.
-    /// True when the user has never seen it for the current marketing version.
+    /// True when the user has never seen it for the current app build.
     static var shouldShow: Bool {
         let lastSeen = UserDefaults.standard.string(forKey: lastSeenVersionKey)
         return lastSeen != currentVersion
     }
 
-    /// Mark the current version as seen.
+    /// Mark the current app build as seen.
     static func markSeen() {
         UserDefaults.standard.set(currentVersion, forKey: lastSeenVersionKey)
     }
@@ -56,7 +72,7 @@ struct WhatsNewView: View {
             icon: "rectangle.stack",
             iconColor: .themePurple,
             title: String(localized: "Extension Widget Cleanup"),
-            description: String(localized: "Widgets and status rows group together, replay after reconnects, and render styled terminal output more clearly.")
+            description: String(localized: "Widgets, status rows, and working messages group together, replay after reconnects, and render styled terminal output more clearly.")
         ),
         WhatsNewFeature(
             icon: "photo.on.rectangle.angled",

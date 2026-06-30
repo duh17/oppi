@@ -45,9 +45,9 @@ No unreleased public changes yet.
 ### Notes
 
 - Release prep for iOS TestFlight build 40 and npm `oppi-server@0.43.0`.
-- This release focuses on a first pass at worktree-aware sessions, lower-cost long-session trace loading, extension widget rendering, Markdown/Mermaid reliability, and a Pi runtime refresh to `0.80.2`.
-- Saved-agent and schedule management foundations are included for server/CLI work, but native Apple management screens are gated off in build 40.
-- `oppi-mirror` package metadata remains `0.42.0`; prepare a separate Pi extension publish if mirror extension code changes need to ship through npm.
+- This release focuses on a first pass at worktree-aware sessions, lower-resource long-session trace loading, extension widget and working-message rendering, Markdown/Mermaid reliability, and a Pi runtime refresh to `0.80.2`.
+- Saved-agent and schedule foundations are included for server/CLI work, including approved automatic schedule runs. Native Apple management screens are gated off in build 40.
+- This release also prepares `oppi-mirror@0.43.0` so mirrored working-message forwarding can ship through the Pi extension package.
 
 ### Added
 
@@ -55,17 +55,19 @@ No unreleased public changes yet.
 - **Client/Server:** Added trace paging and outline data so very long session histories can load in chunks instead of loading the full trace at once.
 - **Client:** Added separate Session Outline and Session Files panels, inline file-browser back controls, optional haptic feedback controls, the Icon Composer app icon, and an Oppi docs prompt toggle.
 - **Client:** Expanded Mermaid rendering coverage for flowcharts, sequence diagrams, state diagrams, mindmaps, and Gantt charts.
-- **Server:** Added saved-agent, schedule, and commit-review launch foundations for CLI/API use. Native Apple management screens are hidden in build 40 until they are ready for TestFlight.
+- **Mirror extension:** Added forwarding for extension working messages, working indicators, hidden-thinking labels, and tool-expanded state from terminal Pi sessions.
+- **Server:** Added saved-agent, schedule, background schedule-runner, and commit-review launch foundations for CLI/API use. Native Apple management screens are hidden in build 40 until they are ready for TestFlight.
 
 ### Changed
 
 - **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.80.2`, `@earendil-works/pi-ai@0.80.2`, and `@earendil-works/pi-tui@0.80.2`.
-- **Client/Server:** Extension widget/status UI now projects working status natively, renders styled terminal widgets, groups widgets into strips, and throttles widget snapshots.
+- **Server:** Saved-agent updates can clear optional description, instruction, resource, and session-default fields with `null`.
+- **Client/Server:** Extension widget/status UI now projects working status, extension-provided working messages, and working indicators natively; renders styled terminal widgets; groups widgets into strips; and throttles widget snapshots.
 - **Client:** Stopped workspace previews stay hidden so the workspace home screen focuses on active or actionable sessions.
 
 ### Fixed
 
-- **Client:** Fixed read-image attachments, deferred SVG markdown images, ordered markdown lists around code blocks, wrapped detached code blocks, review-comment markdown surfaces, and review file chrome.
+- **Client:** Fixed read-image attachments, deferred SVG markdown images, ordered markdown lists around code blocks, wrapped detached code blocks, review-comment markdown surfaces, review file chrome, and What's New tracking for TestFlight builds that share a marketing version.
 - **Client/Server:** Fixed persistent mirror UI replay after reconnect and reduced noisy turn-lifecycle info logs.
 - **Server:** Fixed active trace indexing for session search and tightened session cleanup boundaries.
 - **Client:** Fixed nearby-pairing invite delivery acknowledgement before the pairing flow advances.
@@ -74,7 +76,7 @@ No unreleased public changes yet.
 ### Migration notes
 
 - **Server:** Update npm installs with `npm install -g oppi-server@0.43.0` after publish. App-managed runtimes update through the Oppi app bundle, not `oppi update`.
-- **Mirror extension:** No npm package update is included for `oppi-mirror`; keep using `oppi-mirror@0.42.0` unless a separate extension release is prepared.
+- **Mirror extension:** Install or refresh `oppi-mirror@0.43.0` after publish, then use `/reload` in any already-running interactive Pi session.
 
 ## [0.42.0] - 2026-06-22
 
