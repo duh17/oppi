@@ -224,8 +224,7 @@ class E2ETestCase: XCTestCase {
             if workspaceList.waitForExistence(timeout: 0.5) {
                 return
             }
-            let backButton = app.navigationBars.buttons.firstMatch
-            guard backButton.exists else { break }
+            guard let backButton = navigationBackButton() else { break }
             tap(backButton, named: "navigation back button", timeout: 1)
         }
 
@@ -285,9 +284,9 @@ class E2ETestCase: XCTestCase {
             return
         }
 
-        // Might be inside a chat session — try the back button
-        let backButton = app.navigationBars.buttons.firstMatch
-        if backButton.exists && backButton.isHittable {
+        // Might be inside a chat session — try the explicit chat/back button before
+        // falling back to standard navigation back buttons.
+        if let backButton = navigationBackButton(), backButton.isHittable {
             tap(backButton, named: "navigation back button")
             if newSessionButton.waitForExistence(timeout: 10) {
                 return
@@ -428,8 +427,7 @@ class E2ETestCase: XCTestCase {
             return
         }
 
-        let backButton = app.navigationBars.buttons.firstMatch
-        if backButton.exists && backButton.isHittable {
+        if let backButton = navigationBackButton(), backButton.isHittable {
             tap(backButton, named: "navigation back button")
         }
 
@@ -437,6 +435,19 @@ class E2ETestCase: XCTestCase {
             sessionList.waitForExistence(timeout: 10),
             "Session list did not reappear after navigating back"
         )
+    }
+
+    private func navigationBackButton() -> XCUIElement? {
+        let candidates = [
+            app.buttons["chat.toolbar.back"],
+            app.navigationBars.buttons["BackButton"],
+            app.navigationBars.buttons["Back"],
+        ]
+        if let match = candidates.first(where: { $0.exists }) {
+            return match
+        }
+        let standardBack = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@", "Back")).firstMatch
+        return standardBack.exists ? standardBack : nil
     }
 
     // MARK: - Messaging
