@@ -108,7 +108,17 @@ Use the Oppi workflow wrapper. It starts a paired E2E server, writes invite/devi
 # Focus one E2E test
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
   --only-testing OppiE2ETests/WebSocketLifecycleE2ETests/testNavigationKeepsWorkspaceListOnHTTPAndUsesBoundSessionStreams
+
+# Release-critical smoke group: chat round trip, workspace CRUD, focused stream binding
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group smoke
+
+# Slower follow-up groups for release candidates or nightly coverage
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group regression
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group media --record-video=always
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group screenshot
 ```
+
+`sim-test` writes E2E run artifacts under `.internal/reports/e2e-runs/<timestamp>/` by default. Set `E2E_ARTIFACT_DIR` or `E2E_DOCKER_LOG_DIR` to an absolute or repo-relative path when a release lane needs deterministic artifact collection. `OPPI_E2E_GROUP` and the release wrapper's `OPPI_RELEASE_E2E_GROUP` select the same groups; `release-smoke` maps to `smoke`, and `full-regression` keeps broad `OppiE2ETests` coverage while release wrappers may add explicit non-blocking lab skips.
 
 Prerequisites:
 

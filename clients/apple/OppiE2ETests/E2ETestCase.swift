@@ -343,6 +343,28 @@ class E2ETestCase: XCTestCase {
         }
     }
 
+    func revealWorkspace(named workspaceName: String, timeout: TimeInterval = 20) -> Bool {
+        let workspaceList = app.collectionViews["workspace.list"]
+        guard workspaceList.waitForExistence(timeout: min(5, timeout)) else { return false }
+
+        let title = app.staticTexts[workspaceName]
+        let openButton = app.buttons["workspace.open.\(workspaceName)"]
+        if title.exists || openButton.exists { return true }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        for _ in 0..<3 where Date() < deadline {
+            workspaceList.swipeDown()
+            if title.waitForExistence(timeout: 0.5) || openButton.exists { return true }
+        }
+
+        while Date() < deadline {
+            if title.exists || openButton.exists { return true }
+            workspaceList.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return title.exists || openButton.exists
+    }
+
     // MARK: - Session Helpers
 
     /// Creates a new session by tapping the + button and waits for the app to open it.
@@ -404,11 +426,17 @@ class E2ETestCase: XCTestCase {
             row.waitForExistence(timeout: 10),
             "Session row \(sessionId) did not appear"
         )
-        tap(row, named: "session row \(sessionId)")
 
-        let chatInput = app.textViews["chat.input"]
+        for attempt in 0..<2 {
+            tap(row, named: "session row \(sessionId)")
+            if waitForChatSessionSurface(in: app, timeout: attempt == 0 ? 8 : 30) {
+                return
+            }
+            guard app.collectionViews["workspace.sessionList"].exists else { break }
+        }
+
         XCTAssertTrue(
-            chatInput.waitForExistence(timeout: 30),
+            waitForChatSessionSurface(in: app, timeout: 5),
             "Chat input did not appear after entering session \(sessionId)"
         )
     }
