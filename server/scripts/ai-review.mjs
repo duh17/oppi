@@ -15,8 +15,8 @@ export { readImportsFromFile } from "./architecture-layer-rules.mjs";
 
 const SERVER_PROTOCOL_TYPES = "server/src/types/protocol.ts";
 const APPLE_PROTOCOL_FILES = [
-  "clients/apple/Oppi/Core/Models/ServerMessage.swift",
-  "clients/apple/Oppi/Core/Models/ClientMessage.swift",
+  "clients/apple/OppiCore/Models/ServerMessage.swift",
+  "clients/apple/OppiCore/Models/ClientMessage.swift",
 ];
 const REVIEW_INFRA_FILES = new Set([
   "server/scripts/ai-review.mjs",
@@ -145,8 +145,8 @@ function checkProtocolLockstep(files, context) {
 
   if (serverTypesTouched && serverWireChanged) {
     const requiredAppleFiles = [];
-    if (serverMessageChanged) requiredAppleFiles.push("clients/apple/Oppi/Core/Models/ServerMessage.swift");
-    if (clientMessageChanged) requiredAppleFiles.push("clients/apple/Oppi/Core/Models/ClientMessage.swift");
+    if (serverMessageChanged) requiredAppleFiles.push("clients/apple/OppiCore/Models/ServerMessage.swift");
+    if (clientMessageChanged) requiredAppleFiles.push("clients/apple/OppiCore/Models/ClientMessage.swift");
     const missing = requiredAppleFiles.filter((file) => !files.includes(file));
     if (missing.length > 0) {
       return fail("protocol-lockstep", "server wire contract changed without Apple protocol lockstep", {
