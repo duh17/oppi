@@ -147,6 +147,23 @@ describe("agent routes", () => {
         description: "Reviews risky diffs",
       });
 
+      const clearRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${created.id}`,
+        url: new URL(`http://localhost/agents/${created.id}`),
+        req: makeRequest({
+          description: null,
+          instructions: null,
+          sessionDefaults: { model: null, thinkingLevel: null },
+        }) as never,
+        res: clearRes as never,
+      });
+      const cleared = JSON.parse(clearRes.body).agent as { definition: Record<string, unknown> };
+      expect(cleared.definition).not.toHaveProperty("description");
+      expect(cleared.definition).not.toHaveProperty("instructions");
+      expect(cleared.definition.sessionDefaults).toEqual({});
+
       const archiveRes = makeResponse();
       await dispatch({
         method: "DELETE",
