@@ -291,7 +291,7 @@ final class SessionStore {
     /// from summaries, not timeline-frequency live events.
     @discardableResult
     func applySummary(_ summary: SessionSummary) -> Bool {
-        let didMutateSession = upsertMerged(summary.session)
+        let didMutateSession = upsertMerged(summary.session, preserveNewerLifecycle: true)
         let didMutateAttention = applyListAttentionCounts(from: [summary])
         return didMutateSession || didMutateAttention
     }
@@ -299,7 +299,18 @@ final class SessionStore {
     /// Insert or update several session summaries as a single store mutation.
     @discardableResult
     func upsertManySummaries(_ summaries: [SessionSummary]) -> Bool {
-        let didMutateSessions = upsertMany(summaries.map(\.session))
+        var list = sessions
+        var didMutateSessions = false
+        for summary in summaries {
+            didMutateSessions = merge(
+                summary.session,
+                into: &list,
+                preserveNewerLifecycle: true
+            ) || didMutateSessions
+        }
+        if didMutateSessions {
+            setActiveSessionsPreservingListProjection(list)
+        }
         let didMutateAttention = applyListAttentionCounts(from: summaries)
         return didMutateSessions || didMutateAttention
     }
@@ -540,18 +551,27 @@ final class SessionStore {
         return true
     }
 
-    private func upsertMerged(_ session: Session) -> Bool {
+    private func upsertMerged(_ session: Session, preserveNewerLifecycle: Bool = false) -> Bool {
         var list = sessions
-        guard merge(session, into: &list) else { return false }
+        guard merge(session, into: &list, preserveNewerLifecycle: preserveNewerLifecycle) else { return false }
         setActiveSessionsPreservingListProjection(list)
         return true
     }
 
-    private func merge(_ session: Session, into list: inout [Session]) -> Bool {
+    private func merge(
+        _ session: Session,
+        into list: inout [Session],
+        preserveNewerLifecycle: Bool = false
+    ) -> Bool {
         guard !isDeletedSessionTombstoned(session.id) else { return false }
 
         if let idx = list.firstIndex(where: { $0.id == session.id }) {
-            let merged = mergePreservingContext(existing: list[idx], incoming: session)
+            var merged = mergePreservingContext(existing: list[idx], incoming: session)
+            if preserveNewerLifecycle, list[idx].lastActivity > session.lastActivity {
+                merged.status = list[idx].status
+                merged.currentTurnStartedAt = list[idx].currentTurnStartedAt
+                merged.lastActivity = list[idx].lastActivity
+            }
             guard list[idx] != merged else { return false }
             list[idx] = merged
         } else {

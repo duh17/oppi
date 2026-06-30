@@ -347,6 +347,60 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.contextTokens == 99)
     }
 
+    @Test func staleSummaryDoesNotRegressReadySessionToBusy() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let completedAt = Date(timeIntervalSince1970: 200)
+        let turnStartedAt = Date(timeIntervalSince1970: 100)
+
+        store.upsert(makeTestSession(
+            id: "s1",
+            status: .ready,
+            lastActivity: completedAt,
+            currentTurnStartedAt: nil
+        ))
+
+        let staleBusy = makeTestSession(
+            id: "s1",
+            status: .busy,
+            lastActivity: turnStartedAt,
+            currentTurnStartedAt: turnStartedAt
+        )
+        let changed = store.applySummary(SessionSummary(from: staleBusy))
+
+        #expect(!changed)
+        #expect(store.session(id: "s1")?.status == .ready)
+        #expect(store.session(id: "s1")?.currentTurnStartedAt == nil)
+        #expect(store.session(id: "s1")?.lastActivity == completedAt)
+    }
+
+    @Test func staleSummaryDoesNotRegressBusySessionToReady() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let turnStartedAt = Date(timeIntervalSince1970: 200)
+        let staleAt = Date(timeIntervalSince1970: 100)
+
+        store.upsert(makeTestSession(
+            id: "s1",
+            status: .busy,
+            lastActivity: turnStartedAt,
+            currentTurnStartedAt: turnStartedAt
+        ))
+
+        let staleReady = makeTestSession(
+            id: "s1",
+            status: .ready,
+            lastActivity: staleAt,
+            currentTurnStartedAt: nil
+        )
+        let changed = store.applySummary(SessionSummary(from: staleReady))
+
+        #expect(!changed)
+        #expect(store.session(id: "s1")?.status == .busy)
+        #expect(store.session(id: "s1")?.currentTurnStartedAt == turnStartedAt)
+        #expect(store.session(id: "s1")?.lastActivity == turnStartedAt)
+    }
+
     // MARK: - Remove
 
     @Test func removeClearsActiveSessionId() {
