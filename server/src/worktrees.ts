@@ -14,6 +14,10 @@ type WorktreePorcelainRecord = {
   branch: string | null;
 };
 
+type ListWorkspaceWorktreesOptions = {
+  sessionCountsByWorktreeId?: ReadonlyMap<string, number>;
+};
+
 function safeRealpath(path: string): string {
   try {
     return realpathSync(resolve(path));
@@ -123,7 +127,10 @@ function fallbackMainWorktree(path: string, isGitRepo: boolean): WorkspaceWorktr
   };
 }
 
-export function listWorkspaceWorktrees(workspace: Workspace): WorkspaceWorktree[] {
+export function listWorkspaceWorktrees(
+  workspace: Workspace,
+  options: ListWorkspaceWorktreesOptions = {},
+): WorkspaceWorktree[] {
   const hostMount = workspace.hostMount?.trim();
   if (!hostMount) return [];
 
@@ -133,13 +140,13 @@ export function listWorkspaceWorktrees(workspace: Workspace): WorkspaceWorktree[
   const workspacePath = safeRealpath(hostPath);
   const rootOut = runGit(workspacePath, ["rev-parse", "--show-toplevel"]);
   if (!rootOut) {
-    return [fallbackMainWorktree(workspacePath, false)];
+    return withSessionCounts([fallbackMainWorktree(workspacePath, false)], options);
   }
 
   const workspaceRoot = safeRealpath(rootOut.trim());
   const raw = runGit(workspaceRoot, ["worktree", "list", "--porcelain"]);
   if (!raw) {
-    return [fallbackMainWorktree(workspaceRoot, true)];
+    return withSessionCounts([fallbackMainWorktree(workspaceRoot, true)], options);
   }
 
   const managedRoot = resolve(workspaceRoot, OPPI_WORKTREES_DIR);
@@ -166,10 +173,23 @@ export function listWorkspaceWorktrees(workspace: Workspace): WorkspaceWorktree[
     withIds.unshift(fallbackMainWorktree(workspaceRoot, true));
   }
 
-  return withIds.sort((lhs, rhs) => {
+  const sorted = withIds.sort((lhs, rhs) => {
     if (lhs.isMain !== rhs.isMain) return lhs.isMain ? -1 : 1;
     return lhs.name.localeCompare(rhs.name);
   });
+  return withSessionCounts(sorted, options);
+}
+
+function withSessionCounts(
+  worktrees: WorkspaceWorktree[],
+  options: ListWorkspaceWorktreesOptions,
+): WorkspaceWorktree[] {
+  const counts = options.sessionCountsByWorktreeId;
+  if (!counts) return worktrees;
+  return worktrees.map((worktree) => ({
+    ...worktree,
+    sessionCount: counts.get(worktree.id) ?? 0,
+  }));
 }
 
 export function resolveWorkspaceWorktree(

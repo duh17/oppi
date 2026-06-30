@@ -13,4 +13,6 @@ export interface WorkspaceWorktree {
   isMain: boolean;
   /** True when the checkout came from git worktree discovery. */
   isGitRepo: boolean;
+  /** Managed Oppi sessions assigned to this checkout, when requested by the caller. */
+  sessionCount?: number;
 }

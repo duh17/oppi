@@ -267,7 +267,8 @@ struct WorkspaceDetailView: View {
                     branch: nil,
                     headSha: nil,
                     isMain: true,
-                    isGitRepo: false
+                    isGitRepo: false,
+                    sessionCount: nil
                 ),
             ]
         }
@@ -279,9 +280,11 @@ struct WorkspaceDetailView: View {
     }
 
     private func worktreeMenuTitle(for worktree: WorkspaceWorktree) -> String {
-        if worktree.isMain { return "Main" }
-        if let branch = worktree.branch, !branch.isEmpty { return branch }
-        return worktree.name
+        let title = WorkspaceWorktreeMenuFormatting.title(for: worktree)
+        guard let sessionCount = WorkspaceWorktreeMenuFormatting.sessionCountText(for: worktree) else {
+            return title
+        }
+        return "\(title) · \(sessionCount)"
     }
 
     @ViewBuilder
@@ -299,6 +302,7 @@ struct WorkspaceDetailView: View {
                                 Image(systemName: selectedWorktreeId == worktree.id ? "checkmark" : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted")
                             }
                         }
+                        .accessibilityLabel(WorkspaceWorktreeMenuFormatting.accessibilityLabel(for: worktree))
                         .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
                     }
                 }
