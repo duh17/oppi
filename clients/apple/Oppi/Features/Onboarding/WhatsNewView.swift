@@ -41,34 +41,28 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "puzzlepiece.extension",
-            iconColor: .themePurple,
-            title: String(localized: "More Reliable Extension Prompts"),
-            description: String(localized: "Ask cards, widgets, status panels, and permission prompts stay attached to the right session and replay cleanly after reconnects.")
-        ),
-        WhatsNewFeature(
-            icon: "terminal",
+            icon: "arrow.triangle.branch",
             iconColor: .themeGreen,
-            title: String(localized: "Better Mirrored Pi Sessions"),
-            description: String(localized: "Mirrored terminal sessions reconnect more reliably, keep timestamps steady, and recover from reload, compaction, and bridge reuse cases.")
+            title: String(localized: "First Worktree Support"),
+            description: String(localized: "Selected worktrees now appear on session rows, and workspace quick actions use that worktree when starting a run.")
         ),
         WhatsNewFeature(
             icon: "doc.text.magnifyingglass",
             iconColor: .themeOrange,
-            title: String(localized: "Smoother Long Output"),
-            description: String(localized: "Large markdown, code, diff, and terminal output now use bounded timeline caches and fullscreen readers so busy sessions keep scrolling.")
+            title: String(localized: "Lighter Long Session Loading"),
+            description: String(localized: "Very long or goal-based sessions load trace history in chunks. Session Outline and Session Files now live in separate panels.")
         ),
         WhatsNewFeature(
-            icon: "square.and.arrow.up",
+            icon: "rectangle.stack",
+            iconColor: .themePurple,
+            title: String(localized: "Extension Widget Cleanup"),
+            description: String(localized: "Widgets and status rows group together, replay after reconnects, and render styled terminal output more clearly.")
+        ),
+        WhatsNewFeature(
+            icon: "photo.on.rectangle.angled",
             iconColor: .themeCyan,
-            title: String(localized: "Quick Sessions from Share Sheet"),
-            description: String(localized: "Start a Quick Session from shared text, URLs, images, and files. Pending shares are picked up the next time Oppi opens.")
-        ),
-        WhatsNewFeature(
-            icon: "folder",
-            iconColor: .themeYellow,
-            title: String(localized: "Grouped Session Files"),
-            description: String(localized: "Session Files now groups touched files by directory, making large sessions easier to scan before opening a file.")
+            title: String(localized: "Markdown and Diagram Fixes"),
+            description: String(localized: "Images, SVGs, lists, code blocks, review comments, and Mermaid diagrams stay readable when sessions mix media and code.")
         ),
     ]
 
@@ -104,7 +98,7 @@ struct WhatsNewView: View {
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
 
-            Text("Build 39")
+            Text("Build 40")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
         }

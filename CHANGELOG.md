@@ -40,6 +40,42 @@ Example:
 
 No unreleased public changes yet.
 
+## [0.43.0] - 2026-06-30
+
+### Notes
+
+- Release prep for iOS TestFlight build 40 and npm `oppi-server@0.43.0`.
+- This release focuses on a first pass at worktree-aware sessions, lower-cost long-session trace loading, extension widget rendering, Markdown/Mermaid reliability, and a Pi runtime refresh to `0.80.2`.
+- Saved-agent and schedule management foundations are included for server/CLI work, but native Apple management screens are gated off in build 40.
+- `oppi-mirror` package metadata remains `0.42.0`; prepare a separate Pi extension publish if mirror extension code changes need to ship through npm.
+
+### Added
+
+- **Client/Server:** Added a first pass at worktree-aware workspace/session context, including worktree metadata, selected-worktree quick actions, session launch context, and session-row indicators.
+- **Client/Server:** Added trace paging and outline data so very long session histories can load in chunks instead of loading the full trace at once.
+- **Client:** Added separate Session Outline and Session Files panels, inline file-browser back controls, optional haptic feedback controls, the Icon Composer app icon, and an Oppi docs prompt toggle.
+- **Client:** Expanded Mermaid rendering coverage for flowcharts, sequence diagrams, state diagrams, mindmaps, and Gantt charts.
+- **Server:** Added saved-agent, schedule, and commit-review launch foundations for CLI/API use. Native Apple management screens are hidden in build 40 until they are ready for TestFlight.
+
+### Changed
+
+- **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.80.2`, `@earendil-works/pi-ai@0.80.2`, and `@earendil-works/pi-tui@0.80.2`.
+- **Client/Server:** Extension widget/status UI now projects working status natively, renders styled terminal widgets, groups widgets into strips, and throttles widget snapshots.
+- **Client:** Stopped workspace previews stay hidden so the workspace home screen focuses on active or actionable sessions.
+
+### Fixed
+
+- **Client:** Fixed read-image attachments, deferred SVG markdown images, ordered markdown lists around code blocks, wrapped detached code blocks, review-comment markdown surfaces, and review file chrome.
+- **Client/Server:** Fixed persistent mirror UI replay after reconnect and reduced noisy turn-lifecycle info logs.
+- **Server:** Fixed active trace indexing for session search and tightened session cleanup boundaries.
+- **Client:** Fixed nearby-pairing invite delivery acknowledgement before the pairing flow advances.
+- **Mac:** Fixed Mac app startup when another owner already manages the server process.
+
+### Migration notes
+
+- **Server:** Update npm installs with `npm install -g oppi-server@0.43.0` after publish. App-managed runtimes update through the Oppi app bundle, not `oppi update`.
+- **Mirror extension:** No npm package update is included for `oppi-mirror`; keep using `oppi-mirror@0.42.0` unless a separate extension release is prepared.
+
 ## [0.42.0] - 2026-06-22
 
 ### Notes
@@ -169,7 +205,8 @@ No unreleased public changes yet.
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/duh17/oppi/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/duh17/oppi/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/duh17/oppi/compare/v0.4.0...v0.41.0
 [0.4.0]: https://github.com/duh17/oppi/compare/5c3ba2f4cf23...v0.4.0
