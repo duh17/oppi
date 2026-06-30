@@ -1732,7 +1732,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       session.status !== "stopped"
     ) {
       session.status = state.isIdle ? "ready" : "busy";
-      session.currentTurnStartedAt = state.isIdle ? undefined : session.currentTurnStartedAt;
+      session.currentTurnStartedAt = state.isIdle
+        ? undefined
+        : (session.currentTurnStartedAt ?? now);
     }
 
     if (connection) {

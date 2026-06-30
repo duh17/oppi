@@ -560,6 +560,25 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
+  it("starts and clears mirrored current turn timestamps from terminal idle state", () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error("expected mirrored session");
+    expect(session.status).toBe("ready");
+    expect(session.currentTurnStartedAt).toBeUndefined();
+
+    ws.receive({ type: "state", state: { isIdle: false } });
+    const busy = sessions.get(sessionId);
+    expect(busy?.status).toBe("busy");
+    expect(typeof busy?.currentTurnStartedAt).toBe("number");
+
+    ws.receive({ type: "state", state: { isIdle: true } });
+    const ready = sessions.get(sessionId);
+    expect(ready?.status).toBe("ready");
+    expect(ready?.currentTurnStartedAt).toBeUndefined();
+  });
+
   it("marks the iOS mirror session stopped when the terminal session shuts down", () => {
     const { runtime, sessions } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
