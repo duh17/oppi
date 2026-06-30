@@ -89,6 +89,20 @@ describe("agent schedule durable core", () => {
     expect(store.getSchedule(cron.id)?.name).toBe("Weekday cron");
   });
 
+  it("rejects invalid schedule time zones and cron expressions before persistence", () => {
+    expect(() =>
+      createSchedule({
+        trigger: { type: "cron", expression: "not-a-cron", timeZone: "UTC" },
+      }),
+    ).toThrow("Schedule cron expression must have 5 fields");
+
+    expect(() =>
+      createSchedule({
+        trigger: { type: "cron", expression: "0 9 * * *", timeZone: "Mars/Phobos" },
+      }),
+    ).toThrow("Schedule timeZone is invalid: Mars/Phobos");
+  });
+
   it("manual run creates one run with a request id idempotency key", () => {
     const schedule = createSchedule();
 

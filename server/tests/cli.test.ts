@@ -192,6 +192,8 @@ describe("oppi help", () => {
     expect(text).toContain("--at <iso>");
     expect(text).toContain("--every <duration>");
     expect(text).toContain("--cron <expr>");
+    expect(text).toContain("--approval-ref <ref>");
+    expect(text).toContain("Automatic runs fail closed");
     expect(text).toContain("Run history");
     expect(text).toContain("idempotent");
   });
@@ -537,14 +539,7 @@ describe("oppi session", () => {
 
 describe("oppi wait", () => {
   it("rejects a zero poll interval before polling the local API", () => {
-    const { stdout, exitCode } = run([
-      "wait",
-      "session",
-      "sess-1",
-      "--poll",
-      "0ms",
-      "--json",
-    ]);
+    const { stdout, exitCode } = run(["wait", "session", "sess-1", "--poll", "0ms", "--json"]);
 
     expect(exitCode).toBe(1);
     expect(JSON.parse(stdout)).toEqual({
@@ -704,6 +699,10 @@ describe("oppi local API commands", () => {
           json({ ok: true, session: { id: "sess-1", status: "stopped" } });
           return;
         }
+        if (method === "POST" && url.pathname === "/schedules") {
+          json({ schedule: { id: "sch-created", status: "active", name: body?.name } });
+          return;
+        }
         if (method === "PATCH" && url.pathname === "/schedules/sch-1") {
           json({ schedule: { id: "sch-1", status: "active", name: "Updated" } });
           return;
@@ -808,6 +807,24 @@ describe("oppi local API commands", () => {
           expected: ["GET /workspaces/ws-1", "POST /agents/agent-1/sessions"],
         },
         {
+          args: [
+            "schedule",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "daily check",
+            "--cron",
+            "0 7 * * *",
+            "--tz",
+            "America/Los_Angeles",
+            "--approval-ref",
+            "approval://daily-check",
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "POST /schedules"],
+        },
+        {
           args: ["schedule", "update", "sch-1", "--definition", definitionPath, "--json"],
           expected: ["PATCH /schedules/sch-1"],
         },
@@ -848,6 +865,19 @@ describe("oppi local API commands", () => {
         (request) => request.method === "POST" && request.path === "/sessions/sess-1/command",
       );
       expect(sendRequest?.body).toMatchObject({ type: "prompt", message: "hello" });
+      const scheduleCreateRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/schedules",
+      );
+      expect(scheduleCreateRequest?.body).toMatchObject({
+        name: expect.any(String),
+        trigger: { type: "cron", expression: "0 7 * * *", timeZone: "America/Los_Angeles" },
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          prompt: "daily check",
+          approvalRefs: [expect.objectContaining({ id: "approval://daily-check" })],
+        },
+      });
       const updateRequest = requests.find(
         (request) => request.method === "PATCH" && request.path === "/schedules/sch-1",
       );

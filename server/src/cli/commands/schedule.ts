@@ -56,6 +56,7 @@ async function newSessionAction(
   const workspaceRef = flags.workspace?.trim();
   if (!workspaceRef) throw new Error("--workspace or --session is required");
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
+  const approvalRefs = approvalRefsFromFlags(flags);
   return {
     type: "new_session",
     workspaceId,
@@ -63,6 +64,7 @@ async function newSessionAction(
     ...(flags.model ? { model: flags.model } : {}),
     ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
     ...(flags.name ? { name: flags.name } : {}),
+    ...(approvalRefs ? { approvalRefs } : {}),
   };
 }
 
@@ -70,6 +72,7 @@ async function existingSessionAction(
   storage: Storage,
   sessionId: string,
   prompt: string,
+  flags: Record<string, string>,
   hostResolvers: LocalApiHostResolvers,
 ): Promise<Record<string, unknown>> {
   const result = await localApiRequest<{ session?: { workspaceId?: string } }>(
@@ -81,7 +84,14 @@ async function existingSessionAction(
   const workspaceId = result.session?.workspaceId;
   if (!workspaceId)
     throw new Error("Session has no workspaceId; cannot create existing-session schedule");
-  return { type: "existing_session", workspaceId, sessionId, prompt };
+  const approvalRefs = approvalRefsFromFlags(flags);
+  return {
+    type: "existing_session",
+    workspaceId,
+    sessionId,
+    prompt,
+    ...(approvalRefs ? { approvalRefs } : {}),
+  };
 }
 
 function parseJsonFile(path: string): Record<string, unknown> {
@@ -95,6 +105,29 @@ function parseJsonFile(path: string): Record<string, unknown> {
 function querySuffix(params: URLSearchParams): string {
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function approvalRefsFromFlags(
+  flags: Record<string, string>,
+): Record<string, unknown>[] | undefined {
+  const raw = flags["approval-ref"]?.trim();
+  if (!raw) return undefined;
+  const refs = raw
+    .split(",")
+    .map((ref) => ref.trim())
+    .filter((ref) => ref.length > 0);
+  if (refs.length === 0) return undefined;
+  const now = Date.now();
+  return refs.map((ref) => ({
+    id: ref,
+    ref,
+    status: "accepted",
+    acceptedAt: now,
+    provenance: {
+      extensionDisplayName: "Oppi CLI",
+      recordedAt: now,
+    },
+  }));
 }
 
 function validateAgentFlag(agent: string | undefined): void {
@@ -183,7 +216,7 @@ export async function cmdSchedule(
       const name = flags.name || `Schedule ${new Date().toISOString()}`;
       const trigger = scheduleTriggerFromFlags(flags);
       const action = flags.session
-        ? await existingSessionAction(storage, flags.session, prompt, hostResolvers)
+        ? await existingSessionAction(storage, flags.session, prompt, flags, hostResolvers)
         : await newSessionAction(storage, flags, prompt, hostResolvers);
       const body = { name, trigger, action };
       const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });

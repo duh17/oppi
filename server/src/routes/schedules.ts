@@ -1,13 +1,15 @@
 import type { ServerResponse } from "node:http";
 
-import { AgentLaunchService } from "../agent-launch-service.js";
+import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
 import type {
+  AgentSchedule,
   AgentScheduleRun,
   AgentScheduleStore,
   AgentScheduleSummary,
   CreateAgentScheduleRequest,
 } from "../agent-schedules.js";
 import { safeErrorMessage } from "../log-utils.js";
+import { liveAcceptedApprovalRefAuditIds } from "../schedule-approval.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MANUAL_RUN_LEASE_MS = 10 * 60_000;
@@ -37,7 +39,9 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         const schedules = getSchedules();
         const body = await helpers.parseBody<CreateAgentScheduleRequest>(req);
         validateScheduleTargets(body);
-        const schedule = schedules.createSchedule(body);
+        const now = Date.now();
+        const schedule = schedules.createSchedule(body, now);
+        recordAcceptedApprovalProvenance(schedule, now);
         helpers.json(res, { schedule: schedules.getScheduleSummary(schedule.id) }, 201);
       } catch (error) {
         helpers.error(res, 400, safeErrorMessage(error));
@@ -55,8 +59,13 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     res: ServerResponse,
   ): Promise<boolean> {
     if (method === "GET") {
-      const schedule = resolveScheduleSummary(scheduleId, res);
-      if (!schedule) return true;
+      const resolved = resolveScheduleSummary(scheduleId, res);
+      if (!resolved) return true;
+      const schedule = getSchedules().getSchedule(resolved.id);
+      if (!schedule) {
+        helpers.error(res, 404, "Schedule not found");
+        return true;
+      }
       helpers.json(res, { schedule });
       return true;
     }
@@ -74,10 +83,14 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
             action: body.action ?? schedules.getSchedule(schedule.id)?.action,
           });
         }
-        const updated = schedules.updateSchedule(schedule.id, body);
+        const now = Date.now();
+        const updated = schedules.updateSchedule(schedule.id, body, now);
         if (!updated) {
           helpers.error(res, 404, "Schedule not found");
           return true;
+        }
+        if (body.action?.approvalRefs !== undefined) {
+          recordAcceptedApprovalProvenance(updated, now);
         }
         helpers.json(res, { schedule: schedules.getScheduleSummary(updated.id) });
       } catch (error) {
@@ -131,7 +144,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       }
       const run = schedules.createManualRun(resolved.id, body.requestId);
       const dispatchable = run.status === "pending" || run.status === "claimed";
-      const completedRun = dispatchable ? await claimAndDispatchRun(resolved.id, run) : run;
+      const completedRun = dispatchable ? await claimAndDispatchRun(run) : run;
       helpers.json(
         res,
         { run: summarizeRun(resolved.id, completedRun) },
@@ -143,10 +156,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     return true;
   }
 
-  async function claimAndDispatchRun(
-    scheduleId: string,
-    run: AgentScheduleRun,
-  ): Promise<AgentScheduleRun> {
+  async function claimAndDispatchRun(run: AgentScheduleRun): Promise<AgentScheduleRun> {
     const schedules = getSchedules();
     const now = Date.now();
     const claimed = schedules.claimReadyRuns({
@@ -161,61 +171,15 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     return schedules.dispatchClaimedRun(
       claimed.id,
-      {
-        launchNewSession: async ({ run: launchRun, action }) => {
-          const workspace = ctx.storage.getWorkspace(action.workspaceId);
-          if (!workspace) throw new Error("Workspace not found");
-          const launchService = new AgentLaunchService({
-            storage: ctx.storage,
-            sessions: ctx.sessions,
-            ensureSessionContextWindow: ctx.ensureSessionContextWindow,
-          });
-          const result = await launchService.launch({
-            agent: {
-              name: action.name?.trim() || `Schedule ${scheduleId}`,
-              sessionDefaults: {
-                ...(action.model ? { model: action.model } : {}),
-              },
-            },
-            target: { workspace, ...(action.worktreeId ? { worktreeId: action.worktreeId } : {}) },
-            prompt: action.prompt,
-            idempotencyKey: launchRun.idempotencyKey,
-            leaseOwner: MANUAL_RUN_OWNER,
-            source: "schedule",
-            schedule: {
-              scheduleId,
-              runId: launchRun.id,
-              slotKey: launchRun.slotKey,
-            },
-            sessionName: action.name,
-          });
-          if (result.kind === "launch_in_progress") {
-            throw new Error("launch_in_progress");
-          }
-          if (action.prompt.trim().length > 0 && result.promptDispatch !== "delivered") {
-            throw new Error("prompt_not_sent");
-          }
-          ctx.appEvents?.emitSessionCreated(result.createdSession);
-          if (result.summarySession) ctx.appEvents?.emitSessionSummary(result.summarySession);
-          return {
-            sessionId: result.session.id,
-            promptDispatch: result.promptDispatch,
-            existing: result.kind === "existing",
-          };
+      createAgentScheduleDispatchHooks(
+        {
+          storage: ctx.storage,
+          sessions: ctx.sessions,
+          ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+          appEvents: ctx.appEvents,
         },
-        sendExistingSessionInput: async ({ run: inputRun, action }) => {
-          const session = ctx.storage.getSession(action.sessionId);
-          if (!session) throw new Error("Session not found");
-          if (session.workspaceId !== action.workspaceId) {
-            throw new Error("Session does not belong to schedule workspace");
-          }
-          await ctx.sessions.sendPrompt(action.sessionId, action.prompt, {
-            requestId: inputRun.idempotencyKey,
-            ...(action.streamingBehavior ? { streamingBehavior: action.streamingBehavior } : {}),
-          });
-          return { sessionId: action.sessionId, promptDispatch: "delivered" };
-        },
-      },
+        MANUAL_RUN_OWNER,
+      ),
       { leaseOwner: MANUAL_RUN_OWNER, now },
     );
   }
@@ -261,6 +225,19 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     return false;
   };
+
+  function recordAcceptedApprovalProvenance(schedule: AgentSchedule, now: number): void {
+    const approvalRefIds = liveAcceptedApprovalRefAuditIds(schedule.action.approvalRefs, now);
+    for (const approvalRefId of approvalRefIds) {
+      getSchedules().recordAcceptedApprovalProvenance({
+        workspaceId: schedule.action.workspaceId,
+        scheduleId: schedule.id,
+        approvalRefId,
+        now,
+        details: { source: "schedule_route" },
+      });
+    }
+  }
 
   function filterScheduleSummaries(
     schedules: AgentScheduleSummary[],
