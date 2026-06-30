@@ -32,11 +32,11 @@ final class FileBrowserVideoPlaybackE2ETests: E2ETestCase {
     }
 
     private func openSeededWorkspace() throws {
+        XCTAssertTrue(
+            revealWorkspace(named: workspaceName, timeout: 25),
+            "Seeded video workspace did not appear"
+        )
         let openButton = app.buttons["workspace.open.\(workspaceName)"]
-        if !openButton.waitForExistence(timeout: 15) {
-            app.collectionViews["workspace.list"].swipeDown()
-        }
-        XCTAssertTrue(openButton.waitForExistence(timeout: 15), "Seeded video workspace did not appear")
         openButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
 
         XCTAssertTrue(

@@ -35,7 +35,7 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
         workspaceList.swipeDown()
 
         XCTAssertTrue(
-            app.staticTexts[worktreeWorkspaceName].waitForExistence(timeout: 20),
+            revealWorkspace(named: worktreeWorkspaceName, timeout: 25),
             "Worktree fixture workspace did not appear after refresh"
         )
 
@@ -47,6 +47,13 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
         openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
 
         let sessionList = app.collectionViews["workspace.sessionList"]
+        if !sessionList.waitForExistence(timeout: 8) {
+            // In the full release suite this test can run after another UI test
+            // has just recovered from a sheet or navigation reset. The row body
+            // also opens workspaces in E2E invite mode, so tap the stable title
+            // as a fallback when the trailing affordance tap is swallowed.
+            app.staticTexts[worktreeWorkspaceName].tap()
+        }
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "Workspace detail did not load")
 
         let linkedWorktreeId = try linkedWorktreeId(workspaceId: workspaceId)

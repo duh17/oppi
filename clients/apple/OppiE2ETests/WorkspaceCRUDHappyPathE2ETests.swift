@@ -77,17 +77,25 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
 
         let pathExists = app.staticTexts["Path exists"]
         let submit = app.buttons["workspace.create.submit"]
+        let folderExists = app.staticTexts["Folder exists"]
         XCTAssertTrue(
-            pathExists.waitForExistence(timeout: 20) || submit.isEnabled,
+            pathExists.waitForExistence(timeout: 20) || folderExists.exists || submit.isEnabled,
             "Host path did not validate"
         )
 
         XCTAssertTrue(submit.waitForExistence(timeout: 5), "Create Workspace button not shown")
         XCTAssertTrue(submit.isEnabled, "Create Workspace stayed disabled after path validation")
         tap(submit, named: "create workspace submit button")
-
         XCTAssertTrue(
-            app.staticTexts[name].waitForExistence(timeout: 20),
+            waitForElementToDisappear(submit, timeout: 15),
+            "Create workspace sheet did not dismiss after submit"
+        )
+
+        if !app.collectionViews["workspace.list"].waitForExistence(timeout: 5) {
+            navigateToWorkspaceHome()
+        }
+        XCTAssertTrue(
+            revealWorkspace(named: name, timeout: 25),
             "Created workspace \(name) did not appear in workspace list"
         )
     }
@@ -206,8 +214,15 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
 
     private func confirmSessionDeleteIfNeeded() {
         let confirmDelete = app.buttons["Delete Session"]
-        if confirmDelete.waitForExistence(timeout: 5) {
-            tap(confirmDelete, named: "confirm delete session button")
+        guard confirmDelete.waitForExistence(timeout: 5) else { return }
+
+        // The confirmation dialog can briefly re-resolve its button after the
+        // swipe action closes. Tap the element that already appeared instead of
+        // asking the shared helper to perform a second wait on a stale query.
+        if confirmDelete.isHittable {
+            confirmDelete.tap()
+        } else {
+            confirmDelete.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
     }
 
@@ -241,10 +256,11 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
     }
 
     private func openWorkspace(named workspaceName: String) {
+        XCTAssertTrue(
+            revealWorkspace(named: workspaceName, timeout: 20),
+            "Workspace \(workspaceName) did not appear before opening"
+        )
         let openWorkspaceButton = app.buttons["workspace.open.\(workspaceName)"]
-        if !openWorkspaceButton.waitForExistence(timeout: 10) {
-            app.collectionViews["workspace.list"].swipeDown()
-        }
         tap(openWorkspaceButton, named: "workspace \(workspaceName) open button")
 
         XCTAssertTrue(
