@@ -1666,6 +1666,26 @@ export function bindMirrorOptionalUIContext(ui: MirrorOptionalUIContext) {
     notify: typeof ui.notify === "function" ? ui.notify.bind(ui) : undefined,
     setStatus:
       typeof ui.setStatus === "function" ? ui.setStatus.bind(ui) : undefined,
+    setWorkingMessage:
+      typeof ui.setWorkingMessage === "function"
+        ? ui.setWorkingMessage.bind(ui)
+        : undefined,
+    setWorkingVisible:
+      typeof ui.setWorkingVisible === "function"
+        ? ui.setWorkingVisible.bind(ui)
+        : undefined,
+    setWorkingIndicator:
+      typeof ui.setWorkingIndicator === "function"
+        ? ui.setWorkingIndicator.bind(ui)
+        : undefined,
+    setHiddenThinkingLabel:
+      typeof ui.setHiddenThinkingLabel === "function"
+        ? ui.setHiddenThinkingLabel.bind(ui)
+        : undefined,
+    setToolsExpanded:
+      typeof ui.setToolsExpanded === "function"
+        ? ui.setToolsExpanded.bind(ui)
+        : undefined,
     setWidget:
       typeof ui.setWidget === "function"
         ? (ui.setWidget.bind(ui) as ExtensionUIContext["setWidget"])
@@ -2563,6 +2583,11 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     ) {
       return `widget:${payload.widgetKey}`;
     }
+    if (payload.method === "setWorkingMessage") return "working:message";
+    if (payload.method === "setWorkingVisible") return "working:visible";
+    if (payload.method === "setWorkingIndicator") return "working:indicator";
+    if (payload.method === "setHiddenThinkingLabel") return "thinking:hidden-label";
+    if (payload.method === "setToolsExpanded") return "tools:expanded";
     return undefined;
   }
 
@@ -2592,6 +2617,26 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         payload.nativeSurface !== undefined ||
         widgetLinesHaveContent(payload.widgetLines)
       );
+    }
+    if (payload.method === "setWorkingMessage") {
+      return (
+        typeof payload.message === "string" && payload.message.trim().length > 0
+      );
+    }
+    if (payload.method === "setWorkingVisible") {
+      return typeof payload.workingVisible === "boolean";
+    }
+    if (payload.method === "setWorkingIndicator") {
+      return payload.workingIndicator !== undefined;
+    }
+    if (payload.method === "setHiddenThinkingLabel") {
+      return (
+        typeof payload.hiddenThinkingLabel === "string" &&
+        payload.hiddenThinkingLabel.trim().length > 0
+      );
+    }
+    if (payload.method === "setToolsExpanded") {
+      return typeof payload.toolsExpanded === "boolean";
     }
     return false;
   }
@@ -2788,6 +2833,61 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           method: "setStatus",
           statusKey: key,
           statusText: text,
+        });
+      }
+    };
+
+    ui.setWorkingMessage = (message) => {
+      original.setWorkingMessage?.(message);
+      if (!suppressUIForwarding) {
+        sendPersistentExtensionUIRequest({
+          id: nextUIRequestId("setWorkingMessage"),
+          method: "setWorkingMessage",
+          message,
+        });
+      }
+    };
+
+    ui.setWorkingVisible = (visible) => {
+      original.setWorkingVisible?.(visible);
+      if (!suppressUIForwarding) {
+        sendPersistentExtensionUIRequest({
+          id: nextUIRequestId("setWorkingVisible"),
+          method: "setWorkingVisible",
+          workingVisible: visible,
+        });
+      }
+    };
+
+    ui.setWorkingIndicator = (options) => {
+      original.setWorkingIndicator?.(options);
+      if (!suppressUIForwarding) {
+        sendPersistentExtensionUIRequest({
+          id: nextUIRequestId("setWorkingIndicator"),
+          method: "setWorkingIndicator",
+          workingIndicator: options,
+        });
+      }
+    };
+
+    ui.setHiddenThinkingLabel = (label) => {
+      original.setHiddenThinkingLabel?.(label);
+      if (!suppressUIForwarding) {
+        sendPersistentExtensionUIRequest({
+          id: nextUIRequestId("setHiddenThinkingLabel"),
+          method: "setHiddenThinkingLabel",
+          hiddenThinkingLabel: label,
+        });
+      }
+    };
+
+    ui.setToolsExpanded = (expanded) => {
+      original.setToolsExpanded?.(expanded);
+      if (!suppressUIForwarding) {
+        sendPersistentExtensionUIRequest({
+          id: nextUIRequestId("setToolsExpanded"),
+          method: "setToolsExpanded",
+          toolsExpanded: expanded,
         });
       }
     };
