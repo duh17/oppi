@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +9,26 @@ import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
+import type { Session, Workspace } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function makeRouteSession(id: string, overrides: Partial<Session> = {}): Session {
+  return {
+    id,
+    workspaceId: "ws-1",
+    status: "ready",
+    createdAt: 0,
+    lastActivity: 0,
+    messageCount: 0,
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: 0,
+    ...overrides,
+  };
+}
 
 describe("workspaces module", () => {
   it("handles GET /workspaces in isolation", async () => {
@@ -128,6 +148,68 @@ describe("workspaces module", () => {
     expect(body.summaries).toEqual([
       expect.objectContaining({ workspaceId: "ws-1", hasAttention: true }),
     ]);
+  });
+
+  it("includes session counts in GET /workspaces/:id/worktrees", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-counts-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const stored = makeRouteSession("stored-main");
+      const activeDuplicate = makeRouteSession("stored-main");
+      const activeOnly = makeRouteSession("active-main");
+      const taskRecord = makeRouteSession("task-main", {
+        runtime: "pi-tui",
+        name: "Agent#12345678",
+      });
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => [stored, taskRecord]),
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set(["stored-main", "active-main"])),
+          getActiveSession: vi.fn((sessionId: string) => {
+            if (sessionId === "stored-main") return activeDuplicate;
+            if (sessionId === "active-main") return activeOnly;
+            return undefined;
+          }),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/worktrees",
+        url: new URL("http://localhost/workspaces/ws-1/worktrees"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        worktrees: Array<{ id: string; sessionCount?: number }>;
+      };
+      expect(body.worktrees.find((worktree) => worktree.id === "main")?.sessionCount).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("returns 404 for nonexistent workspace", async () => {

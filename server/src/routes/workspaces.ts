@@ -20,6 +20,7 @@ import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../lo
 import { isOppiDocsPromptEnabled, resolveSdkSessionCwd } from "../sdk-backend.js";
 import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
+import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
 import { hostMountValidationError } from "../host.js";
 import { listWorkspaceWorktrees, resolveWorkspaceWorktree } from "../worktrees.js";
 import type {
@@ -285,7 +286,37 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    helpers.json(res, { workspaceId: wsId, worktrees: listWorkspaceWorktrees(workspace) });
+    helpers.json(res, {
+      workspaceId: wsId,
+      worktrees: listWorkspaceWorktrees(workspace, {
+        sessionCountsByWorktreeId: workspaceWorktreeSessionCounts(wsId),
+      }),
+    });
+  }
+
+  function workspaceWorktreeSessionCounts(workspaceId: string): Map<string, number> {
+    const counts = new Map<string, number>();
+    const countedSessionIds = new Set<string>();
+
+    const addSession = (session: Session | undefined): void => {
+      if (!session || session.workspaceId !== workspaceId) return;
+      if (countedSessionIds.has(session.id)) return;
+      if (isPiTuiTaskRecordSession(session)) return;
+
+      countedSessionIds.add(session.id);
+      const worktreeId = session.worktreeId?.trim() || "main";
+      counts.set(worktreeId, (counts.get(worktreeId) ?? 0) + 1);
+    };
+
+    for (const session of ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId)) {
+      addSession(session);
+    }
+
+    for (const sessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
+      addSession(ctx.sessionRuntimes.getActiveSession(sessionId));
+    }
+
+    return counts;
   }
 
   async function handleGetWorkspaceGitStatus(

@@ -87,4 +87,19 @@ describe("workspace worktrees", () => {
     expect(resolveWorkspaceWorktree(workspace, undefined)?.id).toBe("main");
     expect(resolveWorkspaceWorktree(workspace, "missing")).toBeUndefined();
   });
+
+  it("attaches session counts when provided", () => {
+    const { workspace } = makeGitWorkspace();
+    const linked = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain)!;
+
+    const worktrees = listWorkspaceWorktrees(workspace, {
+      sessionCountsByWorktreeId: new Map([
+        ["main", 2],
+        [linked.id, 3],
+      ]),
+    });
+
+    expect(worktrees.find((worktree) => worktree.isMain)?.sessionCount).toBe(2);
+    expect(worktrees.find((worktree) => worktree.id === linked.id)?.sessionCount).toBe(3);
+  });
 });
