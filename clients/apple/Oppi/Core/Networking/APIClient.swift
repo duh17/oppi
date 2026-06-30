@@ -300,7 +300,6 @@ actor APIClient: ClientLogUploading {
         sessionId: String,
         cursor: String? = nil,
         aroundEntryId: String? = nil,
-        targetEvents: Int? = nil,
         previewBytes: Int? = nil
     ) async throws -> SessionTracePageResponse {
         var items: [URLQueryItem] = []
@@ -312,9 +311,6 @@ actor APIClient: ClientLogUploading {
         }
         if let previewBytes {
             items.append(URLQueryItem(name: "previewBytes", value: String(previewBytes)))
-        }
-        if let targetEvents {
-            items.append(URLQueryItem(name: "targetEvents", value: String(targetEvents)))
         }
         var components = URLComponents()
         components.queryItems = items.isEmpty ? nil : items

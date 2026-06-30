@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("ChatSessionManager")
+@Suite("ChatSessionManager", .serialized)
 @MainActor
 struct ChatSessionManagerTests {
 
@@ -17,6 +17,27 @@ struct ChatSessionManagerTests {
             sleepFunction: { _ in }
         )
         return (controller, { captured })
+    }
+
+    private func makeURLProtocolAPIClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TestURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "http://localhost:7749")!,
+            token: "sk_test",
+            configuration: config
+        )
+    }
+
+    private func mockAPIResponse(status: Int = 200, json: String) -> (Data, HTTPURLResponse) {
+        let data = json.data(using: .utf8)!
+        let response = HTTPURLResponse(
+            url: URL(string: "http://localhost:7749")!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (data, response)
     }
 
     @Test func initialState() {
@@ -113,6 +134,45 @@ struct ChatSessionManagerTests {
         #expect(reloaded == false)
         #expect(manager.isSyncing == false)
         #expect(manager.lastSyncFailed == true)
+    }
+
+    @Test func forceHistoryReloadFallsBackToFullTraceWhenTracePageRouteIsMissing() async {
+        defer { TestURLProtocol.handler = nil }
+
+        let sessionId = "trace-page-fallback"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+
+        TestURLProtocol.handler = { request in
+            if request.url?.path == "/workspaces/w1/sessions/\(sessionId)/trace-page" {
+                return mockAPIResponse(status: 404, json: #"{"error":"Not found"}"#)
+            }
+
+            #expect(request.url?.path == "/workspaces/w1/sessions/\(sessionId)")
+            #expect(request.url?.query == "view=full")
+            return mockAPIResponse(json: """
+            {
+                "session":{"id":"\(sessionId)","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":2,"tokens":{"input":10,"output":5},"cost":0},
+                "trace":[
+                    {"id":"u1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Old server"},
+                    {"id":"a1","type":"assistant","timestamp":"2025-01-01T00:00:01Z","text":"Full trace"}
+                ]
+            }
+            """)
+        }
+
+        let reloaded = await manager.forceHistoryReload(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        #expect(reloaded)
+        #expect(manager.tracePage == nil)
+        #expect(manager.reducer.items.map(\.id) == ["u1", "a1"])
+        #expect(manager.lastSyncFailed == false)
     }
 
     @Test func unexpectedConnectedStreamExitSchedulesReconnect() async {

@@ -480,7 +480,7 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
-            #expect(request.url?.query == "cursor=older-1&previewBytes=4096&targetEvents=180")
+            #expect(request.url?.query == "cursor=older-1&previewBytes=4096")
             return self.mockResponse(json: """
             {
                 "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
@@ -498,7 +498,6 @@ struct APIClientTests {
             workspaceId: "w1",
             sessionId: "s1",
             cursor: "older-1",
-            targetEvents: 180,
             previewBytes: 4096
         )
 
@@ -513,13 +512,13 @@ struct APIClientTests {
         #expect(response.metrics.scannedBytes == 123)
     }
 
-    @Test func getSessionTracePageCanRequestEntryCenteredPage() async throws {
+    @Test func getSessionTracePageCanRequestAroundEntryPage() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
-            #expect(request.url?.query == "aroundEntryId=a1-text-0&previewBytes=4096&targetEvents=180")
+            #expect(request.url?.query == "aroundEntryId=a1-text-0&previewBytes=4096")
             return self.mockResponse(json: """
             {
                 "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
@@ -536,7 +535,6 @@ struct APIClientTests {
             workspaceId: "w1",
             sessionId: "s1",
             aroundEntryId: "a1-text-0",
-            targetEvents: 180,
             previewBytes: 4096
         )
 

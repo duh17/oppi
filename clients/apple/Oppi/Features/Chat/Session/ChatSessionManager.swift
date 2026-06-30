@@ -42,6 +42,12 @@ final class ChatSessionManager {
         case bareMessages(AsyncStream<ServerMessage>)
     }
 
+    private struct TraceHistorySnapshot {
+        let session: Session
+        let trace: [TraceEvent]
+        let page: TracePageMetadata?
+    }
+
     let sessionId: String
 
     /// Per-session timeline pipeline — each ChatSessionManager owns its own
@@ -143,7 +149,6 @@ final class ChatSessionManager {
     }
 
     private static let snapshotFlushMinInterval: TimeInterval = 10
-    private static let tracePageTargetEvents = 180
     private static let tracePagePreviewBytes = 4096
 
     private static func firstMessageFallbackTraceEvent(for session: Session) -> TraceEvent? {
@@ -178,6 +183,11 @@ final class ChatSessionManager {
 
     private static func seqDefaultsKey(sessionId: String) -> String {
         "chat.lastSeenSeq.\(sessionId)"
+    }
+
+    private static func shouldFallbackToFullTrace(_ error: any Error) -> Bool {
+        guard case APIError.server(let status, _) = error else { return false }
+        return status == 404 || status == 405
     }
 
     private static func loadLastSeenSeq(sessionId: String) -> Int {
@@ -785,14 +795,12 @@ final class ChatSessionManager {
             }
 
             do {
-                let response = try await api.getWorkspaceSessionTracePage(
-                    workspaceId: workspaceId,
-                    sessionId: sessionId,
-                    targetEvents: Self.tracePageTargetEvents,
-                    previewBytes: Self.tracePagePreviewBytes
+                let snapshot = try await fetchTraceHistorySnapshot(
+                    api: api,
+                    workspaceId: workspaceId
                 )
-                trace = response.trace
-                page = response.page
+                trace = snapshot.trace
+                page = snapshot.page
             } catch {
                 log.debug("Snapshot flush skipped for \(self.sessionId): \(error.localizedDescription)")
                 return
@@ -1074,6 +1082,36 @@ final class ChatSessionManager {
 
     // MARK: - History Loading
 
+    private func fetchTraceHistorySnapshot(
+        api: APIClient,
+        workspaceId: String
+    ) async throws -> TraceHistorySnapshot {
+        do {
+            let response = try await api.getWorkspaceSessionTracePage(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                previewBytes: Self.tracePagePreviewBytes
+            )
+            return TraceHistorySnapshot(
+                session: response.session,
+                trace: response.trace,
+                page: response.page
+            )
+        } catch {
+            guard Self.shouldFallbackToFullTrace(error) else { throw error }
+            let fallback = try await api.getWorkspaceSession(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                traceView: .full
+            )
+            return TraceHistorySnapshot(
+                session: fallback.session,
+                trace: fallback.trace,
+                page: nil
+            )
+        }
+    }
+
     /// Load session history from the JSONL trace.
     ///
     /// This is the only history path. The trace includes tool calls,
@@ -1108,15 +1146,13 @@ final class ChatSessionManager {
                 (session, trace) = try await fetchHook(workspaceId, sessionId)
                 page = nil
             } else {
-                let response = try await api.getWorkspaceSessionTracePage(
-                    workspaceId: workspaceId,
-                    sessionId: sessionId,
-                    targetEvents: Self.tracePageTargetEvents,
-                    previewBytes: Self.tracePagePreviewBytes
+                let snapshot = try await fetchTraceHistorySnapshot(
+                    api: api,
+                    workspaceId: workspaceId
                 )
-                session = response.session
-                trace = response.trace
-                page = response.page
+                session = snapshot.session
+                trace = snapshot.trace
+                page = snapshot.page
             }
 
             guard !Task.isCancelled else { return nil }
@@ -1254,7 +1290,6 @@ final class ChatSessionManager {
                 workspaceId: workspaceId,
                 sessionId: sessionId,
                 cursor: cursor,
-                targetEvents: Self.tracePageTargetEvents,
                 previewBytes: Self.tracePagePreviewBytes
             )
             return applyPrependedTracePage(response, connection: connection, sessionStore: sessionStore)
@@ -1288,7 +1323,6 @@ final class ChatSessionManager {
                 workspaceId: workspaceId,
                 sessionId: sessionId,
                 aroundEntryId: entryId,
-                targetEvents: Self.tracePageTargetEvents,
                 previewBytes: Self.tracePagePreviewBytes
             )
             guard applyPrependedTracePage(response, connection: connection, sessionStore: sessionStore) else {
