@@ -91,6 +91,37 @@ describe("trace paging", () => {
     expect(page.trace.some((event) => event.id === result?.toolCallId)).toBe(true);
   });
 
+  it("uses the default target size when targetEvents is omitted", () => {
+    const path = tempJsonl(fixtureEntries());
+
+    const page = readSessionTracePageFromFile(path, { previewBytes: 8 });
+
+    expect(page.trace.map((event) => event.id)).toContain("result-r1");
+    expect(page.page.previewBytes).toBe(8);
+    expect(page.page.staleCursor).toBe(false);
+  });
+
+  it("bounds initial latest-page reads for large traces", () => {
+    const padding = Array.from({ length: 80 }, (_, index) =>
+      messageEntry(
+        `pad-${index}`,
+        index === 0 ? null : `pad-${index - 1}`,
+        "user",
+        `padding ${index} ${"x".repeat(200)}`,
+      ),
+    );
+    const path = tempJsonl([...padding, ...fixtureEntries()]);
+
+    const page = readSessionTracePageFromFile(path, {
+      targetEvents: 1,
+      previewBytes: 8,
+      maxInitialReadBytes: 1024,
+    });
+
+    expect(page.metrics.jsonlBytes).toBeGreaterThan(1024);
+    expect(page.metrics.scannedBytes).toBeLessThanOrEqual(1024);
+  });
+
   it("paginates across JSONL files without orphaning tool results split by file boundaries", () => {
     const paths = tempJsonlFiles([
       [
