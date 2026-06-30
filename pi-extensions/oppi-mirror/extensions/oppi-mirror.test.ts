@@ -100,6 +100,9 @@ interface MockExtensionContext {
     theme: { fg: ReturnType<typeof vi.fn> };
     setWidget: ReturnType<typeof vi.fn>;
     setStatus: ReturnType<typeof vi.fn>;
+    setWorkingMessage: ReturnType<typeof vi.fn>;
+    setWorkingIndicator: ReturnType<typeof vi.fn>;
+    setWorkingVisible: ReturnType<typeof vi.fn>;
     notify: ReturnType<typeof vi.fn>;
     confirm: ReturnType<typeof vi.fn>;
   };
@@ -138,6 +141,9 @@ function createMockContext(): MockExtensionContext {
       }
     }),
     setStatus: vi.fn(),
+    setWorkingMessage: vi.fn(),
+    setWorkingIndicator: vi.fn(),
+    setWorkingVisible: vi.fn(),
     notify: vi.fn(),
     confirm: vi.fn(async () => false),
   };
@@ -270,6 +276,42 @@ describe("oppi mirror extension UI replay", () => {
           }),
         ]),
       );
+    });
+  });
+
+  it("forwards working-state UI updates from the proxied terminal context", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      const terminalSetWorkingMessage = ctx.ui.setWorkingMessage;
+
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      ctx.ui.setWorkingMessage("Tracing the logic");
+      ctx.ui.setWorkingIndicator({ frames: ["●"], intervalMs: 120 });
+      ctx.ui.setWorkingVisible(true);
+
+      expect(terminalSetWorkingMessage).toHaveBeenCalledWith("Tracing the logic");
+      expect(sentExtensionUIRequests(socket)).toEqual([
+        expect.objectContaining({
+          method: "setWorkingMessage",
+          message: "Tracing the logic",
+        }),
+        expect.objectContaining({
+          method: "setWorkingIndicator",
+          workingIndicator: { frames: ["●"], intervalMs: 120 },
+        }),
+        expect.objectContaining({
+          method: "setWorkingVisible",
+          workingVisible: true,
+        }),
+      ]);
     });
   });
 
