@@ -33,4 +33,8 @@ enum ReleaseFeatures {
 
     /// Composer microphone button + on-device speech-to-text via SpeechAnalyzer.
     static let voiceInputEnabled = true
+
+    /// Native saved-agent and schedule management screens.
+    /// Hidden for TestFlight build 40 until these iOS management flows are ready.
+    static let agentAndScheduleManagementEnabled = false
 }
