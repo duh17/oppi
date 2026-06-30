@@ -1544,6 +1544,53 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     });
   });
 
+  it("forwards mirrored working-state requests as timeline notifications", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-working-message-1",
+      method: "setWorkingMessage",
+      message: "\u001b]0;title\u0007Tracing the logic · thinking\u001b[2K",
+    });
+    ws.receive({
+      type: "extension_ui_request",
+      id: "ui-working-indicator-1",
+      method: "setWorkingIndicator",
+      workingIndicator: { frames: ["\u001b[32m●\u001b[0m"], intervalMs: 120 },
+    });
+
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWorkingMessage",
+        message: "Tracing the logic · thinking",
+      }),
+    );
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWorkingIndicator",
+        workingIndicator: { frames: ["●"], intervalMs: 120 },
+      }),
+    );
+    expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWorkingMessage",
+        message: "Tracing the logic · thinking",
+      }),
+      expect.objectContaining({
+        type: "extension_ui_notification",
+        method: "setWorkingIndicator",
+        workingIndicator: { frames: ["●"], intervalMs: 120 },
+      }),
+    ]);
+  });
+
   it("replays mirrored clear notifications after explicit clears", () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);

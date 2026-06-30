@@ -239,6 +239,25 @@ describe("mirror extension UI proxy helpers", () => {
       placement: "aboveEditor",
     });
   });
+
+  it("binds terminal working-state UI methods when available", () => {
+    const setWorkingMessage = vi.fn();
+    const setWorkingIndicator = vi.fn();
+    const setWorkingVisible = vi.fn();
+    const original = bindMirrorOptionalUIContext({
+      setWorkingMessage,
+      setWorkingIndicator,
+      setWorkingVisible,
+    } as never);
+
+    original.setWorkingMessage?.("Tracing logic");
+    original.setWorkingIndicator?.({ frames: ["●"], intervalMs: 120 });
+    original.setWorkingVisible?.(true);
+
+    expect(setWorkingMessage).toHaveBeenCalledWith("Tracing logic");
+    expect(setWorkingIndicator).toHaveBeenCalledWith({ frames: ["●"], intervalMs: 120 });
+    expect(setWorkingVisible).toHaveBeenCalledWith(true);
+  });
 });
 
 describe("mirror ask response normalization", () => {
